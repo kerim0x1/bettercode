@@ -175,7 +175,7 @@
   "build": {
     "appId": "com.betterc0de.ide",
     "productName": "BetterC0de",
-    "compression": "maximum",
+    "compression": "normal",
     "asar": true,
     "afterSign": "apps/shell/build/notarize.cjs",
     "asarUnpack": [
@@ -335,6 +335,7 @@
       "sign": true
     },
     "linux": {
+      "maintainer": "BetterC0de contributors <info@wibify.de>",
       "icon": "apps/shell/build/icon.png",
       "target": [
         "AppImage",

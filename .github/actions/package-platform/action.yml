@@ -34,6 +34,13 @@ runs:
       shell: bash
       run: |
         npm run clean:release
+        # GitHub Actions exposes missing secrets as empty environment
+        # variables. electron-builder treats an empty CSC_LINK as the
+        # project directory, then fails with "... not a file" on macOS.
+        # Keep real credentials, but remove empty optional signing values.
+        for name in CSC_LINK CSC_KEY_PASSWORD CSC_INSTALLER_LINK CSC_INSTALLER_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID WIN_CSC_LINK WIN_CSC_KEY_PASSWORD; do
+          if [ -z "${!name:-}" ]; then unset "$name"; fi
+        done
         SIGNING_METADATA=$(node -p "require('./scripts/pack-electron.cjs').buildSigningMetadataArgs()[0]")
         npx electron-builder ${{ inputs.platform-flag }} --${{ inputs.arch }} --dir --publish never "$SIGNING_METADATA"
     - name: Enforce packaged size budgets
@@ -50,6 +57,9 @@ runs:
         PREPACKAGED_PATH: ${{ steps.packaged-smoke.outputs.prepackaged-path }}
       run: |
         test -n "$PREPACKAGED_PATH"
+        for name in CSC_LINK CSC_KEY_PASSWORD CSC_INSTALLER_LINK CSC_INSTALLER_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID WIN_CSC_LINK WIN_CSC_KEY_PASSWORD; do
+          if [ -z "${!name:-}" ]; then unset "$name"; fi
+        done
         npx electron-builder ${{ inputs.platform-flag }} --${{ inputs.arch }} --prepackaged "$PREPACKAGED_PATH" --publish ${{ inputs.publish }}
     - name: Generate installer checksums
       if: inputs.build-installers == 'true'

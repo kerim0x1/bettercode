@@ -4,7 +4,9 @@ This guide covers both the downloadable desktop app and a local checkout for dev
 
 ## Use the desktop installer
 
-Download the build for your operating system from [betterc0de.com/download](https://betterc0de.com/download).
+Download the build for your operating system from [GitHub Releases](https://github.com/kerim0x1/bettercode/releases). Expand **Assets** below the release notes to see the installers.
+
+The installer files are published on the repository's [GitHub Releases page](https://github.com/kerim0x1/bettercode/releases). GitHub **Packages** is for npm/container packages and does not contain the desktop `.exe`, `.dmg`, or Linux installers. A release is created when a matching `v<version>` tag is pushed; the release then contains the installer and update metadata such as `latest.yml`.
 
 The installer files are published on the repository's [GitHub Releases page](https://github.com/kerim0x1/bettercode/releases). GitHub **Packages** is for npm/container packages and does not contain the desktop `.exe`, `.dmg`, or Linux installers. A release is created when a matching `v<version>` tag is pushed; the release then contains the installer and update metadata such as `latest.yml`.
 
@@ -16,6 +18,8 @@ The installer files are published on the repository's [GitHub Releases page](htt
 | Linux | `.AppImage`, `.deb`, `.rpm`, or `.tar.gz` package |
 
 After installation, open **Settings → Providers**, connect a supported provider, open a project folder, and start a conversation. Provider accounts, API keys, and usage limits belong to the provider you connect.
+
+Unsigned Windows builds do not install updates automatically. Download and run the newer `.exe` installer from Releases to update them. A successful CI run alone does not publish a download: the tag-triggered Release workflow builds installers into a draft and publishes it only after all platform jobs succeed. Beta versions are marked as prereleases.
 
 ## Requirements for a source checkout
 

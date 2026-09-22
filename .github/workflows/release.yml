@@ -161,3 +161,22 @@ jobs:
           path: ${{ matrix.artifact_paths }}
           if-no-files-found: error
           retention-days: 14
+
+  publish:
+    name: Publish completed release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Make the verified installer draft public
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          PRERELEASE=false
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then PRERELEASE=true; fi
+          gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease="$PRERELEASE" --title "BetterC0de $GITHUB_REF_NAME"

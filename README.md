@@ -6,6 +6,11 @@
 
 <p align="center"><strong>Your coding agents. One desktop workspace.</strong></p>
 
+> [!WARNING]
+> **Beta software:** BetterC0de is an early beta release. Bugs, crashes, incomplete features, and breaking changes are normal and expected. Save your work, review changes before running them, and report problems through [GitHub Issues](https://github.com/kerim0x1/bettercode/issues).
+>
+> Download the current beta installers from the [GitHub Releases page](https://github.com/kerim0x1/bettercode/releases/tag/v0.1.0-beta.2). GitHub **Packages** does not contain the desktop installers.
+
 <p align="center">
   Bring your AI conversations, project files, terminals, and live previews together.<br>
   Move from an idea to a change you can see, understand, and review.
@@ -48,16 +53,16 @@ Open a project, choose an available provider, and describe what you want to buil
 
 ## Download
 
-BetterC0de is free during the beta. The links always serve the latest build.
+BetterC0de is free during the beta. The [GitHub Releases page](https://github.com/kerim0x1/bettercode/releases) contains the installer files and update metadata for each version. Select the newest beta, expand **Assets**, and choose your platform.
 
 > **Open source as of 21 September 2026.** The full source is in this repository under the MIT License. Beta installers are below.
 
 | Platform | Requirements | Download |
 | --- | --- | --- |
-| **Windows** | Windows 10 / 11, 64-bit | [Download `.exe`](https://betterc0de.com/download?os=win) |
-| **macOS · Apple Silicon** | M1 or newer | [Download `.dmg`](https://betterc0de.com/download?os=mac&arch=arm64) |
-| **macOS · Intel** | Intel-based Mac | [Download `.dmg`](https://betterc0de.com/download?os=mac&arch=x64) |
-| **Linux** | — | Coming soon |
+| **Windows** | Windows 10 / 11, 64-bit | [Release assets](https://github.com/kerim0x1/bettercode/releases) |
+| **macOS · Apple Silicon** | M1 or newer | [Release assets](https://github.com/kerim0x1/bettercode/releases) |
+| **macOS · Intel** | Intel-based Mac | [Release assets](https://github.com/kerim0x1/bettercode/releases) |
+| **Linux** | x64 | [Release assets](https://github.com/kerim0x1/bettercode/releases) (`.AppImage` or `.tar.gz`) |
 
 Not sure which Mac you have? Open **About This Mac** — an "Apple M…" chip means Apple Silicon. Or just use [betterc0de.com/download](https://betterc0de.com/download), which picks the right build for your system.
 
