@@ -385,6 +385,9 @@ const DESKTOP_ONLY_PATHS: ReadonlyArray<{
   { methods: new Set(["POST"]), pattern: /^\/api\/v1\/providers\/instances\/[^/]+\/update$/ },
   { methods: null, pattern: /^\/api\/v1\/runtime\/debug-info$/ },
   { methods: null, pattern: /^\/api\/v1\/runtime\/heap-snapshot$/ },
+  // Provider CLI reports include subscription quotas and local session
+  // history; keep this host-local even for paired remote clients.
+  { methods: null, pattern: /^\/api\/v1\/usage\// },
   { methods: null, pattern: /^\/api\/v1\/filesystem\/drives$/ },
   { methods: null, pattern: /^\/api\/v1\/settings\/deepgram-token$/ },
   // Themes: scanning this machine's editors and changing the stored set are

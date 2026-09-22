@@ -75,23 +75,23 @@ export interface RuntimeDebugInfo {
 }
 
 export interface RuntimeCompatDebugInfo {
-    configDir: string
-    configDirSource: "default" | "BETTERC0DE_CONFIG_DIR" | "legacy"
-    dataDir: string
-    stateDir: string
-    cacheDir: string
-    binDir: string
-    logDir: string
-    reposDir: string
-    dbPath: string
-    dbPathSource: "default" | "BETTERC0DE_DB" | "legacy"
-    authPath: string
-    mcpAuthPath: string
-    pluginMetaPath: string
-    pureMode?: boolean
-    defaultPluginsDisabled?: boolean
-    externalPlugins?: "enabled" | "disabled-by-pure"
-    defaultPlugins?: "enabled" | "disabled-by-env"
+  configDir: string
+  configDirSource: "default" | "BETTERC0DE_CONFIG_DIR" | "legacy"
+  dataDir: string
+  stateDir: string
+  cacheDir: string
+  binDir: string
+  logDir: string
+  reposDir: string
+  dbPath: string
+  dbPathSource: "default" | "BETTERC0DE_DB" | "legacy"
+  authPath: string
+  mcpAuthPath: string
+  pluginMetaPath: string
+  pureMode?: boolean
+  defaultPluginsDisabled?: boolean
+  externalPlugins?: "enabled" | "disabled-by-pure"
+  defaultPlugins?: "enabled" | "disabled-by-env"
 }
 
 export const getRuntimeDebugInfo = () =>
@@ -239,6 +239,28 @@ export interface ThreadUsageStats {
       cost: number
     }
   >
+  providerUsage?: Record<
+    string,
+    {
+      messages: number
+      tokens: {
+        input: number
+        output: number
+        reasoning: number
+        cache: {
+          read: number
+          write: number
+        }
+      }
+      cost: number
+    }
+  >
+  dailyUsage?: Array<{
+    date: string
+    provider: string
+    tokens: number
+    cost: number
+  }>
   dateRange: {
     earliest: string | null
     latest: string | null
@@ -265,6 +287,115 @@ export const loadThreadStats = (
   const query = params.toString()
   return invoke<ThreadUsageStats>(`/threads/stats${query ? `?${query}` : ""}`)
 }
+
+export type UsageProviderId = "claude" | "codex" | "grok"
+export type UsageStatus = "ready" | "partial" | "unavailable" | "error"
+
+export interface UsageDailyPoint {
+  date: string
+  tokens: number
+  messages: number
+  sessions: number
+}
+
+export interface UsageEntry {
+  id: string
+  label: string
+  value: number
+  share?: number
+  cost?: number
+}
+
+export interface UsagePricing {
+  currency: "USD"
+  total: number
+  breakdown: {
+    input: number
+    output: number
+    cacheRead: number
+    cacheWrite: number
+  }
+  pricedTokens: number
+  unpricedTokens: number
+  unpricedModels: string[]
+  hasOverrides: boolean
+  notes: string[]
+}
+
+export interface UsageList {
+  id: string
+  title: string
+  unit: string
+  entries: UsageEntry[]
+}
+
+export interface UsageInsight {
+  id: string
+  label: string
+  value: string
+  hint?: string
+}
+
+export interface UsageLimit {
+  id: string
+  label: string
+  usedPercent: number
+  resetsAt: string | null
+  resetLabel: string | null
+}
+
+export interface UsageSummary {
+  totalTokens: number
+  tokens: {
+    input: number
+    output: number
+    reasoning: number
+    cacheRead: number
+    cacheWrite: number
+  }
+  peakDayTokens: number
+  peakDayDate: string | null
+  longestSessionMs: number
+  currentStreakDays: number
+  longestStreakDays: number
+  sessions: number
+  messages: number
+  activeDays: number
+  firstActivity: string | null
+  lastActivity: string | null
+  cost: number | null
+}
+
+export interface ProviderUsageReport {
+  provider: UsageProviderId
+  label: string
+  status: UsageStatus
+  installed: boolean
+  authenticated: boolean
+  version: string | null
+  plan: string | null
+  source: string
+  fetchedAt: string
+  scannedMs: number
+  summary: UsageSummary
+  daily: UsageDailyPoint[]
+  pricing: UsagePricing | null
+  pricesFile: string | null
+  models: UsageEntry[]
+  insights: UsageInsight[]
+  lists: UsageList[]
+  limits: UsageLimit[]
+  limitsObservedAt: string | null
+  limitNotes: string[]
+  notes: string[]
+  error?: string
+}
+
+/** Usage read from each provider CLI's own local store. */
+export const loadProviderUsage = (options: { refresh?: boolean } = {}) =>
+  invoke<ProviderUsageReport[]>(
+    `/usage/providers${options.refresh ? "?refresh=1" : ""}`
+  )
 
 export const loadMessages = (threadId: string) =>
   invokeContract("listMessages", { id: threadId })

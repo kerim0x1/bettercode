@@ -1086,8 +1086,16 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   {
     id: "stats",
     name: "/stats",
-    aliases: ["/usage", "/token-usage", "/session.stats", "/session-stats"],
-    description: "Show token, model, and tool usage statistics",
+    aliases: ["/token-usage", "/session.stats", "/session-stats"],
+    description: "Show BetterC0de token, model, and tool history",
+    category: "builtin",
+    action: "execute",
+  },
+  {
+    id: "usage",
+    name: "/usage",
+    aliases: ["/cli-usage"],
+    description: "Open live Claude, Codex, and Grok CLI usage",
     category: "builtin",
     action: "execute",
   },

@@ -1,6 +1,7 @@
 import { useState, type MouseEvent } from "react"
 import {
   CheckIcon,
+  ChartNoAxesCombinedIcon,
   ChevronDownIcon,
   CodeIcon,
   SettingsIcon as FileSettingsIcon,
@@ -409,6 +410,20 @@ export function SidebarFooter({
           <span className="flex-1 text-xs">Customize</span>
         </SimpleDropdownItem>
       </SimpleDropdown>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label="Usage"
+            className="flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            onClick={() => window.dispatchEvent(new CustomEvent("betterc0de:open-usage"))}
+          >
+            <ChartNoAxesCombinedIcon className="size-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top">Usage</TooltipContent>
+      </Tooltip>
 
       <Tooltip>
         <TooltipTrigger asChild>
