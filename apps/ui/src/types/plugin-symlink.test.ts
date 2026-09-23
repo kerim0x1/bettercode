@@ -13,7 +13,10 @@ const requireCjs = createRequire(import.meta.url)
 const electronPath = requireCjs.resolve("electron")
 const cache = (
   requireCjs as unknown as {
-    cache: Record<string, { id: string; filename: string; loaded: boolean; exports: unknown }>
+    cache: Record<
+      string,
+      { id: string; filename: string; loaded: boolean; exports: unknown }
+    >
   }
 ).cache
 cache[electronPath] = {
@@ -26,7 +29,7 @@ cache[electronPath] = {
 }
 
 const { PluginManager, assertPluginTreeHasNoSymlinks } = requireCjs(
-  "../../../shell/plugin-manager.cjs",
+  "../../../shell/plugin-manager.cjs"
 ) as {
   PluginManager: new () => {
     _pluginsDir: string | null
@@ -38,21 +41,31 @@ const { PluginManager, assertPluginTreeHasNoSymlinks } = requireCjs(
     loadPlugin: (pluginId: string) => Promise<Record<string, unknown>>
     unloadPlugin: (pluginId: string) => Promise<boolean>
     togglePlugin: (pluginId: string, enabled: boolean) => Promise<void>
-    sendToPlugin: (pluginId: string, method: string, args?: unknown) => Promise<unknown>
+    sendToPlugin: (
+      pluginId: string,
+      method: string,
+      args?: unknown
+    ) => Promise<unknown>
     setupPluginEvents: (
       pluginId: string,
-      callback: (event: unknown) => void,
+      callback: (event: unknown) => void
     ) => Promise<boolean>
-    plugins: Map<string, {
-      manifest: Record<string, unknown>
-      module: Record<string, unknown> | null
-      config: Record<string, unknown>
-      error: string | null
-      eventDisposer: (() => unknown) | null
-      entryPath: string
-    }>
+    plugins: Map<
+      string,
+      {
+        manifest: Record<string, unknown>
+        module: Record<string, unknown> | null
+        config: Record<string, unknown>
+        error: string | null
+        eventDisposer: (() => unknown) | null
+        entryPath: string
+      }
+    >
   }
-  assertPluginTreeHasNoSymlinks: (root: string, opts?: { maxNodes?: number }) => void
+  assertPluginTreeHasNoSymlinks: (
+    root: string,
+    opts?: { maxNodes?: number }
+  ) => void
 }
 
 function tmpDir(label: string): string {
@@ -95,7 +108,7 @@ describe("assertPluginTreeHasNoSymlinks (S3)", () => {
   it("refuses an absurdly large tree to avoid DoS on the install path", () => {
     fs.writeFileSync(path.join(dir, "manifest.json"), "{}")
     expect(() => assertPluginTreeHasNoSymlinks(dir, { maxNodes: 0 })).toThrow(
-      /more than 0 entries/,
+      /more than 0 entries/
     )
   })
 })
@@ -117,12 +130,15 @@ describe("PluginManager secret config", () => {
           { key: "apiKey", type: "secret", label: "API key" },
           { key: "region", type: "string", label: "Region" },
         ],
-      }),
+      })
     )
     fs.writeFileSync(path.join(pluginDir, "index.cjs"), "module.exports = {}")
     fs.writeFileSync(
       path.join(pluginDir, "config.json"),
-      JSON.stringify({ enabled: true, values: { apiKey: "legacy-secret", region: "eu" } }),
+      JSON.stringify({
+        enabled: true,
+        values: { apiKey: "legacy-secret", region: "eu" },
+      })
     )
   })
 
@@ -138,7 +154,10 @@ describe("PluginManager secret config", () => {
     const disk = fs.readFileSync(path.join(dir, "demo", "config.json"), "utf8")
     expect(disk).toContain("enc:v1:")
     expect(disk).not.toContain("legacy-secret")
-    expect(manager.getConfig("demo")).toEqual({ apiKey: "legacy-secret", region: "eu" })
+    expect(manager.getConfig("demo")).toEqual({
+      apiKey: "legacy-secret",
+      region: "eu",
+    })
     expect(manager.getPublicConfig("demo")).toEqual({
       apiKey: { configured: true, storage: "encrypted" },
       region: "eu",
@@ -156,8 +175,9 @@ describe("PluginManager secret config", () => {
 
     await manager.setConfig("demo", "apiKey", { set: "replacement-secret" })
     expect(manager.getConfig("demo").apiKey).toBe("replacement-secret")
-    expect(fs.readFileSync(path.join(dir, "demo", "config.json"), "utf8"))
-      .not.toContain("replacement-secret")
+    expect(
+      fs.readFileSync(path.join(dir, "demo", "config.json"), "utf8")
+    ).not.toContain("replacement-secret")
 
     await manager.setConfig("demo", "apiKey", { clear: true })
     expect(manager.getPublicConfig("demo").apiKey).toEqual({
@@ -169,17 +189,19 @@ describe("PluginManager secret config", () => {
   it("refuses to load or invoke a disabled plugin", async () => {
     fs.writeFileSync(
       path.join(dir, "demo", "config.json"),
-      JSON.stringify({ enabled: false, values: {} }),
+      JSON.stringify({ enabled: false, values: {} })
     )
     fs.writeFileSync(
       path.join(dir, "demo", "index.cjs"),
-      "module.exports = { ping() { return 'pong' } }",
+      "module.exports = { ping() { return 'pong' } }"
     )
     const manager = new PluginManager()
     manager._pluginsDir = dir
 
     await expect(manager.loadPlugin("demo")).rejects.toThrow(/disabled/i)
-    await expect(manager.sendToPlugin("demo", "ping")).rejects.toThrow(/disabled/i)
+    await expect(manager.sendToPlugin("demo", "ping")).rejects.toThrow(
+      /disabled/i
+    )
     expect(manager.plugins.has("demo")).toBe(false)
   })
 
@@ -237,7 +259,7 @@ describe("PluginManager secret config", () => {
         "    return { async dispose() { global.__betterc0dePluginDisposed = true } }",
         "  }",
         "}",
-      ].join("\n"),
+      ].join("\n")
     )
     const manager = new PluginManager()
     manager._pluginsDir = dir
@@ -248,8 +270,10 @@ describe("PluginManager secret config", () => {
     expect(requireCjs.cache[entryPath]).toBeDefined()
     await manager.unloadPlugin("demo")
 
-    expect((globalThis as { __betterc0dePluginDisposed?: boolean })
-      .__betterc0dePluginDisposed).toBe(true)
+    expect(
+      (globalThis as { __betterc0dePluginDisposed?: boolean })
+        .__betterc0dePluginDisposed
+    ).toBe(true)
     expect(requireCjs.cache[entryPath]).toBeUndefined()
     delete (globalThis as { __betterc0dePluginDisposed?: boolean })
       .__betterc0dePluginDisposed
