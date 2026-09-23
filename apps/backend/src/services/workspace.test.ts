@@ -113,12 +113,12 @@ beforeEach(async () => {
   previousBetterC0deConfigDir = process.env.BetterC0de_CONFIG_DIR
   previousUpperBetterC0deConfig = process.env.BETTERC0DE_CONFIG
   previousBetterC0deConfig = process.env.BetterC0de_CONFIG
-  previousUpperBetterC0deConfigContent =
-    process.env.BETTERC0DE_CONFIG_CONTENT
+  previousUpperBetterC0deConfigContent = process.env.BETTERC0DE_CONFIG_CONTENT
   previousBetterC0deConfigContent = process.env.BetterC0de_CONFIG_CONTENT
   previousBetterC0dePermission = process.env.BetterC0de_PERMISSION
   previousBetterC0deTuiConfig = process.env.BetterC0de_TUI_CONFIG
-  previousBetterC0deDisableAutocompact = process.env.BetterC0de_DISABLE_AUTOCOMPACT
+  previousBetterC0deDisableAutocompact =
+    process.env.BetterC0de_DISABLE_AUTOCOMPACT
   previousBetterC0deDisablePrune = process.env.BetterC0de_DISABLE_PRUNE
   previousBetterC0deDisableProjectConfig =
     process.env.BetterC0de_DISABLE_PROJECT_CONFIG
@@ -126,7 +126,8 @@ beforeEach(async () => {
   previousBetterC0deAutoShare = process.env.BetterC0de_AUTO_SHARE
   previousBetterC0deDisableExternalSkills =
     process.env.BetterC0de_DISABLE_EXTERNAL_SKILLS
-  previousBetterC0deDisableClaudeCode = process.env.BetterC0de_DISABLE_CLAUDE_CODE
+  previousBetterC0deDisableClaudeCode =
+    process.env.BetterC0de_DISABLE_CLAUDE_CODE
   previousBetterC0deDisableClaudeCodePrompt =
     process.env.BetterC0de_DISABLE_CLAUDE_CODE_PROMPT
   previousBetterC0deDisableClaudeCodeSkills =
@@ -134,9 +135,12 @@ beforeEach(async () => {
   previousBetterC0dePure = process.env.BetterC0de_PURE
   previousBetterC0deDisableDefaultPlugins =
     process.env.BetterC0de_DISABLE_DEFAULT_PLUGINS
-  previousBetterC0deDisableAutoupdate = process.env.BetterC0de_DISABLE_AUTOUPDATE
-  previousBetterC0deAlwaysNotifyUpdate = process.env.BetterC0de_ALWAYS_NOTIFY_UPDATE
-  previousBetterC0deDisableModelsFetch = process.env.BetterC0de_DISABLE_MODELS_FETCH
+  previousBetterC0deDisableAutoupdate =
+    process.env.BetterC0de_DISABLE_AUTOUPDATE
+  previousBetterC0deAlwaysNotifyUpdate =
+    process.env.BetterC0de_ALWAYS_NOTIFY_UPDATE
+  previousBetterC0deDisableModelsFetch =
+    process.env.BetterC0de_DISABLE_MODELS_FETCH
   previousBetterC0deModelsUrl = process.env.BetterC0de_MODELS_URL
   previousBetterC0deModelsPath = process.env.BetterC0de_MODELS_PATH
   previousBetterC0deFakeVcs = process.env.BetterC0de_FAKE_VCS
@@ -148,7 +152,8 @@ beforeEach(async () => {
     process.env.BetterC0de_EXPERIMENTAL_DISABLE_FILEWATCHER
   previousBetterC0deExperimentalDisableCopyOnSelect =
     process.env.BetterC0de_EXPERIMENTAL_DISABLE_COPY_ON_SELECT
-  previousBetterC0deExperimentalLspTy = process.env.BetterC0de_EXPERIMENTAL_LSP_TY
+  previousBetterC0deExperimentalLspTy =
+    process.env.BetterC0de_EXPERIMENTAL_LSP_TY
   previousBetterC0deDirectTrace = process.env.BetterC0de_DIRECT_TRACE
   previousBetterC0deDisableMouse = process.env.BetterC0de_DISABLE_MOUSE
   previousBetterC0deDisableTerminalTitle =
@@ -156,9 +161,11 @@ beforeEach(async () => {
   previousBetterC0deShowTtfd = process.env.BetterC0de_SHOW_TTFD
   previousBetterC0deExperimentalBashDefaultTimeoutMs =
     process.env.BetterC0de_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS
-  previousBetterC0deDisableLspDownload = process.env.BetterC0de_DISABLE_LSP_DOWNLOAD
+  previousBetterC0deDisableLspDownload =
+    process.env.BetterC0de_DISABLE_LSP_DOWNLOAD
   previousBetterC0deEnableParallel = process.env.BetterC0de_ENABLE_PARALLEL
-  previousBetterC0deWebSearchProvider = process.env.BetterC0de_WEBSEARCH_PROVIDER
+  previousBetterC0deWebSearchProvider =
+    process.env.BetterC0de_WEBSEARCH_PROVIDER
   previousBetterC0deExperimentalOutputTokenMax =
     process.env.BetterC0de_EXPERIMENTAL_OUTPUT_TOKEN_MAX
   previousBetterC0deClient = process.env.BetterC0de_CLIENT
@@ -269,8 +276,7 @@ afterEach(async () => {
     delete process.env.BetterC0de_CONFIG_CONTENT
   }
   if (typeof previousUpperBetterC0deConfigContent === "string") {
-    process.env.BETTERC0DE_CONFIG_CONTENT =
-      previousUpperBetterC0deConfigContent
+    process.env.BETTERC0DE_CONFIG_CONTENT = previousUpperBetterC0deConfigContent
   } else {
     delete process.env.BETTERC0DE_CONFIG_CONTENT
   }
@@ -318,7 +324,8 @@ afterEach(async () => {
     delete process.env.BetterC0de_DISABLE_EXTERNAL_SKILLS
   }
   if (typeof previousBetterC0deDisableClaudeCode === "string") {
-    process.env.BetterC0de_DISABLE_CLAUDE_CODE = previousBetterC0deDisableClaudeCode
+    process.env.BetterC0de_DISABLE_CLAUDE_CODE =
+      previousBetterC0deDisableClaudeCode
   } else {
     delete process.env.BetterC0de_DISABLE_CLAUDE_CODE
   }
@@ -346,7 +353,8 @@ afterEach(async () => {
     delete process.env.BetterC0de_DISABLE_DEFAULT_PLUGINS
   }
   if (typeof previousBetterC0deDisableAutoupdate === "string") {
-    process.env.BetterC0de_DISABLE_AUTOUPDATE = previousBetterC0deDisableAutoupdate
+    process.env.BetterC0de_DISABLE_AUTOUPDATE =
+      previousBetterC0deDisableAutoupdate
   } else {
     delete process.env.BetterC0de_DISABLE_AUTOUPDATE
   }
@@ -383,7 +391,8 @@ afterEach(async () => {
     delete process.env.BetterC0de_WORKSPACE_ID
   }
   if (typeof previousBetterC0deAutoHeapSnapshot === "string") {
-    process.env.BetterC0de_AUTO_HEAP_SNAPSHOT = previousBetterC0deAutoHeapSnapshot
+    process.env.BetterC0de_AUTO_HEAP_SNAPSHOT =
+      previousBetterC0deAutoHeapSnapshot
   } else {
     delete process.env.BetterC0de_AUTO_HEAP_SNAPSHOT
   }
@@ -406,7 +415,8 @@ afterEach(async () => {
     delete process.env.BetterC0de_EXPERIMENTAL_DISABLE_COPY_ON_SELECT
   }
   if (typeof previousBetterC0deExperimentalLspTy === "string") {
-    process.env.BetterC0de_EXPERIMENTAL_LSP_TY = previousBetterC0deExperimentalLspTy
+    process.env.BetterC0de_EXPERIMENTAL_LSP_TY =
+      previousBetterC0deExperimentalLspTy
   } else {
     delete process.env.BetterC0de_EXPERIMENTAL_LSP_TY
   }
@@ -449,7 +459,8 @@ afterEach(async () => {
     delete process.env.BetterC0de_ENABLE_PARALLEL
   }
   if (typeof previousBetterC0deWebSearchProvider === "string") {
-    process.env.BetterC0de_WEBSEARCH_PROVIDER = previousBetterC0deWebSearchProvider
+    process.env.BetterC0de_WEBSEARCH_PROVIDER =
+      previousBetterC0deWebSearchProvider
   } else {
     delete process.env.BetterC0de_WEBSEARCH_PROVIDER
   }
@@ -589,8 +600,9 @@ describe("workspace file operations", () => {
     await writeFile(root, "src/note.txt", "first")
     await writeFile(root, "src/note.txt", "second")
 
-    await expect(fs.readFile(path.join(root, "src", "note.txt"), "utf8"))
-      .resolves.toBe("second")
+    await expect(
+      fs.readFile(path.join(root, "src", "note.txt"), "utf8")
+    ).resolves.toBe("second")
     const entries = await fs.readdir(path.join(root, "src"))
     expect(entries).toEqual(["note.txt"])
   })
@@ -614,9 +626,13 @@ describe("workspace file operations", () => {
     await fs.mkdir(path.join(root, "assets"))
     await fs.writeFile(path.join(root, "src", "nested", "note.txt"), "keep")
     await movePath(root, "src/nested", "assets/nested")
-    await expect(fs.readFile(path.join(root, "assets", "nested", "note.txt"), "utf8")).resolves.toBe("keep")
+    await expect(
+      fs.readFile(path.join(root, "assets", "nested", "note.txt"), "utf8")
+    ).resolves.toBe("keep")
     await movePath(root, "assets/nested", "nested")
-    await expect(fs.readFile(path.join(root, "nested", "note.txt"), "utf8")).resolves.toBe("keep")
+    await expect(
+      fs.readFile(path.join(root, "nested", "note.txt"), "utf8")
+    ).resolves.toBe("keep")
     expect(await exists(path.join(root, "assets", "nested"))).toBe(false)
   })
 
@@ -626,11 +642,19 @@ describe("workspace file operations", () => {
     await fs.mkdir(path.join(root, "dest"))
     await fs.writeFile(path.join(root, "src", "file.txt"), "source")
     await fs.writeFile(path.join(root, "dest", "file.txt"), "target")
-    await expect(movePath(root, "src/file.txt", "dest/file.txt")).rejects.toMatchObject({ statusCode: 409, code: "EEXIST" })
-    await expect(fs.readFile(path.join(root, "src", "file.txt"), "utf8")).resolves.toBe("source")
-    await expect(fs.readFile(path.join(root, "dest", "file.txt"), "utf8")).resolves.toBe("target")
+    await expect(
+      movePath(root, "src/file.txt", "dest/file.txt")
+    ).rejects.toMatchObject({ statusCode: 409, code: "EEXIST" })
+    await expect(
+      fs.readFile(path.join(root, "src", "file.txt"), "utf8")
+    ).resolves.toBe("source")
+    await expect(
+      fs.readFile(path.join(root, "dest", "file.txt"), "utf8")
+    ).resolves.toBe("target")
     await fs.mkdir(path.join(root, "empty"))
-    await expect(movePath(root, "src", "empty")).rejects.toMatchObject({ code: "EEXIST" })
+    await expect(movePath(root, "src", "empty")).rejects.toMatchObject({
+      code: "EEXIST",
+    })
     expect(await fs.readdir(path.join(root, "empty"))).toEqual([])
     expect(await exists(path.join(root, "src"))).toBe(true)
   })
@@ -639,7 +663,9 @@ describe("workspace file operations", () => {
     const root = await makeWorkspace()
     await fs.mkdir(path.join(root, "src"))
     await fs.writeFile(path.join(root, "src", "file.txt"), "keep")
-    await expect(movePath(root, "src", "src/new/nested")).rejects.toMatchObject({ code: "EINVAL" })
+    await expect(movePath(root, "src", "src/new/nested")).rejects.toMatchObject(
+      { code: "EINVAL" }
+    )
     expect(await fs.readdir(path.join(root, "src"))).toEqual(["file.txt"])
   })
 
@@ -649,7 +675,9 @@ describe("workspace file operations", () => {
     await movePath(root, "note.txt", "note.txt")
     await movePath(root, "note.txt", "Note.txt")
     expect(await fs.readdir(root)).toContain("Note.txt")
-    await expect(fs.readFile(path.join(root, "Note.txt"), "utf8")).resolves.toBe("keep")
+    await expect(
+      fs.readFile(path.join(root, "Note.txt"), "utf8")
+    ).resolves.toBe("keep")
   })
 
   it("deletes files and recursive folders inside the workspace", async () => {
@@ -681,7 +709,11 @@ describe("workspace file operations", () => {
     const outside = await makeWorkspace()
     const link = path.join(root, "outside-link")
     await fs.writeFile(path.join(outside, "secret.txt"), "secret", "utf8")
-    await fs.symlink(outside, link, process.platform === "win32" ? "junction" : "dir")
+    await fs.symlink(
+      outside,
+      link,
+      process.platform === "win32" ? "junction" : "dir"
+    )
 
     await expect(
       readFile({ cwd: root, relative_path: "outside-link/secret.txt" })
@@ -695,12 +727,13 @@ describe("workspace file operations", () => {
     await expect(
       movePath(root, "outside-link/secret.txt", "moved.txt")
     ).rejects.toThrow("workspace path crosses a symbolic link or junction")
-    await expect(
-      deletePath(root, "outside-link/secret.txt")
-    ).rejects.toThrow("workspace path crosses a symbolic link or junction")
+    await expect(deletePath(root, "outside-link/secret.txt")).rejects.toThrow(
+      "workspace path crosses a symbolic link or junction"
+    )
 
-    await expect(fs.readFile(path.join(outside, "secret.txt"), "utf8"))
-      .resolves.toBe("secret")
+    await expect(
+      fs.readFile(path.join(outside, "secret.txt"), "utf8")
+    ).resolves.toBe("secret")
     await expect(fs.stat(path.join(outside, "new.txt"))).rejects.toMatchObject({
       code: "ENOENT",
     })
@@ -723,8 +756,9 @@ describe("workspace file operations", () => {
       )
     })
 
-    await expect(writeFile(root, "safe/new.txt", "must stay inside"))
-      .rejects.toMatchObject({ statusCode: expect.any(Number) })
+    await expect(
+      writeFile(root, "safe/new.txt", "must stay inside")
+    ).rejects.toMatchObject({ statusCode: expect.any(Number) })
     await expect(fs.stat(path.join(outside, "new.txt"))).rejects.toMatchObject({
       code: "ENOENT",
     })
@@ -773,10 +807,12 @@ describe("workspace file operations", () => {
       )
     })
 
-    await expect(movePath(root, "safe/item.txt", "moved.txt"))
-      .rejects.toMatchObject({ statusCode: expect.any(Number) })
-    await expect(fs.readFile(path.join(outside, "item.txt"), "utf8"))
-      .resolves.toBe("outside")
+    await expect(
+      movePath(root, "safe/item.txt", "moved.txt")
+    ).rejects.toMatchObject({ statusCode: expect.any(Number) })
+    await expect(
+      fs.readFile(path.join(outside, "item.txt"), "utf8")
+    ).resolves.toBe("outside")
     await expect(fs.stat(path.join(root, "moved.txt"))).rejects.toMatchObject({
       code: "ENOENT",
     })
@@ -801,12 +837,15 @@ describe("workspace file operations", () => {
       )
     })
 
-    await expect(deletePath(root, "safe/item.txt"))
-      .rejects.toMatchObject({ statusCode: expect.any(Number) })
-    await expect(fs.readFile(path.join(outside, "item.txt"), "utf8"))
-      .resolves.toBe("outside")
-    await expect(fs.readFile(path.join(movedParent, "item.txt"), "utf8"))
-      .resolves.toBe("inside")
+    await expect(deletePath(root, "safe/item.txt")).rejects.toMatchObject({
+      statusCode: expect.any(Number),
+    })
+    await expect(
+      fs.readFile(path.join(outside, "item.txt"), "utf8")
+    ).resolves.toBe("outside")
+    await expect(
+      fs.readFile(path.join(movedParent, "item.txt"), "utf8")
+    ).resolves.toBe("inside")
   })
 
   it("rejects oversized text reads before buffering the file", async () => {
@@ -1444,7 +1483,8 @@ describe("workspace project agents", () => {
             permission: "bash",
             pattern: "npm test",
             action: "allow",
-            sourcePath: ".BetterC0de/agent/reviewer.md#permission.bash.npm test",
+            sourcePath:
+              ".BetterC0de/agent/reviewer.md#permission.bash.npm test",
           },
         ],
       },
@@ -1713,11 +1753,9 @@ describe("workspace project skills", () => {
             reject(new Error("aborted"))
             return
           }
-          signal.addEventListener(
-            "abort",
-            () => reject(new Error("aborted")),
-            { once: true }
-          )
+          signal.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          })
         })
       },
     })
@@ -1752,9 +1790,7 @@ describe("workspace project skills", () => {
       expect(signals.size).toBe(1)
       expect(requestedPaths).toHaveLength(9)
       expect(requestedPaths).not.toContain("/skill-8/SKILL.md")
-      expect(result.map((skill) => skill.id)).toEqual([
-        "customize-betterc0de",
-      ])
+      expect(result.map((skill) => skill.id)).toEqual(["customize-betterc0de"])
     } finally {
       vi.useRealTimers()
     }
@@ -2021,8 +2057,9 @@ describe("workspace project instructions", () => {
     expect(instructions).toHaveLength(1)
     expect(instructions[0]?.content).toContain("...[truncated]")
     expect(instructions[0]?.content).not.toContain("\uFFFD")
-    expect(Buffer.byteLength(instructions[0]?.content ?? "", "utf8"))
-      .toBeLessThan(257 * 1024)
+    expect(
+      Buffer.byteLength(instructions[0]?.content ?? "", "utf8")
+    ).toBeLessThan(257 * 1024)
   })
 
   it("caps aggregate local instruction content", async () => {
@@ -2085,10 +2122,7 @@ describe("workspace project instructions", () => {
       "utf8"
     )
 
-    const loads = [
-      listProjectInstructions(root),
-      listProjectInstructions(root),
-    ]
+    const loads = [listProjectInstructions(root), listProjectInstructions(root)]
     await requestStarted
     for (let turn = 0; turn < 25; turn += 1) {
       await new Promise<void>((resolve) => setImmediate(resolve))
@@ -2126,11 +2160,9 @@ describe("workspace project instructions", () => {
             reject(new Error("aborted"))
             return
           }
-          signal.addEventListener(
-            "abort",
-            () => reject(new Error("aborted")),
-            { once: true }
-          )
+          signal.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          })
         })
       },
     })
@@ -2346,8 +2378,10 @@ describe("workspace project instructions", () => {
     const requestedUrls: string[] = []
     __setRemoteProjectFetchDependenciesForTests({
       lookup: async (hostname) => {
-        if (hostname === "localhost") return [{ address: "127.0.0.1", family: 4 }]
-        if (hostname === "private.example") return [{ address: "10.0.0.8", family: 4 }]
+        if (hostname === "localhost")
+          return [{ address: "127.0.0.1", family: 4 }]
+        if (hostname === "private.example")
+          return [{ address: "10.0.0.8", family: 4 }]
         if (hostname === "metadata.example") {
           return [{ address: "169.254.169.254", family: 4 }]
         }
@@ -2765,7 +2799,11 @@ describe("workspace BetterC0de execution config", () => {
     )
     process.env.BetterC0de_TEST_MANAGED_PREFERENCES_FILE =
       managedPreferencesFile
-    await fs.writeFile(managedPreferencesFile, "not valid json or plist", "utf8")
+    await fs.writeFile(
+      managedPreferencesFile,
+      "not valid json or plist",
+      "utf8"
+    )
 
     await expect(listProjectPermissions(root)).rejects.toMatchObject({
       statusCode: 503,
@@ -2997,7 +3035,10 @@ describe("workspace BetterC0de execution config", () => {
     const observed = await fs.readFile(observedPath, "utf8")
     const relativeToWorkspace = path.relative(
       await fs.realpath(root),
-      path.join(await fs.realpath(path.dirname(observed)), path.basename(observed))
+      path.join(
+        await fs.realpath(path.dirname(observed)),
+        path.basename(observed)
+      )
     )
     expect(
       relativeToWorkspace === "" ||
@@ -3005,7 +3046,9 @@ describe("workspace BetterC0de execution config", () => {
           !path.isAbsolute(relativeToWorkspace))
     ).toBe(true)
     expect(path.resolve(observed)).not.toBe(path.resolve(original))
-    expect(await fs.realpath(path.dirname(observed))).toBe(await fs.realpath(root))
+    expect(await fs.realpath(path.dirname(observed))).toBe(
+      await fs.realpath(root)
+    )
     expect(path.basename(observed)).toMatch(
       /^\.betterc0de-format-[0-9a-f-]+\.txt$/i
     )
@@ -3048,13 +3091,7 @@ describe("workspace BetterC0de execution config", () => {
       JSON.stringify({
         formatter: {
           contextual: {
-            command: [
-              process.execPath,
-              "-e",
-              script,
-              "$FILE",
-              observedPath,
-            ],
+            command: [process.execPath, "-e", script, "$FILE", observedPath],
             extensions: [".ts"],
           },
         },
@@ -3070,9 +3107,7 @@ describe("workspace BetterC0de execution config", () => {
     })
 
     expect(result.formatted).toBe(true)
-    const observed = JSON.parse(
-      await fs.readFile(observedPath, "utf8")
-    ) as {
+    const observed = JSON.parse(await fs.readFile(observedPath, "utf8")) as {
       staged: string
       cwd: string
       configFound: boolean
@@ -3126,13 +3161,7 @@ describe("workspace BetterC0de execution config", () => {
       JSON.stringify({
         formatter: {
           swap: {
-            command: [
-              process.execPath,
-              "-e",
-              script,
-              "$FILE",
-              outsideTarget,
-            ],
+            command: [process.execPath, "-e", script, "$FILE", outsideTarget],
             extensions: [".txt"],
           },
         },
@@ -3178,7 +3207,11 @@ describe("workspace BetterC0de execution config", () => {
     await handle.close()
 
     await expect(
-      formatProjectFile({ allowWorkspaceCommands: true, cwd: root, relativePath: "oversized.txt" })
+      formatProjectFile({
+        allowWorkspaceCommands: true,
+        cwd: root,
+        relativePath: "oversized.txt",
+      })
     ).rejects.toMatchObject({
       statusCode: 413,
       code: "PROJECT_FORMATTER_INPUT_TOO_LARGE",
@@ -3234,58 +3267,54 @@ describe("workspace BetterC0de execution config", () => {
     })
   })
 
-  it(
-    "terminates the formatter process tree while its candidate exceeds the file quota",
-    async () => {
-      const root = await makeWorkspace()
-      const target = path.join(root, "note.txt")
-      await fs.writeFile(
-        path.join(root, "BetterC0de.json"),
-        JSON.stringify({
-          formatter: {
-            expandForever: {
-              command: [
-                process.execPath,
-                "-e",
-                [
-                  "require('node:fs').truncateSync(process.argv[1], 16 * 1024 * 1024 + 1)",
-                  "setInterval(() => {}, 1000)",
-                ].join(";"),
-                "$FILE",
-              ],
-              extensions: [".txt"],
-            },
+  it("terminates the formatter process tree while its candidate exceeds the file quota", async () => {
+    const root = await makeWorkspace()
+    const target = path.join(root, "note.txt")
+    await fs.writeFile(
+      path.join(root, "BetterC0de.json"),
+      JSON.stringify({
+        formatter: {
+          expandForever: {
+            command: [
+              process.execPath,
+              "-e",
+              [
+                "require('node:fs').truncateSync(process.argv[1], 16 * 1024 * 1024 + 1)",
+                "setInterval(() => {}, 1000)",
+              ].join(";"),
+              "$FILE",
+            ],
+            extensions: [".txt"],
           },
-        }),
-        "utf8"
-      )
-      await fs.writeFile(target, "original\n", "utf8")
-      const startedAt = Date.now()
+        },
+      }),
+      "utf8"
+    )
+    await fs.writeFile(target, "original\n", "utf8")
+    const startedAt = Date.now()
 
-      const result = await formatProjectFile({
-        allowWorkspaceCommands: true,
-        cwd: root,
-        relativePath: "note.txt",
-      })
+    const result = await formatProjectFile({
+      allowWorkspaceCommands: true,
+      cwd: root,
+      relativePath: "note.txt",
+    })
 
-      expect(Date.now() - startedAt).toBeLessThan(15_000)
-      expect(result.formatted).toBe(false)
-      expect(result.results[0]).toMatchObject({
-        id: "expandForever",
-        success: false,
-      })
-      expect(result.results[0]?.stderr).toContain(
-        "Formatter file output exceeded 16777216 bytes"
-      )
-      await expect(fs.readFile(target, "utf8")).resolves.toBe("original\n")
-      expect(activeWorkspaceProcessCount()).toBe(0)
-      expect(__projectFormatterAdmissionCountsForTests()).toEqual({
-        active: 0,
-        queued: 0,
-      })
-    },
-    20_000
-  )
+    expect(Date.now() - startedAt).toBeLessThan(15_000)
+    expect(result.formatted).toBe(false)
+    expect(result.results[0]).toMatchObject({
+      id: "expandForever",
+      success: false,
+    })
+    expect(result.results[0]?.stderr).toContain(
+      "Formatter file output exceeded 16777216 bytes"
+    )
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("original\n")
+    expect(activeWorkspaceProcessCount()).toBe(0)
+    expect(__projectFormatterAdmissionCountsForTests()).toEqual({
+      active: 0,
+      queued: 0,
+    })
+  }, 20_000)
 
   it("bounds formatter operations and queues globally and per workspace", async () => {
     const workspaceA = path.join(os.tmpdir(), `formatter-a-${Date.now()}`)
@@ -3334,9 +3363,7 @@ describe("workspace BetterC0de execution config", () => {
         active: 4,
         queued: 32,
       })
-      expect(
-        __projectFormatterAdmissionCountsForTests(workspaceA)
-      ).toEqual({
+      expect(__projectFormatterAdmissionCountsForTests(workspaceA)).toEqual({
         active: 2,
         queued: 8,
       })
@@ -3397,12 +3424,7 @@ describe("workspace BetterC0de execution config", () => {
             extensions: [".txt"],
           },
           "b-success": {
-            command: [
-              process.execPath,
-              "-e",
-              verifyOriginalScript,
-              "$FILE",
-            ],
+            command: [process.execPath, "-e", verifyOriginalScript, "$FILE"],
             extensions: [".txt"],
           },
           "c-fail": {
@@ -3467,11 +3489,13 @@ describe("workspace BetterC0de execution config", () => {
     })
 
     await expect(
-      formatProjectFile({ allowWorkspaceCommands: true, cwd: root, relativePath: "note.txt" })
+      formatProjectFile({
+        allowWorkspaceCommands: true,
+        cwd: root,
+        relativePath: "note.txt",
+      })
     ).rejects.toMatchObject({ code: "WORKSPACE_PATH_CHANGED" })
-    await expect(fs.readFile(target, "utf8")).resolves.toBe(
-      "external change\n"
-    )
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("external change\n")
     expect(stagingPath).not.toBe("")
     await expect(fs.access(stagingPath)).rejects.toMatchObject({
       code: "ENOENT",
@@ -3635,10 +3659,7 @@ describe("workspace BetterC0de execution config", () => {
     void formatting.catch(() => undefined)
     try {
       const deadline = Date.now() + 2_000
-      while (
-        activeWorkspaceProcessCount() === 0 &&
-        Date.now() < deadline
-      ) {
+      while (activeWorkspaceProcessCount() === 0 && Date.now() < deadline) {
         await new Promise<void>((resolve) => setTimeout(resolve, 5))
       }
       expect(activeWorkspaceProcessCount()).toBe(1)
@@ -3668,10 +3689,7 @@ describe("workspace BetterC0de execution config", () => {
     const allQueued: Array<ReturnType<typeof runWaiting>> = []
     try {
       const activeDeadline = Date.now() + 3_000
-      while (
-        activeWorkspaceProcessCount() < 4 &&
-        Date.now() < activeDeadline
-      ) {
+      while (activeWorkspaceProcessCount() < 4 && Date.now() < activeDeadline) {
         await new Promise<void>((resolve) => setTimeout(resolve, 5))
       }
       expect(activeWorkspaceProcessCount()).toBe(4)
@@ -3683,10 +3701,7 @@ describe("workspace BetterC0de execution config", () => {
         allQueued.push(runWaiting())
       }
       const queueDeadline = Date.now() + 3_000
-      while (
-        queuedWorkspaceProcessCount() < 32 &&
-        Date.now() < queueDeadline
-      ) {
+      while (queuedWorkspaceProcessCount() < 32 && Date.now() < queueDeadline) {
         await new Promise<void>((resolve) => setTimeout(resolve, 5))
       }
       expect(queuedWorkspaceProcessCount()).toBe(32)
@@ -3738,9 +3753,9 @@ describe("workspace BetterC0de execution config", () => {
         relativePath: "linked/note.txt",
       })
     ).rejects.toThrow("workspace path crosses a symbolic link or junction")
-    await expect(fs.readFile(path.join(outside, "note.txt"), "utf8")).resolves.toBe(
-      "outside\n"
-    )
+    await expect(
+      fs.readFile(path.join(outside, "note.txt"), "utf8")
+    ).resolves.toBe("outside\n")
   })
 
   it("revalidates the formatter target after process admission and immediately before spawn", async () => {
@@ -3881,11 +3896,11 @@ describe("workspace BetterC0de execution config", () => {
     process.env.PATH = binDir
     try {
       const beforePackage = await listProjectFormatters(root)
-      expect(beforePackage.find((item) => item.id === "prettier")).toMatchObject(
-        {
-          available: false,
-        }
-      )
+      expect(
+        beforePackage.find((item) => item.id === "prettier")
+      ).toMatchObject({
+        available: false,
+      })
 
       const skipped = await formatProjectFile({
         allowWorkspaceCommands: true,
@@ -4038,7 +4053,11 @@ describe("workspace BetterC0de execution config", () => {
     await fs.writeFile(path.join(root, "note.txt"), "hello\n", "utf8")
 
     await expect(
-      formatProjectFile({ allowWorkspaceCommands: true, cwd: root, relativePath: "note.txt" })
+      formatProjectFile({
+        allowWorkspaceCommands: true,
+        cwd: root,
+        relativePath: "note.txt",
+      })
     ).resolves.toMatchObject({
       formatted: false,
       results: [],
@@ -4369,7 +4388,8 @@ describe("workspace BetterC0de project config summary", () => {
           label: "Experimental file watcher",
           kind: "toggle",
           value: "enabled",
-          sourcePath: "BetterC0de runtime flags#runtime.experimentalFileWatcher",
+          sourcePath:
+            "BetterC0de runtime flags#runtime.experimentalFileWatcher",
         },
         {
           key: "runtime.experimentalDisableFileWatcher",
@@ -4701,7 +4721,8 @@ describe("workspace BetterC0de project config summary", () => {
       "ai.BetterC0de.managed.plist"
     )
     process.env.BetterC0de_TEST_MANAGED_CONFIG_DIR = managedDir
-    process.env.BetterC0de_TEST_MANAGED_PREFERENCES_FILE = managedPreferencesFile
+    process.env.BetterC0de_TEST_MANAGED_PREFERENCES_FILE =
+      managedPreferencesFile
     await fs.writeFile(
       path.join(root, "BetterC0de.jsonc"),
       JSON.stringify({
@@ -5469,7 +5490,9 @@ describe("workspace BetterC0de project plugins", () => {
   it("loads plugin specs from config and discovers project plugin files", async () => {
     const root = await makeWorkspace()
     await fs.mkdir(path.join(root, "plugins"), { recursive: true })
-    await fs.mkdir(path.join(root, ".BetterC0de", "plugin"), { recursive: true })
+    await fs.mkdir(path.join(root, ".BetterC0de", "plugin"), {
+      recursive: true,
+    })
     await fs.writeFile(
       path.join(root, "plugins", "local.ts"),
       "export {}",
@@ -5587,10 +5610,7 @@ describe("workspace BetterC0de project plugins", () => {
           id: "./plugin/from-config.js",
           spec: "./plugin/from-config.js",
           kind: "file",
-          sourcePath: `${path.join(
-            ancestorDir,
-            "BetterC0de.jsonc"
-          )}#plugin.0`,
+          sourcePath: `${path.join(ancestorDir, "BetterC0de.jsonc")}#plugin.0`,
           optionsKeys: [],
           path: path.join(ancestorDir, "plugin", "from-config.js"),
           exists: true,
@@ -5629,7 +5649,9 @@ describe("workspace BetterC0de project plugins", () => {
     )
     await fs.writeFile(
       path.join(root, "BetterC0de.jsonc"),
-      JSON.stringify({ plugin: ["acme-plugin", "./.BetterC0de/plugin/auto.js"] }),
+      JSON.stringify({
+        plugin: ["acme-plugin", "./.BetterC0de/plugin/auto.js"],
+      }),
       "utf8"
     )
     process.env.BetterC0de_PURE = "true"
