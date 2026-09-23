@@ -68,6 +68,7 @@ const args =
         "--remote-debugging-port=0",
       ]
 let child = null
+let appExitedOnItsOwn = false
 
 try {
   child = spawn(command, args, {
@@ -139,6 +140,14 @@ try {
     await removeDirectoryWithRetries(dataDir)
   } catch (error) {
     cleanupFailures.push(error)
+  }
+  if (appExitedOnItsOwn) {
+    process.stdout.write(
+      `WARNING: the app exited on its own (code ${child?.exitCode ?? "null"}, signal ${child?.signalCode ?? "none"}) before the smoke stopped it. Its last output:\n${diagnosticTail()}\n`
+    )
+  }
+  if (cleanupFailures.length > 0) {
+    process.stderr.write(`Cleanup failed. The app's last output:\n${diagnosticTail()}\n`)
   }
   if (cleanupFailures.length === 1) throw cleanupFailures[0]
   if (cleanupFailures.length > 1) {
@@ -561,6 +570,11 @@ async function publishPrepackagedPath(packageRoot) {
   await appendFile(outputFile, `prepackaged-path=${packageRoot}\n`, "utf8")
 }
 
+function diagnosticTail() {
+  const text = `${stdout.trim()}\n${stderr.trim()}`.trim()
+  return text ? text.slice(-4_000) : "(no output)"
+}
+
 function appendDiagnosticTail(current, chunk) {
   return `${current}${chunk.toString("utf8")}`.slice(-64_000)
 }
@@ -588,7 +602,18 @@ async function stopChildTree(processHandle) {
     throw new Error("Packaged application has no process ID for cleanup")
   }
   if (process.platform === "win32") {
-    await terminateWindowsChildTree(processHandle.pid)
+    try {
+      await terminateWindowsChildTree(processHandle.pid)
+    } catch (error) {
+      // taskkill exits 128 ("not found") when the app ended on its own between
+      // the last liveness check and the kill. Its tree is gone then; only a
+      // root that does not report its exit is a failure. A stale backend
+      // would still be caught by the next launch's port check.
+      if (error?.taskkillCode !== 128) throw error
+      await waitForChildExit(processHandle, childExitTimeoutMs)
+      appExitedOnItsOwn = true
+      return
+    }
     await waitForChildExit(processHandle, childExitTimeoutMs)
     return
   }
@@ -654,8 +679,11 @@ async function terminateWindowsChildTree(pid) {
         return
       }
       finish(
-        new Error(
-          `taskkill failed for packaged application pid ${pid} (code ${code ?? "null"}, signal ${signal ?? "none"})`
+        Object.assign(
+          new Error(
+            `taskkill failed for packaged application pid ${pid} (code ${code ?? "null"}, signal ${signal ?? "none"})`
+          ),
+          { taskkillCode: code }
         )
       )
     })
