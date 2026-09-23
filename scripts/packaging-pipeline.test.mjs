@@ -14,6 +14,12 @@ const {
 const postinstall = require("./postinstall.cjs")
 const root = path.resolve(import.meta.dirname, "..")
 
+// electron-builder logs to stdout, in several writes per line, and node:test
+// reports this file's results to the runner over the same stdout. On Linux CI
+// a log line interleaved with a result and the runner failed the file with
+// "Unable to deserialize cloned data". Keep the logs, on stderr.
+require("builder-util").log.stream = process.stderr
+
 test("electron-builder files cover the shell main-process relative-require closure", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
   const patterns = manifest.build.files.filter(
