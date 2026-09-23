@@ -1355,7 +1355,13 @@ export function uniqueAbsolutePaths(paths: readonly string[]): string[] {
 
 export function platformCanonicalAbsolutePath(value: string): string {
   const resolved = path.resolve(value)
-  if (process.platform !== "win32") return resolved
+  // Windows and macOS file systems are case-insensitive by default, so the
+  // candidates `betterc0de.jsonc` and `BetterC0de.jsonc` (or `.betterc0de/`
+  // and `.BetterC0de/`) can be one entry. The native realpath returns its
+  // single on-disk spelling, which both deduplicates and names it correctly;
+  // a case-sensitive volume still yields two distinct paths.
+  if (process.platform !== "win32" && process.platform !== "darwin")
+    return resolved
   try {
     return fsSync.realpathSync.native(resolved)
   } catch {
