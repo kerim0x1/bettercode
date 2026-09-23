@@ -68,7 +68,7 @@ Not sure which Mac you have? Open **About This Mac** — an "Apple M…" chip me
 
 ### Installing a beta build
 
-The beta installers are not code-signed yet, so your operating system warns before the first launch:
+BetterC0de installers are not code-signed, so your operating system warns before the first launch:
 
 - **Windows:** SmartScreen shows "Windows protected your PC". Choose **More info → Run anyway**. Unsigned Windows builds do not update themselves; install a newer version by running its installer.
 - **macOS:** open the `.dmg` and drag BetterC0de to **Applications**. If macOS blocks the first launch, open **System Settings → Privacy & Security** and choose **Open Anyway**. If it reports that the app is damaged, run `xattr -dr com.apple.quarantine /Applications/BetterC0de.app` in Terminal.
@@ -152,7 +152,7 @@ No `.env` file or account is needed to build, test or start the app. Optional en
 2. Commit, tag `v<version>` and push the tag. The pre-push hook runs `npm run release:check` first and refuses the push if it fails.
 3. The Release workflow runs `release:check` on Linux, Windows and both Mac architectures, and publishes the GitHub release only when every platform passed.
 
-The [release checklist](docs/release-checklist.md) has the details, and [code signing](docs/development/code-signing.md) lists the certificates a signed release needs.
+The [release checklist](docs/release-checklist.md) has the details. Releases are unsigned by decision; [code signing](docs/development/code-signing.md) explains what that means for users.
 
 ### Troubleshooting
 

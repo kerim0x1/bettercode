@@ -2,9 +2,9 @@
 #
 # Push a `v<version>` tag that matches package.json (the pre-push hook runs
 # `npm run release:check` locally first). This workflow then:
-#   1. runs the full release:check on every supported platform, with signing
-#      credentials when they are configured; each job builds, launches,
-#      installs and uninstalls its installers and keeps them as artifacts
+#   1. runs the full release:check on every supported platform; each job
+#      builds, launches, installs and uninstalls its installers and keeps them
+#      as artifacts
 #   2. runs the Node compatibility leg
 #   3. only when every job passed: assembles one release from the artifacts
 #      (merged macOS update metadata, sha512 cross-check of every update
@@ -14,11 +14,8 @@
 # (workflow_dispatch) stop after step 2 and keep the installers as workflow
 # artifacts.
 #
-# Optional secrets (see docs/development/code-signing.md). Without them the
-# builds are unsigned, as every release so far has been:
-#   CSC_LINK, CSC_KEY_PASSWORD           macOS Developer ID Application .p12
-#   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID   macOS notarization
-#   WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD   Windows Authenticode certificate
+# Releases are unsigned by decision (docs/development/code-signing.md), so the
+# workflow uses no secrets beyond the automatic GITHUB_TOKEN.
 
 name: Release
 
@@ -93,17 +90,6 @@ jobs:
 
       - name: release:check
         run: npm run release:check -- --arch ${{ matrix.arch }}
-        env:
-          # Each platform only sees its own credentials: electron-builder
-          # falls back from WIN_CSC_LINK to CSC_LINK, so a macOS certificate
-          # would otherwise be tried on the Windows installer.
-          CSC_LINK: ${{ runner.os == 'macOS' && secrets.CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.CSC_KEY_PASSWORD || '' }}
-          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
-          WIN_CSC_LINK: ${{ runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
-          WIN_CSC_KEY_PASSWORD: ${{ runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
 
       - name: Keep the verified installers
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

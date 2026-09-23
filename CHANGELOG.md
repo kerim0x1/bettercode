@@ -20,12 +20,13 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 - CI runs `release:check` on Linux x64, Windows x64, macOS arm64 and macOS x64 for every push and pull request, and the source checks on Node 24.
 - The Linux `.deb` is installed with apt and started with the Chromium sandbox on in CI; the `.rpm` is installed in a clean Fedora container.
 - A pre-push hook runs `release:check` before a release tag is pushed.
-- Documentation for code signing and notarization (`docs/development/code-signing.md`) and this changelog.
+- Documentation of the unsigned-release policy and what users see (`docs/development/code-signing.md`), and this changelog.
 
 ### Changed
 
 - Releases are published only after every platform passed, from one verified set of files. A failed platform no longer leaves a partial release behind.
 - Releases carry a single `SHA256SUMS.txt` instead of one checksum file per platform.
+- Releases are unsigned by decision; the Release workflow no longer passes signing secrets.
 - Node.js 22.23.2 is the pinned build toolchain (`.nvmrc`). Supported for development: Node 22.15+ and Node 24.
 - A local `npm run build:mac` builds only for the architecture of the Mac it runs on, like the CI jobs. It used to also emit the other architecture's file names from the same app.
 

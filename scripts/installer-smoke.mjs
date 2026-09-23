@@ -202,10 +202,9 @@ function verifyWindowsSignatures(files) {
   if (certificateConfigured) {
     throw new Error(`A signing certificate is configured, but the signatures are not valid: ${report.join(", ")}`)
   }
-  warn(
-    `This build is not Authenticode-signed (${report.join(", ")}). SmartScreen warns users and the app ` +
-      "disables its update check; see docs/development/code-signing.md."
-  )
+  // Releases are unsigned by decision (docs/development/code-signing.md), so
+  // this is the expected state and only recorded.
+  log(`Not Authenticode-signed, as intended (${report.join(", ")}).`)
 }
 
 /**
@@ -329,8 +328,9 @@ function verifyMacSignature(appPath) {
     }
     // Without an identity electron-builder skips signing: the Electron
     // binaries keep their linker signatures (so the app runs, as the launch
-    // test proves), but the bundle as a whole has no valid seal.
-    warn(`The app bundle has no valid code signature: ${verify.stderr.trim().split("\n").at(-1)}`)
+    // test proves), but the bundle as a whole has no valid seal. Releases are
+    // unsigned by decision, so this is recorded, not flagged.
+    log(`Bundle not code-signed, as intended: ${verify.stderr.trim().split("\n").at(-1)}`)
   }
 
   const assess = run("spctl", ["--assess", "--type", "execute", "--verbose=2", appPath], {
@@ -344,9 +344,9 @@ function verifyMacSignature(appPath) {
   if (notarizationConfigured) {
     throw new Error(`Gatekeeper rejects the notarized app:\n${assess.stderr.trim()}`)
   }
-  warn(
-    "Gatekeeper rejects this build because it is not signed with a Developer ID and notarized. " +
-      "Users will be blocked on first launch; see docs/development/code-signing.md."
+  log(
+    "Gatekeeper rejects the unsigned build, as expected; users allow it once on first launch " +
+      "(docs/development/code-signing.md)."
   )
 }
 

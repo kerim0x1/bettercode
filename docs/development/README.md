@@ -82,7 +82,7 @@ For a focused edit, use the relevant scripts: `npm test`, `npm run test:backend`
 
 Artifacts are written to `release/`. These local commands explicitly disable publishing. Packaging rebuilds native modules for Electron and then restores the development dependency setup. Close apps using this checkout before packaging so native files are not locked.
 
-Build and test on the target operating system and architecture: macOS packages cannot be built on Windows, and a Mac build packages only its own architecture. Signing needs credentials described in [code signing](code-signing.md). See the [release checklist](../release-checklist.md) for the maintainer workflow.
+Build and test on the target operating system and architecture: macOS packages cannot be built on Windows, and a Mac build packages only its own architecture. Releases are unsigned by decision; see [code signing](code-signing.md). See the [release checklist](../release-checklist.md) for the maintainer workflow.
 
 Fork maintainers must change the repository/publishing target in `package.json` and review app IDs, mobile bundle identifiers, diagnostic endpoints, and branding before distributing their own builds. The current package metadata points to `kerim0x1/bettercode`.
 

@@ -21,7 +21,7 @@ BetterC0de releases are built from a `v<package-version>` tag by the Release wor
 1. `git tag v<version>` on the release commit, then `git push origin v<version>`. The hook refuses the push if the tag does not match `package.json`, is not the checked-out commit, the tree is dirty, the changelog section is missing, or `release:check` fails.
 2. The Release workflow then:
    - checks that the tag, version and changelog agree
-   - runs the full `release:check` on all four platforms, with signing credentials when configured; each job builds, launches, installs and uninstalls its installers
+   - runs the full `release:check` on all four platforms; each job builds, launches, installs and uninstalls its installers
    - runs the source checks on Node 24
    - only if every job passed: assembles the release. It fails on duplicate file names, merges `latest-mac.yml`, checks every update-metadata entry against its file's sha512, requires every supported download and writes `SHA256SUMS.txt`. It then uploads everything to a draft, confirms every file arrived, and publishes the draft. Versions with a `-` (for example `0.2.0-beta.1`) are marked as prereleases.
 3. If any job fails, nothing is published. Fix the problem, delete the tag locally and on GitHub, and tag again. An already-published release is never modified; release a new version instead.
@@ -34,5 +34,5 @@ BetterC0de releases are built from a `v<package-version>` tag by the Release wor
 
 ## What is not automated
 
-- **Code signing and notarization.** No signing secrets are configured today, so releases are unsigned. See [code signing](development/code-signing.md) for what users see and what is needed.
+- **Code signing.** Releases are unsigned by decision. See [code signing](development/code-signing.md) for what users see and how they get past the first-launch warnings.
 - **Hardware coverage.** CI runs on GitHub-hosted runners: Ubuntu 24.04, Windows Server 2025, and macOS 15 on arm64 and Intel. Windows on ARM, Linux arm64, other distributions and older macOS versions are not tested.
