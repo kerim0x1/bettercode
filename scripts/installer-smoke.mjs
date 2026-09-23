@@ -80,7 +80,9 @@ try {
   )
   process.exitCode = 1
 } finally {
-  fs.rmSync(workDir, { recursive: true, force: true, maxRetries: 5 })
+  // The async rm is the one that honours maxRetries for EBUSY on Windows,
+  // while the just-stopped app may still be releasing its files.
+  await fs.promises.rm(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +136,7 @@ async function smokeWindows(installers) {
     }
     log(`Installed: ${executable}; shortcuts: ${createdShortcuts.join(", ")}`)
 
+    verifyWindowsSignatures([installer, executable, uninstaller])
     launchPackagedApp(executable)
   } finally {
     if (fs.existsSync(uninstaller)) {
@@ -179,6 +182,33 @@ function readUninstallEntries() {
 
 function registryKeyExists(key) {
   return run("reg", ["query", key], { capture: true, allowFailure: true, quiet: true }).status === 0
+}
+
+function verifyWindowsSignatures(files) {
+  // electron-builder signs with WIN_CSC_LINK, falling back to CSC_LINK.
+  const certificateConfigured = Boolean(process.env.WIN_CSC_LINK || process.env.CSC_LINK)
+  const script = files
+    .map((file) => `(Get-AuthenticodeSignature -LiteralPath '${file.replaceAll("'", "''")}').Status`)
+    .join("; ")
+  const statuses = run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    capture: true,
+    quiet: true,
+  })
+    .stdout.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const report = files.map((file, index) => `${path.basename(file)}: ${statuses[index] ?? "unknown"}`)
+  if (statuses.length === files.length && statuses.every((status) => status === "Valid")) {
+    log(`Authenticode signatures are valid (${report.join(", ")}).`)
+    return
+  }
+  if (certificateConfigured) {
+    throw new Error(`A signing certificate is configured, but the signatures are not valid: ${report.join(", ")}`)
+  }
+  warn(
+    `This build is not Authenticode-signed (${report.join(", ")}). SmartScreen warns users and the app ` +
+      "disables its update check; see docs/development/code-signing.md."
+  )
 }
 
 function windowsShellFolders() {
