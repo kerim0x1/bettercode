@@ -1,3 +1,4 @@
+import fsSync from "node:fs"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -457,10 +458,18 @@ describe("native provider text generation", () => {
           },
           prompt: "Hang",
           schemaName: "threadTitle",
-          timeoutMs: 100,
+          // Long enough for the fake CLI (cmd -> node -> node on Windows) to
+          // start its descendant before the timeout fires. 100 ms raced the
+          // start-up on slow runners: the tree was killed half-started (macOS
+          // Intel: no pid file; loaded Windows: unconfirmed cleanup).
+          timeoutMs: 3_000,
         })
       ).rejects.toThrow(/timed out/i)
 
+      expect(
+        fsSync.existsSync(pidFile),
+        "the fake CLI had not started its descendant when the timeout fired"
+      ).toBe(true)
       descendantPid = Number.parseInt(await fs.readFile(pidFile, "utf8"), 10)
       expect(isProcessRunning(descendantPid)).toBe(false)
     } finally {
@@ -473,7 +482,7 @@ describe("native provider text generation", () => {
       }
       await fs.rm(root, { recursive: true, force: true })
     }
-  })
+  }, 15_000)
 
   it("terminates a running native provider process tree when shutdown aborts it", async () => {
     const root = await fs.realpath(
