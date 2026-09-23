@@ -38,6 +38,8 @@ The release workflow passes these only to the macOS jobs. For a local signed bui
 
 After the first signed release, check that `release:check` in the Release run reports "Gatekeeper accepts the app" for both architectures.
 
+**Until a certificate is available**, an optional stopgap is ad-hoc signing. Without an identity, electron-builder skips signing altogether: the Electron binaries keep their linker signatures, so the app runs, but the bundle has no valid seal, which is why Apple Silicon reports a downloaded copy as "damaged". Building unsigned Mac releases with `--config.mac.identity=-` gives the bundle a consistent ad-hoc signature, and users then get the ordinary "Open Anyway" flow instead. `entitlements.mac.plist` already contains the `disable-library-validation` entitlement that ad-hoc signing with the hardened runtime needs. The flag must only be passed when `CSC_LINK` is unset, because an explicit identity replaces the real certificate. This has not been tried in CI yet.
+
 ## Windows: Authenticode signing
 
 Since June 2023 the CA/Browser Forum requires that the private keys of publicly trusted code-signing certificates live on hardware (a token or a cloud HSM). A new certificate therefore usually comes as a hardware token or a cloud signing service rather than a `.pfx` file. The options are:

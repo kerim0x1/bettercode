@@ -312,10 +312,14 @@ function verifyMacSignature(appPath) {
     capture: true,
     allowFailure: true,
   })
-  // Apple Silicon refuses to run code without at least an ad-hoc signature,
-  // so a broken signature there is a broken app, certificate or not.
-  if (verify.status !== 0 && (certificateConfigured || options.arch === "arm64")) {
-    throw new Error(`codesign verification failed:\n${verify.stderr.trim()}`)
+  if (verify.status !== 0) {
+    if (certificateConfigured) {
+      throw new Error(`codesign verification failed:\n${verify.stderr.trim()}`)
+    }
+    // Without an identity electron-builder skips signing: the Electron
+    // binaries keep their linker signatures (so the app runs, as the launch
+    // test proves), but the bundle as a whole has no valid seal.
+    warn(`The app bundle has no valid code signature: ${verify.stderr.trim().split("\n").at(-1)}`)
   }
 
   const assess = run("spctl", ["--assess", "--type", "execute", "--verbose=2", appPath], {
