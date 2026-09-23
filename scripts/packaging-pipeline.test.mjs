@@ -402,3 +402,32 @@ test("bundled NSIS per-user install mode reads the known folder path within boun
     "app-builder-lib dropped the bounded copy of the per-user install root"
   )
 })
+
+// Regression guard for the 0.1.0-beta.2 macOS release. An `arch` list on a
+// target overrides the --x64/--arm64 build flag, so each single-arch runner
+// packaged its one app under both architectures' file names and the last
+// upload won: `arm64.dmg` shipped an Intel build. Targets must take the
+// architecture from the command line.
+test("installer targets take their architecture from the build command", () => {
+  const manifest = readJson("package.json")
+  for (const platform of ["mac", "win", "linux"]) {
+    const targets = manifest.build[platform]?.target ?? []
+    for (const target of Array.isArray(targets) ? targets : [targets]) {
+      if (typeof target === "string") continue
+      assert.equal(target.arch, undefined, `${platform} target ${target.target} pins an arch list`)
+      assert.doesNotMatch(String(target.target), /:/, `${platform} target ${target.target} pins an arch suffix`)
+    }
+  }
+})
+
+// GitHub replaces spaces in uploaded asset names, while latest.yml and the
+// checksum files keep the local name; the default NSIS name has spaces.
+test("installer file names contain no spaces", () => {
+  const manifest = readJson("package.json")
+  assert.equal(manifest.build.nsis.artifactName, "${productName}-Setup-${version}.${ext}")
+  for (const platform of ["mac", "win", "linux", "nsis", "dmg"]) {
+    const artifactName = manifest.build[platform]?.artifactName
+    if (artifactName) assert.doesNotMatch(artifactName, /\s/, `${platform}.artifactName`)
+  }
+  assert.doesNotMatch(manifest.build.productName, /\s/, "productName is part of most artifact names")
+})

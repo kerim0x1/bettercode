@@ -296,18 +296,10 @@
     "mac": {
       "target": [
         {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "target": "dmg"
         },
         {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "target": "zip"
         }
       ],
       "category": "public.app-category.developer-tools",
@@ -363,7 +355,8 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "installerIcon": "apps/shell/build/icon.ico",
-      "uninstallerIcon": "apps/shell/build/icon.ico"
+      "uninstallerIcon": "apps/shell/build/icon.ico",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     }
   },
   "description": "A desktop AI coding environment for agents, files, terminals, and live previews.",
