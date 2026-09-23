@@ -3,7 +3,11 @@ import os from "node:os"
 import path from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { defaultSettings, type Settings } from "@betterc0de/schema"
-import type { AcpEvent, AcpPermissionRequest, AcpRuntime } from "../provider/runtime/acp/AcpRuntimeBase"
+import type {
+  AcpEvent,
+  AcpPermissionRequest,
+  AcpRuntime,
+} from "../provider/runtime/acp/AcpRuntimeBase"
 import * as cursorBinaryResolution from "../provider/runtime/cursor/CursorBinaryResolution"
 import * as cursorRuntimeModule from "../provider/runtime/cursor/CursorAcpRuntime"
 import {
@@ -57,29 +61,53 @@ function settingsWithInstance(input: {
 describe("native provider text generation", () => {
   it("retains an ACP runtime and its directory after failed close until shutdown retry succeeds", async () => {
     let directory = ""
-    const close = vi.fn<() => Promise<void>>()
+    const close = vi
+      .fn<() => Promise<void>>()
       .mockRejectedValueOnce(new Error("process tree still alive"))
       .mockResolvedValue(undefined)
     const runtime = {
-      start: vi.fn(async () => { throw new Error("request failed") }),
+      start: vi.fn(async () => {
+        throw new Error("request failed")
+      }),
       cancel: vi.fn(async () => {}),
       close,
       onEvent: vi.fn(() => () => {}),
       onPermissionRequest: vi.fn(),
     } as unknown as AcpRuntime
-    await expect(runNativeTextGeneration({
-      settings: settingsWithInstance({ instanceId: "grok-retained", driver: "grok-cli", binaryPath: "test-grok" }),
-      modelSelection: { instanceId: "grok-retained", model: "grok-4.6" },
-      prompt: "private context", schemaName: "threadTitle",
-    }, {
-      run: vi.fn(),
-      createGrokRuntime: options => { directory = options.cwd; return runtime },
-    })).rejects.toThrow("request and process cleanup both failed")
+    await expect(
+      runNativeTextGeneration(
+        {
+          settings: settingsWithInstance({
+            instanceId: "grok-retained",
+            driver: "grok-cli",
+            binaryPath: "test-grok",
+          }),
+          modelSelection: { instanceId: "grok-retained", model: "grok-4.6" },
+          prompt: "private context",
+          schemaName: "threadTitle",
+        },
+        {
+          run: vi.fn(),
+          createGrokRuntime: (options) => {
+            directory = options.cwd
+            return runtime
+          },
+        }
+      )
+    ).rejects.toThrow("request and process cleanup both failed")
     expect((await fs.stat(directory)).isDirectory()).toBe(true)
     expect(activeNativeTextGenerationResourceCount()).toBe(1)
-    expect(() => resumeNativeTextGenerationAdmissions()).toThrow("previous resources remain active")
-    await expect(runNativeTextGeneration({ settings: defaultSettings(), modelSelection: null, prompt: "blocked", schemaName: "threadTitle" }))
-      .rejects.toMatchObject({ code: "NATIVE_TEXT_GENERATION_ADMISSION_CLOSED" })
+    expect(() => resumeNativeTextGenerationAdmissions()).toThrow(
+      "previous resources remain active"
+    )
+    await expect(
+      runNativeTextGeneration({
+        settings: defaultSettings(),
+        modelSelection: null,
+        prompt: "blocked",
+        schemaName: "threadTitle",
+      })
+    ).rejects.toMatchObject({ code: "NATIVE_TEXT_GENERATION_ADMISSION_CLOSED" })
     await expect(shutdownAllNativeTextGenerationResources()).resolves.toBe(1)
     await expect(fs.stat(directory)).rejects.toMatchObject({ code: "ENOENT" })
     expect(close).toHaveBeenCalledTimes(2)
@@ -87,52 +115,108 @@ describe("native provider text generation", () => {
   })
 
   it("rejects an unverified Cursor binary before constructing the production runtime", async () => {
-    const resolve = vi.spyOn(cursorBinaryResolution, "resolveCursorBinaryAsync").mockResolvedValue(null)
-    const create = vi.spyOn(cursorRuntimeModule, "createCursorAcpRuntime").mockImplementation(() => {
-      throw new Error("unverified executable reached runtime")
-    })
-    await expect(runNativeTextGeneration({
-      settings: settingsWithInstance({ instanceId: "cursor-unverified", driver: "cursor-agent", binaryPath: "agent" }),
-      modelSelection: { instanceId: "cursor-unverified", model: "gpt-5.4" },
-      prompt: "Private repository content",
-      schemaName: "threadTitle",
-    })).rejects.toThrow("Cursor Agent CLI is unavailable")
+    const resolve = vi
+      .spyOn(cursorBinaryResolution, "resolveCursorBinaryAsync")
+      .mockResolvedValue(null)
+    const create = vi
+      .spyOn(cursorRuntimeModule, "createCursorAcpRuntime")
+      .mockImplementation(() => {
+        throw new Error("unverified executable reached runtime")
+      })
+    await expect(
+      runNativeTextGeneration({
+        settings: settingsWithInstance({
+          instanceId: "cursor-unverified",
+          driver: "cursor-agent",
+          binaryPath: "agent",
+        }),
+        modelSelection: { instanceId: "cursor-unverified", model: "gpt-5.4" },
+        prompt: "Private repository content",
+        schemaName: "threadTitle",
+      })
+    ).rejects.toThrow("Cursor Agent CLI is unavailable")
     expect(resolve).toHaveBeenCalledWith("agent")
     expect(create).not.toHaveBeenCalled()
   })
 
-  it.each([true, false])("runs Grok summaries with denied tools and closes the runtime (nonempty=%s)", async (nonempty) => {
-    let listener: (event: AcpEvent) => void = () => {}
-    let permission: (request: AcpPermissionRequest) => Promise<unknown> = async () => { throw new Error("permission handler missing") }
-    const unsubscribe = vi.fn()
-    const runtime: AcpRuntime = {
-      start: async () => ({ sessionId: "grok-summary", resumed: false, initializeResult: {}, sessionSetupResult: {}, configOptions: [] }),
-      getConfigOptions: () => [], getModeState: () => undefined,
-      setConfigOption: vi.fn(async () => ({})), setModel: vi.fn(async () => {}), setMode: vi.fn(async () => {}),
-      prompt: vi.fn(async () => {
-        expect(await permission({ kind: "execute", raw: {} })).toEqual({ outcome: { outcome: "cancelled" } })
-        if (nonempty) listener({ type: "content.delta", text: '{"summary":"Carry these decisions forward."}', raw: {} })
-        return { stopReason: "completed" }
-      }),
-      cancel: vi.fn(async () => {}), close: vi.fn(async () => {}),
-      onEvent: callback => { listener = callback; return unsubscribe },
-      onPermissionRequest: handler => { permission = handler },
-      onExtRequest: vi.fn(), onExtNotification: vi.fn(),
+  it.each([true, false])(
+    "runs Grok summaries with denied tools and closes the runtime (nonempty=%s)",
+    async (nonempty) => {
+      let listener: (event: AcpEvent) => void = () => {}
+      let permission: (
+        request: AcpPermissionRequest
+      ) => Promise<unknown> = async () => {
+        throw new Error("permission handler missing")
+      }
+      const unsubscribe = vi.fn()
+      const runtime: AcpRuntime = {
+        start: async () => ({
+          sessionId: "grok-summary",
+          resumed: false,
+          initializeResult: {},
+          sessionSetupResult: {},
+          configOptions: [],
+        }),
+        getConfigOptions: () => [],
+        getModeState: () => undefined,
+        setConfigOption: vi.fn(async () => ({})),
+        setModel: vi.fn(async () => {}),
+        setMode: vi.fn(async () => {}),
+        prompt: vi.fn(async () => {
+          expect(await permission({ kind: "execute", raw: {} })).toEqual({
+            outcome: { outcome: "cancelled" },
+          })
+          if (nonempty)
+            listener({
+              type: "content.delta",
+              text: '{"summary":"Carry these decisions forward."}',
+              raw: {},
+            })
+          return { stopReason: "completed" }
+        }),
+        cancel: vi.fn(async () => {}),
+        close: vi.fn(async () => {}),
+        onEvent: (callback) => {
+          listener = callback
+          return unsubscribe
+        },
+        onPermissionRequest: (handler) => {
+          permission = handler
+        },
+        onExtRequest: vi.fn(),
+        onExtNotification: vi.fn(),
+      }
+      const createGrokRuntime = vi.fn(() => runtime)
+      const result = runNativeTextGeneration(
+        {
+          settings: settingsWithInstance({
+            instanceId: "grok-source",
+            driver: "grok-cli",
+            binaryPath: "verified-grok-test",
+          }),
+          modelSelection: { instanceId: "grok-source", model: "grok-4.6" },
+          cwd: "/private/repository",
+          prompt: "Summarize this conversation",
+          schemaName: "threadContextSummary",
+        },
+        { run: vi.fn(), createGrokRuntime }
+      )
+      if (nonempty)
+        await expect(result).resolves.toBe(
+          '{"summary":"Carry these decisions forward."}'
+        )
+      else await expect(result).rejects.toThrow("Grok returned empty output")
+      expect(runtime.setModel).toHaveBeenCalledWith("grok-4.6")
+      expect(runtime.setMode).not.toHaveBeenCalled()
+      expect(createGrokRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: expect.stringContaining("betterc0de-grok-text-generation-"),
+        })
+      )
+      expect(runtime.close).toHaveBeenCalledTimes(1)
+      expect(unsubscribe).toHaveBeenCalledTimes(1)
     }
-    const createGrokRuntime = vi.fn(() => runtime)
-    const result = runNativeTextGeneration({
-      settings: settingsWithInstance({ instanceId: "grok-source", driver: "grok-cli", binaryPath: "verified-grok-test" }),
-      modelSelection: { instanceId: "grok-source", model: "grok-4.6" },
-      cwd: "/private/repository", prompt: "Summarize this conversation", schemaName: "threadContextSummary",
-    }, { run: vi.fn(), createGrokRuntime })
-    if (nonempty) await expect(result).resolves.toBe('{"summary":"Carry these decisions forward."}')
-    else await expect(result).rejects.toThrow("Grok returned empty output")
-    expect(runtime.setModel).toHaveBeenCalledWith("grok-4.6")
-    expect(runtime.setMode).not.toHaveBeenCalled()
-    expect(createGrokRuntime).toHaveBeenCalledWith(expect.objectContaining({ cwd: expect.stringContaining("betterc0de-grok-text-generation-") }))
-    expect(runtime.close).toHaveBeenCalledTimes(1)
-    expect(unsubscribe).toHaveBeenCalledTimes(1)
-  })
+  )
 
   it("admits native text generation in configurable FIFO order", async () => {
     vi.stubEnv("BETTERC0DE_NATIVE_TEXT_GENERATION_MAX_CONCURRENT", "1")
@@ -329,9 +413,9 @@ describe("native provider text generation", () => {
   })
 
   it("waits for a timed-out native provider process tree to exit", async () => {
-    const root = await fs.realpath(await fs.mkdtemp(
-      path.join(os.tmpdir(), "betterc0de-native-tree-")
-    ))
+    const root = await fs.realpath(
+      await fs.mkdtemp(path.join(os.tmpdir(), "betterc0de-native-tree-"))
+    )
     const pidFile = path.join(root, "descendant.pid")
     const scriptPath = path.join(root, "codex-runner.cjs")
     const binaryPath =
@@ -377,10 +461,7 @@ describe("native provider text generation", () => {
         })
       ).rejects.toThrow(/timed out/i)
 
-      descendantPid = Number.parseInt(
-        await fs.readFile(pidFile, "utf8"),
-        10
-      )
+      descendantPid = Number.parseInt(await fs.readFile(pidFile, "utf8"), 10)
       expect(isProcessRunning(descendantPid)).toBe(false)
     } finally {
       if (descendantPid && isProcessRunning(descendantPid)) {
@@ -395,9 +476,11 @@ describe("native provider text generation", () => {
   })
 
   it("terminates a running native provider process tree when shutdown aborts it", async () => {
-    const root = await fs.realpath(await fs.mkdtemp(
-      path.join(os.tmpdir(), "betterc0de-native-shutdown-tree-")
-    ))
+    const root = await fs.realpath(
+      await fs.mkdtemp(
+        path.join(os.tmpdir(), "betterc0de-native-shutdown-tree-")
+      )
+    )
     const pidFile = path.join(root, "descendant.pid")
     const scriptPath = path.join(root, "codex-runner.cjs")
     const binaryPath =
@@ -467,9 +550,11 @@ describe("native provider text generation", () => {
   }, 15_000)
 
   it("drains a local compatibility server that is still starting", async () => {
-    const root = await fs.realpath(await fs.mkdtemp(
-      path.join(os.tmpdir(), "betterc0de-native-server-startup-")
-    ))
+    const root = await fs.realpath(
+      await fs.mkdtemp(
+        path.join(os.tmpdir(), "betterc0de-native-server-startup-")
+      )
+    )
     const pidFile = path.join(root, "server.pid")
     const scriptPath = path.join(root, "server.cjs")
     const binaryPath =
@@ -516,7 +601,9 @@ describe("native provider text generation", () => {
         serverPid = Number.parseInt(await fs.readFile(pidFile, "utf8"), 10)
         expect(serverPid).toBeGreaterThan(0)
       })
-      expect(activeNativeTextGenerationResourceCount()).toBeGreaterThanOrEqual(2)
+      expect(activeNativeTextGenerationResourceCount()).toBeGreaterThanOrEqual(
+        2
+      )
 
       await expect(
         shutdownAllNativeTextGenerationResources()
@@ -808,15 +895,15 @@ describe("native provider text generation", () => {
       external: true,
       close,
     }))
-    const createBetterC0deClient = vi.fn(async (_input: {
-      readonly baseUrl: string
-    }) => ({
-      session: {
-        create: sessionCreate,
-        prompt: sessionPrompt,
-        delete: sessionDelete,
-      },
-    }))
+    const createBetterC0deClient = vi.fn(
+      async (_input: { readonly baseUrl: string }) => ({
+        session: {
+          create: sessionCreate,
+          prompt: sessionPrompt,
+          delete: sessionDelete,
+        },
+      })
+    )
     const runner: NativeTextGenerationRunner = {
       run: async () => {
         throw new Error("process runner should not be called")
@@ -1228,19 +1315,19 @@ describe("native provider text generation", () => {
         close: closes[index]!,
       }
     })
-    const createBetterC0deClient = vi.fn(async (_input: {
-      readonly baseUrl: string
-    }) => ({
-      session: {
-        create: vi.fn(async () => ({ data: { id: "session" } })),
-        prompt: vi.fn(async () => {
-          await promptGate
-          return {
-            data: { parts: [{ type: "text", text: '{"title":"isolated"}' }] },
-          }
-        }),
-      },
-    }))
+    const createBetterC0deClient = vi.fn(
+      async (_input: { readonly baseUrl: string }) => ({
+        session: {
+          create: vi.fn(async () => ({ data: { id: "session" } })),
+          prompt: vi.fn(async () => {
+            await promptGate
+            return {
+              data: { parts: [{ type: "text", text: '{"title":"isolated"}' }] },
+            }
+          }),
+        },
+      })
+    )
     const runner: NativeTextGenerationRunner = {
       run: async () => {
         throw new Error("process runner should not be called")
@@ -1270,33 +1357,21 @@ describe("native provider text generation", () => {
     })
 
     const first = runNativeTextGeneration(
-      makeInput(
-        "betterc0de-fingerprint-a",
-        "betterc0de-shared",
-        "secret-one"
-      ),
+      makeInput("betterc0de-fingerprint-a", "betterc0de-shared", "secret-one"),
       runner
     )
     await vi.waitFor(() =>
       expect(connectBetterC0deServer).toHaveBeenCalledTimes(1)
     )
     const second = runNativeTextGeneration(
-      makeInput(
-        "betterc0de-fingerprint-b",
-        "betterc0de-shared",
-        "secret-two"
-      ),
+      makeInput("betterc0de-fingerprint-b", "betterc0de-shared", "secret-two"),
       runner
     )
     await vi.waitFor(() =>
       expect(connectBetterC0deServer).toHaveBeenCalledTimes(2)
     )
     const third = runNativeTextGeneration(
-      makeInput(
-        "betterc0de-fingerprint-c",
-        "betterc0de-other",
-        "secret-two"
-      ),
+      makeInput("betterc0de-fingerprint-c", "betterc0de-other", "secret-two"),
       runner
     )
     await vi.waitFor(() =>
@@ -1310,9 +1385,8 @@ describe("native provider text generation", () => {
       '{"title":"isolated"}',
     ])
     expect(
-      new Set(
-        createBetterC0deClient.mock.calls.map(([input]) => input.baseUrl)
-      ).size
+      new Set(createBetterC0deClient.mock.calls.map(([input]) => input.baseUrl))
+        .size
     ).toBe(3)
   })
 
