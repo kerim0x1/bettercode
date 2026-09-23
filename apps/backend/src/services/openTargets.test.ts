@@ -289,6 +289,16 @@ describe("buildLaunchInvocation", () => {
     expect(inv.args).toEqual([`--cd=${SPACE_PATH}`])
   })
 
+  it("terminal on macOS opens Terminal.app at the project path", async () => {
+    // The launch builders follow the injected platform, not the host's.
+    const inv = await buildLaunchInvocation("terminal", SPACE_PATH, {
+      ...winDeps(),
+      platform: "darwin",
+    })
+    expect(inv.command).toBe("/usr/bin/open")
+    expect(inv.args).toEqual(["-a", "Terminal", SPACE_PATH])
+  })
+
   it("terminal without wt falls back to cmd with the path only in cwd", async () => {
     const inv = await buildLaunchInvocation("terminal", SPACE_PATH, winDeps())
     expect(inv.command.toLowerCase()).toContain("cmd")

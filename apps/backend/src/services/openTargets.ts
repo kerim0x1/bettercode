@@ -60,6 +60,8 @@ export interface LaunchInvocation {
 interface LaunchContext {
   binaryPath: string | null
   projectPath: string
+  /** The platform being launched for: `deps.platform`, which tests set. */
+  platform: NodeJS.Platform
   /** Resolve another target's binary from the same detection pass —
    *  lets WSL prefer Windows Terminal when it exists. */
   resolve: (id: string) => string | null
@@ -339,7 +341,7 @@ const TARGETS: readonly OpenTargetDef[] = [
     buildLaunch: (ctx) => ({
       command:
         ctx.binaryPath ??
-        (process.platform === "win32"
+        (ctx.platform === "win32"
           ? path.join(winDir(), "explorer.exe")
           : "/usr/bin/open"),
       args: [ctx.projectPath],
@@ -365,7 +367,7 @@ const TARGETS: readonly OpenTargetDef[] = [
         : [],
     pathNames: IS_WIN ? ["wt"] : [],
     buildLaunch: (ctx) => {
-      if (process.platform === "darwin") {
+      if (ctx.platform === "darwin") {
         return {
           command: "/usr/bin/open",
           args: ["-a", "Terminal", ctx.projectPath],
@@ -751,6 +753,7 @@ export async function buildLaunchInvocation(
   const invocation = def.buildLaunch({
     binaryPath,
     projectPath,
+    platform: deps.platform,
     resolve: (otherId) => resolved.get(otherId) ?? null,
   })
   return wrapWindowsScriptInvocation(invocation)
