@@ -7,7 +7,10 @@ import test from "node:test"
 import { pruneBuildOutput } from "./prune-build-output.mjs"
 
 function workspace(t, target = "backend") {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-prune-test-"))
+  // Canonical, because Node's resolver reports canonical paths and the
+  // assertions compare against it; macOS reaches the temp dir through the
+  // /var -> /private/var symlink.
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-prune-test-")))
   // Only this fixture-owned absolute directory is removed, never the repository.
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const backend = path.join(root, target === "schema" ? "packages" : "apps", target)
@@ -94,6 +97,31 @@ for (const location of ["src", "dist", "dist/nested"]) {
     if (location !== "dist") assert.equal(fs.readFileSync(stale, "utf8"), "workspace stale output")
   })
 }
+
+test("a workspace reached through a symlinked ancestor is pruned; a symlinked workspace is refused", (t) => {
+  const { root: base } = workspace(t)
+  const real = path.join(base, "real")
+  const repo = path.join(real, "repo")
+  const backend = path.join(repo, "apps", "backend")
+  fs.mkdirSync(path.join(backend, "src"), { recursive: true })
+  fs.mkdirSync(path.join(backend, "dist"), { recursive: true })
+  fs.writeFileSync(path.join(backend, "package.json"), JSON.stringify({ name: "@betterc0de/backend" }))
+  fs.writeFileSync(path.join(backend, "dist", "stale.js"), "stale")
+  const linkType = process.platform === "win32" ? "junction" : "dir"
+
+  // Like a checkout under macOS /tmp or a symlinked home directory.
+  const linkedParent = path.join(base, "linked-parent")
+  fs.symlinkSync(real, linkedParent, linkType)
+  assert.deepEqual(pruneBuildOutput("backend", path.join(linkedParent, "repo")), ["stale.js"])
+  assert.equal(fs.existsSync(path.join(backend, "dist", "stale.js")), false)
+
+  // The workspace directory itself must still be a real directory.
+  fs.writeFileSync(path.join(backend, "dist", "stale.js"), "stale")
+  const linkedRoot = path.join(base, "linked-root")
+  fs.symlinkSync(repo, linkedRoot, linkType)
+  assert.throws(() => pruneBuildOutput("backend", linkedRoot), /must be a real directory/)
+  assert.equal(fs.readFileSync(path.join(backend, "dist", "stale.js"), "utf8"), "stale")
+})
 
 test("schema target removes only its orphan JS/maps and preserves current schema outputs", (t) => {
   const { root, write } = workspace(t, "schema")

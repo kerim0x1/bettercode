@@ -68,11 +68,25 @@ function validateRoot(absoluteRoot) {
   }
 }
 
+/**
+ * Symlinks above the workspace are part of the machine's layout, not of the
+ * build: macOS reaches /tmp and /var through /private, and home directories
+ * are often links. Resolve the ancestors once, keep the workspace directory
+ * itself unresolved so a symlinked root is still refused, and let
+ * validateRoot's re-checks catch an ancestor that changes afterwards.
+ */
+function canonicalRoot(root) {
+  const resolved = path.resolve(root)
+  const parent = path.dirname(resolved)
+  if (parent === resolved) return resolved
+  return path.join(fs.realpathSync(parent), path.basename(resolved))
+}
+
 /** Remove only stale generated JS/maps; never recursively delete directories. */
 export function pruneBuildOutput(target, root = repositoryRoot) {
   const configuration = targets.get(target)
   if (!configuration) throw new Error("Build target must be backend or schema")
-  const absoluteRoot = path.resolve(root)
+  const absoluteRoot = canonicalRoot(root)
   validateRoot(absoluteRoot)
   const sourceRelative = path.join(configuration.directory, "src")
   const outputRelative = path.join(configuration.directory, "dist")
