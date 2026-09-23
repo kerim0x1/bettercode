@@ -1,25 +1,36 @@
-# Universal release pipeline.
+# Release pipeline.
 #
-# Trigger by pushing a `v*.*.*` tag (e.g. `git tag v0.1.0 && git push --tags`)
-# or running this workflow manually from the Actions tab. Tag runs publish;
-# manual runs build and upload workflow artifacts without creating a GitHub
-# Release. Each platform is built on its native runner so `electron-rebuild`
-# produces the correct native binaries for that OS / Electron ABI.
+# Push a `v<version>` tag that matches package.json (the pre-push hook runs
+# `npm run release:check` locally first). This workflow then:
+#   1. runs the full release:check on every supported platform, with signing
+#      credentials when they are configured; each job builds, launches,
+#      installs and uninstalls its installers and keeps them as artifacts
+#   2. runs the Node compatibility leg
+#   3. only when every job passed: assembles one release from the artifacts
+#      (merged macOS update metadata, sha512 cross-check of every update
+#      entry, one SHA256SUMS.txt), uploads it to a draft, confirms every file
+#      arrived, and publishes the draft
+# Nothing reaches the release page unless all platforms passed. Manual runs
+# (workflow_dispatch) stop after step 2 and keep the installers as workflow
+# artifacts.
 #
-# Required secrets (only set what you have — missing secrets cause graceful
-# skips, not build failures):
-#   GH_TOKEN                          GitHub PAT with Contents: write (or use
-#                                     the auto-provided GITHUB_TOKEN — already
-#                                     wired below)
-#   APPLE_ID                          Apple Developer email (for notarization)
-#   APPLE_APP_SPECIFIC_PASSWORD       App-specific password from appleid.apple.com
-#   APPLE_TEAM_ID                     10-char Apple Team ID
-#   CSC_LINK                          Base64 .p12 (or HTTPS URL) — macOS code-signing cert
-#   CSC_KEY_PASSWORD                  Password for the .p12
-#   WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD   (Optional) Windows code-signing cert
-#                                     — currently unsigned by user choice.
+# Optional secrets (see docs/development/code-signing.md). Without them the
+# builds are unsigned, as every release so far has been:
+#   CSC_LINK, CSC_KEY_PASSWORD           macOS Developer ID Application .p12
+#   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID   macOS notarization
+#   WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD   Windows Authenticode certificate
 
 name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 # Automated builds must not send heartbeat or diagnostic reports.
 env:
@@ -29,154 +40,175 @@ env:
 permissions:
   contents: read
 
-on:
-  push:
-    tags:
-      - "v*.*.*"
-  workflow_dispatch:
-
 jobs:
-  verify:
-    name: Verify source and performance budgets
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
+  tag:
+    name: Tag, version and release notes agree
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
-          cache: npm
+          node-version-file: .nvmrc
 
-      - name: Install dependencies
-        env:
-          BETTERC0DE_SKIP_POSTINSTALL: "1"
-        run: npm ci --no-audit --no-fund
-
-      - name: Verify release tag matches package version
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Tag matches the package version
         shell: bash
-        run: >-
-          node --input-type=module -e
-          "import fs from 'node:fs';
-          const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
-          const expected = 'v' + version;
-          if (process.env.GITHUB_REF_NAME !== expected) {
-            console.error('Release tag ' + process.env.GITHUB_REF_NAME + ' does not match package version ' + expected);
-            process.exit(1);
-          }"
+        run: |
+          expected="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the package version $expected"
+            exit 1
+          fi
 
-      - name: Shared source verification gate
-        uses: ./.github/actions/verify-source
+      - name: CHANGELOG.md has an entry for this version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: node scripts/release-notes.mjs "$TAG"
 
-  build:
-    name: Build ${{ matrix.os }} (${{ matrix.arch }})
-    permissions:
-      contents: write
+  release-check:
+    name: release:check (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    needs: verify
+    timeout-minutes: ${{ matrix.timeout }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-15-intel
-            platform_flag: --mac
-            arch: x64
-            artifact_name: installers-macos-x64
-            artifact_paths: |
-              release/*.dmg
-              release/*.zip
-              release/SHA256SUMS-*.txt
-          - os: macos-15
-            platform_flag: --mac
-            arch: arm64
-            artifact_name: installers-macos-arm64
-            artifact_paths: |
-              release/*.dmg
-              release/*.zip
-              release/SHA256SUMS-*.txt
-          - os: windows-latest
-            platform_flag: --win
-            arch: x64
-            artifact_name: installers-windows-x64
-            artifact_paths: |
-              release/*.exe
-              release/SHA256SUMS-*.txt
-          - os: ubuntu-latest
-            platform_flag: --linux
-            arch: x64
-            artifact_name: installers-linux-x64
-            artifact_paths: |
-              release/*.AppImage
-              release/*.deb
-              release/*.rpm
-              release/*.tar.gz
-              release/SHA256SUMS-*.txt
-
+          - { name: Linux x64, os: ubuntu-24.04, arch: x64, timeout: 75, artifact: installers-linux-x64 }
+          - { name: Windows x64, os: windows-2025, arch: x64, timeout: 75, artifact: installers-windows-x64 }
+          - { name: macOS arm64, os: macos-15, arch: arm64, timeout: 75, artifact: installers-macos-arm64 }
+          - { name: macOS x64, os: macos-15-intel, arch: x64, timeout: 120, artifact: installers-macos-x64 }
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
-          cache: npm
+          # The format check needs origin/main to find its base revision.
+          fetch-depth: 0
 
-      - name: Install dependencies
+      - name: Prepare
+        uses: ./.github/actions/prepare
+
+      - name: release:check
+        run: npm run release:check -- --arch ${{ matrix.arch }}
         env:
-          # Keep native modules on the runner's Node ABI for the backend
-          # startup smoke. The package action rebuilds for Electron afterward.
-          BETTERC0DE_SKIP_POSTINSTALL: "1"
-        run: npm ci --no-audit --no-fund
+          # Each platform only sees its own credentials: electron-builder
+          # falls back from WIN_CSC_LINK to CSC_LINK, so a macOS certificate
+          # would otherwise be tried on the Windows installer.
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+          WIN_CSC_LINK: ${{ runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
 
-      - name: Shared package, packaged startup, and publish gate
-        uses: ./.github/actions/package-platform
+      - name: Keep the verified installers
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          platform-flag: ${{ matrix.platform_flag }}
-          arch: ${{ matrix.arch }}
-          build-installers: "true"
-          publish: ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
-          # macOS code-signing + notarization (no-op when secrets missing)
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          # Windows code-signing (no-op when unset; current default)
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-
-      - name: Upload installers as workflow artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_paths }}
+          name: ${{ matrix.artifact }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/*.tar.gz
+            release/*.blockmap
+            release/latest*.yml
+            release/SHA256SUMS-*.txt
           if-no-files-found: error
           retention-days: 14
 
+  node-compat:
+    name: Node ${{ matrix.node }} source and build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15]
+        node: ["24.21.0"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The format check needs origin/main to find its base revision.
+          fetch-depth: 0
+
+      - name: Prepare
+        uses: ./.github/actions/prepare
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: release:check up to the production build
+        run: npm run release:check -- --until build
+
   publish:
-    name: Publish completed release
-    needs: build
+    name: Publish the release
+    needs: [tag, release-check, node-compat]
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
-      - name: Make the verified installer draft public
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install the release tooling
+        # Only JavaScript dependencies are needed here (yaml).
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Download the installers from every platform
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: installers-*
+          path: artifacts
+
+      - name: Assemble and verify the release
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          npm run release:assemble -- artifacts dist-release
+          node scripts/release-notes.mjs "$TAG" release-notes.md
+
+      - name: Upload to a draft, confirm every file arrived, then publish
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        shell: bash
+          TAG: ${{ github.ref_name }}
         run: |
-          PRERELEASE=false
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then PRERELEASE=true; fi
-          gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease="$PRERELEASE" --title "BetterC0de $GITHUB_REF_NAME"
+          set -euo pipefail
+          prerelease=()
+          if [[ "$TAG" == *-* ]]; then prerelease=(--prerelease); fi
+
+          if draft="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [ "$draft" != "true" ]; then
+              echo "::error::$TAG is already published. Published releases are never modified; release a new version instead."
+              exit 1
+            fi
+            gh release upload "$TAG" dist-release/* --clobber
+          else
+            gh release create "$TAG" dist-release/* --draft --verify-tag \
+              --title "BetterC0de $TAG" --notes-file release-notes.md "${prerelease[@]}"
+          fi
+
+          expected="$(ls dist-release | sort)"
+          actual="$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort)"
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::The draft's assets differ from the verified set:"
+            diff <(echo "$expected") <(echo "$actual") || true
+            exit 1
+          fi
+          gh release edit "$TAG" --draft=false "${prerelease[@]}"

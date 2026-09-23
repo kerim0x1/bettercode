@@ -365,10 +365,23 @@ test("packaging reports failed restoration and attempts both cleanup stages", ()
   assert.equal(restoredNode, true)
 })
 
-test("CI includes signing metadata and electron-builder preserves its boolean type", () => {
-  const action = fs.readFileSync(path.join(root, ".github/actions/package-platform/action.yml"), "utf8")
-  assert.match(action, /buildSigningMetadataArgs/)
-  assert.match(action, /--dir --publish never "\$SIGNING_METADATA"/)
+test("release builds include signing metadata and electron-builder preserves its boolean type", () => {
+  // CI and releases package through release:check (the former
+  // package-platform action), which must bake the signing posture in.
+  const releaseCheck = fs.readFileSync(path.join(root, "scripts/release-check.mjs"), "utf8")
+  assert.match(
+    releaseCheck,
+    /"--dir", "--publish", "never", \.\.\.buildSigningMetadataArgs\(signingEnv\(\)\)/
+  )
+  for (const workflow of ["ci.yml", "release.yml"]) {
+    const source = fs.readFileSync(path.join(root, ".github/workflows", workflow), "utf8")
+    assert.match(source, /npm run release:check -- --arch/, `${workflow} packages through release:check`)
+    assert.doesNotMatch(
+      source,
+      /^\s*(?:-\s*)?(?:run:\s*)?(?:npx\s+)?electron-builder\s/m,
+      `${workflow} must not call electron-builder around release:check`
+    )
+  }
   for (const env of [{}, { WIN_CSC_LINK: "test-cert", CSC_LINK: "test-cert" }]) {
     const args = buildSigningMetadataArgs(env)
     const parsed = configureBuildCommand(require("yargs/yargs")([])).parse(args)

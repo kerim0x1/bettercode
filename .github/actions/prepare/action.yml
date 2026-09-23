@@ -1,0 +1,64 @@
+name: Prepare a release:check run
+description: >-
+  Node from .nvmrc (or an explicit version), npm and Electron download caches,
+  the Linux packaging tools, and the base revision for the format check.
+inputs:
+  node-version:
+    description: Node version to use instead of the exact pin in .nvmrc.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        node-version-file: ${{ inputs.node-version == '' && '.nvmrc' || '' }}
+        # Keyed on package-lock.json; `npm ci` inside release:check reuses it.
+        cache: npm
+
+    - name: Cache Electron and electron-builder downloads
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cache/electron
+          ~/.cache/electron-builder
+          ~/Library/Caches/electron
+          ~/Library/Caches/electron-builder
+          ~/AppData/Local/electron/Cache
+          ~/AppData/Local/electron-builder/Cache
+        key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+        restore-keys: electron-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Install Linux packaging and display tools
+      if: runner.os == 'Linux'
+      shell: bash
+      # xvfb: virtual display for the packaged-app smoke tests.
+      # rpm: rpmbuild for electron-builder's .rpm target.
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq --no-install-recommends xvfb rpm
+
+    - name: Choose the format-check base revision
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        REF: ${{ github.ref }}
+        BEFORE: ${{ github.event.before }}
+      # Pull requests check out a merge commit whose first parent is the base
+      # branch. A push to main is checked against the previous main. Other
+      # pushes fall back to the merge-base with origin/main inside the script.
+      run: |
+        base=""
+        if [ "$EVENT_NAME" = "pull_request" ]; then
+          base="HEAD^1"
+        elif [ "$REF" = "refs/heads/main" ]; then
+          base="$BEFORE"
+        fi
+        # A force-push or first push leaves no usable previous commit.
+        if [ -n "$base" ] && ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+          echo "::notice::Format base $base is not in this clone; comparing with origin/main instead."
+          base=""
+        fi
+        echo "FORMAT_BASE=$base" >> "$GITHUB_ENV"

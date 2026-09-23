@@ -1,14 +1,20 @@
 name: CI
 
+# Every push and pull request runs the same `npm run release:check` a release
+# has to pass: clean install, versions, formatting, lint, type-check, tests,
+# production build, packaging, a launch of the packaged app, installers, and
+# an install → launch → uninstall test of those installers on a clean runner.
+
 on:
   push:
-    branches: [main]
+    branches: ["**"]
+    tags-ignore: ["**"]
   pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # Automated builds must not send heartbeat or diagnostic reports.
 env:
@@ -19,80 +25,56 @@ permissions:
   contents: read
 
 jobs:
-  verify:
-    name: Source and build verification (${{ matrix.os }})
+  release-check:
+    name: release:check (${{ matrix.name }})
+    # Branches in this repository are covered by their push run; the
+    # pull_request event is what runs for forks.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        env:
-          # Source tests and backend smoke use the runner's Node ABI.
-          # Packaging rebuilds native modules for Electron in a separate job.
-          BETTERC0DE_SKIP_POSTINSTALL: "1"
-        run: npm ci --no-audit --no-fund
-
-      - name: Shared source verification gate
-        uses: ./.github/actions/verify-source
-
-  package-smoke:
-    name: Package smoke (${{ matrix.os }}, ${{ matrix.arch }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    needs: verify
-    # Also on main pushes: this repo's day-to-day flow commits straight to
-    # main, so a PR-only gate would never run on the changes that ship.
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    timeout-minutes: ${{ matrix.timeout }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-15-intel
-            platform_flag: --mac
-            arch: x64
-          - os: macos-15
-            platform_flag: --mac
-            arch: arm64
-          - os: windows-latest
-            platform_flag: --win
-            arch: x64
-          - os: ubuntu-latest
-            platform_flag: --linux
-            arch: x64
-
+          - { name: Linux x64, os: ubuntu-24.04, arch: x64, timeout: 75 }
+          - { name: Windows x64, os: windows-2025, arch: x64, timeout: 75 }
+          - { name: macOS arm64, os: macos-15, arch: arm64, timeout: 75 }
+          - { name: macOS x64, os: macos-15-intel, arch: x64, timeout: 120 }
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
-          cache: npm
+          # The format check compares against main or the previous push.
+          fetch-depth: 0
 
-      - name: Install dependencies
-        env:
-          # Keep native modules on the runner's Node ABI for source tests and
-          # the backend smoke. The package action rebuilds them for Electron
-          # only after the Node smoke has passed.
-          BETTERC0DE_SKIP_POSTINSTALL: "1"
-        run: npm ci --no-audit --no-fund
+      - name: Prepare
+        uses: ./.github/actions/prepare
 
-      - name: Shared package and startup gate
-        uses: ./.github/actions/package-platform
+      - name: release:check
+        run: npm run release:check -- --arch ${{ matrix.arch }}
+
+  node-compat:
+    name: Node ${{ matrix.node }} source and build (${{ matrix.os }})
+    # engines allows the next LTS line too. The packaged app runs on
+    # Electron's own Node, so this leg stops before packaging.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15]
+        node: ["24.21.0"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          platform-flag: ${{ matrix.platform_flag }}
-          arch: ${{ matrix.arch }}
+          fetch-depth: 0
+
+      - name: Prepare
+        uses: ./.github/actions/prepare
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: release:check up to the production build
+        run: npm run release:check -- --until build
