@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 import { createRequire } from "node:module"
-import { access, appendFile, mkdtemp, readdir, stat } from "node:fs/promises"
+import { access, appendFile, mkdtemp, readdir, stat, writeFile } from "node:fs/promises"
 import { constants as fsConstants } from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -17,17 +17,28 @@ const { listPackage } = require("@electron/asar")
 
 const root = path.resolve(import.meta.dirname, "..")
 const releaseDir = path.resolve(root, process.env.PACKAGE_RELEASE_DIR || "release")
+// PACKAGED_EXECUTABLE launches one specific binary (an installed app, an
+// AppImage) instead of searching release/ for the unpacked build.
+const explicitExecutable = process.env.PACKAGED_EXECUTABLE
+  ? path.resolve(process.env.PACKAGED_EXECUTABLE)
+  : null
+// Linux smoke runs pass --no-sandbox by default because an unpacked build's
+// chrome-sandbox is not setuid root. An installed .deb ships an AppArmor
+// profile and must start with the sandbox, the way users launch it.
+const keepLinuxSandbox = process.env.PACKAGED_SANDBOX === "1"
 const startupTimeoutMs = 30_000
 const stabilityWindowMs = 2_000
 const childExitTimeoutMs = 5_000
 const taskkillTimeoutMs = 5_000
 const defaultBackendPorts = [3773, 3774, 3775, 3776]
-const packaged = await findPackagedApplication(releaseDir)
+const packaged = explicitExecutable
+  ? await describePackagedExecutable(explicitExecutable)
+  : await findPackagedApplication(releaseDir)
 let stdout = ""
 let stderr = ""
 let successMessage = null
 
-await validatePackageStructure(packaged)
+if (packaged.resourcesDir) await validatePackageStructure(packaged)
 
 const preexistingBackend = await findHealthyBackend(defaultBackendPorts)
 if (preexistingBackend) {
@@ -45,7 +56,7 @@ const args =
     ? [
         "-a",
         packaged.executable,
-        "--no-sandbox",
+        ...(keepLinuxSandbox ? [] : ["--no-sandbox"]),
         `--user-data-dir=${dataDir}`,
         "--remote-debugging-address=127.0.0.1",
         "--remote-debugging-port=0",
@@ -88,7 +99,10 @@ try {
   const health = await waitForPackagedReady(child, () => ({ stdout, stderr }))
   const renderer = await waitForRendererReady(child, () => ({ stdout, stderr }))
   await assertStableAfterReady(child, () => ({ stdout, stderr }))
-  await publishPrepackagedPath(packaged.packageRoot)
+  if (!explicitExecutable) {
+    await publishPrepackagedPath(packaged.packageRoot)
+    await writeSmokeResult(packaged)
+  }
   successMessage = `Packaged startup smoke passed: ${path.relative(root, packaged.executable)}; backend health ready on port ${health.port}; renderer mounted at ${renderer.url}.\n`
 } catch (error) {
   process.stderr.write(
@@ -120,6 +134,30 @@ try {
 }
 
 if (successMessage) process.stdout.write(successMessage)
+
+async function describePackagedExecutable(executable) {
+  const executableStats = await stat(executable)
+  if (!executableStats.isFile()) {
+    throw new Error(`PACKAGED_EXECUTABLE is not a file: ${executable}`)
+  }
+  if (process.platform !== "win32") {
+    await access(executable, fsConstants.X_OK)
+  }
+  // An AppImage is a single self-mounting file; its app.asar only exists
+  // once the runtime has extracted it, so there is no structure to inspect.
+  if (/\.appimage$/i.test(executable)) {
+    return { executable, packageRoot: path.dirname(executable), resourcesDir: null }
+  }
+  const packageRoot = packagedRootForExecutable(executable)
+  return {
+    executable,
+    packageRoot,
+    resourcesDir:
+      process.platform === "darwin"
+        ? path.join(packageRoot, "Contents", "Resources")
+        : path.join(packageRoot, "resources"),
+  }
+}
 
 async function findPackagedApplication(directory) {
   const files = await walk(directory)
@@ -398,6 +436,19 @@ async function findHealthyBackend(ports) {
     }
   }
   return null
+}
+
+// release:check hands the verified unpacked build to the installer step
+// through this file; CI jobs use the GITHUB_OUTPUT value below.
+async function writeSmokeResult({ executable, packageRoot }) {
+  const outputFile = process.env.PACKAGED_SMOKE_OUTPUT
+  if (!outputFile) return
+  await writeFile(
+    outputFile,
+    `${JSON.stringify({ executable, packageRoot }, null, 2)}
+`,
+    "utf8"
+  )
 }
 
 async function publishPrepackagedPath(packageRoot) {

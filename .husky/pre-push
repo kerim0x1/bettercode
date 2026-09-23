@@ -1,0 +1,4 @@
+# Release tags must pass the full release gate before they leave this machine.
+# The logic lives in scripts/pre-push.mjs so it behaves the same on every OS.
+# HUSKY=0 stops the npm ci inside the check from rewriting these hook files.
+HUSKY=0 node scripts/pre-push.mjs "$@"
