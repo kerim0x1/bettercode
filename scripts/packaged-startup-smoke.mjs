@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { createRequire } from "node:module"
 import { access, appendFile, mkdtemp, readdir, stat, writeFile } from "node:fs/promises"
 import { constants as fsConstants } from "node:fs"
@@ -118,6 +118,14 @@ try {
     } catch (error) {
       cleanupFailures.push(error)
     }
+    // A descendant that leaves the process group (for example a crash
+    // handler, which is meant to outlive the app) keeps the inherited
+    // stdout/stderr open. On Linux CI that held this script for five minutes
+    // after a passing smoke. The verdict is already made, so stop reading and
+    // name what is left.
+    child.stdout?.destroy()
+    child.stderr?.destroy()
+    reportSurvivingProcesses(packaged)
   }
   try {
     await removeDirectoryWithRetries(dataDir)
@@ -448,6 +456,27 @@ async function writeSmokeResult({ executable, packageRoot }) {
     `${JSON.stringify({ executable, packageRoot }, null, 2)}
 `,
     "utf8"
+  )
+}
+
+/**
+ * Lists processes still running from the package after the app was stopped.
+ * Reported, not failed: such helpers can deliberately outlive the browser
+ * process and exit on their own.
+ */
+function reportSurvivingProcesses({ packageRoot, executable }) {
+  if (process.platform === "win32") return
+  const listing = spawnSync("ps", ["-eo", "pid=,etime=,args="], { encoding: "utf8" })
+  if (listing.status !== 0) return
+  const markers = [packageRoot, executable, "appimage_extracted_", "/tmp/.mount_"]
+  const survivors = listing.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.includes("packaged-startup-smoke"))
+    .filter((line) => markers.some((marker) => line.includes(marker)))
+  if (survivors.length === 0) return
+  process.stdout.write(
+    `Still running from the package after the app was stopped (reported for diagnosis, not a failure):\n${survivors.map((line) => `  ${line.slice(0, 300)}`).join("\n")}\n`
   )
 }
 

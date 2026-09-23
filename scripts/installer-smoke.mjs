@@ -190,10 +190,7 @@ function verifyWindowsSignatures(files) {
   const script = files
     .map((file) => `(Get-AuthenticodeSignature -LiteralPath '${file.replaceAll("'", "''")}').Status`)
     .join("; ")
-  const statuses = run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-    capture: true,
-    quiet: true,
-  })
+  const statuses = powershell(script)
     .stdout.split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
@@ -211,14 +208,28 @@ function verifyWindowsSignatures(files) {
   )
 }
 
+/**
+ * Windows PowerShell 5.1 started from a PowerShell 7 process (GitHub Actions
+ * runs Windows steps in pwsh) inherits pwsh's PSModulePath and then cannot
+ * autoload its own modules, e.g. Microsoft.PowerShell.Security for
+ * Get-AuthenticodeSignature. Without the variable it builds its default.
+ */
+function powershell(script) {
+  const baseEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "psmodulepath")
+  )
+  return run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    capture: true,
+    quiet: true,
+    baseEnv,
+  })
+}
+
 function windowsShellFolders() {
   // Desktop can be redirected (OneDrive, roaming profiles); ask the shell.
   const script =
     "[Environment]::GetFolderPath('Desktop'); [Environment]::GetFolderPath('Programs')"
-  const result = run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-    capture: true,
-    quiet: true,
-  })
+  const result = powershell(script)
   const [desktop, programs] = result.stdout.split(/\r?\n/).map((line) => line.trim())
   if (!desktop || !programs) throw new Error("Could not resolve the Desktop and Start menu folders")
   return { desktop, programs }
@@ -475,13 +486,13 @@ function launchPackagedApp(executable, { sandbox = false, env = {} } = {}) {
   })
 }
 
-function run(command, args, { capture = false, allowFailure = false, quiet = false, env, timeoutMs = 10 * 60_000, ...spawnOptions } = {}) {
+function run(command, args, { capture = false, allowFailure = false, quiet = false, env, baseEnv = process.env, timeoutMs = 10 * 60_000, ...spawnOptions } = {}) {
   if (!quiet) log(`$ ${command} ${args.join(" ")}`)
   const result = spawnSync(command, args, {
     cwd: root,
     encoding: "utf8",
     stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
-    env: { ...process.env, ...env },
+    env: { ...baseEnv, ...env },
     timeout: timeoutMs,
     ...spawnOptions,
   })
