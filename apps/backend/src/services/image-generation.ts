@@ -478,7 +478,11 @@ async function terminateImageProcessTree(child: ChildProcess): Promise<void> {
     try {
       process.kill(-pid, "SIGKILL")
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error
+      // ESRCH: already gone. EPERM: on macOS, the group's members have exited
+      // but are not reaped yet; ensurePosixProcessGroupTerminated waits that
+      // out and still fails closed on a genuine permission denial.
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== "ESRCH" && code !== "EPERM") throw error
     }
     await ensurePosixProcessGroupTerminated(pid)
   } catch (error) {

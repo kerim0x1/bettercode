@@ -155,6 +155,59 @@ describe("provider child process-tree termination", () => {
     expect(killProcess).toHaveBeenCalledWith(-6_404, "SIGKILL")
   })
 
+  it("terminates a macOS process group of unreaped zombies that rejects signals with EPERM", async () => {
+    vi.useFakeTimers()
+    const child = fakeChild(6_606)
+    let probes = 0
+    const killProcess = vi.fn(
+      (pid: number, signal?: NodeJS.Signals | number) => {
+        expect(pid).toBe(-6_606)
+        // Darwin answers kill(-pgid, sig) with EPERM while every member is
+        // an unreaped zombie; once Node reaps the child the group is gone.
+        if (signal === 0 && (probes += 1) > 2) {
+          throw Object.assign(new Error("gone"), { code: "ESRCH" })
+        }
+        throw Object.assign(new Error("not permitted"), { code: "EPERM" })
+      }
+    ) as unknown as typeof process.kill
+
+    const termination = terminateProviderChildProcessTree(
+      child as unknown as ChildProcess,
+      {
+        platform: "darwin",
+        termGraceMs: 100,
+        killGraceMs: 100,
+        killProcess,
+      }
+    )
+    await vi.advanceTimersByTimeAsync(100)
+    await expect(termination).resolves.toBeUndefined()
+  })
+
+  it("still reports a process group that keeps rejecting signals with EPERM", async () => {
+    vi.useFakeTimers()
+    const child = fakeChild(6_707)
+    // A genuine permission denial never turns into ESRCH: fail closed.
+    const killProcess = vi.fn(() => {
+      throw Object.assign(new Error("not permitted"), { code: "EPERM" })
+    }) as unknown as typeof process.kill
+    const termination = terminateProviderChildProcessTree(
+      child as unknown as ChildProcess,
+      {
+        platform: "darwin",
+        termGraceMs: 25,
+        killGraceMs: 25,
+        killProcess,
+      }
+    )
+    const expectation = expect(termination).rejects.toMatchObject({
+      code: "PROVIDER_PROCESS_GROUP_SURVIVED_SIGKILL",
+      pid: 6_707,
+    })
+    await vi.advanceTimersByTimeAsync(100)
+    await expectation
+  })
+
   it("reports a POSIX process group that survives SIGKILL", async () => {
     vi.useFakeTimers()
     const child = fakeChild(6_505)

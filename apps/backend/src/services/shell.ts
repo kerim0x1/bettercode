@@ -968,6 +968,12 @@ function signalPosixProcessGroup(pid: number, signal: NodeJS.Signals): boolean {
     return true
   } catch (error) {
     if (isNoSuchProcessError(error)) return false
+    // macOS refuses to signal a process group whose members have all exited
+    // but are not reaped yet (zombies) with EPERM; Linux reports success.
+    // Such a group needs no signal. Whether it is gone is decided by the
+    // callers' wait loop, which still treats EPERM as alive until Node
+    // reaps the child, so a genuine permission denial still fails closed.
+    if ((error as NodeJS.ErrnoException).code === "EPERM") return false
     throw error
   }
 }
