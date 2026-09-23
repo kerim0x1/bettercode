@@ -69,7 +69,12 @@ const { PluginManager, assertPluginTreeHasNoSymlinks } = requireCjs(
 }
 
 function tmpDir(label: string): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `bc0de-plug-${label}-`))
+  // Canonical, because require.cache is keyed by real paths: on macOS the
+  // temp dir is reached through the /var -> /private/var symlink, and a
+  // lookup by the /var path would never find the loaded plugin.
+  return fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), `bc0de-plug-${label}-`))
+  )
 }
 
 describe("assertPluginTreeHasNoSymlinks (S3)", () => {
