@@ -224,7 +224,10 @@ describe("CodexSessionRuntime", () => {
     const runtime = new CodexSessionRuntime({ binaryPath: "codex" })
     const events: Array<{ kind: string; error?: string }> = []
     const state = runtime as unknown as {
-      rpc: { emit(event: string, payload: unknown): void; close(): Promise<void> }
+      rpc: {
+        emit(event: string, payload: unknown): void
+        close(): Promise<void>
+      }
       spawned: boolean
       wireRpcListeners(): void
     }
@@ -257,7 +260,10 @@ describe("CodexSessionRuntime", () => {
 
     state.rpc.emit(
       "child-error",
-      new CodexServerResponseRefusedError("item/commandExecution/requestApproval", 9)
+      new CodexServerResponseRefusedError(
+        "item/commandExecution/requestApproval",
+        9
+      )
     )
 
     expect(events).toEqual([
@@ -382,55 +388,108 @@ describe("CodexSessionRuntime", () => {
   })
 
   it.each([
-    { enabled: true, resume: false }, { enabled: false, resume: false },
-    { enabled: true, resume: true }, { enabled: false, resume: true },
-  ])("overrides code-search configuration on start and resume (%j)", async ({ enabled, resume }) => {
-    const fake = makeFakeCodexBinary()
-    const runtime = new CodexSessionRuntime({ binaryPath: fake.binaryPath, cwd: fake.dir, env: { FAKE_CODEX_LOG: fake.logPath } })
-    try {
-      await runtime.start({
-        cwd: fake.dir, clientInfo: { name: "test", title: "Test", version: "0.0.0" },
-        storedProviderThreadId: resume ? "stored-thread" : null,
-        codeSearchServer: enabled ? { type: "http", url: "http://127.0.0.1:12345/mcp", headers: { Authorization: "Bearer scoped" } } : null,
+    { enabled: true, resume: false },
+    { enabled: false, resume: false },
+    { enabled: true, resume: true },
+    { enabled: false, resume: true },
+  ])(
+    "overrides code-search configuration on start and resume (%j)",
+    async ({ enabled, resume }) => {
+      const fake = makeFakeCodexBinary()
+      const runtime = new CodexSessionRuntime({
+        binaryPath: fake.binaryPath,
+        cwd: fake.dir,
+        env: { FAKE_CODEX_LOG: fake.logPath },
       })
-      expect(readRpcLog(fake.logPath)).toContainEqual({ method: resume ? "thread/resume" : "thread/start", params: expect.objectContaining({
-        config: { "mcp_servers.betterc0de_code_search": enabled
-          ? { enabled: true, url: "http://127.0.0.1:12345/mcp", http_headers: { Authorization: "Bearer scoped" } }
-          : { enabled: false, url: "http://127.0.0.1:9/mcp" } },
-      }) })
-      expect(fs.existsSync(path.join(fake.dir, "config.toml"))).toBe(false)
-    } finally {
-      await runtime.close()
-      fs.rmSync(fake.dir, {
-        recursive: true,
-        force: true,
-        maxRetries: 20,
-        retryDelay: 50,
-      })
+      try {
+        await runtime.start({
+          cwd: fake.dir,
+          clientInfo: { name: "test", title: "Test", version: "0.0.0" },
+          storedProviderThreadId: resume ? "stored-thread" : null,
+          codeSearchServer: enabled
+            ? {
+                type: "http",
+                url: "http://127.0.0.1:12345/mcp",
+                headers: { Authorization: "Bearer scoped" },
+              }
+            : null,
+        })
+        expect(readRpcLog(fake.logPath)).toContainEqual({
+          method: resume ? "thread/resume" : "thread/start",
+          params: expect.objectContaining({
+            config: {
+              "mcp_servers.betterc0de_code_search": enabled
+                ? {
+                    enabled: true,
+                    url: "http://127.0.0.1:12345/mcp",
+                    http_headers: { Authorization: "Bearer scoped" },
+                  }
+                : { enabled: false, url: "http://127.0.0.1:9/mcp" },
+            },
+          }),
+        })
+        expect(fs.existsSync(path.join(fake.dir, "config.toml"))).toBe(false)
+      } finally {
+        await runtime.close()
+        fs.rmSync(fake.dir, {
+          recursive: true,
+          force: true,
+          maxRetries: 20,
+          retryDelay: 50,
+        })
+      }
     }
-  })
+  )
 
-  it.each([false, true])("overrides coordinator tools on start/resume without changing code-search settings (resume=%s)", async resume => {
-    const fake = makeFakeCodexBinary()
-    const runtime = new CodexSessionRuntime({ binaryPath: fake.binaryPath, cwd: fake.dir, env: { FAKE_CODEX_LOG: fake.logPath } })
-    try {
-      await runtime.start({ cwd: fake.dir, clientInfo: { name: "test", title: "Test", version: "0" }, storedProviderThreadId: resume ? "saved" : null,
-        orchestratorServer: { type: "http", url: "http://127.0.0.1:12345/mcp", headers: { Authorization: "Bearer team" } }, codeSearchServer: null })
-      expect(readRpcLog(fake.logPath)).toContainEqual({ method: resume ? "thread/resume" : "thread/start", params: expect.objectContaining({ config: {
-        "mcp_servers.betterc0de_orchestrator": { enabled: true, url: "http://127.0.0.1:12345/mcp", http_headers: { Authorization: "Bearer team" } },
-        "mcp_servers.betterc0de_code_search": { enabled: false, url: "http://127.0.0.1:9/mcp" },
-      } }) })
-      expect(fs.existsSync(path.join(fake.dir, "config.toml"))).toBe(false)
-    } finally {
-      await runtime.close()
-      fs.rmSync(fake.dir, {
-        recursive: true,
-        force: true,
-        maxRetries: 20,
-        retryDelay: 50,
+  it.each([false, true])(
+    "overrides coordinator tools on start/resume without changing code-search settings (resume=%s)",
+    async (resume) => {
+      const fake = makeFakeCodexBinary()
+      const runtime = new CodexSessionRuntime({
+        binaryPath: fake.binaryPath,
+        cwd: fake.dir,
+        env: { FAKE_CODEX_LOG: fake.logPath },
       })
+      try {
+        await runtime.start({
+          cwd: fake.dir,
+          clientInfo: { name: "test", title: "Test", version: "0" },
+          storedProviderThreadId: resume ? "saved" : null,
+          orchestratorServer: {
+            type: "http",
+            url: "http://127.0.0.1:12345/mcp",
+            headers: { Authorization: "Bearer team" },
+          },
+          codeSearchServer: null,
+        })
+        expect(readRpcLog(fake.logPath)).toContainEqual({
+          method: resume ? "thread/resume" : "thread/start",
+          params: expect.objectContaining({
+            config: {
+              "mcp_servers.betterc0de_orchestrator": {
+                enabled: true,
+                url: "http://127.0.0.1:12345/mcp",
+                http_headers: { Authorization: "Bearer team" },
+              },
+              "mcp_servers.betterc0de_code_search": {
+                enabled: false,
+                url: "http://127.0.0.1:9/mcp",
+              },
+            },
+          }),
+        })
+        expect(fs.existsSync(path.join(fake.dir, "config.toml"))).toBe(false)
+      } finally {
+        await runtime.close()
+        fs.rmSync(fake.dir, {
+          recursive: true,
+          force: true,
+          maxRetries: 20,
+          retryDelay: 50,
+        })
+      }
     }
-  })
+  )
 
   it("emits approval resolution notifications after responding", async () => {
     const fake = makeFakeCodexBinary()
@@ -467,10 +526,12 @@ describe("CodexSessionRuntime", () => {
         ])
       )
 
-      expect(() => runtime.respondToRequest("approval-1", {
-        kind: "user_input",
-        answers: { scope: "Backend" },
-      })).toThrow(/stale pending/i)
+      expect(() =>
+        runtime.respondToRequest("approval-1", {
+          kind: "user_input",
+          answers: { scope: "Backend" },
+        })
+      ).toThrow(/stale pending/i)
       runtime.respondToRequest("approval-1", {
         kind: "tool_approval",
         decision: "approve",
@@ -513,91 +574,99 @@ describe("CodexSessionRuntime", () => {
   })
 
   it.each([
-    { answers: { scope: "Backend" }, expectedAnswers: { scope: { answers: ["Backend"] } } },
+    {
+      answers: { scope: "Backend" },
+      expectedAnswers: { scope: { answers: ["Backend"] } },
+    },
     {
       answers: JSON.parse('{"__proto__":"Backend"}') as Record<string, unknown>,
       expectedAnswers: JSON.parse('{"__proto__":{"answers":["Backend"]}}'),
     },
-  ])("emits user-input answered notifications and preserves question IDs (%j)", async ({ answers, expectedAnswers }) => {
-    const fake = makeFakeCodexBinary()
-    const runtime = new CodexSessionRuntime({
-      binaryPath: fake.binaryPath,
-      cwd: fake.dir,
-      env: {
-        FAKE_CODEX_LOG: fake.logPath,
-        FAKE_CODEX_REQUEST_KIND: "user-input",
-        FAKE_CODEX_QUESTION_ID: Object.keys(answers)[0],
-      },
-    })
-    const events: Array<{
-      method?: string
-      requestId?: string
-      params?: unknown
-      kind: string
-    }> = []
-    runtime.on("event", (event) => events.push(event))
-
-    try {
-      await runtime.start({
+  ])(
+    "emits user-input answered notifications and preserves question IDs (%j)",
+    async ({ answers, expectedAnswers }) => {
+      const fake = makeFakeCodexBinary()
+      const runtime = new CodexSessionRuntime({
+        binaryPath: fake.binaryPath,
         cwd: fake.dir,
-        clientInfo: { name: "test", title: "Test", version: "0.0.0" },
+        env: {
+          FAKE_CODEX_LOG: fake.logPath,
+          FAKE_CODEX_REQUEST_KIND: "user-input",
+          FAKE_CODEX_QUESTION_ID: Object.keys(answers)[0],
+        },
       })
-      await runtime.sendTurn({ message: "Ask a question" })
+      const events: Array<{
+        method?: string
+        requestId?: string
+        params?: unknown
+        kind: string
+      }> = []
+      runtime.on("event", (event) => events.push(event))
 
-      expect(events).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            kind: "server-request",
-            method: "item/tool/requestUserInput",
-            requestId: "question-1",
-          }),
-        ])
-      )
+      try {
+        await runtime.start({
+          cwd: fake.dir,
+          clientInfo: { name: "test", title: "Test", version: "0.0.0" },
+        })
+        await runtime.sendTurn({ message: "Ask a question" })
 
-      expect(() => runtime.respondToRequest("question-1", {
-        kind: "tool_approval",
-        decision: "approve",
-      })).toThrow(/stale pending/i)
-      runtime.respondToRequest("question-1", {
-        kind: "user_input",
-        answers,
-      })
-
-      expect(events).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            kind: "notification",
-            method: "item/tool/requestUserInput/answered",
-            requestId: "question-1",
-            params: expect.objectContaining({
+        expect(events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "server-request",
+              method: "item/tool/requestUserInput",
               requestId: "question-1",
-              answers: expectedAnswers,
             }),
-          }),
-        ])
-      )
-      const rpcLog = await waitForRpcLog(
-        fake.logPath,
-        (entry) => entry.method === "server-input-response"
-      )
-      expect(rpcLog).toEqual(
-        expect.arrayContaining([
-          {
-            method: "server-input-response",
-            params: { answers: expectedAnswers },
-          },
-        ])
-      )
-    } finally {
-      await runtime.close().catch(() => {})
-      fs.rmSync(fake.dir, {
-        recursive: true,
-        force: true,
-        maxRetries: 20,
-        retryDelay: 50,
-      })
+          ])
+        )
+
+        expect(() =>
+          runtime.respondToRequest("question-1", {
+            kind: "tool_approval",
+            decision: "approve",
+          })
+        ).toThrow(/stale pending/i)
+        runtime.respondToRequest("question-1", {
+          kind: "user_input",
+          answers,
+        })
+
+        expect(events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "notification",
+              method: "item/tool/requestUserInput/answered",
+              requestId: "question-1",
+              params: expect.objectContaining({
+                requestId: "question-1",
+                answers: expectedAnswers,
+              }),
+            }),
+          ])
+        )
+        const rpcLog = await waitForRpcLog(
+          fake.logPath,
+          (entry) => entry.method === "server-input-response"
+        )
+        expect(rpcLog).toEqual(
+          expect.arrayContaining([
+            {
+              method: "server-input-response",
+              params: { answers: expectedAnswers },
+            },
+          ])
+        )
+      } finally {
+        await runtime.close().catch(() => {})
+        fs.rmSync(fake.dir, {
+          recursive: true,
+          force: true,
+          maxRetries: 20,
+          retryDelay: 50,
+        })
+      }
     }
-  })
+  )
 
   it("grants permission-profile requests with the requested profile", async () => {
     const fake = makeFakeCodexBinary()

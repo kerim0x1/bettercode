@@ -353,87 +353,122 @@ afterEach(async () => {
 })
 
 describe("CodexAdapter", () => {
-  it.each([false, true])("cleans up startup when thread persistence fails (cleanup retry: %s)", async (retryCleanup) => {
-    const fake = makeFakeCodexBinary()
-    const persistFailure = new Error("binding write failed")
-    const cleanupFailure = new Error("runtime close failed")
-    const originalClose = CodexSessionRuntime.prototype.close
-    const startSpy = vi.spyOn(CodexSessionRuntime.prototype, "start")
-    const closeSpy = vi.spyOn(CodexSessionRuntime.prototype, "close")
-    if (retryCleanup) {
-      closeSpy.mockImplementationOnce(async function (this: CodexSessionRuntime) {
-        await originalClose.call(this)
-        throw cleanupFailure
-      })
-    }
-    const adapter = new CodexAdapter({
-      providerInstanceId: "codex",
-      continuationKey: "codex",
-      binaryPath: fake.binaryPath,
-      clientInfo: { name: "test", title: "Test", version: "0.0.0" },
-      getStoredProviderThreadId: () => null,
-      persistProviderThreadId: () => { throw persistFailure },
-    })
-    sessionAdapters.push(adapter)
-    try {
-      const startup = adapter.startSession({ threadId: "failed-binding" as ThreadId, cwd: fake.dir })
+  it.each([false, true])(
+    "cleans up startup when thread persistence fails (cleanup retry: %s)",
+    async (retryCleanup) => {
+      const fake = makeFakeCodexBinary()
+      const persistFailure = new Error("binding write failed")
+      const cleanupFailure = new Error("runtime close failed")
+      const originalClose = CodexSessionRuntime.prototype.close
+      const startSpy = vi.spyOn(CodexSessionRuntime.prototype, "start")
+      const closeSpy = vi.spyOn(CodexSessionRuntime.prototype, "close")
       if (retryCleanup) {
-        await expect(startup).rejects.toMatchObject({
-          code: "CODEX_STARTUP_CLEANUP_FAILED",
-          errors: [persistFailure, cleanupFailure],
+        closeSpy.mockImplementationOnce(async function (
+          this: CodexSessionRuntime
+        ) {
+          await originalClose.call(this)
+          throw cleanupFailure
         })
-      } else {
-        await expect(startup).rejects.toBe(persistFailure)
       }
-      expect(closeSpy).toHaveBeenCalledTimes(1)
-      expect(await adapter.listSessions()).toEqual([])
-      await adapter.stopAll()
-      expect(closeSpy).toHaveBeenCalledTimes(retryCleanup ? 2 : 1)
-    } finally {
-      for (const runtime of startSpy.mock.contexts) await originalClose.call(runtime)
-      startSpy.mockRestore()
-      closeSpy.mockRestore()
+      const adapter = new CodexAdapter({
+        providerInstanceId: "codex",
+        continuationKey: "codex",
+        binaryPath: fake.binaryPath,
+        clientInfo: { name: "test", title: "Test", version: "0.0.0" },
+        getStoredProviderThreadId: () => null,
+        persistProviderThreadId: () => {
+          throw persistFailure
+        },
+      })
+      sessionAdapters.push(adapter)
+      try {
+        const startup = adapter.startSession({
+          threadId: "failed-binding" as ThreadId,
+          cwd: fake.dir,
+        })
+        if (retryCleanup) {
+          await expect(startup).rejects.toMatchObject({
+            code: "CODEX_STARTUP_CLEANUP_FAILED",
+            errors: [persistFailure, cleanupFailure],
+          })
+        } else {
+          await expect(startup).rejects.toBe(persistFailure)
+        }
+        expect(closeSpy).toHaveBeenCalledTimes(1)
+        expect(await adapter.listSessions()).toEqual([])
+        await adapter.stopAll()
+        expect(closeSpy).toHaveBeenCalledTimes(retryCleanup ? 2 : 1)
+      } finally {
+        for (const runtime of startSpy.mock.contexts)
+          await originalClose.call(runtime)
+        startSpy.mockRestore()
+        closeSpy.mockRestore()
+      }
     }
-  })
+  )
 
   it.each([
     { cursorMode: "repeated", maxRequests: 2 },
     { cursorMode: "unending", maxRequests: 100 },
-  ])("stops a model probe with $cursorMode pagination cursors", async ({ cursorMode, maxRequests }) => {
-    const fake = makeFakeCodexBinary()
-    const originalCall = CodexRpcClient.prototype.call
-    let modelRequests = 0
-    const callSpy = vi.spyOn(CodexRpcClient.prototype, "call").mockImplementation(function (this: CodexRpcClient, method, params, timeoutMs) {
-      if (method !== "model/list") return originalCall.call(this, method, params, timeoutMs)
-      modelRequests += 1
-      if (modelRequests > maxRequests) return Promise.reject(new Error("test prevents unbounded pagination"))
-      return Promise.resolve({ data: [{ model: "repeated-model" }], nextCursor: cursorMode === "repeated" ? "same-cursor" : `cursor-${modelRequests}` })
-    })
-    const closeSpy = vi.spyOn(CodexRpcClient.prototype, "close")
-    const adapter = new CodexAdapter({
-      providerInstanceId: "codex",
-      continuationKey: "codex",
-      binaryPath: fake.binaryPath,
-      clientInfo: { name: "test", title: "Test", version: "0.0.0" },
-      getStoredProviderThreadId: () => null,
-      persistProviderThreadId: () => {},
-    })
-    sessionAdapters.push(adapter)
-    try {
-      expect((await adapter.availableModels())[0].slug).toBe("gpt-6-astra")
-      expect(modelRequests).toBe(maxRequests)
-      expect(closeSpy).toHaveBeenCalledTimes(1)
-    } finally {
-      callSpy.mockRestore()
-      closeSpy.mockRestore()
+  ])(
+    "stops a model probe with $cursorMode pagination cursors",
+    async ({ cursorMode, maxRequests }) => {
+      const fake = makeFakeCodexBinary()
+      const originalCall = CodexRpcClient.prototype.call
+      let modelRequests = 0
+      const callSpy = vi
+        .spyOn(CodexRpcClient.prototype, "call")
+        .mockImplementation(function (
+          this: CodexRpcClient,
+          method,
+          params,
+          timeoutMs
+        ) {
+          if (method !== "model/list")
+            return originalCall.call(this, method, params, timeoutMs)
+          modelRequests += 1
+          if (modelRequests > maxRequests)
+            return Promise.reject(
+              new Error("test prevents unbounded pagination")
+            )
+          return Promise.resolve({
+            data: [{ model: "repeated-model" }],
+            nextCursor:
+              cursorMode === "repeated"
+                ? "same-cursor"
+                : `cursor-${modelRequests}`,
+          })
+        })
+      const closeSpy = vi.spyOn(CodexRpcClient.prototype, "close")
+      const adapter = new CodexAdapter({
+        providerInstanceId: "codex",
+        continuationKey: "codex",
+        binaryPath: fake.binaryPath,
+        clientInfo: { name: "test", title: "Test", version: "0.0.0" },
+        getStoredProviderThreadId: () => null,
+        persistProviderThreadId: () => {},
+      })
+      sessionAdapters.push(adapter)
+      try {
+        expect((await adapter.availableModels())[0].slug).toBe("gpt-6-astra")
+        expect(modelRequests).toBe(maxRequests)
+        expect(closeSpy).toHaveBeenCalledTimes(1)
+      } finally {
+        callSpy.mockRestore()
+        closeSpy.mockRestore()
+      }
     }
-  })
+  )
 
   it("keeps prototype-named live reasoning efforts as string labels", () => {
-    const models = parseCodexModelListResponse({ data: [{
-      model: "custom-model",
-      supportedReasoningEfforts: ["constructor", "__proto__", "toString"],
-    }] })
+    const models = parseCodexModelListResponse({
+      data: [
+        {
+          model: "custom-model",
+          supportedReasoningEfforts: ["constructor", "__proto__", "toString"],
+        },
+      ],
+    })
     expect(models[0].capabilities?.optionDescriptors?.[0]).toMatchObject({
       options: [
         { id: "constructor", label: "constructor" },
@@ -446,8 +481,20 @@ describe("CodexAdapter", () => {
   it("detects orchestration capability changes without restarting unchanged sessions", async () => {
     const fake = makeFakeCodexBinary()
     let enabled = false
-    const descriptor = { type: "http" as const, url: "http://127.0.0.1:12345/mcp", headers: { Authorization: "Bearer team" } }
-    const adapter = new CodexAdapter({ providerInstanceId: "codex", continuationKey: "codex", binaryPath: fake.binaryPath, clientInfo: { name: "test", title: "Test", version: "0" }, getStoredProviderThreadId: () => null, persistProviderThreadId: () => {}, resolveOrchestratorServer: async () => enabled ? descriptor : null })
+    const descriptor = {
+      type: "http" as const,
+      url: "http://127.0.0.1:12345/mcp",
+      headers: { Authorization: "Bearer team" },
+    }
+    const adapter = new CodexAdapter({
+      providerInstanceId: "codex",
+      continuationKey: "codex",
+      binaryPath: fake.binaryPath,
+      clientInfo: { name: "test", title: "Test", version: "0" },
+      getStoredProviderThreadId: () => null,
+      persistProviderThreadId: () => {},
+      resolveOrchestratorServer: async () => (enabled ? descriptor : null),
+    })
     sessionAdapters.push(adapter)
     const input = { threadId: "existing" as ThreadId, cwd: fake.dir }
     await adapter.startSession(input)
@@ -455,7 +502,10 @@ describe("CodexAdapter", () => {
     enabled = true
     expect(await adapter.needsSessionConfigurationRefresh(input)).toBe(true)
     await adapter.stopSession(input.threadId)
-    await adapter.startSession({ ...input, resumeCursor: { providerThreadId: "fake-thread-1" } })
+    await adapter.startSession({
+      ...input,
+      resumeCursor: { providerThreadId: "fake-thread-1" },
+    })
     expect(await adapter.needsSessionConfigurationRefresh(input)).toBe(false)
     enabled = false
     expect(await adapter.needsSessionConfigurationRefresh(input)).toBe(true)
@@ -489,9 +539,9 @@ describe("CodexAdapter", () => {
     sessionAdapters.push(adapter)
 
     try {
-      await expect(
-        adapter.probeStatus({ cwd: fake.dir })
-      ).rejects.toBe(cleanupFailure)
+      await expect(adapter.probeStatus({ cwd: fake.dir })).rejects.toBe(
+        cleanupFailure
+      )
       const quarantines = (
         adapter as unknown as {
           probeCleanupQuarantines: Map<unknown, unknown>
@@ -689,9 +739,8 @@ describe("CodexAdapter", () => {
       getStoredProviderThreadId: () => null,
       persistProviderThreadId: () => {},
     })
-    const sessions = (
-      adapter as unknown as { sessions: Map<string, unknown> }
-    ).sessions
+    const sessions = (adapter as unknown as { sessions: Map<string, unknown> })
+      .sessions
     sessions.set("thread-stop-a", {})
     sessions.set("thread-stop-b", {})
     const failure = new Error("stop failed")
@@ -830,10 +879,9 @@ describe("CodexAdapter", () => {
       persistProviderThreadId: () => {},
     })
 
-    expect((await adapter.availableModels()).map((model) => model.slug)).toEqual([
-      "gpt-live",
-      "gpt-second",
-    ])
+    expect(
+      (await adapter.availableModels()).map((model) => model.slug)
+    ).toEqual(["gpt-live", "gpt-second"])
   })
 
   it("loads live Codex models through model/list pagination", async () => {
