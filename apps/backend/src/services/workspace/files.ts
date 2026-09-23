@@ -150,6 +150,11 @@ export function workspacePathIdentity(stat: Stats): WorkspacePathIdentity {
   }
 }
 
+/** A path spelling with case and Unicode normalization folded away. */
+function foldPathSpelling(value: string): string {
+  return value.normalize("NFC").toLowerCase()
+}
+
 export function sameWorkspacePathIdentity(
   left: WorkspacePathIdentity,
   right: WorkspacePathIdentity
@@ -663,15 +668,17 @@ export async function movePath(
     const to = path.join(targetParent.path, path.basename(unresolvedTo))
     const targetState = await captureWorkspaceTargetState(to)
 
-    // Explorer drops never imply replacing an existing entry. Retain case-only
-    // renames on Windows, where both spellings refer to the same entry.
+    // Explorer drops never imply replacing an existing entry. A case-only (or
+    // Unicode-normalization-only) rename is allowed wherever both spellings
+    // name the same entry: Windows, macOS (APFS is case-insensitive by
+    // default) and case-folded Linux directories. Comparing the spellings as
+    // well as the identity keeps a hard link to the same file a conflict.
     if (targetState.kind === "present") {
       if (from === to) return
-      const sameWindowsEntry =
-        process.platform === "win32" &&
-        from.toLowerCase() === to.toLowerCase() &&
+      const sameEntryRespelled =
+        foldPathSpelling(from) === foldPathSpelling(to) &&
         sameWorkspacePathIdentity(targetState.identity, sourceState.identity)
-      if (!sameWindowsEntry) {
+      if (!sameEntryRespelled) {
         throw Object.assign(
           new Error("a file or folder already exists at the destination"),
           {

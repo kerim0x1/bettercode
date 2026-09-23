@@ -669,6 +669,18 @@ describe("workspace file operations", () => {
     expect(await fs.readdir(path.join(root, "src"))).toEqual(["file.txt"])
   })
 
+  it("refuses to rename onto a hard link of the same file", async () => {
+    // Both names are the same file, but they are not respellings of each
+    // other: allowing it would make the rename a silent no-op.
+    const root = await makeWorkspace()
+    await fs.writeFile(path.join(root, "a.txt"), "keep")
+    await fs.link(path.join(root, "a.txt"), path.join(root, "b.txt"))
+    await expect(movePath(root, "a.txt", "b.txt")).rejects.toMatchObject({
+      code: "EEXIST",
+    })
+    expect((await fs.readdir(root)).sort()).toEqual(["a.txt", "b.txt"])
+  })
+
   it("supports same-path and case-only renames", async () => {
     const root = await makeWorkspace()
     await fs.writeFile(path.join(root, "note.txt"), "keep")
