@@ -334,6 +334,16 @@ function preflight(plan, options) {
       note("error", "rpmbuild is missing; electron-builder needs it for the .rpm target. Install it: sudo apt-get install -y rpm")
     }
   }
+  // Hardened shells (and some agent sandboxes) set this so cmd.exe never runs
+  // programs from the current directory. node-pty's winpty build runs
+  // `cd shared && GetCommitHash.bat`, and electron-rebuild fails with an
+  // unhelpful gyp error. Process env names are case-insensitive on Windows.
+  if (process.platform === "win32" && runs("package") && process.env.NoDefaultCurrentDirectoryInExePath) {
+    note(
+      "error",
+      "NoDefaultCurrentDirectoryInExePath is set, which breaks node-pty's native build (winpty runs GetCommitHash.bat from its own directory). Clear it for this shell: PowerShell `Remove-Item Env:NoDefaultCurrentDirectoryInExePath`, cmd `set NoDefaultCurrentDirectoryInExePath=`."
+    )
+  }
   if (process.platform === "darwin" && !capture("xcode-select", ["-p"])) {
     note("warn", "Xcode Command Line Tools are not installed; native modules without a prebuilt binary cannot compile. Run: xcode-select --install")
   }

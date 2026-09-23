@@ -179,6 +179,10 @@ Another process holds a file in `node_modules`, typically a running `npm run dev
 
 A native module is compiling and the toolchain is missing. Install the build tools listed under [requirements](#requirements-for-a-source-checkout), open a new terminal, and rerun `npm ci`.
 
+### `GetCommitHash.bat` is "not recognized" while rebuilding node-pty (Windows)
+
+`gyp: Call to 'cmd /c "cd shared && GetCommitHash.bat"' returned exit status 1` means the environment variable `NoDefaultCurrentDirectoryInExePath` is set, so `cmd.exe` will not run a script from the current directory, which node-pty's bundled winpty build needs. Clear it for the shell that runs the build (`Remove-Item Env:NoDefaultCurrentDirectoryInExePath` in PowerShell, `set NoDefaultCurrentDirectoryInExePath=` in cmd) and run the command again. `npm run release:check` detects this in preflight.
+
 ### `release:check` stops at preflight
 
 Preflight names the problem and the fix: a Node version outside the supported range, a missing `xvfb-run` or `rpmbuild` on Linux, or missing Xcode Command Line Tools. In CI it also requires the exact Node version from `.nvmrc`.
