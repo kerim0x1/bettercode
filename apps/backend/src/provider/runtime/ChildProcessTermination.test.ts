@@ -215,9 +215,14 @@ describe("Windows process queries", () => {
     expect(spawnPowerShell).toHaveBeenCalledWith(
       "powershell.exe",
       expect.arrayContaining(["-NoProfile", "-NonInteractive"]),
-      expect.objectContaining({ windowsHide: true, stdio: ["ignore", "pipe", "ignore"] })
+      expect.objectContaining({
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
     )
-    const script = (spawnPowerShell.mock.calls[0] as unknown as [string, string[]])[1].at(-1)
+    const script = (
+      spawnPowerShell.mock.calls[0] as unknown as [string, string[]]
+    )[1].at(-1)
     expect(script).toContain("ParentProcessId=4242")
     helper.stdout.write('[{"pid":5151,"created":"t1"}]')
     helper.emit("close", 0, null)
@@ -251,28 +256,42 @@ describe("Windows process queries", () => {
     await expectation
   })
 
-  it.each(["", "[]"])("rejects overflow instead of treating retained %j as a complete snapshot", async (prefix) => {
-    const helper = fakeHelper()
-    const listing = listWindowsChildProcesses(4_242, { spawnPowerShell: () => helper as never })
-    if (prefix) helper.stdout.write(prefix)
-    helper.stdout.write("x".repeat(256 * 1024 + 1))
-    helper.emit("close", 0, null)
-    await expect(listing).rejects.toMatchObject({ code: "PROVIDER_PROCESS_QUERY_OUTPUT_LIMIT" })
-    expect(helper.kill).toHaveBeenCalledWith("SIGKILL")
-  })
+  it.each(["", "[]"])(
+    "rejects overflow instead of treating retained %j as a complete snapshot",
+    async (prefix) => {
+      const helper = fakeHelper()
+      const listing = listWindowsChildProcesses(4_242, {
+        spawnPowerShell: () => helper as never,
+      })
+      if (prefix) helper.stdout.write(prefix)
+      helper.stdout.write("x".repeat(256 * 1024 + 1))
+      helper.emit("close", 0, null)
+      await expect(listing).rejects.toMatchObject({
+        code: "PROVIDER_PROCESS_QUERY_OUTPUT_LIMIT",
+      })
+      expect(helper.kill).toHaveBeenCalledWith("SIGKILL")
+    }
+  )
 
   it.each([
-    [null, "current"], ["original", null], [null, null],
-  ])("refuses to identify a live process without both creation times (%s/%s)", async (original, current) => {
-    const helper = fakeHelper()
-    const result = windowsProcessStillMatches(
-      { pid: 5_151, createdAt: original },
-      { spawnPowerShell: () => helper as never }
-    )
-    helper.stdout.write(JSON.stringify([{ pid: 5151, created: current }]))
-    helper.emit("close", 0, null)
-    await expect(result).rejects.toMatchObject({ code: "PROVIDER_PROCESS_IDENTITY_UNCONFIRMED" })
-  })
+    [null, "current"],
+    ["original", null],
+    [null, null],
+  ])(
+    "refuses to identify a live process without both creation times (%s/%s)",
+    async (original, current) => {
+      const helper = fakeHelper()
+      const result = windowsProcessStillMatches(
+        { pid: 5_151, createdAt: original },
+        { spawnPowerShell: () => helper as never }
+      )
+      helper.stdout.write(JSON.stringify([{ pid: 5151, created: current }]))
+      helper.emit("close", 0, null)
+      await expect(result).rejects.toMatchObject({
+        code: "PROVIDER_PROCESS_IDENTITY_UNCONFIRMED",
+      })
+    }
+  )
 
   it("does not match a PID that a newer process now owns", async () => {
     const probe = (output: string) => {
@@ -285,8 +304,12 @@ describe("Windows process queries", () => {
       helper.emit("close", 0, null)
       return result
     }
-    await expect(probe('[{"pid":5151,"created":"t-original"}]')).resolves.toBe(true)
-    await expect(probe('[{"pid":5151,"created":"t-reused"}]')).resolves.toBe(false)
+    await expect(probe('[{"pid":5151,"created":"t-original"}]')).resolves.toBe(
+      true
+    )
+    await expect(probe('[{"pid":5151,"created":"t-reused"}]')).resolves.toBe(
+      false
+    )
     await expect(probe("[]")).resolves.toBe(false)
   })
 })

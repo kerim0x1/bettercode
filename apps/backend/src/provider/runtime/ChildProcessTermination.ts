@@ -1,7 +1,4 @@
-import {
-  spawn,
-  type ChildProcess,
-} from "node:child_process"
+import { spawn, type ChildProcess } from "node:child_process"
 import { sanitizedChildEnvironment } from "../../security/childEnvironment"
 
 const DEFAULT_TERM_GRACE_MS = 500
@@ -41,14 +38,8 @@ export async function terminateProviderChildProcessTree(
   options: ProviderChildProcessTerminationOptions = {}
 ): Promise<void> {
   const platform = options.platform ?? process.platform
-  const termGraceMs = boundedDelay(
-    options.termGraceMs,
-    DEFAULT_TERM_GRACE_MS
-  )
-  const killGraceMs = boundedDelay(
-    options.killGraceMs,
-    DEFAULT_KILL_GRACE_MS
-  )
+  const termGraceMs = boundedDelay(options.termGraceMs, DEFAULT_TERM_GRACE_MS)
+  const killGraceMs = boundedDelay(options.killGraceMs, DEFAULT_KILL_GRACE_MS)
 
   if (platform === "win32") {
     await terminateWindowsProviderProcessTree(child, {
@@ -187,27 +178,19 @@ export async function runProviderWindowsTaskkill(
     readonly closeGraceMs?: number
   } = {}
 ): Promise<void> {
-  const spawnTaskkill =
-    options.spawnTaskkill ?? (spawn as TaskkillSpawner)
-  const timeoutMs = boundedDelay(
-    options.timeoutMs,
-    DEFAULT_TASKKILL_TIMEOUT_MS
-  )
+  const spawnTaskkill = options.spawnTaskkill ?? (spawn as TaskkillSpawner)
+  const timeoutMs = boundedDelay(options.timeoutMs, DEFAULT_TASKKILL_TIMEOUT_MS)
   const closeGraceMs = boundedDelay(
     options.closeGraceMs,
     DEFAULT_TASKKILL_CLOSE_GRACE_MS
   )
   let killer: ChildProcess
   try {
-    killer = spawnTaskkill(
-      "taskkill.exe",
-      ["/pid", String(pid), "/T", "/F"],
-      {
-        env: sanitizedChildEnvironment(),
-        stdio: "ignore",
-        windowsHide: true,
-      }
-    )
+    killer = spawnTaskkill("taskkill.exe", ["/pid", String(pid), "/T", "/F"], {
+      env: sanitizedChildEnvironment(),
+      stdio: "ignore",
+      windowsHide: true,
+    })
   } catch (error) {
     throw codedError(
       `Failed to start taskkill for provider process tree ${pid}: ${errorMessage(
@@ -239,10 +222,7 @@ export async function runProviderWindowsTaskkill(
       // Node normally follows "error" with "close". Keep waiting so the
       // helper lifecycle is never dropped at the error event.
     }
-    const onClose = (
-      code: number | null,
-      signal: NodeJS.Signals | null
-    ) => {
+    const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
       if (spawnError) {
         finish(
           codedError(
@@ -461,10 +441,11 @@ async function runWindowsProcessQuery(
         // Already closing.
       }
       finish(
-        outputLimitError ?? codedError(
-          "Windows process query timed out.",
-          "PROVIDER_PROCESS_QUERY_TIMEOUT"
-        )
+        outputLimitError ??
+          codedError(
+            "Windows process query timed out.",
+            "PROVIDER_PROCESS_QUERY_TIMEOUT"
+          )
       )
     }, timeoutMs)
     timer.unref?.()
@@ -495,7 +476,9 @@ async function runWindowsProcessQuery(
   return parseWindowsProcessRows(output)
 }
 
-export function parseWindowsProcessRows(output: string): WindowsProcessRecord[] {
+export function parseWindowsProcessRows(
+  output: string
+): WindowsProcessRecord[] {
   const trimmed = output.trim()
   if (trimmed.length === 0) return []
   let parsed: unknown

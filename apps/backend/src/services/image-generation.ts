@@ -164,7 +164,11 @@ function quarantineImageGeneration(
   generation.unsafeFailure = failure
   imageGenerationAdmissionsOpen = false
   logger.warn(
-    { generationId: generation.id, pid: generation.child?.pid ?? null, err: failure.message },
+    {
+      generationId: generation.id,
+      pid: generation.child?.pid ?? null,
+      err: failure.message,
+    },
     "image generation: process tree unconfirmed; admission closed until it is recovered"
   )
   scheduleImageGenerationRecovery()
@@ -197,7 +201,9 @@ async function recoverImageGenerationAdmissions(): Promise<void> {
   }
   if (imageGenerationShuttingDown) return
   imageGenerationAdmissionsOpen = true
-  logger.info("image generation: admission reopened after process-tree recovery")
+  logger.info(
+    "image generation: admission reopened after process-tree recovery"
+  )
 }
 
 /** Test seam: quarantine a synthetic tree whose settlement cannot be confirmed. */
@@ -369,7 +375,9 @@ export function resolveImageSavePath(
   return { absolutePath, relativePath: relative.split(path.sep).join("/") }
 }
 
-function parseVersionTuple(version: string | null): [number, number, number] | null {
+function parseVersionTuple(
+  version: string | null
+): [number, number, number] | null {
   const match = version?.match(/^(\d+)\.(\d+)\.(\d+)/)
   if (!match) return null
   return [Number(match[1]), Number(match[2]), Number(match[3])]
@@ -412,9 +420,7 @@ function spawnCodex(
       ? process.env.ComSpec
       : "cmd.exe"
     : binaryPath
-  const spawnArgs = viaCmd
-    ? buildWindowsCmdArgs(binaryPath, args)
-    : args
+  const spawnArgs = viaCmd ? buildWindowsCmdArgs(binaryPath, args) : args
   return spawn(spawnCommand, spawnArgs, {
     cwd,
     env,
@@ -743,10 +749,9 @@ async function generateImageInternal(
     return {
       ok: false,
       code: message.includes("cancelled") ? "timeout" : "generation_failed",
-      message:
-        message.includes("cancelled")
-          ? "Image generation was cancelled."
-          : "Image generation is busy; try again after another request finishes.",
+      message: message.includes("cancelled")
+        ? "Image generation was cancelled."
+        : "Image generation is busy; try again after another request finishes.",
     }
   }
 
@@ -778,8 +783,7 @@ async function generateImageInternal(
       error instanceof ImageProcessTreeUnsettledError ||
       !generation.processTreeSettled
     ) {
-      const failure =
-        error instanceof Error ? error : new Error(String(error))
+      const failure = error instanceof Error ? error : new Error(String(error))
       quarantineImageGeneration(generation, failure)
       return {
         ok: false,
@@ -797,7 +801,9 @@ async function generateImageInternal(
 
 const STAGING_FILE_NAME = "asset.png"
 const MAX_GENERATED_IMAGE_BYTES = 25 * 1024 * 1024
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+const PNG_SIGNATURE = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+])
 
 class ImageDestinationError extends Error {
   constructor(
@@ -883,10 +889,12 @@ async function resolveRealImageDestination(
     )
   }
   const destination = path.join(realParent, fileName)
-  const existing = await fs.lstat(destination).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return null
-    throw error
-  })
+  const existing = await fs
+    .lstat(destination)
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null
+      throw error
+    })
   if (existing?.isSymbolicLink()) {
     throw new ImageDestinationError(
       "invalid_save_path",
@@ -1027,7 +1035,10 @@ async function moveIntoWorkspace(
       "Image destination changed to a path outside the workspace."
     )
   }
-  const destination = path.join(finalParent, path.basename(resolved.destination))
+  const destination = path.join(
+    finalParent,
+    path.basename(resolved.destination)
+  )
   const temporaryDestination = path.join(
     finalParent,
     `.${path.basename(destination)}.${randomUUID()}.tmp`
@@ -1056,7 +1067,10 @@ async function moveIntoWorkspace(
     // final operation is a rename, which replaces a destination symlink as a
     // directory entry instead of following it.
     const checkedParent = await fs.realpath(path.dirname(temporaryDestination))
-    if (checkedParent !== finalParent || !isInside(resolved.realRoot, checkedParent)) {
+    if (
+      checkedParent !== finalParent ||
+      !isInside(resolved.realRoot, checkedParent)
+    ) {
       throw new ImageDestinationError(
         "invalid_save_path",
         "Image destination changed before it could be written."
@@ -1069,7 +1083,10 @@ async function moveIntoWorkspace(
         if (error.code === "ENOENT") return null
         throw error
       })
-    if (currentDestination?.isSymbolicLink() || (currentDestination && !currentDestination.isFile())) {
+    if (
+      currentDestination?.isSymbolicLink() ||
+      (currentDestination && !currentDestination.isFile())
+    ) {
       throw new ImageDestinationError(
         "invalid_save_path",
         "Refusing to replace a non-file image destination."
@@ -1160,20 +1177,26 @@ async function moveIntoWorkspace(
     throw error
   } finally {
     if (temporaryIdentity) {
-      await quarantineOwnedImageDestination(temporaryDestination, temporaryIdentity)
-        .catch(() => {})
+      await quarantineOwnedImageDestination(
+        temporaryDestination,
+        temporaryIdentity
+      ).catch(() => {})
     }
   }
   return destination
 }
 
-export async function readStagedPng(stagedFile: string): Promise<Buffer | null> {
+export async function readStagedPng(
+  stagedFile: string
+): Promise<Buffer | null> {
   const entry = await fs.lstat(stagedFile).catch(() => null)
   if (!entry || !entry.isFile() || entry.isSymbolicLink() || entry.size === 0) {
     return null
   }
   if (entry.size > MAX_GENERATED_IMAGE_BYTES) {
-    throw new Error(`Generated image exceeds the ${MAX_GENERATED_IMAGE_BYTES}-byte limit.`)
+    throw new Error(
+      `Generated image exceeds the ${MAX_GENERATED_IMAGE_BYTES}-byte limit.`
+    )
   }
 
   const handle = await fs.open(
@@ -1208,7 +1231,11 @@ async function runCodexGeneration(
   env: NodeJS.ProcessEnv
 ): Promise<GenerateImageResult> {
   if (req.signal?.aborted) {
-    return { ok: false, code: "timeout", message: "Image generation was cancelled." }
+    return {
+      ok: false,
+      code: "timeout",
+      message: "Image generation was cancelled.",
+    }
   }
   const lastMessageFile = path.join(stagingDir, "last-message.txt")
   const args = buildCodexExecArgs({
@@ -1249,9 +1276,7 @@ async function runCodexGeneration(
     }
   })
   child.once("error", () => resolveRootOutcome({ kind: "error" }))
-  child.once("close", (code) =>
-    resolveRootOutcome({ kind: "close", code })
-  )
+  child.once("close", (code) => resolveRootOutcome({ kind: "close", code }))
 
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined
   let onAbort: (() => void) | undefined
@@ -1314,7 +1339,9 @@ async function runCodexGeneration(
       code: "generation_failed",
       message:
         `codex exec exited with code ${exit.code ?? "unknown"}. ` +
-        (lastMessage || diagnostics.slice(-4).join(" | ") || "No diagnostics captured."),
+        (lastMessage ||
+          diagnostics.slice(-4).join(" | ") ||
+          "No diagnostics captured."),
     }
   }
 
@@ -1326,7 +1353,10 @@ async function runCodexGeneration(
     return {
       ok: false,
       code: "generation_failed",
-      message: error instanceof Error ? error.message : "Generated image validation failed.",
+      message:
+        error instanceof Error
+          ? error.message
+          : "Generated image validation failed.",
     }
   }
   if (!image) {

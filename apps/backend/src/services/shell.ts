@@ -6,10 +6,7 @@ import { randomUUID } from "node:crypto"
 import { logger } from "../observability/logger"
 import { sanitizedShellEnvironment } from "../security/childEnvironment"
 import { resolveComSpec } from "../security/windowsCommandLine"
-import {
-  isNoSuchProcessError,
-  runWindowsTaskkill,
-} from "./process-termination"
+import { isNoSuchProcessError, runWindowsTaskkill } from "./process-termination"
 
 const DEFAULT_TIMEOUT_MS = 120_000 // 2 min — old limit was 30s and broke `npm install`.
 const MAX_TIMEOUT_MS = 600_000 // 10 min hard cap — anything longer should use a real job runner.
@@ -58,11 +55,13 @@ function resolveCwd(cwd: string): string {
   return path.resolve(cwd)
 }
 
-export function resolveGitBashPath(input: {
-  readonly env?: NodeJS.ProcessEnv
-  readonly platform?: NodeJS.Platform | string
-  readonly exists?: (candidate: string) => boolean
-} = {}): string | null {
+export function resolveGitBashPath(
+  input: {
+    readonly env?: NodeJS.ProcessEnv
+    readonly platform?: NodeJS.Platform | string
+    readonly exists?: (candidate: string) => boolean
+  } = {}
+): string | null {
   const platform = input.platform ?? process.platform
   if (platform !== "win32") return null
   const env = input.env ?? process.env
@@ -77,10 +76,8 @@ export function resolveGitBashPath(input: {
   // installs where the directory name is translated.
   const home = env.USERPROFILE || os.homedir()
   const programFiles64 = env.ProgramW6432 || "C:\\Program Files"
-  const programFiles86 =
-    env["ProgramFiles(x86)"] || "C:\\Program Files (x86)"
-  const localAppData =
-    env.LOCALAPPDATA || path.join(home, "AppData", "Local")
+  const programFiles86 = env["ProgramFiles(x86)"] || "C:\\Program Files (x86)"
+  const localAppData = env.LOCALAPPDATA || path.join(home, "AppData", "Local")
   const installRoot = env.GIT_INSTALL_ROOT
   const candidates = [
     installRoot ? path.join(installRoot, "bin", "bash.exe") : null,
@@ -255,10 +252,7 @@ export function abortShellSession(
 ): boolean {
   const child = activeSessions.get(sessionId)
   if (!child) return false
-  if (
-    ownerId !== undefined
-    && activeSessionOwners.get(sessionId) !== ownerId
-  ) {
+  if (ownerId !== undefined && activeSessionOwners.get(sessionId) !== ownerId) {
     return false
   }
   requestShellProcessTreeTermination(child, "SIGTERM")
@@ -282,9 +276,7 @@ export function __abortAllShellSessionsForTests(): number {
   return sessionIds.length
 }
 
-export async function closeAllShellSessions(
-  graceMs = 2_000
-): Promise<number> {
+export async function closeAllShellSessions(graceMs = 2_000): Promise<number> {
   const entries = [...activeSessions.entries()]
   return closeShellSessionEntries(entries, graceMs)
 }
@@ -454,9 +446,9 @@ export async function runShellCommand(
     )
   }
   if (
-    input.ownerId
-    && activeShellSessionCountForOwner(input.ownerId)
-      >= MAX_ACTIVE_SHELL_SESSIONS_PER_OWNER
+    input.ownerId &&
+    activeShellSessionCountForOwner(input.ownerId) >=
+      MAX_ACTIVE_SHELL_SESSIONS_PER_OWNER
   ) {
     throw Object.assign(
       new Error(
@@ -522,7 +514,9 @@ export async function runShellCommand(
     let archiveTruncated = false
     let archiveFailed = false
     let archiveBackpressured = false
-    archiveStream?.once("open", () => { archiveCreated = true })
+    archiveStream?.once("open", () => {
+      archiveCreated = true
+    })
     const resumeOutput = () => {
       if (!archiveBackpressured) return
       archiveBackpressured = false
@@ -807,10 +801,10 @@ function isSameOrDescendantPath(root: string, candidate: string): boolean {
   const comparableCandidate = comparablePath(candidate)
   const relative = path.relative(comparableRoot, comparableCandidate)
   return (
-    relative === ""
-    || (!relative.startsWith(`..${path.sep}`)
-      && relative !== ".."
-      && !path.isAbsolute(relative))
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative))
   )
 }
 
@@ -824,9 +818,7 @@ function comparablePath(value: string): string {
   return process.platform === "win32" ? resolved.toLowerCase() : resolved
 }
 
-function shellTerminationState(
-  child: ChildProcess
-): ShellTreeTerminationState {
+function shellTerminationState(child: ChildProcess): ShellTreeTerminationState {
   let state = shellTreeTerminations.get(child)
   if (!state) {
     state = { pending: new Set(), errors: [] }
@@ -943,9 +935,7 @@ async function terminateShellProcessTree(
     const exited = await waitForPosixProcessGroupExit(child.pid, 500)
     if (!exited) {
       throw Object.assign(
-        new Error(
-          `POSIX process group ${child.pid} survived SIGKILL.`
-        ),
+        new Error(`POSIX process group ${child.pid} survived SIGKILL.`),
         {
           code: "PROCESS_GROUP_SURVIVED_SIGKILL",
           pid: child.pid,
@@ -972,10 +962,7 @@ export async function ensurePosixProcessGroupTerminated(
   )
 }
 
-function signalPosixProcessGroup(
-  pid: number,
-  signal: NodeJS.Signals
-): boolean {
+function signalPosixProcessGroup(pid: number, signal: NodeJS.Signals): boolean {
   try {
     process.kill(-pid, signal)
     return true
@@ -1131,11 +1118,9 @@ export async function detectShells(): Promise<unknown[]> {
       ]),
       probeCommand("wsl", ["--status"]),
     ])
-    if (hasPowerShell)
-      available.push({ id: "powershell", name: "PowerShell" })
+    if (hasPowerShell) available.push({ id: "powershell", name: "PowerShell" })
     if (findGitBash()) available.push({ id: "gitbash", name: "Git Bash" })
-    if (hasWsl)
-      available.push({ id: "wsl", name: "WSL (Linux)" })
+    if (hasWsl) available.push({ id: "wsl", name: "WSL (Linux)" })
   } else {
     const defaultUnixShell =
       path.basename(process.env.SHELL || "") === "zsh" ? "zsh" : "bash"
