@@ -11,6 +11,7 @@ import {
   parseCursorCliConfigChannel,
   parseCursorVersionDate,
   probeCursorProviderStatus,
+  __resetCursorStatusProbeStateForTests,
 } from "./CursorProviderStatus"
 import * as termination from "../ChildProcessTermination"
 
@@ -22,8 +23,16 @@ vi.mock("node:child_process", async (importOriginal) => {
 const directories: string[] = []
 afterEach(async () => {
   vi.restoreAllMocks()
+  __resetCursorStatusProbeStateForTests()
+  // A real probe process from the test may still be exiting on Windows;
+  // fs.rm (unlike fs.rmSync) honours the retries for EBUSY.
   for (const directory of directories.splice(0))
-    await fs.rm(directory, { recursive: true, force: true })
+    await fs.rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 20,
+      retryDelay: 50,
+    })
 })
 
 async function makeProbe(

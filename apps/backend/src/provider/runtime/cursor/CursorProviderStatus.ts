@@ -72,6 +72,20 @@ let activeStatusCommand: ChildProcess | null = null
 let failedStatusCommand: ChildProcess | null = null
 let statusCleanupInFlight: Promise<void> | null = null
 
+/**
+ * Test isolation. The cleanup fence above is process-wide on purpose: once a
+ * Windows root has exited, an unconfirmed tree cleanup blocks every later
+ * probe. Between tests that fence must not carry over, or one test's slow
+ * real process-tree cleanup fails the next test's first probe.
+ */
+export function __resetCursorStatusProbeStateForTests(): void {
+  statusCache.clear()
+  statusInFlight.clear()
+  activeStatusCommand = null
+  failedStatusCommand = null
+  statusCleanupInFlight = null
+}
+
 export function probeCursorProviderStatus(input: {
   readonly binaryPath: string
   readonly env?: NodeJS.ProcessEnv
