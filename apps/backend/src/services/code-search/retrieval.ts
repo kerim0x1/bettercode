@@ -60,6 +60,8 @@ export async function collectWorkspaceData(input: {
     readonly query: string
     readonly keywords?: readonly string[]
   }
+  /** Wall-clock budget for discovery and reads; defaults to SEARCH_LIMITS.retrievalMs. */
+  readonly deadlineMs?: number
 }): Promise<{
   files: string[]
   candidates: CodeCandidate[]
@@ -81,7 +83,8 @@ export async function collectWorkspaceData(input: {
     reasons: [],
   }
   const files: string[] = []
-  const deadline = performance.now() + SEARCH_LIMITS.retrievalMs
+  const deadline =
+    performance.now() + (input.deadlineMs ?? SEARCH_LIMITS.retrievalMs)
   const terms = input.search
     ? searchTerms(input.search.query, input.search.keywords)
     : []

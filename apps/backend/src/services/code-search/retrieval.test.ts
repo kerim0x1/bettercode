@@ -163,6 +163,12 @@ describe("local code retrieval", () => {
       root,
       signal: signal(),
       search: { query: "ProviderHub dispatchTurn provider-events" },
+      // This test is about coverage, not speed. The scan takes about 1 s
+      // alone, but more than the 8 s production budget when the whole
+      // backend suite runs in parallel on a loaded Windows host, which
+      // failed the test with incomplete coverage. The budget itself is
+      // covered by the deadline test below.
+      deadlineMs: 25_000,
     })
     expect(result.coverage).toMatchObject({
       eligibleFiles: 1400,
@@ -175,4 +181,21 @@ describe("local code retrieval", () => {
       `Retrieval fixture: 1400 files, ${result.coverage.readBytes} bytes, ${Math.round(performance.now() - started)} ms`
     )
   }, 30_000)
+
+  it("stops at its deadline and reports the coverage as incomplete", async () => {
+    const root = await fixture({
+      "src/a.ts": "dispatchTurn()",
+      "src/b.ts": "dispatchTurn()",
+    })
+    const result = await collectWorkspaceData({
+      root,
+      signal: signal(),
+      search: { query: "dispatchTurn" },
+      deadlineMs: 0,
+    })
+    expect(result.coverage.incomplete).toBe(true)
+    expect(result.coverage.reasons).toContain("deadline")
+    expect(result.coverage.scannedFiles).toBe(0)
+    expect(result.candidates).toEqual([])
+  })
 })
