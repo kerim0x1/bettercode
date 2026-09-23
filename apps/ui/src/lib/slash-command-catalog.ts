@@ -19,16 +19,59 @@ export interface SlashCommand {
 }
 
 export const GOAL_SUBCOMMANDS: SlashCommand[] = [
-  { id: "goal-pause", name: "/goal pause", description: "Pause the goal and stop its current turn", category: "builtin", action: "insert" },
-  { id: "goal-continue", name: "/goal continue", aliases: ["/goal resume"], description: "Continue the goal with the selected model and permissions", category: "builtin", action: "insert" },
-  { id: "goal-status", name: "/goal status", description: "Show the current goal and its progress", category: "builtin", action: "insert" },
-  { id: "goal-edit", name: "/goal edit", description: "Change the objective · /goal edit <goal text>", category: "builtin", action: "insert" },
-  { id: "goal-clear", name: "/goal clear", description: "Stop and remove the current goal", category: "builtin", action: "insert" },
-  { id: "goal-set", name: "/goal set", description: "Start a new goal · /goal set <goal text>", category: "builtin", action: "insert" },
+  {
+    id: "goal-pause",
+    name: "/goal pause",
+    description: "Pause the goal and stop its current turn",
+    category: "builtin",
+    action: "insert",
+  },
+  {
+    id: "goal-continue",
+    name: "/goal continue",
+    aliases: ["/goal resume"],
+    description: "Continue the goal with the selected model and permissions",
+    category: "builtin",
+    action: "insert",
+  },
+  {
+    id: "goal-status",
+    name: "/goal status",
+    description: "Show the current goal and its progress",
+    category: "builtin",
+    action: "insert",
+  },
+  {
+    id: "goal-edit",
+    name: "/goal edit",
+    description: "Change the objective · /goal edit <goal text>",
+    category: "builtin",
+    action: "insert",
+  },
+  {
+    id: "goal-clear",
+    name: "/goal clear",
+    description: "Stop and remove the current goal",
+    category: "builtin",
+    action: "insert",
+  },
+  {
+    id: "goal-set",
+    name: "/goal set",
+    description: "Start a new goal · /goal set <goal text>",
+    category: "builtin",
+    action: "insert",
+  },
 ]
 
 export const BUILTIN_COMMANDS: SlashCommand[] = [
-  { id: "goal", name: "/goal", description: "Start a goal with the selected model · /goal <goal text>", category: "builtin", action: "insert" },
+  {
+    id: "goal",
+    name: "/goal",
+    description: "Start a goal with the selected model · /goal <goal text>",
+    category: "builtin",
+    action: "insert",
+  },
   ...GOAL_SUBCOMMANDS,
   {
     id: "model",
@@ -981,7 +1024,11 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   {
     id: "debug-info",
     name: "/debug-info",
-    aliases: ["/debug.info", "/betterc0de.debug.info", "/betterc0de-debug-info"],
+    aliases: [
+      "/debug.info",
+      "/betterc0de.debug.info",
+      "/betterc0de-debug-info",
+    ],
     description: "Show BetterC0de app, OS, and runtime diagnostics",
     category: "builtin",
     action: "execute",
@@ -1119,7 +1166,8 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
     id: "remote",
     name: "/remote",
     aliases: ["/remote-access"],
-    description: "Enable remote access and create a one-time phone/browser link",
+    description:
+      "Enable remote access and create a one-time phone/browser link",
     category: "builtin",
     action: "execute",
   },
@@ -1536,8 +1584,7 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
       "/v2.session.prompt",
       "/v2.session.wait",
     ],
-    description:
-      "Show BetterC0de handling for internal compatibility routes",
+    description: "Show BetterC0de handling for internal compatibility routes",
     category: "builtin",
     action: "execute",
   },
@@ -1661,7 +1708,8 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
       "/betterc0de-server-start",
       "/betterc0de-serve",
     ],
-    description: "Show or prefill BetterC0de headless server compatibility command",
+    description:
+      "Show or prefill BetterC0de headless server compatibility command",
     category: "builtin",
     action: "execute",
   },
@@ -1678,7 +1726,8 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
       "/server.switch",
       "/server-switch",
     ],
-    description: "Show or prefill BetterC0de remote server attach compatibility command",
+    description:
+      "Show or prefill BetterC0de remote server attach compatibility command",
     category: "builtin",
     action: "execute",
   },
@@ -1699,12 +1748,7 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   {
     id: "betterc0de-acp",
     name: "/betterc0de-acp",
-    aliases: [
-      "/betterc0de.acp",
-      "/betterc0de.acp",
-      "/betterc0de-acp",
-      "/acp",
-    ],
+    aliases: ["/betterc0de.acp", "/betterc0de.acp", "/betterc0de-acp", "/acp"],
     description: "Show or prefill BetterC0de ACP compatibility command",
     category: "builtin",
     action: "execute",
@@ -1745,7 +1789,8 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
       "/betterc0de-openapi",
       "/betterc0de-generate",
     ],
-    description: "Show or prefill BetterC0de API generation compatibility command",
+    description:
+      "Show or prefill BetterC0de API generation compatibility command",
     category: "builtin",
     action: "execute",
   },
@@ -1758,7 +1803,8 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
       "/betterc0de-completion",
       "/completion",
     ],
-    description: "Show or prefill BetterC0de shell completion compatibility command",
+    description:
+      "Show or prefill BetterC0de shell completion compatibility command",
     category: "builtin",
     action: "execute",
   },
@@ -1847,7 +1893,8 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
     id: "plugin-toggle",
     name: "/plugin-toggle",
     aliases: ["/plugins.toggle", "/plugins-toggle"],
-    description: "Set BetterC0de terminal UI plugin enablement in project config",
+    description:
+      "Set BetterC0de terminal UI plugin enablement in project config",
     category: "builtin",
     action: "execute",
   },

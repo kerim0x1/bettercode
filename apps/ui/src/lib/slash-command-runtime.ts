@@ -588,7 +588,919 @@ function slashAbort(
 
 const SLASH_COMMAND_INDEX = indexSlashCommands([
   {
-    names: ["model","models","model.choose","model.list","model-list","model.dialog.provider","model-dialog-provider","command-palette","command.palette.show","command-palette-show","mode-next","chat-mode-next","mode-previous","chat-mode-previous","agent","agent-next","agent.cycle","agent-previous","previous-agent","agent.cycle.reverse","model-next","next-model","model-cycle","model.cycle_recent","model-previous","previous-model","prev-model","model.cycle_recent_reverse","favorite-next","next-favorite","favorite-model-next","model.cycle_favorite","favorite-toggle","model.dialog.favorite","model-dialog-favorite","favorite-previous","previous-favorite","prev-favorite","favorite-model-previous","model.cycle_favorite_reverse","new","clear","session.new","session.create","session-new","resume","continue","session.next","session-next","session.next.unseen","session-next-unseen","session.previous","session-previous","session.prev","session-prev","session.previous.unseen","session-previous-unseen","fork","session.fork","parent","session-parent","session.parent","child","children","session-child","session.child","session.children","session.child.first","child-next","next-child","session.child.next","child-previous","prev-child","previous-child","session.child.previous","pin","pin-session","session.pin","session.pin.toggle","pins","pinned","pinned-sessions","archive","archive-session","session.archive","unarchive","unarchive-session","session.unarchive","archives","archived","archived-sessions","delete-session","delete","session.delete","share","session.share","unshare","session.unshare","copy","session.copy","copy-last","copy-assistant","copy-message","messages.copy","export","session.export","betterc0de-export","betterc0de.export","import","session.import","betterc0de-import","betterc0de.import","diff","diffs","session.diff","session.update","rename","title","session.rename","timeline","session.timeline","events","event.subscribe","event-subscribe","session.events","messages","message-list","message","session.messages","session.message","session.message.list","v2.session.messages","v2-session-messages","context","session.context","context-list","v2.session.context","v2-session-context","first","first-message","messages.first","session.first","last","last-message","messages.last","session.last","last-user","last-user-message","messages-last-user","messages.last_user","session.messages_last_user","next-message","message-next","message.next","messages.next","session.message.next","previous-message","prev-message","message-previous","message.previous","messages.previous","session.message.previous","page-up","pageup","messages-page-up","message.page_up","messages.page_up","session.page.up","page-down","pagedown","messages-page-down","message.page_down","messages.page_down","session.page.down","line-up","lineup","messages-line-up","message.line_up","messages.line_up","session.line.up","line-down","linedown","messages-line-down","message.line_down","messages.line_down","session.line.down","half-page-up","halfpage-up","session.half.page.up","half-page-down","halfpage-down","session.half.page.down","open","editor","file.open","prompt.editor","prompt-editor","add-selection","context.addselection","context-add-selection","selection-context","editor-context-clear","prompt.editor_context.clear","prompt-editor-context-clear","close","close-tab","tab.close","warp","workspace","workspace.set","workspace-set","project.open","project-open","project.update","project-update","project-next","project.next","project-previous","project.previous","project-prev","workspace-new","workspace.new","worktree.create","worktree-create","workspace-toggle","workspace.toggle","project.list","project-list","project.current","project-current","workspace-list","workspace.list","worktree-list","worktree.list","workspace-remove","workspace.remove","worktree-remove","worktree.remove","workspace-reset","workspace.reset","worktree-reset","worktree.reset","undo","session.undo","session.revert","redo","session.redo","session.unrevert","interrupt","stop","cancel","session.interrupt","session.abort","exit","quit","q","app.exit","app-exit","help","help.show","help-show","sessions","session","session.list","session.get","session-list","v2.session.list","v2-session-list","history","prompt-history","histories","history-use","history-pop","prompt-history-use","prompt.history.previous","prompt-history-previous","prompt.history.next","prompt-history-next","prompt-clear","prompt.clear","clear-prompt","prompt-paste","prompt.paste","prompt-submit","prompt.submit","input-actions","stash","prompt-stash","prompt.stash","stashes","stash-list","prompt-stash-list","prompt.stash.list","stash-pop","prompt-stash-pop","prompt.stash.pop","stash-delete","stash-remove","prompt-stash-delete","stash.delete","commands","project-commands","command.list","command-list","references","refs","project-references","format","project-format","formatter.run","formatters","project-formatters","formatter.status","formatter-status","lsp","lsps","language-servers","debug.lsp","debug-lsp","lsp.status","lsp-status","debug.lsp.diagnostics","debug-lsp-diagnostics","debug.lsp.symbols","debug-lsp-symbols","debug.lsp.document-symbols","debug-lsp-document-symbols","permissions","project-permissions","approvals","approval-list","permission-list","permission.list","permissions-pending","permission.prompt.fullscreen","permission-fullscreen","approve","approval-approve","permission-approve","permission.reply","permission.respond","deny","reject","approval-deny","permission-deny","questions","question-list","question.list","user-inputs","user-input-list","answer","question-reply","question.reply","user-input-answer","reject-question","question-reject","question.reject","user-input-reject","todos","todo","tasks","session.todo","session-status","session.status","status.session","thread-status","vcs","vcs.status","vcs-status","vcs.get","vcs.diff","vcs-diff","vcs.diff.raw","vcs-diff-raw","vcs-apply","vcs.apply","find","find.text","find-text","find.file","find-file","find.files","find-files","find.symbol","find-symbol","find.symbols","find-symbols","betterc0de","betterc0de-config","project-config","debug.config","debug-config","config.get","config-get","config.update","config-update","global.config.get","global-config-get","global.config.update","global-config-update","compat-config","betterc0de-audit","betterc0de.parity","betterc0de-parity","compat","compat-audit","parity","betterc0de-cli","betterc0de.commands","betterc0de-commands","betterc0de.entrypoints","betterc0de-entrypoints","betterc0de-api","betterc0de.api","betterc0de-http","betterc0de.http","openapi","openapi.operations","betterc0de-gaps","betterc0de.missing","betterc0de-missing","betterc0de.todo","betterc0de-todo","betterc0de-sync","betterc0de.sync","sync","sync.history.list","sync-history","sync.replay","sync-replay","sync.start","sync-start","sync.steal","sync-steal","betterc0de-workspace","betterc0de.workspace","experimental.workspace.syncList","experimental-workspace-sync-list","experimental.workspace.warp","experimental-workspace-warp","betterc0de-lifecycle","betterc0de.lifecycle","global.dispose","global-dispose","instance.dispose","instance-dispose","tui-control","tui.control.next","tui-control-next","tui.control.response","tui-control-response","auth.set","auth-set","auth.remove","auth-remove","betterc0de-internal","betterc0de.internal","tui","tui-config","keybinds","keybindings","which-key","which-key.toggle","which-key.layout.toggle","which-key.pending.toggle","which-key.group.previous","which-key.group.next","which-key.scroll.up","which-key.scroll.down","which-key.page.up","which-key.page.down","which-key.home","which-key.end","tips","tips.toggle","betterc0de-tips","tips-toggle","attachments","attachment","image-attachments","betterc0de-attachments","tool-output","tool-output-limits","betterc0de-tool-output","compaction","context-compaction","betterc0de-compaction","betterc0de-runtime","betterc0de.server","betterc0de-app","runtime-config","betterc0de-server","betterc0de-tui","betterc0de.thread","betterc0de-thread","betterc0de.ui","betterc0de-ui","betterc0de-run","betterc0de.run","betterc0de-cli-run","betterc0de-serve","betterc0de.serve","betterc0de-server-start","betterc0de-attach","betterc0de.attach","betterc0de-server-switch","attach","attach-server","server.switch","server-switch","betterc0de-web","betterc0de.web","betterc0de-web-ui","betterc0de-acp","betterc0de.acp","acp","betterc0de-upgrade","betterc0de.upgrade","betterc0de-update","betterc0de-uninstall","betterc0de.uninstall","betterc0de-generate","betterc0de.generate","betterc0de-openapi","betterc0de-completion","betterc0de.completion","completion","betterc0de-db","betterc0de.db","betterc0de-db-path","betterc0de-db-migrate","betterc0de-db-query","betterc0de.db.query","db","db.migrate","db.query","db-query","betterc0de-session","betterc0de.session","betterc0de-session-list","betterc0de.session.list","betterc0de-session-delete","betterc0de.session.delete","session-cli","session.cli","project-providers","provider-config","betterc0de-providers","config.providers","config-providers","v2.provider.list","v2-provider-list","v2.provider.get","v2-provider-get","project-plugins","betterc0de-plugins","project-tools","betterc0de-tools","tool.list","tool-list","tool.ids","tool-ids","mcp-resources","mcp.resources","mcp-resource-list","resources","experimental.resource.list","experimental-resource-list","mcp-auth","mcp.auth","mcp.auth.list","mcp.auth.ls","mcp.auth.start","mcp.auth.callback","mcp.auth.authenticate","mcp-auth-list","mcp-auth-ls","mcp-add","mcp.add","mcp-install","mcp.install","mcp-logout","mcp.logout","mcp.auth.remove","mcp-auth-logout","mcp-debug","mcp.debug","mcp-inspect","mcps","mcp","mcp.list","mcp.ls","mcp.status","mcp-ls","mcp-toggle","toggle-mcp","mcp.toggle","mcp.connect","mcp.disconnect","dialog.mcp.toggle","dialog-mcp-toggle","mcp-enable","mcp-disable","skills","prompt.skills","prompt-skills","debug.skill","debug-skill","app.skills","agents","agent.list","agent-list","debug.agent","debug-agent","app.agents","agent-create","agent.create","agents.create","create-agent","instructions","project-rules","status","betterc0de.status","betterc0de-status","global.health","debug-info","debug.info","betterc0de.debug.info","betterc0de-debug-info","debug-paths","debug.paths","betterc0de.debug.paths","betterc0de-debug-paths","db.path","db-path","paths","path.get","path-get","debug-rg","debug.rg","debug.rg.files","debug.rg.search","debug.file","debug.file.read","debug-file-read","debug.file.list","debug-file-list","debug.file.status","debug-file-status","debug.file.search","debug.file.tree","file","file.read","file-read","file.list","file-list","file.status","file-status","debug-snapshot","debug.snapshot","debug.snapshot.track","debug.snapshot.patch","debug.snapshot.diff","debug-snapshot-track","debug-snapshot-patch","debug-snapshot-diff","debug-utility","debug.startup","debug-startup","debug.scrap","debug-scrap","debug.v2","debug-v2","debug.wait","debug-wait","stats","usage","token-usage","session.stats","session-stats","github","github-agent","github.install","github-install","github.run","github-run","docs","documentation","docs.open","docs-open","org","organization","orgs","switch-org","console.orgs","console-orgs","console.switch","console-switch","console.org.switch","console-org-switch","account.orgs","account.switch","plugin-install","plugin","plug","plugin.install","plugins.install","plugins-install","dialog.plugins.install","dialog-plugins-install","plugin-toggle","plugins.toggle","plugins-toggle","auth","remote","remote-access","console","app.console","app-console","app.debug","app-debug","app.log","app-log","heap-snapshot","app.heap_snapshot","app-heap-snapshot","review-toggle","review.toggle","review-panel-toggle","terminal-title","terminal.title.toggle","terminal-title-toggle","pty.update","terminal","terminal.toggle","terminal.suspend","pty","pty.list","pty-list","pty.shells","pty-shells","pty.get","pty-get","pty.connect","pty-connect","pty.connectToken","pty.connect-token","pty.remove","pty-remove","terminal-new","terminal.new","new-terminal","pty.create","pty-create","file-tree-toggle","filetree.toggle","filetree-toggle","file-tree.toggle","file-tree","files","files.toggle","sidebar","toggle-sidebar","sidebar.toggle","session.sidebar.toggle","input-focus","input.focus","focus-input","composer-focus","animations","app.toggle.animations","app-toggle-animations","file-context","app.toggle.file_context","app-toggle-file-context","paste-summary","app.toggle.paste_summary","app-toggle-paste-summary","session-directory-filter","app.toggle.session_directory_filter","app-toggle-session-directory-filter","connect","provider.connect","provider-connect","providers.login","provider.login","auth.login","auth.connect","console.login","console.open","account.login","account.open","auth.list","auth.ls","auth.get","provider-auth","provider.auth","providers.list","providers.ls","provider.list","provider.ls","providers.logout","provider.logout","auth.logout","console.logout","account","account.list","account.logout","theme-mode","theme.switch_mode","theme-switch-mode","theme-mode-lock","theme.mode.lock","theme-lock","themes","theme","theme.switch","theme-switch","theme.cycle","theme-cycle","theme.scheme.cycle","theme-scheme-cycle","language","language.cycle","language-cycle","terminal-font","font.terminal","terminal.font","appearance.terminal_font","variants","variant.list","variant-list","variant.cycle","variant-cycle","model.variant.cycle","model-variant-cycle","catalog","model-catalog","model-info","models.list","models-list","catalog.model.list","catalog.model.get","v2.model.list","v2-model-list","timestamps","toggle-timestamps","toggle.timestamps","session.toggle.timestamps","thinking","toggle-thinking","toggle.thinking","session.toggle.thinking","reasoning-summaries","reasoning-summary","session.toggle.reasoning_summaries","session-toggle-reasoning-summaries","tool-details","actions","toggle-actions","toggle.actions","session.toggle.actions","progress","session-progress","session.toggle.progress_bar","session-toggle-progress-bar","shell-expanded","shell-tool-parts","shell-tool-parts-expanded","session.toggle.shell_tool_parts_expanded","edit-expanded","edit-tool-parts","edit-tool-parts-expanded","session.toggle.edit_tool_parts_expanded","scrollbar","toggle-scrollbar","toggle.scrollbar","session.toggle.scrollbar","generic-tool-output","generic-output","toggle-generic-tool-output","toggle.generic_tool_output","session.toggle.generic_tool_output","conceal","toggle-conceal","session.toggle.conceal","autosave","auto-save","diffwrap","wrap","app.toggle.diffwrap","app-toggle-diffwrap","diff-style","diff_style","diff.style","app.diff_style","notifications","notify","notification","confirmations","confirm","autoaccept","auto-accept","permissions.autoaccept","compact","summarize","session.compact","v2.session.compact","v2-session-compact","density","compact-ui"],
+    names: [
+      "model",
+      "models",
+      "model.choose",
+      "model.list",
+      "model-list",
+      "model.dialog.provider",
+      "model-dialog-provider",
+      "command-palette",
+      "command.palette.show",
+      "command-palette-show",
+      "mode-next",
+      "chat-mode-next",
+      "mode-previous",
+      "chat-mode-previous",
+      "agent",
+      "agent-next",
+      "agent.cycle",
+      "agent-previous",
+      "previous-agent",
+      "agent.cycle.reverse",
+      "model-next",
+      "next-model",
+      "model-cycle",
+      "model.cycle_recent",
+      "model-previous",
+      "previous-model",
+      "prev-model",
+      "model.cycle_recent_reverse",
+      "favorite-next",
+      "next-favorite",
+      "favorite-model-next",
+      "model.cycle_favorite",
+      "favorite-toggle",
+      "model.dialog.favorite",
+      "model-dialog-favorite",
+      "favorite-previous",
+      "previous-favorite",
+      "prev-favorite",
+      "favorite-model-previous",
+      "model.cycle_favorite_reverse",
+      "new",
+      "clear",
+      "session.new",
+      "session.create",
+      "session-new",
+      "resume",
+      "continue",
+      "session.next",
+      "session-next",
+      "session.next.unseen",
+      "session-next-unseen",
+      "session.previous",
+      "session-previous",
+      "session.prev",
+      "session-prev",
+      "session.previous.unseen",
+      "session-previous-unseen",
+      "fork",
+      "session.fork",
+      "parent",
+      "session-parent",
+      "session.parent",
+      "child",
+      "children",
+      "session-child",
+      "session.child",
+      "session.children",
+      "session.child.first",
+      "child-next",
+      "next-child",
+      "session.child.next",
+      "child-previous",
+      "prev-child",
+      "previous-child",
+      "session.child.previous",
+      "pin",
+      "pin-session",
+      "session.pin",
+      "session.pin.toggle",
+      "pins",
+      "pinned",
+      "pinned-sessions",
+      "archive",
+      "archive-session",
+      "session.archive",
+      "unarchive",
+      "unarchive-session",
+      "session.unarchive",
+      "archives",
+      "archived",
+      "archived-sessions",
+      "delete-session",
+      "delete",
+      "session.delete",
+      "share",
+      "session.share",
+      "unshare",
+      "session.unshare",
+      "copy",
+      "session.copy",
+      "copy-last",
+      "copy-assistant",
+      "copy-message",
+      "messages.copy",
+      "export",
+      "session.export",
+      "betterc0de-export",
+      "betterc0de.export",
+      "import",
+      "session.import",
+      "betterc0de-import",
+      "betterc0de.import",
+      "diff",
+      "diffs",
+      "session.diff",
+      "session.update",
+      "rename",
+      "title",
+      "session.rename",
+      "timeline",
+      "session.timeline",
+      "events",
+      "event.subscribe",
+      "event-subscribe",
+      "session.events",
+      "messages",
+      "message-list",
+      "message",
+      "session.messages",
+      "session.message",
+      "session.message.list",
+      "v2.session.messages",
+      "v2-session-messages",
+      "context",
+      "session.context",
+      "context-list",
+      "v2.session.context",
+      "v2-session-context",
+      "first",
+      "first-message",
+      "messages.first",
+      "session.first",
+      "last",
+      "last-message",
+      "messages.last",
+      "session.last",
+      "last-user",
+      "last-user-message",
+      "messages-last-user",
+      "messages.last_user",
+      "session.messages_last_user",
+      "next-message",
+      "message-next",
+      "message.next",
+      "messages.next",
+      "session.message.next",
+      "previous-message",
+      "prev-message",
+      "message-previous",
+      "message.previous",
+      "messages.previous",
+      "session.message.previous",
+      "page-up",
+      "pageup",
+      "messages-page-up",
+      "message.page_up",
+      "messages.page_up",
+      "session.page.up",
+      "page-down",
+      "pagedown",
+      "messages-page-down",
+      "message.page_down",
+      "messages.page_down",
+      "session.page.down",
+      "line-up",
+      "lineup",
+      "messages-line-up",
+      "message.line_up",
+      "messages.line_up",
+      "session.line.up",
+      "line-down",
+      "linedown",
+      "messages-line-down",
+      "message.line_down",
+      "messages.line_down",
+      "session.line.down",
+      "half-page-up",
+      "halfpage-up",
+      "session.half.page.up",
+      "half-page-down",
+      "halfpage-down",
+      "session.half.page.down",
+      "open",
+      "editor",
+      "file.open",
+      "prompt.editor",
+      "prompt-editor",
+      "add-selection",
+      "context.addselection",
+      "context-add-selection",
+      "selection-context",
+      "editor-context-clear",
+      "prompt.editor_context.clear",
+      "prompt-editor-context-clear",
+      "close",
+      "close-tab",
+      "tab.close",
+      "warp",
+      "workspace",
+      "workspace.set",
+      "workspace-set",
+      "project.open",
+      "project-open",
+      "project.update",
+      "project-update",
+      "project-next",
+      "project.next",
+      "project-previous",
+      "project.previous",
+      "project-prev",
+      "workspace-new",
+      "workspace.new",
+      "worktree.create",
+      "worktree-create",
+      "workspace-toggle",
+      "workspace.toggle",
+      "project.list",
+      "project-list",
+      "project.current",
+      "project-current",
+      "workspace-list",
+      "workspace.list",
+      "worktree-list",
+      "worktree.list",
+      "workspace-remove",
+      "workspace.remove",
+      "worktree-remove",
+      "worktree.remove",
+      "workspace-reset",
+      "workspace.reset",
+      "worktree-reset",
+      "worktree.reset",
+      "undo",
+      "session.undo",
+      "session.revert",
+      "redo",
+      "session.redo",
+      "session.unrevert",
+      "interrupt",
+      "stop",
+      "cancel",
+      "session.interrupt",
+      "session.abort",
+      "exit",
+      "quit",
+      "q",
+      "app.exit",
+      "app-exit",
+      "help",
+      "help.show",
+      "help-show",
+      "sessions",
+      "session",
+      "session.list",
+      "session.get",
+      "session-list",
+      "v2.session.list",
+      "v2-session-list",
+      "history",
+      "prompt-history",
+      "histories",
+      "history-use",
+      "history-pop",
+      "prompt-history-use",
+      "prompt.history.previous",
+      "prompt-history-previous",
+      "prompt.history.next",
+      "prompt-history-next",
+      "prompt-clear",
+      "prompt.clear",
+      "clear-prompt",
+      "prompt-paste",
+      "prompt.paste",
+      "prompt-submit",
+      "prompt.submit",
+      "input-actions",
+      "stash",
+      "prompt-stash",
+      "prompt.stash",
+      "stashes",
+      "stash-list",
+      "prompt-stash-list",
+      "prompt.stash.list",
+      "stash-pop",
+      "prompt-stash-pop",
+      "prompt.stash.pop",
+      "stash-delete",
+      "stash-remove",
+      "prompt-stash-delete",
+      "stash.delete",
+      "commands",
+      "project-commands",
+      "command.list",
+      "command-list",
+      "references",
+      "refs",
+      "project-references",
+      "format",
+      "project-format",
+      "formatter.run",
+      "formatters",
+      "project-formatters",
+      "formatter.status",
+      "formatter-status",
+      "lsp",
+      "lsps",
+      "language-servers",
+      "debug.lsp",
+      "debug-lsp",
+      "lsp.status",
+      "lsp-status",
+      "debug.lsp.diagnostics",
+      "debug-lsp-diagnostics",
+      "debug.lsp.symbols",
+      "debug-lsp-symbols",
+      "debug.lsp.document-symbols",
+      "debug-lsp-document-symbols",
+      "permissions",
+      "project-permissions",
+      "approvals",
+      "approval-list",
+      "permission-list",
+      "permission.list",
+      "permissions-pending",
+      "permission.prompt.fullscreen",
+      "permission-fullscreen",
+      "approve",
+      "approval-approve",
+      "permission-approve",
+      "permission.reply",
+      "permission.respond",
+      "deny",
+      "reject",
+      "approval-deny",
+      "permission-deny",
+      "questions",
+      "question-list",
+      "question.list",
+      "user-inputs",
+      "user-input-list",
+      "answer",
+      "question-reply",
+      "question.reply",
+      "user-input-answer",
+      "reject-question",
+      "question-reject",
+      "question.reject",
+      "user-input-reject",
+      "todos",
+      "todo",
+      "tasks",
+      "session.todo",
+      "session-status",
+      "session.status",
+      "status.session",
+      "thread-status",
+      "vcs",
+      "vcs.status",
+      "vcs-status",
+      "vcs.get",
+      "vcs.diff",
+      "vcs-diff",
+      "vcs.diff.raw",
+      "vcs-diff-raw",
+      "vcs-apply",
+      "vcs.apply",
+      "find",
+      "find.text",
+      "find-text",
+      "find.file",
+      "find-file",
+      "find.files",
+      "find-files",
+      "find.symbol",
+      "find-symbol",
+      "find.symbols",
+      "find-symbols",
+      "betterc0de",
+      "betterc0de-config",
+      "project-config",
+      "debug.config",
+      "debug-config",
+      "config.get",
+      "config-get",
+      "config.update",
+      "config-update",
+      "global.config.get",
+      "global-config-get",
+      "global.config.update",
+      "global-config-update",
+      "compat-config",
+      "betterc0de-audit",
+      "betterc0de.parity",
+      "betterc0de-parity",
+      "compat",
+      "compat-audit",
+      "parity",
+      "betterc0de-cli",
+      "betterc0de.commands",
+      "betterc0de-commands",
+      "betterc0de.entrypoints",
+      "betterc0de-entrypoints",
+      "betterc0de-api",
+      "betterc0de.api",
+      "betterc0de-http",
+      "betterc0de.http",
+      "openapi",
+      "openapi.operations",
+      "betterc0de-gaps",
+      "betterc0de.missing",
+      "betterc0de-missing",
+      "betterc0de.todo",
+      "betterc0de-todo",
+      "betterc0de-sync",
+      "betterc0de.sync",
+      "sync",
+      "sync.history.list",
+      "sync-history",
+      "sync.replay",
+      "sync-replay",
+      "sync.start",
+      "sync-start",
+      "sync.steal",
+      "sync-steal",
+      "betterc0de-workspace",
+      "betterc0de.workspace",
+      "experimental.workspace.syncList",
+      "experimental-workspace-sync-list",
+      "experimental.workspace.warp",
+      "experimental-workspace-warp",
+      "betterc0de-lifecycle",
+      "betterc0de.lifecycle",
+      "global.dispose",
+      "global-dispose",
+      "instance.dispose",
+      "instance-dispose",
+      "tui-control",
+      "tui.control.next",
+      "tui-control-next",
+      "tui.control.response",
+      "tui-control-response",
+      "auth.set",
+      "auth-set",
+      "auth.remove",
+      "auth-remove",
+      "betterc0de-internal",
+      "betterc0de.internal",
+      "tui",
+      "tui-config",
+      "keybinds",
+      "keybindings",
+      "which-key",
+      "which-key.toggle",
+      "which-key.layout.toggle",
+      "which-key.pending.toggle",
+      "which-key.group.previous",
+      "which-key.group.next",
+      "which-key.scroll.up",
+      "which-key.scroll.down",
+      "which-key.page.up",
+      "which-key.page.down",
+      "which-key.home",
+      "which-key.end",
+      "tips",
+      "tips.toggle",
+      "betterc0de-tips",
+      "tips-toggle",
+      "attachments",
+      "attachment",
+      "image-attachments",
+      "betterc0de-attachments",
+      "tool-output",
+      "tool-output-limits",
+      "betterc0de-tool-output",
+      "compaction",
+      "context-compaction",
+      "betterc0de-compaction",
+      "betterc0de-runtime",
+      "betterc0de.server",
+      "betterc0de-app",
+      "runtime-config",
+      "betterc0de-server",
+      "betterc0de-tui",
+      "betterc0de.thread",
+      "betterc0de-thread",
+      "betterc0de.ui",
+      "betterc0de-ui",
+      "betterc0de-run",
+      "betterc0de.run",
+      "betterc0de-cli-run",
+      "betterc0de-serve",
+      "betterc0de.serve",
+      "betterc0de-server-start",
+      "betterc0de-attach",
+      "betterc0de.attach",
+      "betterc0de-server-switch",
+      "attach",
+      "attach-server",
+      "server.switch",
+      "server-switch",
+      "betterc0de-web",
+      "betterc0de.web",
+      "betterc0de-web-ui",
+      "betterc0de-acp",
+      "betterc0de.acp",
+      "acp",
+      "betterc0de-upgrade",
+      "betterc0de.upgrade",
+      "betterc0de-update",
+      "betterc0de-uninstall",
+      "betterc0de.uninstall",
+      "betterc0de-generate",
+      "betterc0de.generate",
+      "betterc0de-openapi",
+      "betterc0de-completion",
+      "betterc0de.completion",
+      "completion",
+      "betterc0de-db",
+      "betterc0de.db",
+      "betterc0de-db-path",
+      "betterc0de-db-migrate",
+      "betterc0de-db-query",
+      "betterc0de.db.query",
+      "db",
+      "db.migrate",
+      "db.query",
+      "db-query",
+      "betterc0de-session",
+      "betterc0de.session",
+      "betterc0de-session-list",
+      "betterc0de.session.list",
+      "betterc0de-session-delete",
+      "betterc0de.session.delete",
+      "session-cli",
+      "session.cli",
+      "project-providers",
+      "provider-config",
+      "betterc0de-providers",
+      "config.providers",
+      "config-providers",
+      "v2.provider.list",
+      "v2-provider-list",
+      "v2.provider.get",
+      "v2-provider-get",
+      "project-plugins",
+      "betterc0de-plugins",
+      "project-tools",
+      "betterc0de-tools",
+      "tool.list",
+      "tool-list",
+      "tool.ids",
+      "tool-ids",
+      "mcp-resources",
+      "mcp.resources",
+      "mcp-resource-list",
+      "resources",
+      "experimental.resource.list",
+      "experimental-resource-list",
+      "mcp-auth",
+      "mcp.auth",
+      "mcp.auth.list",
+      "mcp.auth.ls",
+      "mcp.auth.start",
+      "mcp.auth.callback",
+      "mcp.auth.authenticate",
+      "mcp-auth-list",
+      "mcp-auth-ls",
+      "mcp-add",
+      "mcp.add",
+      "mcp-install",
+      "mcp.install",
+      "mcp-logout",
+      "mcp.logout",
+      "mcp.auth.remove",
+      "mcp-auth-logout",
+      "mcp-debug",
+      "mcp.debug",
+      "mcp-inspect",
+      "mcps",
+      "mcp",
+      "mcp.list",
+      "mcp.ls",
+      "mcp.status",
+      "mcp-ls",
+      "mcp-toggle",
+      "toggle-mcp",
+      "mcp.toggle",
+      "mcp.connect",
+      "mcp.disconnect",
+      "dialog.mcp.toggle",
+      "dialog-mcp-toggle",
+      "mcp-enable",
+      "mcp-disable",
+      "skills",
+      "prompt.skills",
+      "prompt-skills",
+      "debug.skill",
+      "debug-skill",
+      "app.skills",
+      "agents",
+      "agent.list",
+      "agent-list",
+      "debug.agent",
+      "debug-agent",
+      "app.agents",
+      "agent-create",
+      "agent.create",
+      "agents.create",
+      "create-agent",
+      "instructions",
+      "project-rules",
+      "status",
+      "betterc0de.status",
+      "betterc0de-status",
+      "global.health",
+      "debug-info",
+      "debug.info",
+      "betterc0de.debug.info",
+      "betterc0de-debug-info",
+      "debug-paths",
+      "debug.paths",
+      "betterc0de.debug.paths",
+      "betterc0de-debug-paths",
+      "db.path",
+      "db-path",
+      "paths",
+      "path.get",
+      "path-get",
+      "debug-rg",
+      "debug.rg",
+      "debug.rg.files",
+      "debug.rg.search",
+      "debug.file",
+      "debug.file.read",
+      "debug-file-read",
+      "debug.file.list",
+      "debug-file-list",
+      "debug.file.status",
+      "debug-file-status",
+      "debug.file.search",
+      "debug.file.tree",
+      "file",
+      "file.read",
+      "file-read",
+      "file.list",
+      "file-list",
+      "file.status",
+      "file-status",
+      "debug-snapshot",
+      "debug.snapshot",
+      "debug.snapshot.track",
+      "debug.snapshot.patch",
+      "debug.snapshot.diff",
+      "debug-snapshot-track",
+      "debug-snapshot-patch",
+      "debug-snapshot-diff",
+      "debug-utility",
+      "debug.startup",
+      "debug-startup",
+      "debug.scrap",
+      "debug-scrap",
+      "debug.v2",
+      "debug-v2",
+      "debug.wait",
+      "debug-wait",
+      "stats",
+      "usage",
+      "token-usage",
+      "session.stats",
+      "session-stats",
+      "github",
+      "github-agent",
+      "github.install",
+      "github-install",
+      "github.run",
+      "github-run",
+      "docs",
+      "documentation",
+      "docs.open",
+      "docs-open",
+      "org",
+      "organization",
+      "orgs",
+      "switch-org",
+      "console.orgs",
+      "console-orgs",
+      "console.switch",
+      "console-switch",
+      "console.org.switch",
+      "console-org-switch",
+      "account.orgs",
+      "account.switch",
+      "plugin-install",
+      "plugin",
+      "plug",
+      "plugin.install",
+      "plugins.install",
+      "plugins-install",
+      "dialog.plugins.install",
+      "dialog-plugins-install",
+      "plugin-toggle",
+      "plugins.toggle",
+      "plugins-toggle",
+      "auth",
+      "remote",
+      "remote-access",
+      "console",
+      "app.console",
+      "app-console",
+      "app.debug",
+      "app-debug",
+      "app.log",
+      "app-log",
+      "heap-snapshot",
+      "app.heap_snapshot",
+      "app-heap-snapshot",
+      "review-toggle",
+      "review.toggle",
+      "review-panel-toggle",
+      "terminal-title",
+      "terminal.title.toggle",
+      "terminal-title-toggle",
+      "pty.update",
+      "terminal",
+      "terminal.toggle",
+      "terminal.suspend",
+      "pty",
+      "pty.list",
+      "pty-list",
+      "pty.shells",
+      "pty-shells",
+      "pty.get",
+      "pty-get",
+      "pty.connect",
+      "pty-connect",
+      "pty.connectToken",
+      "pty.connect-token",
+      "pty.remove",
+      "pty-remove",
+      "terminal-new",
+      "terminal.new",
+      "new-terminal",
+      "pty.create",
+      "pty-create",
+      "file-tree-toggle",
+      "filetree.toggle",
+      "filetree-toggle",
+      "file-tree.toggle",
+      "file-tree",
+      "files",
+      "files.toggle",
+      "sidebar",
+      "toggle-sidebar",
+      "sidebar.toggle",
+      "session.sidebar.toggle",
+      "input-focus",
+      "input.focus",
+      "focus-input",
+      "composer-focus",
+      "animations",
+      "app.toggle.animations",
+      "app-toggle-animations",
+      "file-context",
+      "app.toggle.file_context",
+      "app-toggle-file-context",
+      "paste-summary",
+      "app.toggle.paste_summary",
+      "app-toggle-paste-summary",
+      "session-directory-filter",
+      "app.toggle.session_directory_filter",
+      "app-toggle-session-directory-filter",
+      "connect",
+      "provider.connect",
+      "provider-connect",
+      "providers.login",
+      "provider.login",
+      "auth.login",
+      "auth.connect",
+      "console.login",
+      "console.open",
+      "account.login",
+      "account.open",
+      "auth.list",
+      "auth.ls",
+      "auth.get",
+      "provider-auth",
+      "provider.auth",
+      "providers.list",
+      "providers.ls",
+      "provider.list",
+      "provider.ls",
+      "providers.logout",
+      "provider.logout",
+      "auth.logout",
+      "console.logout",
+      "account",
+      "account.list",
+      "account.logout",
+      "theme-mode",
+      "theme.switch_mode",
+      "theme-switch-mode",
+      "theme-mode-lock",
+      "theme.mode.lock",
+      "theme-lock",
+      "themes",
+      "theme",
+      "theme.switch",
+      "theme-switch",
+      "theme.cycle",
+      "theme-cycle",
+      "theme.scheme.cycle",
+      "theme-scheme-cycle",
+      "language",
+      "language.cycle",
+      "language-cycle",
+      "terminal-font",
+      "font.terminal",
+      "terminal.font",
+      "appearance.terminal_font",
+      "variants",
+      "variant.list",
+      "variant-list",
+      "variant.cycle",
+      "variant-cycle",
+      "model.variant.cycle",
+      "model-variant-cycle",
+      "catalog",
+      "model-catalog",
+      "model-info",
+      "models.list",
+      "models-list",
+      "catalog.model.list",
+      "catalog.model.get",
+      "v2.model.list",
+      "v2-model-list",
+      "timestamps",
+      "toggle-timestamps",
+      "toggle.timestamps",
+      "session.toggle.timestamps",
+      "thinking",
+      "toggle-thinking",
+      "toggle.thinking",
+      "session.toggle.thinking",
+      "reasoning-summaries",
+      "reasoning-summary",
+      "session.toggle.reasoning_summaries",
+      "session-toggle-reasoning-summaries",
+      "tool-details",
+      "actions",
+      "toggle-actions",
+      "toggle.actions",
+      "session.toggle.actions",
+      "progress",
+      "session-progress",
+      "session.toggle.progress_bar",
+      "session-toggle-progress-bar",
+      "shell-expanded",
+      "shell-tool-parts",
+      "shell-tool-parts-expanded",
+      "session.toggle.shell_tool_parts_expanded",
+      "edit-expanded",
+      "edit-tool-parts",
+      "edit-tool-parts-expanded",
+      "session.toggle.edit_tool_parts_expanded",
+      "scrollbar",
+      "toggle-scrollbar",
+      "toggle.scrollbar",
+      "session.toggle.scrollbar",
+      "generic-tool-output",
+      "generic-output",
+      "toggle-generic-tool-output",
+      "toggle.generic_tool_output",
+      "session.toggle.generic_tool_output",
+      "conceal",
+      "toggle-conceal",
+      "session.toggle.conceal",
+      "autosave",
+      "auto-save",
+      "diffwrap",
+      "wrap",
+      "app.toggle.diffwrap",
+      "app-toggle-diffwrap",
+      "diff-style",
+      "diff_style",
+      "diff.style",
+      "app.diff_style",
+      "notifications",
+      "notify",
+      "notification",
+      "confirmations",
+      "confirm",
+      "autoaccept",
+      "auto-accept",
+      "permissions.autoaccept",
+      "compact",
+      "summarize",
+      "session.compact",
+      "v2.session.compact",
+      "v2-session-compact",
+      "density",
+      "compact-ui",
+    ],
     run: (context: SlashRuntimeContext) => runSlashLadder(context),
   },
 ])
@@ -596,7 +1508,11 @@ const SLASH_COMMAND_INDEX = indexSlashCommands([
 export async function runRegisteredSlashCommand(
   context: SlashRuntimeContext
 ): Promise<SlashRuntimeResult | null> {
-  const dispatched = dispatchSlashCommand(context.cmd, context, SLASH_COMMAND_INDEX)
+  const dispatched = dispatchSlashCommand(
+    context.cmd,
+    context,
+    SLASH_COMMAND_INDEX
+  )
   if (dispatched) return await dispatched
   return runSlashLadder(context)
 }
@@ -637,3794 +1553,3654 @@ async function runSlashLadder(
   let outputMessageCompactionGeneration: number | undefined
   let outputUserMessageId: string | undefined
   let outputUserMessageCreatedAt: string | undefined
-        if (
-          isSlashCommand(
-            cmd,
-            "model",
-            "models",
-            "model.choose",
-            "model.list",
-            "model-list",
-            "model.dialog.provider",
-            "model-dialog-provider"
-          ) &&
-          shouldOpenModelPickerForSlashCommand(cmd, args)
-        ) {
-          closeSlash()
-          openModelPicker?.()
-          return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "command-palette",
-            "command.palette.show",
-            "command-palette-show"
-          )
-        ) {
-          closeSlash()
-          openCommandPalette?.()
-          return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-        }
-
-        if (isSlashCommand(cmd, "mode-next", "chat-mode-next")) {
-          const next = cycleChatMode(chatMode, 1)
-          setChatMode(next)
-          output = buildChatModeCycleOutput(next)
-        }
-
-        if (isSlashCommand(cmd, "mode-previous", "chat-mode-previous")) {
-          const next = cycleChatMode(chatMode, -1)
-          setChatMode(next)
-          output = buildChatModeCycleOutput(next)
-        }
-
-        if (
-          isSlashCommand(cmd, "agent", "agent-next", "agent.cycle") &&
-          !betterC0deAgentSlashSubcommand(cmd, args)
-        ) {
-          output = applyModelAgentCycleCommand({
-            threadId,
-            provider: selectedProvider,
-            selectedModel,
-            direction: 1,
-          })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "agent-previous",
-            "previous-agent",
-            "agent.cycle.reverse"
-          )
-        ) {
-          output = applyModelAgentCycleCommand({
-            threadId,
-            provider: selectedProvider,
-            selectedModel,
-            direction: -1,
-          })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "model-next",
-            "next-model",
-            "model-cycle",
-            "model.cycle_recent"
-          )
-        ) {
-          output = applyModelCycleCommand({
-            items: buildModelCycleItems(providers),
-            direction: 1,
-            selectedProviderId: selectedProvider?.id ?? selectedProviderId,
-            selectedModel,
-            setSelectedProviderId,
-            setSelectedModel,
-            source: "model",
-          })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "model-previous",
-            "previous-model",
-            "prev-model",
-            "model.cycle_recent_reverse"
-          )
-        ) {
-          output = applyModelCycleCommand({
-            items: buildModelCycleItems(providers),
-            direction: -1,
-            selectedProviderId: selectedProvider?.id ?? selectedProviderId,
-            selectedModel,
-            setSelectedProviderId,
-            setSelectedModel,
-            source: "model",
-          })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "favorite-next",
-            "next-favorite",
-            "favorite-model-next",
-            "model.cycle_favorite"
-          )
-        ) {
-          output = applyModelCycleCommand({
-            items: buildFavoriteModelCycleItems(favoriteEntries),
-            direction: 1,
-            selectedProviderId: selectedProvider?.id ?? selectedProviderId,
-            selectedModel,
-            setSelectedProviderId,
-            setSelectedModel,
-            source: "favorite",
-          })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "favorite-toggle",
-            "model.dialog.favorite",
-            "model-dialog-favorite"
-          )
-        ) {
-          output = buildFavoriteToggleOutput({
-            providerId: selectedProvider?.id ?? selectedProviderId ?? null,
-            modelId: selectedModel,
-            toggleFavorite,
-            isFavorite,
-          })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "favorite-previous",
-            "previous-favorite",
-            "prev-favorite",
-            "favorite-model-previous",
-            "model.cycle_favorite_reverse"
-          )
-        ) {
-          output = applyModelCycleCommand({
-            items: buildFavoriteModelCycleItems(favoriteEntries),
-            direction: -1,
-            selectedProviderId: selectedProvider?.id ?? selectedProviderId,
-            selectedModel,
-            setSelectedProviderId,
-            setSelectedModel,
-            source: "favorite",
-          })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "new",
-            "clear",
-            "session.new",
-            "session.create",
-            "session-new"
-          )
-        ) {
-          store.createThread("New Chat", "BetterC0de")
-          return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-        }
-
-        if (isSlashCommand(cmd, "resume", "continue")) {
-          const sessionThreads = filterThreadsForSessionDirectory(
-            store.threads,
-            threadId,
-            useAppearanceStore.getState().sessionDirectoryFilterEnabled
-          )
-          const target = args.join(" ").trim().toLowerCase()
-          if (target) {
-            const match = sessionThreads.find((thread) => {
-              const title = thread.title.toLowerCase()
-              return (
-                thread.id.toLowerCase().startsWith(target) ||
-                title.includes(target)
-              )
-            })
-            if (match) {
-              store.setActiveThread(match.id)
-              return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-            }
-          }
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "session.next",
-            "session-next",
-            "session.next.unseen",
-            "session-next-unseen"
-          )
-        ) {
-          const target = resolveAdjacentSessionThread(
-            filterThreadsForSessionDirectory(
-              store.threads,
-              threadId,
-              useAppearanceStore.getState().sessionDirectoryFilterEnabled
-            ),
-            threadId,
-            1
-          )
-          if (target) {
-            store.setActiveThread(target.id)
-            return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-          }
-          output = "# Next Session\n\n> No other session is available."
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "session.previous",
-            "session-previous",
-            "session.prev",
-            "session-prev",
-            "session.previous.unseen",
-            "session-previous-unseen"
-          )
-        ) {
-          const target = resolveAdjacentSessionThread(
-            filterThreadsForSessionDirectory(
-              store.threads,
-              threadId,
-              useAppearanceStore.getState().sessionDirectoryFilterEnabled
-            ),
-            threadId,
-            -1
-          )
-          if (target) {
-            store.setActiveThread(target.id)
-            return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-          }
-          output = "# Previous Session\n\n> No other session is available."
-        }
-
-        if (isSlashCommand(cmd, "fork", "session.fork")) {
-          if (!threadId) {
-            threadId = store.createThread("New Chat", "BetterC0de")
-            store.addMessage(threadId, {
-              id: crypto.randomUUID(),
-              role: "user",
-              content: rawText,
-              createdAt: new Date().toISOString(),
-            })
-            store.addMessage(threadId, {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content:
-                "# Fork Session\n\n> No existing chat history to fork yet.",
-              createdAt: new Date().toISOString(),
-            })
-            return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-          }
-          const forkedThreadId = await store.forkThread(threadId)
-          if (forkedThreadId) {
-            return slashAbort({
-              threadId: forkedThreadId,
-              output,
-              outputMessageId,
-              outputMessageCreatedAt,
-              outputMessageCompactionGeneration,
-              outputUserMessageId,
-              outputUserMessageCreatedAt,
-            })
-          }
-          output = "# Fork Session\n\n> The active chat could not be found."
-        }
-
-        if (isSlashCommand(cmd, "parent", "session-parent", "session.parent")) {
-          const target = resolveParentThread(store.threads, threadId)
-          if (target) {
-            store.setActiveThread(target.id)
-            return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-          }
-          output =
-            "# Parent Session\n\n> This chat has no linked parent session."
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "child",
-            "children",
-            "session-child",
-            "session.child",
-            "session.children",
-            "session.child.first"
-          )
-        ) {
-          const target = resolveChildThread(
-            store.threads,
-            threadId,
-            args.join(" ")
-          )
-          if (target) {
-            store.setActiveThread(target.id)
-            return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-          }
-          output =
-            "# Child Session\n\n> This chat has no linked child fork yet."
-        }
-
-        if (
-          isSlashCommand(cmd, "child-next", "next-child", "session.child.next")
-        ) {
-          const target = resolveSiblingChildThread(store.threads, threadId, 1)
-          if (target) {
-            store.setActiveThread(target.id)
-            return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-          }
-          output =
-            "# Next Child Session\n\n> This chat is not inside a child-session branch with siblings."
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "child-previous",
-            "prev-child",
-            "previous-child",
-            "session.child.previous"
-          )
-        ) {
-          const target = resolveSiblingChildThread(store.threads, threadId, -1)
-          if (target) {
-            store.setActiveThread(target.id)
-            return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-          }
-          output =
-            "# Previous Child Session\n\n> This chat is not inside a child-session branch with siblings."
-        }
-
-        const quickSwitchSlot = resolveQuickSwitchSlot(cmd, args[0])
-        if (
-          isSlashCommand(
-            cmd,
-            "pin",
-            "pin-session",
-            "session.pin",
-            "session.pin.toggle"
-          )
-        ) {
-          output = buildPinThreadOutput(store, threadId)
-        }
-
-        if (isSlashCommand(cmd, "pins", "pinned", "pinned-sessions")) {
-          output = buildPinnedThreadsOutput(
-            store.threads,
-            store.pinnedThreadIds
-          )
-        }
-
-        if (quickSwitchSlot !== null) {
-          const target = resolvePinnedThreadSlot(
-            store.threads,
-            store.pinnedThreadIds,
-            quickSwitchSlot
-          )
-          if (target) {
-            store.setActiveThread(target.id)
-            return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-          }
-          output = buildQuickSwitchThreadOutput(quickSwitchSlot)
-        }
-
-        if (
-          isSlashCommand(cmd, "archive", "archive-session", "session.archive")
-        ) {
-          output = await buildArchiveThreadOutput(
-            store.threads,
-            threadId,
-            args.join(" ")
-          )
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "unarchive",
-            "unarchive-session",
-            "session.unarchive"
-          )
-        ) {
-          output = await buildUnarchiveThreadOutput(
-            store.threads,
-            threadId,
-            args.join(" ")
-          )
-        }
-
-        if (isSlashCommand(cmd, "archives", "archived", "archived-sessions")) {
-          output = buildArchivedThreadsOutput(
-            store.threads,
-            useSettingsStore.getState().archivedThreadIds
-          )
-        }
-
-        if (isSlashCommand(cmd, "delete-session", "delete", "session.delete")) {
-          const deleteResult = buildDeleteThreadOutput(
-            store.threads,
-            threadId,
-            args
-          )
-          if (deleteResult.threadId && deleteResult.confirmed) {
-            const deletedActiveThread = deleteResult.threadId === threadId
-            store.deleteThread(deleteResult.threadId)
-            if (deletedActiveThread) {
-              const replacementThreadId = store.createThread(
-                "New Chat",
-                "BetterC0de"
-              )
-              store.addMessage(replacementThreadId, {
-                id: crypto.randomUUID(),
-                role: "user",
-                content: rawText,
-                createdAt: new Date().toISOString(),
-              })
-              store.addMessage(replacementThreadId, {
-                id: crypto.randomUUID(),
-                role: "assistant",
-                content: deleteResult.output,
-                createdAt: new Date().toISOString(),
-              })
-              return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-            }
-          }
-          output = deleteResult.output
-        }
-
-        if (isSlashCommand(cmd, "share", "session.share")) {
-          output = await buildShareThreadOutput(threadId)
-        }
-
-        if (isSlashCommand(cmd, "unshare", "session.unshare")) {
-          output = buildUnshareThreadOutput(threadId)
-        }
-
-        if (isSlashCommand(cmd, "copy", "session.copy")) {
-          output = await buildCopyThreadOutput(threadId)
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "copy-last",
-            "copy-assistant",
-            "copy-message",
-            "messages.copy"
-          )
-        ) {
-          output = await buildCopyLastAssistantMessageOutput(threadId)
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "export",
-            "session.export",
-            "betterc0de-export",
-            "betterc0de.export",
-            "betterc0de-export",
-            "betterc0de.export"
-          )
-        ) {
-          const betterC0deExportMode = isSlashCommand(
-            cmd,
-            "session.export",
-            "betterc0de-export",
-            "betterc0de.export",
-            "betterc0de-export",
-            "betterc0de.export"
-          )
-          const terminalCommand = buildBetterC0deSessionIoTerminalCommand(
-            "export",
-            args
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = await buildExportThreadOutput(threadId, args, {
-            betterC0deMode: betterC0deExportMode,
-          })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "import",
-            "session.import",
-            "betterc0de-import",
-            "betterc0de.import",
-            "betterc0de-import",
-            "betterc0de.import"
-          )
-        ) {
-          const terminalCommand = buildBetterC0deSessionIoTerminalCommand(
-            "import",
-            args
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = await buildImportThreadOutput(args, activeThread)
-        }
-
-        if (isSlashCommand(cmd, "diff", "diffs", "session.diff")) {
-          output = await buildDiffThreadOutput(threadId, args)
-        }
-
-        if (isSlashCommand(cmd, "session.update")) {
-          output = await buildSessionUpdateThreadOutput(
-            store.threads,
-            threadId,
-            args
-          )
-        }
-
-        if (isSlashCommand(cmd, "rename", "title", "session.rename")) {
-          output = buildRenameThreadOutput(threadId, args)
-        }
-
-        if (isSlashCommand(cmd, "timeline", "session.timeline")) {
-          output = await buildTimelineThreadOutput(threadId)
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "events",
-            "event.subscribe",
-            "event-subscribe",
-            "session.events"
-          )
-        ) {
-          output = await buildEventsThreadOutput(threadId)
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "messages",
-            "message-list",
-            "message",
-            "session.messages",
-            "session.message",
-            "session.message.list",
-            "v2.session.messages",
-            "v2-session-messages"
-          )
-        ) {
-          output = await buildMessagesThreadOutput(threadId, args)
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "context",
-            "session.context",
-            "context-list",
-            "v2.session.context",
-            "v2-session-context"
-          )
-        ) {
-          output = await buildContextThreadOutput(threadId, {
-            selectedProvider,
-            selectedModel,
-            chatMode: effectiveChatMode,
-            permissionLevel,
-            contextWindow,
-            full: args.includes("--full"),
-          })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "first",
-            "first-message",
-            "messages.first",
-            "session.first"
-          )
-        ) {
-          dispatchChatMessageScroll("first", threadId)
-          return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "last",
-            "last-message",
-            "messages.last",
-            "session.last"
-          )
-        ) {
-          dispatchChatMessageScroll("last", threadId)
-          return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "last-user",
-            "last-user-message",
-            "messages-last-user",
-            "messages.last_user",
-            "session.messages_last_user"
-          )
-        ) {
-          dispatchChatMessageScroll("last-user", threadId)
-          return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "next-message",
-            "message-next",
-            "message.next",
-            "messages.next",
-            "session.message.next"
-          )
-        ) {
-          dispatchChatMessageScroll("next", threadId)
-          return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "previous-message",
-            "prev-message",
-            "message-previous",
-            "message.previous",
-            "messages.previous",
-            "session.message.previous"
-          )
-        ) {
-          dispatchChatMessageScroll("previous", threadId)
-          return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "page-up",
-            "pageup",
-            "messages-page-up",
-            "message.page_up",
-            "messages.page_up",
-            "session.page.up"
-          )
-        ) {
-          dispatchChatMessageScroll("page-up", threadId)
-          return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "page-down",
-            "pagedown",
-            "messages-page-down",
-            "message.page_down",
-            "messages.page_down",
-            "session.page.down"
-          )
-        ) {
-          dispatchChatMessageScroll("page-down", threadId)
-          return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "line-up",
-            "lineup",
-            "messages-line-up",
-            "message.line_up",
-            "messages.line_up",
-            "session.line.up"
-          )
-        ) {
-          dispatchChatMessageScroll("line-up", threadId)
-          return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "line-down",
-            "linedown",
-            "messages-line-down",
-            "message.line_down",
-            "messages.line_down",
-            "session.line.down"
-          )
-        ) {
-          dispatchChatMessageScroll("line-down", threadId)
-          return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "half-page-up",
-            "halfpage-up",
-            "session.half.page.up"
-          )
-        ) {
-          dispatchChatMessageScroll("half-page-up", threadId)
-          return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "half-page-down",
-            "halfpage-down",
-            "session.half.page.down"
-          )
-        ) {
-          dispatchChatMessageScroll("half-page-down", threadId)
-          return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "open",
-            "editor",
-            "file.open",
-            "prompt.editor",
-            "prompt-editor"
-          )
-        ) {
-          output = await buildOpenFileOutput(threadId, args)
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "add-selection",
-            "context.addselection",
-            "context-add-selection",
-            "selection-context"
-          )
-        ) {
-          output = buildAddSelectionContextOutput(threadId)
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "editor-context-clear",
-            "prompt.editor_context.clear",
-            "prompt-editor-context-clear"
-          )
-        ) {
-          output = buildClearEditorContextOutput()
-        }
-
-        if (isSlashCommand(cmd, "close", "close-tab", "tab.close")) {
-          output = buildCloseEditorTabOutput()
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "warp",
-            "workspace",
-            "workspace.set",
-            "workspace-set",
-            "project.open",
-            "project-open",
-            "project.update",
-            "project-update"
-          )
-        ) {
-          output = await buildWarpWorkspaceOutput(threadId, args)
-        }
-
-        if (isSlashCommand(cmd, "project-next", "project.next")) {
-          const target = resolveAdjacentProjectThread(
-            store.threads,
-            threadId,
-            1
-          )
-          if (target) {
-            store.setActiveThread(target.id)
-            return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-          }
-          output =
-            "# Next Project\n\n> No other project is represented by recent chats."
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "project-previous",
-            "project.previous",
-            "project-prev"
-          )
-        ) {
-          const target = resolveAdjacentProjectThread(
-            store.threads,
-            threadId,
-            -1
-          )
-          if (target) {
-            store.setActiveThread(target.id)
-            return slashAbort({ threadId, output, outputMessageId, outputMessageCreatedAt, outputMessageCompactionGeneration, outputUserMessageId, outputUserMessageCreatedAt })
-          }
-          output =
-            "# Previous Project\n\n> No other project is represented by recent chats."
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "workspace-new",
-            "workspace.new",
-            "worktree.create",
-            "worktree-create"
-          )
-        ) {
-          output = await buildWorkspaceNewOutput(threadId)
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "workspace-toggle",
-            "workspace.toggle",
-            "project.list",
-            "project-list",
-            "project.current",
-            "project-current"
-          )
-        ) {
-          output = buildWorkspaceToggleOutput(activeThread)
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "workspace-list",
-            "workspace.list",
-            "worktree-list",
-            "worktree.list"
-          )
-        ) {
-          output = await buildWorkspaceListOutput(activeThread)
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "workspace-remove",
-            "workspace.remove",
-            "worktree-remove",
-            "worktree.remove"
-          )
-        ) {
-          output = await buildWorkspaceRemoveOutput(threadId, args)
-        }
-
-        if (
-          isSlashCommand(
-            cmd,
-            "workspace-reset",
-            "workspace.reset",
-            "worktree-reset",
-            "worktree.reset"
-          )
-        ) {
-          output = await buildWorkspaceResetOutput(threadId, args)
-        }
-
-        let mcpList: RuntimeMcpServer[] = []
-        let skillList: RuntimeSkill[] = []
-        let subagentList: RuntimeSubagent[] = []
-        let projectSubagentList: RuntimeSubagent[] = []
-        let projectCommandList: WorkspaceProjectCommand[] = []
-        let projectReferenceList: WorkspaceProjectReference[] = []
-        let projectFormatterList: WorkspaceProjectFormatter[] = []
-        let projectLspServerList: WorkspaceProjectLspServer[] = []
-        let projectPermissionList: WorkspaceProjectPermissionRule[] = []
-        let projectConfigList: WorkspaceProjectConfigSetting[] = []
-        let projectProvidersSummary: WorkspaceProjectProvidersSummary | null =
-          null
-        let projectPluginList: WorkspaceProjectPlugin[] = []
-        let projectToolList: WorkspaceProjectToolFlag[] = []
-        try {
-          const [mcps, skills, subagents] = await Promise.all([
-            listRuntimeMcps(),
-            listRuntimeSkills(),
-            listRuntimeSubagents(),
-          ])
-          mcpList = mcps
-          skillList = skills
-          subagentList = subagents
-        } catch {
-          console.warn(
-            "Failed to load runtime MCPs/skills/subagents for slash commands"
-          )
-        }
-        const slashRuntimePath = resolveThreadRuntimePath(activeThread)
-        if (slashRuntimePath) {
-          try {
-            const [
-              commands,
-              projectMcps,
-              projectSkills,
-              projectSubagents,
-              projectReferences,
-              projectFormatters,
-              projectLspServers,
-              projectPermissions,
-              projectConfig,
-              projectProviders,
-              projectPlugins,
-              projectTools,
-            ] = await Promise.all([
-              listProjectCommands(slashRuntimePath),
-              listProjectRuntimeMcps(slashRuntimePath),
-              listProjectRuntimeSkills(slashRuntimePath),
-              listProjectRuntimeSubagents(slashRuntimePath),
-              listProjectReferences(slashRuntimePath),
-              listProjectFormatters(slashRuntimePath),
-              listProjectLspServers(slashRuntimePath),
-              listProjectPermissions(slashRuntimePath),
-              listProjectConfigSettings(slashRuntimePath),
-              listProjectProviders(slashRuntimePath),
-              listProjectPlugins(slashRuntimePath),
-              listProjectTools(slashRuntimePath),
-            ])
-            projectCommandList = commands
-            projectSubagentList = projectSubagents
-            projectReferenceList = projectReferences
-            projectFormatterList = projectFormatters
-            projectLspServerList = projectLspServers
-            projectPermissionList = projectPermissions
-            projectConfigList = projectConfig
-            projectProvidersSummary = projectProviders
-            projectPluginList = projectPlugins
-            projectToolList = projectTools
-            mcpList = mergeRuntimeMcps(mcpList, projectMcps)
-            skillList = mergeRuntimeSkills(skillList, projectSkills)
-            subagentList = mergeRuntimeSubagents(subagentList, projectSubagents)
-          } catch {
-            projectCommandList = []
-            projectSubagentList = []
-            projectReferenceList = []
-            projectFormatterList = []
-            projectLspServerList = []
-            projectPermissionList = []
-            projectConfigList = []
-            projectProvidersSummary = null
-            projectPluginList = []
-            projectToolList = []
-          }
-        }
-
-        if (isSlashCommand(cmd, "undo", "session.undo", "session.revert")) {
-          output = await buildUndoCheckpointOutput(threadId, args[0])
-        } else if (
-          isSlashCommand(cmd, "redo", "session.redo", "session.unrevert")
-        ) {
-          output = await buildRedoCheckpointOutput(threadId)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "interrupt",
-            "stop",
-            "cancel",
-            "session.interrupt",
-            "session.abort"
-          )
-        ) {
-          output = await buildInterruptThreadOutput(
-            threadId,
-            selectedProvider,
-            selectedProviderId
-          )
-        } else if (
-          isSlashCommand(cmd, "exit", "quit", "q", "app.exit", "app-exit")
-        ) {
-          scheduleWindowCloseFromChat()
-          output = "# Exit\n\nClosing BetterC0de window."
-        } else if (isSlashCommand(cmd, "help", "help.show", "help-show")) {
-          const sections: string[] = [
-            "# BetterC0de Commands\n",
-            "**Built-in**\n",
-            "| Command | What it does |",
-            "|:--------|:-------------|",
-            "| `/plan [prompt]` | Switch this thread into plan mode |",
-            "| `/ask [prompt]` | Switch this thread into read-only ask mode |",
-            "| `/security [prompt]` | Switch this thread into security review mode |",
-            "| `/debug [prompt]` | Switch this thread into debug mode |",
-            "| `/default`, `/build`, `/agent-mode` | Return this thread to normal build mode |",
-            "| `/agent`, `/agent.cycle` | Cycle the selected BetterC0de compatibility provider agent |",
-            "| `/model`, `/models` | Open the model picker |",
-            "| `/command-palette`, `/command.palette.show` | Open the command palette |",
-            "| `/model-next`, `/model-previous`, `/favorite-next`, `/favorite-previous` | Cycle models without opening the picker |",
-            "| `/favorite-toggle`, `/model.dialog.favorite` | Toggle the current model as favorite |",
-            "| `/sessions`, `/session.list --format json`, `/resume`, `/continue` | List or resume recent chats |",
-            "| `/session.next`, `/session.previous` | Navigate recent chats like BetterC0de app commands |",
-            "| `/new`, `/clear` | Start a new chat session |",
-            "| `/project.open`, `/project.next`, `/project.previous` | Open or navigate projects represented by chats |",
-            "| `/workspace.new`, `/workspace.toggle`, `/workspace.list`, `/workspace.remove`, `/workspace.reset` | Create, inspect, list, remove, or reset isolated worktree workspace state |",
-            "| `/init [focus]` | Create or update repo-local `AGENTS.md` instructions |",
-            "| `/review [commit|branch|pr]`, `/pr <number>` | Review uncommitted changes, a commit, branch, or PR |",
-            "| `/github`, `/github.install`, `/github.run` | Show BetterC0de GitHub agent setup and run guidance; `/github.install --workflow-only --provider <provider> --model <model>` writes the workflow file |",
-            "| `/commands`, `/project-commands` | List repo-local command templates and config commands; add `--config-only` to write a config command |",
-            "| `/references`, `/refs` | List configured BetterC0de project references; add `--config-only` to write an alias |",
-            "| `/format <file> [formatter] [--dry-run|--terminal]` | Run or preview a BetterC0de project formatter |",
-            "| `/formatters` | List BetterC0de project formatter config; add `--config-only` to write a formatter entry |",
-            "| `/lsp`, `/lsps`, `/debug.lsp` | List BetterC0de project LSP server config; add `--config-only` to write an LSP entry |",
-            "| `/lsp diagnostics <file> [--json]`, `/lsp symbols <query> [--json]`, `/lsp document-symbols <uri> [--json]` | Show BetterC0de LSP debug guidance and local JSON previews |",
-            "| `/permissions` | List BetterC0de project permission rules; add `--config-only` to write explicit permission config |",
-            "| `/approvals` | List pending provider/BetterC0de approval requests |",
-            "| `/approve <#|id>`, `/deny <#|id>` | Reply to a pending approval request |",
-            "| `/todos`, `/tasks`, `/session.todo` | Show the current BetterC0de session todo list |",
-            "| `/betterc0de-config`, `/project-config`, `/debug.config` | Show BetterC0de project config summary |",
-            "| `/betterc0de-audit`, `/betterc0de-parity` | Show BetterC0de feature-area compatibility coverage |",
-            "| `/betterc0de-cli`, `/betterc0de.commands` | Show command-by-command BetterC0de compatibility coverage |",
-            "| `/betterc0de-api`, `/betterc0de.api` | Show BetterC0de HTTP/API compatibility coverage |",
-            "| `/betterc0de-gaps`, `/betterc0de.missing` | Show partial and display-only BetterC0de compatibility gaps |",
-            "| `/betterc0de-sync`, `/sync.history.list` | Show BetterC0de sync compatibility and validation |",
-            "| `/betterc0de-workspace`, `/experimental.workspace.warp` | Show BetterC0de workspace sync/warp compatibility |",
-            "| `/betterc0de-lifecycle`, `/global.dispose` | Show BetterC0de lifecycle compatibility |",
-            "| `/tui-control`, `/tui.control.next` | Show BetterC0de terminal control compatibility |",
-            "| `/tui`, `/keybinds`, `/which-key` | Show BetterC0de terminal UI config, keybind overrides, and defaults; add `--config-only` to write safe `tui.json` settings |",
-            "| `/tips` | Show BetterC0de workflow tips |",
-            "| `/theme.cycle`, `/theme.scheme.cycle`, `/language.cycle` | BetterC0de app command compatibility |",
-            "| `/attachments`, `/tool-output`, `/compaction` | Show BetterC0de runtime limits and context controls; add `--config-only` to write safe limit settings |",
-            "| `/betterc0de-runtime` | Show BetterC0de shell, server, watcher, limits, share, enterprise, and app settings; add `--config-only` to write runtime config |",
-            "| `/betterc0de-tui`, `/betterc0de-run`, `/betterc0de-serve`, `/betterc0de-web`, `/betterc0de-acp` | Show BetterC0de runtime compatibility entrypoint guidance; add `--terminal` to prefill the integrated terminal |",
-            "| `/betterc0de-upgrade`, `/betterc0de-uninstall`, `/betterc0de-generate`, `/betterc0de-completion`, `/betterc0de-db`, `/db.query` | Show BetterC0de maintenance/database compatibility guidance; add `--terminal` to prefill the integrated terminal |",
-            "| `/project-providers` | Show BetterC0de project provider, model, and auth config |",
-            "| `/project-plugins` | Show BetterC0de project plugin specs |",
-            "| `/project-tools` | Show BetterC0de project tool flags and custom tool modules; add `--config-only` to write legacy tool flags |",
-            "| `/undo [turn]` | Restore the previous checkpoint, or a specific checkpoint turn |",
-            "| `/redo` | Reapply the last checkpoint undo |",
-            "| `/interrupt`, `/stop`, `/cancel` | Interrupt the active provider turn |",
-            "| `/fork` | Fork this chat into an independent session |",
-            "| `/parent`, `/child [id|title]`, `/child-next`, `/child-previous` | Navigate forked chat session branches |",
-            "| `/pin`, `/pins`, `/quick-switch <1-9>` | Pin sessions and jump to BetterC0de-compatible pinned slots |",
-            "| `/archive`, `/unarchive`, `/archives`, `/delete-session --yes` | Archive, restore, inspect, or permanently delete sessions |",
-            ...shareCommandHelpRows(projectConfigList),
-            "| `/copy` | Copy this chat transcript to the clipboard |",
-            "| `/copy-last`, `/copy-assistant`, `/copy-message` | Copy the latest assistant message to the clipboard |",
-            "| `/export [file.md]`, `/export --json [file.json]` | Export this chat transcript into the workspace; add `--terminal` for raw `betterc0de export` |",
-            "| `/import <file.json|url>`, `/session.import <file.json|url>` | Import a BetterC0de JSON session or compatibility share data; add `--terminal` for raw `betterc0de import` |",
-            "| `/diff [--full]`, `/session.diff` | Show the active chat session diff summary |",
-            "| `/rename <title>`, `/title <title>` | Rename the active chat session |",
-            "| `/timeline` | Show a compact timeline of this chat session |",
-            "| `/messages [--limit 20] [--order asc|desc] [--cursor n]`, `/session.message.list` | Page through chat messages |",
-            "| `/context [--full]`, `/session.context` | Inspect active chat context after the last compaction |",
-            "| `/vcs`, `/vcs diff`, `/vcs raw`, `/vcs.apply [patch.diff]` | Show BetterC0de-compatible VCS status, diff, or patch-apply guidance |",
-            "| `/history`, `/history-use [#|id]` | Show or restore BetterC0de-compatible prompt history |",
-            "| `/prompt-clear`, `/prompt-paste`, `/prompt-submit` | BetterC0de prompt controls |",
-            "| `/stash <prompt>` | Save prompt text to the BetterC0de-compatible prompt stash |",
-            "| `/stashes`, `/stash-pop [#|id]`, `/stash-delete <#|id>` | List, restore, or delete stashed prompts |",
-            "| `/first`, `/last`, `/last-user`, `/next-message`, `/previous-message` | Navigate chat messages without sending to the model |",
-            "| `/page-up`, `/page-down`, `/half-page-up`, `/half-page-down`, `/line-up`, `/line-down` | Scroll the chat transcript without sending to the model |",
-            "| `/open [path[:line[:column]]]`, `/editor` | Open Quick Open or a workspace file in Editor Mode |",
-            "| `/add-selection`, `/context.addSelection` | Add the active editor selection to the composer context |",
-            "| `/close`, `/close-tab` | Close the active editor tab |",
-            "| `/warp [folder]`, `/workspace [folder]` | Change the workspace for this chat |",
-            "| `/mode-next`, `/mode-previous` | Cycle between Agent, Plan, Ask, Security, and Debug modes |",
-            "| `/exit`, `/quit`, `/q` | Close the BetterC0de window |",
-            "| `/help` | Show this overview |",
-            "| `/mcps`, `/mcp.list` | Show installed MCP servers with connection details |",
-            "| `/mcp-resources`, `/experimental.resource.list` | Show BetterC0de-compatible MCP resource availability |",
-            "| `/mcp-auth`, `/mcp.auth.list` | Show OAuth authentication status for MCP servers |",
-            "| `/mcp-add`, `/mcp-logout`, `/mcp-debug <id>` | BetterC0de MCP add/logout/debug compatibility; add `--config-only` to write project MCP config |",
-            "| `/mcp-toggle <id> [on|off]` | Enable or disable an installed MCP server; add `--config-only` to write a project override |",
-            "| `/skills`, `/debug.skill` | Show installed skills and their content; add `--config-only` to add compatibility skill paths or URLs |",
-            "| `/agents`, `/debug.agent` | Show configured subagents and BetterC0de-compatible details; add `--terminal` for `betterc0de agent list` / `betterc0de debug agent` |",
-            "| `/agent-create`, `/agent.create` | Show BetterC0de agent create guidance; add `--terminal` to prefill raw `betterc0de agent create` |",
-            "| `/instructions`, `/project-rules` | Show injected project rules and BetterC0de instructions; add `--config-only` to add instruction file globs |",
-            "| `/status` | Show system status overview |",
-            "| `/debug-info`, `/debug.info` | Show BetterC0de-compatible app, OS, and runtime diagnostics |",
-            "| `/debug-paths`, `/debug.paths`, `/db.path` | Show BetterC0de data paths and SQLite database path |",
-            "| `/debug-rg [files|read|search|tree]`, `/debug.file.[status|list|read|search|tree]`, `/file.[status|list|read]` | Run read-only BetterC0de-compatible workspace file/search diagnostics |",
-            "| `/debug-snapshot [track|patch|diff]` | Show read-only BetterC0de-compatible snapshot/checkpoint diagnostics |",
-            "| `/debug-startup`, `/debug-scrap`, `/debug-v2`, `/debug-wait` | Show BetterC0de debug guidance |",
-            "| `/stats`, `/usage` | Show BetterC0de-compatible token, model, and tool usage statistics |",
-            "| `/plugin-install <module>`, `/plugin <module>`, `/plug <module>` | Show BetterC0de plugin install guidance |",
-            "| `/plugin-toggle <id> --enabled true --config-only` | Persist BetterC0de terminal UI `plugin_enabled` state |",
-            "| `/compact` | Compact this chat into a thread summary |",
-            "| `/docs` | Open BetterC0de documentation |",
-            "| `/settings [tab]` | Open Settings (`general`, `providers`, `appearance`, `rules`, `skills`, `tools`, `hooks`, `plugins`, `betterc0de`, `docs`) |",
-            "| `/org`, `/organization` | Open provider account and organization settings; add `--terminal` for `betterc0de console orgs/switch` |",
-            "| `/console`, `/app.debug` | Toggle the console/debug panel |",
-            "| `/app.log [level] <message>` | Write an BetterC0de-compatible local log entry |",
-            "| `/heap-snapshot`, `/app.heap_snapshot` | Write a Node backend heap snapshot to the logs directory |",
-            "| `/terminal`, `/terminal.suspend` | Toggle the terminal panel |",
-            "| `/terminal-title`, `/terminal.title.toggle` | Toggle integrated terminal tab titles |",
-            "| `/terminal-new`, `/terminal.new` | Open the terminal panel and create a new terminal session |",
-            "| `/review.toggle` | Toggle the review/diff panel |",
-            "| `/fileTree.toggle`, `/files` | Toggle the workspace file tree |",
-            "| `/sidebar` | Toggle the main app sidebar |",
-            "| `/input.focus` | Focus the chat input |",
-            "| `/animations`, `/file-context`, `/session-directory-filter` | Toggle BetterC0de-compatible app behavior flags |",
-            "| `/connect`, `/providers.login`, `/account.login`, `/console.login` | Show provider connection guidance; add `--terminal` to prefill the BetterC0de auth command |",
-            "| `/auth`, `/auth.list`, `/account.logout`, `/providers.logout` | Show provider authentication and setup status; add `--terminal` for logout/list commands |",
-            "| `/themes`, `/theme <dark|light>` | List or switch themes |",
-            "| `/theme-mode`, `/theme.switch_mode`, `/theme-mode-lock` | Switch or lock the light/dark theme mode |",
-            "| `/terminal-font [font|system]` | Show or set the integrated terminal font |",
-            "| `/variants`, `/variant.list` | Show model variant support |",
-            "| `/variant.cycle`, `/model.variant.cycle` | Cycle the current BetterC0de model variant |",
-            "| `/catalog [model|provider]`, `/models <query> --verbose`, `/catalog.model.list` | Inspect provider model catalog metadata |",
-            "| `/streaming [on|off]` | Toggle assistant response streaming |",
-            "| `/timestamps [on|off]`, `/toggle-timestamps [on|off]` | Toggle chat message timestamps |",
-            "| `/thinking [on|off]`, `/toggle-thinking [on|off]` | Toggle assistant thinking blocks |",
-            "| `/reasoning-summaries [on|off]` | Toggle compact reasoning summary headings |",
-            "| `/tool-details [on|off]`, `/actions [on|off]` | Toggle expanded tool details |",
-            "| `/progress [on|off]`, `/session.toggle.progress_bar [on|off]` | Toggle BetterC0de-compatible session progress rows |",
-            "| `/shell-expanded [on|off]`, `/edit-expanded [on|off]` | Toggle default expansion for shell and edit tool parts |",
-            "| `/scrollbar [on|off]`, `/toggle-scrollbar [on|off]` | Toggle the main chat scrollbar |",
-            "| `/generic-tool-output [on|off]` | Toggle raw output previews for generic tools |",
-            "| `/conceal [on|off]`, `/session.toggle.conceal [on|off]` | Toggle concealed code block previews |",
-            "| `/autosave [on|off]` | Toggle automatic conversation saving |",
-            "| `/diffwrap [on|off]` | Toggle diff viewer word wrap |",
-            "| `/diff-style [auto|stacked]` | Set BetterC0de-compatible diff layout |",
-            "| `/notifications [request|on|off|agent|permissions|errors]` | Show or change native notification settings |",
-            "| `/confirmations [on|off]` | Toggle archive and delete confirmations |",
-            "| `/autoaccept [on|off]` | Toggle automatic tool approval for this chat |",
-            "| `/density [on|off]`, `/compact-ui [on|off]` | Toggle compact chat spacing |",
-          ]
-          if (mcpList.length > 0) {
-            sections.push(
-              "",
-              "---",
-              "",
-              "**MCP Servers** - Type `/<name>` to reference\n"
-            )
-            for (const m of mcpList)
-              sections.push(
-                `- \`/${m.id}\` - **${m.name}** \`${m.command}\` ${m.enabled ? "" : "(disabled)"}`
-              )
-          }
-          const providerSlashCommands = selectedProvider?.slashCommands ?? []
-          if (providerSlashCommands.length > 0) {
-            sections.push(
-              "",
-              "---",
-              "",
-              `**${selectedProvider?.name ?? "Provider"} Commands** - Type \`/<command>\` to send a provider-native slash command\n`
-            )
-            for (const command of providerSlashCommands) {
-              const name = command.name.replace(/^\/+/, "")
-              sections.push(
-                `- \`/${name}\`${command.description ? ` - ${command.description}` : ""}`
-              )
-            }
-          }
-          const providerSkills = (selectedProvider?.skills ?? []).filter(
-            (skill) => skill.enabled
-          )
-          if (providerSkills.length > 0) {
-            sections.push(
-              "",
-              "---",
-              "",
-              `**${selectedProvider?.name ?? "Provider"} Skills** - Type \`/\` and choose **Skills**, or use \`$<skill>\` directly. Existing commands take precedence over a typed \`/<skill>\` alias.\n`
-            )
-            for (const skill of providerSkills) {
-              const name = skill.name.replace(/^\$+/, "")
-              sections.push(
-                `- \`$${name}\` - **${skill.displayName ?? skill.name}**`
-              )
-            }
-          }
-          if (skillList.length > 0) {
-            sections.push(
-              "",
-              "---",
-              "",
-              "**BetterC0de Runtime Skills** - Use `/<skill-id>` to run a skill as an BetterC0de-compatible command, or `@<skill-id>` to inline one explicitly for non-native providers\n"
-            )
-            for (const s of skillList)
-              sections.push(`- \`/${s.id}\` / \`@${s.id}\` - **${s.name}**`)
-          }
-          if (subagentList.length > 0) {
-            sections.push(
-              "",
-              "---",
-              "",
-              "**Subagents** - Type `/<name>` to inspect or `@<subagent-id>` to inject into the prompt\n"
-            )
-            for (const agent of subagentList)
-              sections.push(`- \`/${agent.id}\` - **${agent.name}**`)
-          }
-          if (projectCommandList.length > 0) {
-            sections.push(
-              "",
-              "---",
-              "",
-              "**Project Commands** - Type `/<command>` to run repo-local `.betterc0de/command(s)` templates\n"
-            )
-            for (const command of projectCommandList) {
-              sections.push(
-                `- \`/${command.name}\` - **${command.description ?? command.sourcePath}**`
-              )
-            }
-          }
-          if (projectReferenceList.length > 0) {
-            sections.push(
-              "",
-              "---",
-              "",
-              "**Project References** - Type `@<alias>` or `@<alias>/<path>` to point the agent at an BetterC0de reference\n"
-            )
-            for (const reference of projectReferenceList) {
-              sections.push(
-                `- \`@${reference.id}\` - **${reference.kind}** ${reference.repository ?? reference.relativePath ?? reference.message ?? reference.sourcePath}`
-              )
-            }
-          }
-          if (projectFormatterList.length > 0) {
-            sections.push(
-              "",
-              "---",
-              "",
-              "**Project Formatters** - Type `/formatters` for command details\n"
-            )
-            for (const formatter of projectFormatterList) {
-              sections.push(
-                `- \`${formatter.id}\` - **${formatter.enabled ? "enabled" : "disabled"}** ${formatter.command || "built-in"}`
-              )
-            }
-          }
-          if (projectLspServerList.length > 0) {
-            sections.push(
-              "",
-              "---",
-              "",
-              "**Project LSP Servers** - Type `/lsp` for command details\n"
-            )
-            for (const server of projectLspServerList) {
-              sections.push(
-                `- \`${server.id}\` - **${server.enabled ? "enabled" : "disabled"}** ${server.command || "built-in"}`
-              )
-            }
-          }
-          if (projectPermissionList.length > 0) {
-            sections.push(
-              "",
-              "---",
-              "",
-              "**Project Permissions** - Type `/permissions` for rules\n"
-            )
-            for (const rule of projectPermissionList) {
-              sections.push(
-                `- \`${rule.permission}\` \`${rule.pattern}\` - **${rule.action}**`
-              )
-            }
-          }
-          if (projectConfigList.length > 0) {
-            sections.push(
-              "",
-              "---",
-              "",
-              "**BetterC0de Project Config** - Type `/betterc0de` for the full summary\n"
-            )
-            for (const setting of projectConfigList.slice(0, 12)) {
-              sections.push(`- \`${setting.key}\` - **${setting.value}**`)
-            }
-          }
-          if (
-            projectProvidersSummary &&
-            (projectProvidersSummary.providers.length > 0 ||
-              projectProvidersSummary.defaultModel ||
-              projectProvidersSummary.enabledProviders.length > 0 ||
-              projectProvidersSummary.disabledProviders.length > 0)
-          ) {
-            sections.push(
-              "",
-              "---",
-              "",
-              "**BetterC0de Project Providers** - Type `/project-providers` for provider and model details\n"
-            )
-            if (projectProvidersSummary.defaultModel) {
-              sections.push(
-                `- Default model: \`${projectProvidersSummary.defaultModel}\``
-              )
-            }
-            for (const provider of projectProvidersSummary.providers) {
-              sections.push(
-                `- \`${provider.id}\` - **${provider.name ?? provider.id}** (${provider.models.length} model${provider.models.length === 1 ? "" : "s"})`
-              )
-            }
-          }
-          if (projectPluginList.length > 0) {
-            sections.push(
-              "",
-              "---",
-              "",
-              "**BetterC0de Project Plugins** - Type `/project-plugins` for plugin specs\n"
-            )
-            for (const plugin of projectPluginList) {
-              sections.push(
-                `- \`${plugin.spec}\` - **${plugin.kind}** ${plugin.message ?? ""}`
-              )
-            }
-          }
-          if (projectToolList.length > 0) {
-            sections.push(
-              "",
-              "---",
-              "",
-              "**BetterC0de Project Tools** - Type `/project-tools` for tool flags and custom tool modules\n"
-            )
-            for (const tool of projectToolList) {
-              sections.push(
-                `- \`${tool.tool}\` - **${formatProjectToolState(tool)}**`
-              )
-            }
-          }
-          output = sections.join("\n")
-        } else if (isBetterC0deSessionSlashSubcommand(cmd, args, "list")) {
-          const sessionArgs = stripBetterC0deSessionSlashSubcommand(args)
-          const terminalCommand = buildBetterC0deSessionCliTerminalCommand(
-            "/betterc0de-session-list",
-            sessionArgs
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = buildBetterC0deSessionCliOutput(
-            "/betterc0de-session-list",
-            sessionArgs,
-            activeThread
-          )
-        } else if (isBetterC0deSessionSlashSubcommand(cmd, args, "delete")) {
-          const sessionArgs = stripBetterC0deSessionSlashSubcommand(args)
-          const terminalCommand = buildBetterC0deSessionCliTerminalCommand(
-            "/betterc0de-session-delete",
-            sessionArgs
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = buildBetterC0deSessionCliOutput(
-            "/betterc0de-session-delete",
-            sessionArgs,
-            activeThread
-          )
-        } else if (
-          isSlashCommand(
-            cmd,
-            "sessions",
-            "session",
-            "resume",
-            "continue",
-            "session.list",
-            "session.get",
-            "session-list",
-            "v2.session.list",
-            "v2-session-list"
-          )
-        ) {
-          output = buildSessionsOutput(
-            filterThreadsForSessionDirectory(
-              store.threads,
-              threadId,
-              useAppearanceStore.getState().sessionDirectoryFilterEnabled
-            ),
-            threadId,
-            parseSessionListOptions(args)
-          )
-        } else if (
-          isSlashCommand(cmd, "history", "prompt-history", "histories")
-        ) {
-          output = buildPromptHistoryListOutput(
-            usePreferencesStore.getState().promptHistoryEntries
-          )
-        } else if (
-          isSlashCommand(
-            cmd,
-            "history-use",
-            "history-pop",
-            "prompt-history-use",
-            "prompt.history.previous",
-            "prompt-history-previous",
-            "prompt.history.next",
-            "prompt-history-next"
-          )
-        ) {
-          if (!threadId) {
-            threadId = store.createThread("New Chat", "BetterC0de")
-          }
-          output = buildPromptHistoryUseOutput(args[0], threadId)
-        } else if (
-          isSlashCommand(cmd, "prompt-clear", "prompt.clear", "clear-prompt")
-        ) {
-          if (!threadId) {
-            threadId = store.createThread("New Chat", "BetterC0de")
-          }
-          output = buildPromptClearOutput(threadId)
-        } else if (isSlashCommand(cmd, "prompt-paste", "prompt.paste")) {
-          if (!threadId) {
-            threadId = store.createThread("New Chat", "BetterC0de")
-          }
-          output = await buildPromptPasteOutput(threadId, args.join(" "))
-        } else if (isSlashCommand(cmd, "prompt-submit", "prompt.submit")) {
-          output = buildPromptSubmitOutput()
-        } else if (
-          isSlashCommand(
-            cmd,
-            "input-actions",
-            ...BETTERC0DE_INPUT_ACTION_COMMANDS
-          )
-        ) {
-          output = buildComposerInputActionsOutput(cmd)
-        } else if (
-          isSlashCommand(cmd, "stash", "prompt-stash", "prompt.stash")
-        ) {
-          output = buildPromptStashPushOutput(
-            args.join(" "),
-            threadId,
-            activeThread
-          )
-        } else if (
-          isSlashCommand(
-            cmd,
-            "stashes",
-            "stash-list",
-            "prompt-stash-list",
-            "prompt.stash.list"
-          )
-        ) {
-          output = buildPromptStashListOutput(
-            usePreferencesStore.getState().promptStashEntries
-          )
-        } else if (
-          isSlashCommand(
-            cmd,
-            "stash-pop",
-            "prompt-stash-pop",
-            "prompt.stash.pop"
-          )
-        ) {
-          if (!threadId) {
-            threadId = store.createThread("New Chat", "BetterC0de")
-          }
-          output = buildPromptStashPopOutput(args[0], threadId)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "stash-delete",
-            "stash-remove",
-            "prompt-stash-delete",
-            "stash.delete"
-          )
-        ) {
-          output = buildPromptStashDeleteOutput(args[0])
-        } else if (
-          isSlashCommand(
-            cmd,
-            "commands",
-            "project-commands",
-            "command.list",
-            "command-list"
-          )
-        ) {
-          if (args.includes("--config-only")) {
-            output = await buildProjectCommandConfigOutput(args, activeThread)
-          } else {
-            output = buildProjectCommandsOutput(
-              projectCommandList,
-              skillList,
-              activeThread
-            )
-          }
-        } else if (
-          isSlashCommand(cmd, "references", "refs", "project-references")
-        ) {
-          if (args.includes("--config-only")) {
-            output = await buildProjectReferenceConfigOutput(args, activeThread)
-          } else {
-            output = buildProjectReferencesOutput(
-              projectReferenceList,
-              activeThread
-            )
-          }
-        } else if (
-          isSlashCommand(cmd, "format", "project-format", "formatter.run")
-        ) {
-          const terminalCommand = buildProjectFormatTerminalCommand(
-            args,
-            projectFormatterList
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = await buildProjectFormatOutput(
-            args,
-            projectFormatterList,
-            activeThread
-          )
-        } else if (
-          isSlashCommand(
-            cmd,
-            "formatters",
-            "project-formatters",
-            "formatter.status",
-            "formatter-status"
-          )
-        ) {
-          if (args.includes("--config-only")) {
-            output = await buildProjectFormatterConfigOutput(args, activeThread)
-          } else {
-            output = buildProjectFormattersOutput(
-              projectFormatterList,
-              activeThread
-            )
-          }
-        } else if (
-          isSlashCommand(
-            cmd,
-            "lsp",
-            "lsps",
-            "language-servers",
-            "debug.lsp",
-            "debug-lsp",
-            "lsp.status",
-            "lsp-status",
-            "debug.lsp.diagnostics",
-            "debug-lsp-diagnostics",
-            "debug.lsp.symbols",
-            "debug-lsp-symbols",
-            "debug.lsp.document-symbols",
-            "debug-lsp-document-symbols"
-          )
-        ) {
-          const terminalCommand = buildProjectLspTerminalCommand(cmd, args)
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          if (args.includes("--config-only")) {
-            output = await buildProjectLspConfigOutput(args, activeThread)
-          } else {
-            output = buildProjectLspServersOutput(
-              projectLspServerList,
-              activeThread,
-              cmd,
-              args
-            )
-          }
-        } else if (isSlashCommand(cmd, "permissions", "project-permissions")) {
-          if (args.includes("--config-only")) {
-            output = await buildProjectPermissionsConfigOutput(
-              args,
-              activeThread
-            )
-          } else {
-            output = buildProjectPermissionsOutput(
-              projectPermissionList,
-              activeThread,
-              permissionLevel,
-              projectSubagentList
-            )
-          }
-        } else if (
-          isSlashCommand(
-            cmd,
-            "approvals",
-            "approval-list",
-            "permission-list",
-            "permission.list",
-            "permissions-pending",
-            "permission.prompt.fullscreen",
-            "permission-fullscreen"
-          )
-        ) {
-          output = await buildPendingApprovalsThreadOutput(threadId)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "approve",
-            "approval-approve",
-            "permission-approve",
-            "permission.reply",
-            "permission.respond"
-          )
-        ) {
-          output = await buildApprovalDecisionOutput(
-            threadId,
-            args[0],
-            "approve"
-          )
-        } else if (
-          isSlashCommand(
-            cmd,
-            "deny",
-            "reject",
-            "approval-deny",
-            "permission-deny"
-          )
-        ) {
-          output = await buildApprovalDecisionOutput(threadId, args[0], "deny")
-        } else if (
-          isSlashCommand(
-            cmd,
-            "questions",
-            "question-list",
-            "question.list",
-            "user-inputs",
-            "user-input-list"
-          )
-        ) {
-          output = await buildPendingUserInputsThreadOutput(threadId)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "answer",
-            "question-reply",
-            "question.reply",
-            "user-input-answer"
-          )
-        ) {
-          output = await buildUserInputAnswerOutput(threadId, args)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "reject-question",
-            "question-reject",
-            "question.reject",
-            "user-input-reject"
-          )
-        ) {
-          output = await buildUserInputRejectOutput(threadId, args[0])
-        } else if (
-          isSlashCommand(cmd, "todos", "todo", "tasks", "session.todo")
-        ) {
-          output = await buildThreadTodosOutput(threadId)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "session-status",
-            "session.status",
-            "status.session",
-            "thread-status"
-          )
-        ) {
-          output = await buildSessionStatusOutput(threadId)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "vcs",
-            "vcs.status",
-            "vcs-status",
-            "vcs.get",
-            "vcs.diff",
-            "vcs-diff",
-            "vcs.diff.raw",
-            "vcs-diff-raw",
-            "vcs-apply",
-            "vcs.apply"
-          )
-        ) {
-          const terminalCommand = isVcsApplyCommand(cmd, args)
-            ? buildVcsApplyTerminalCommand(args)
-            : { command: "", shouldOpen: false }
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = await buildVcsOutput(cmd, args, activeThread)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "find",
-            "find.text",
-            "find-text",
-            "find.file",
-            "find-file",
-            "find.files",
-            "find-files",
-            "find.symbol",
-            "find-symbol",
-            "find.symbols",
-            "find-symbols"
-          )
-        ) {
-          output = await buildFindOutput(cmd, args, activeThread)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "betterc0de",
-            "betterc0de-config",
-            "betterc0de",
-            "project-config",
-            "betterc0de-config",
-            "debug.config",
-            "debug-config",
-            "config.get",
-            "config-get",
-            "config.update",
-            "config-update",
-            "global.config.get",
-            "global-config-get",
-            "global.config.update",
-            "global-config-update",
-            "betterc0de-config",
-            "betterc0de",
-            "compat-config"
-          )
-        ) {
-          if (isSlashCommand(cmd, "debug.config", "debug-config")) {
-            if (args.some(isBetterC0deRuntimeTerminalFlag)) {
-              dispatchPrefilledTerminalCommand(
-                activeThread,
-                "betterc0de debug config"
-              )
-            }
-            output = buildBetterC0deDebugConfigOutput(
-              projectConfigList,
-              activeThread,
-              args
-            )
-          } else {
-            output = buildProjectConfigOutput(projectConfigList, activeThread)
-          }
-        } else if (
-          isSlashCommand(
-            cmd,
-            "betterc0de-audit",
-            "betterc0de.parity",
-            "betterc0de-parity",
-            "compat",
-            "compat-audit",
-            "betterc0de-audit",
-            "betterc0de.parity",
-            "betterc0de-parity",
-            "parity"
-          )
-        ) {
-          output = buildBetterC0deParityMarkdown()
-        } else if (
-          isSlashCommand(
-            cmd,
-            "betterc0de-cli",
-            "betterc0de.commands",
-            "betterc0de-commands",
-            "betterc0de.entrypoints",
-            "betterc0de-entrypoints",
-            "betterc0de-cli",
-            "betterc0de.commands",
-            "betterc0de-commands",
-            "betterc0de.entrypoints",
-            "betterc0de-entrypoints"
-          )
-        ) {
-          output = buildBetterC0deCliParityMarkdown(args)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "betterc0de-api",
-            "betterc0de.api",
-            "betterc0de-http",
-            "betterc0de.http",
-            "betterc0de-http",
-            "betterc0de.api",
-            "betterc0de-api",
-            "betterc0de.http",
-            "openapi",
-            "openapi.operations"
-          )
-        ) {
-          output = buildBetterC0deHttpParityMarkdown(args)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "betterc0de-gaps",
-            "betterc0de.missing",
-            "betterc0de-missing",
-            "betterc0de.todo",
-            "betterc0de-todo",
-            "betterc0de-gaps",
-            "betterc0de.missing",
-            "betterc0de-missing",
-            "betterc0de.todo",
-            "betterc0de-todo"
-          )
-        ) {
-          output = buildBetterC0deGapMarkdown(args)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "betterc0de-sync",
-            "betterc0de.sync",
-            "betterc0de-sync",
-            "sync",
-            "sync.history.list",
-            "sync-history",
-            "sync.replay",
-            "sync-replay",
-            "sync.start",
-            "sync-start",
-            "sync.steal",
-            "sync-steal"
-          )
-        ) {
-          output = buildBetterC0deSyncRouteOutput(cmd, args, {
-            threads: store.threads,
-            activeThreadId: threadId,
-            activitiesByThread: store.activitiesByThread,
-            streamingByThread: store.streamingByThread,
-            activeThread,
-          })
-        } else if (
-          isSlashCommand(
-            cmd,
-            "betterc0de-workspace",
-            "betterc0de.workspace",
-            "betterc0de-workspace",
-            "experimental.workspace.syncList",
-            "experimental-workspace-sync-list",
-            "experimental.workspace.warp",
-            "experimental-workspace-warp"
-          )
-        ) {
-          output = buildBetterC0deWorkspaceRouteOutput(cmd, args, {
-            threads: store.threads,
-            activeThreadId: threadId,
-            activeThread,
-          })
-        } else if (
-          isSlashCommand(
-            cmd,
-            "betterc0de-lifecycle",
-            "betterc0de.lifecycle",
-            "betterc0de-lifecycle",
-            "global.dispose",
-            "global-dispose",
-            "instance.dispose",
-            "instance-dispose"
-          )
-        ) {
-          output = buildBetterC0deLifecycleRouteOutput(cmd, activeThread)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "tui-control",
-            "tui.control.next",
-            "tui-control-next",
-            "tui.control.response",
-            "tui-control-response"
-          )
-        ) {
-          output = buildBetterC0deTuiControlRouteOutput(cmd, args)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "auth.set",
-            "auth-set",
-            "auth.remove",
-            "auth-remove"
-          )
-        ) {
-          output = buildBetterC0deAuthControlOutput(cmd, args)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "betterc0de-internal",
-            "betterc0de.internal",
-            "betterc0de-internal"
-          ) ||
-          isBetterC0deInternalRouteCommand(cmd)
-        ) {
-          const terminalCommand = buildBetterC0deInternalRouteTerminalCommand(
-            cmd,
-            args
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = buildBetterC0deInternalRouteOutput(cmd, args)
-        } else if (isSlashCommand(cmd, "tui", "tui-config")) {
-          output = args.includes("--config-only")
-            ? await buildProjectTuiConfigWriteOutput(args, activeThread)
-            : buildProjectTuiConfigOutput(projectConfigList, activeThread)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "keybinds",
-            "keybindings",
-            "which-key",
-            "which-key.toggle",
-            "which-key.layout.toggle",
-            "which-key.pending.toggle",
-            "which-key.group.previous",
-            "which-key.group.next",
-            "which-key.scroll.up",
-            "which-key.scroll.down",
-            "which-key.page.up",
-            "which-key.page.down",
-            "which-key.home",
-            "which-key.end"
-          )
-        ) {
-          output = args.includes("--config-only")
-            ? await buildProjectTuiConfigWriteOutput(args, activeThread)
-            : buildProjectKeybindsOutput(projectConfigList, activeThread)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "tips",
-            "tips.toggle",
-            "betterc0de-tips",
-            "betterc0de-tips",
-            "tips-toggle"
-          )
-        ) {
-          output = buildBetterC0deTipsMarkdown()
-        } else if (
-          isSlashCommand(
-            cmd,
-            "attachments",
-            "attachment",
-            "image-attachments",
-            "betterc0de-attachments",
-            "betterc0de-attachments"
-          )
-        ) {
-          if (args.includes("--config-only")) {
-            output = await buildBetterC0deRuntimeConfigOutput(
-              args,
-              activeThread
-            )
-          } else {
-            output = buildProjectConfigGroupOutput({
-              activeThread,
-              emptyTitle: "BetterC0de Attachments",
-              emptyMessage:
-                "No BetterC0de attachment config found. Defaults are auto resize on, max 2000x2000, and 5 MB base64 payload.",
-              heading: "BetterC0de Attachments",
-              match: isBetterC0deAttachmentConfigKey,
-              settings: projectConfigList,
-            })
-          }
-        } else if (
-          isSlashCommand(
-            cmd,
-            "tool-output",
-            "tool-output-limits",
-            "betterc0de-tool-output",
-            "betterc0de-tool-output"
-          )
-        ) {
-          if (args.includes("--config-only")) {
-            output = await buildBetterC0deRuntimeConfigOutput(
-              args,
-              activeThread
-            )
-          } else {
-            output = buildProjectConfigGroupOutput({
-              activeThread,
-              emptyTitle: "BetterC0de Tool Output",
-              emptyMessage:
-                "No BetterC0de tool_output config found. BetterC0de will use its runtime defaults.",
-              heading: "BetterC0de Tool Output",
-              match: isBetterC0deToolOutputConfigKey,
-              settings: projectConfigList,
-            })
-          }
-        } else if (
-          isSlashCommand(
-            cmd,
-            "compaction",
-            "context-compaction",
-            "betterc0de-compaction",
-            "betterc0de-compaction"
-          )
-        ) {
-          if (args.includes("--config-only")) {
-            output = await buildBetterC0deRuntimeConfigOutput(
-              args,
-              activeThread
-            )
-          } else {
-            output = buildProjectConfigGroupOutput({
-              activeThread,
-              emptyTitle: "BetterC0de Compaction",
-              emptyMessage:
-                "No BetterC0de compaction config found. BetterC0de will use its runtime defaults.",
-              heading: "BetterC0de Compaction",
-              match: isBetterC0deCompactionConfigKey,
-              settings: projectConfigList,
-            })
-          }
-        } else if (
-          isSlashCommand(
-            cmd,
-            "betterc0de-runtime",
-            "betterc0de-runtime",
-            "betterc0de.server",
-            "betterc0de-app",
-            "runtime-config",
-            "betterc0de-server",
-            "betterc0de-app"
-          )
-        ) {
-          if (args.includes("--config-only")) {
-            output = await buildBetterC0deRuntimeConfigOutput(
-              args,
-              activeThread
-            )
-          } else {
-            output = buildProjectConfigGroupOutput({
-              activeThread,
-              emptyTitle: "BetterC0de Runtime Config",
-              emptyMessage:
-                "No BetterC0de compatibility runtime/app config found. BetterC0de will use its own app defaults.",
-              heading: "BetterC0de Runtime Config",
-              match: isBetterC0deRuntimeConfigKey,
-              settings: projectConfigList,
-            })
-          }
-        } else if (
-          isSlashCommand(
-            cmd,
-            "betterc0de-tui",
-            "betterc0de-tui",
-            "betterc0de.thread",
-            "betterc0de-thread",
-            "betterc0de.ui",
-            "betterc0de-ui",
-            "betterc0de.thread",
-            "betterc0de-thread",
-            "betterc0de.ui",
-            "betterc0de-ui",
-            "betterc0de-run",
-            "betterc0de-run",
-            "betterc0de.run",
-            "betterc0de-cli-run",
-            "betterc0de.run",
-            "betterc0de-cli-run",
-            "betterc0de-serve",
-            "betterc0de-serve",
-            "betterc0de.serve",
-            "betterc0de-server-start",
-            "betterc0de.serve",
-            "betterc0de-server-start",
-            "betterc0de-attach",
-            "betterc0de-attach",
-            "betterc0de.attach",
-            "betterc0de-server-switch",
-            "betterc0de.attach",
-            "attach",
-            "attach-server",
-            "server.switch",
-            "server-switch",
-            "betterc0de-web",
-            "betterc0de-web",
-            "betterc0de.web",
-            "betterc0de-web-ui",
-            "betterc0de.web",
-            "betterc0de-web-ui",
-            "betterc0de-acp",
-            "betterc0de-acp",
-            "betterc0de.acp",
-            "betterc0de.acp",
-            "acp"
-          )
-        ) {
-          const terminalCommand = buildBetterC0deRuntimeTerminalCommand(
-            cmd,
-            args
-          )
-          const runtimePath = resolveThreadRuntimePath(activeThread)
-          if (
-            runtimePath &&
-            terminalCommand.shouldOpen &&
+  if (
+    isSlashCommand(
+      cmd,
+      "model",
+      "models",
+      "model.choose",
+      "model.list",
+      "model-list",
+      "model.dialog.provider",
+      "model-dialog-provider"
+    ) &&
+    shouldOpenModelPickerForSlashCommand(cmd, args)
+  ) {
+    closeSlash()
+    openModelPicker?.()
+    return slashAbort({
+      threadId,
+      output,
+      outputMessageId,
+      outputMessageCreatedAt,
+      outputMessageCompactionGeneration,
+      outputUserMessageId,
+      outputUserMessageCreatedAt,
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "command-palette",
+      "command.palette.show",
+      "command-palette-show"
+    )
+  ) {
+    closeSlash()
+    openCommandPalette?.()
+    return slashAbort({
+      threadId,
+      output,
+      outputMessageId,
+      outputMessageCreatedAt,
+      outputMessageCompactionGeneration,
+      outputUserMessageId,
+      outputUserMessageCreatedAt,
+    })
+  }
+
+  if (isSlashCommand(cmd, "mode-next", "chat-mode-next")) {
+    const next = cycleChatMode(chatMode, 1)
+    setChatMode(next)
+    output = buildChatModeCycleOutput(next)
+  }
+
+  if (isSlashCommand(cmd, "mode-previous", "chat-mode-previous")) {
+    const next = cycleChatMode(chatMode, -1)
+    setChatMode(next)
+    output = buildChatModeCycleOutput(next)
+  }
+
+  if (
+    isSlashCommand(cmd, "agent", "agent-next", "agent.cycle") &&
+    !betterC0deAgentSlashSubcommand(cmd, args)
+  ) {
+    output = applyModelAgentCycleCommand({
+      threadId,
+      provider: selectedProvider,
+      selectedModel,
+      direction: 1,
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "agent-previous",
+      "previous-agent",
+      "agent.cycle.reverse"
+    )
+  ) {
+    output = applyModelAgentCycleCommand({
+      threadId,
+      provider: selectedProvider,
+      selectedModel,
+      direction: -1,
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "model-next",
+      "next-model",
+      "model-cycle",
+      "model.cycle_recent"
+    )
+  ) {
+    output = applyModelCycleCommand({
+      items: buildModelCycleItems(providers),
+      direction: 1,
+      selectedProviderId: selectedProvider?.id ?? selectedProviderId,
+      selectedModel,
+      setSelectedProviderId,
+      setSelectedModel,
+      source: "model",
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "model-previous",
+      "previous-model",
+      "prev-model",
+      "model.cycle_recent_reverse"
+    )
+  ) {
+    output = applyModelCycleCommand({
+      items: buildModelCycleItems(providers),
+      direction: -1,
+      selectedProviderId: selectedProvider?.id ?? selectedProviderId,
+      selectedModel,
+      setSelectedProviderId,
+      setSelectedModel,
+      source: "model",
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "favorite-next",
+      "next-favorite",
+      "favorite-model-next",
+      "model.cycle_favorite"
+    )
+  ) {
+    output = applyModelCycleCommand({
+      items: buildFavoriteModelCycleItems(favoriteEntries),
+      direction: 1,
+      selectedProviderId: selectedProvider?.id ?? selectedProviderId,
+      selectedModel,
+      setSelectedProviderId,
+      setSelectedModel,
+      source: "favorite",
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "favorite-toggle",
+      "model.dialog.favorite",
+      "model-dialog-favorite"
+    )
+  ) {
+    output = buildFavoriteToggleOutput({
+      providerId: selectedProvider?.id ?? selectedProviderId ?? null,
+      modelId: selectedModel,
+      toggleFavorite,
+      isFavorite,
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "favorite-previous",
+      "previous-favorite",
+      "prev-favorite",
+      "favorite-model-previous",
+      "model.cycle_favorite_reverse"
+    )
+  ) {
+    output = applyModelCycleCommand({
+      items: buildFavoriteModelCycleItems(favoriteEntries),
+      direction: -1,
+      selectedProviderId: selectedProvider?.id ?? selectedProviderId,
+      selectedModel,
+      setSelectedProviderId,
+      setSelectedModel,
+      source: "favorite",
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "new",
+      "clear",
+      "session.new",
+      "session.create",
+      "session-new"
+    )
+  ) {
+    store.createThread("New Chat", "BetterC0de")
+    return slashAbort({
+      threadId,
+      output,
+      outputMessageId,
+      outputMessageCreatedAt,
+      outputMessageCompactionGeneration,
+      outputUserMessageId,
+      outputUserMessageCreatedAt,
+    })
+  }
+
+  if (isSlashCommand(cmd, "resume", "continue")) {
+    const sessionThreads = filterThreadsForSessionDirectory(
+      store.threads,
+      threadId,
+      useAppearanceStore.getState().sessionDirectoryFilterEnabled
+    )
+    const target = args.join(" ").trim().toLowerCase()
+    if (target) {
+      const match = sessionThreads.find((thread) => {
+        const title = thread.title.toLowerCase()
+        return (
+          thread.id.toLowerCase().startsWith(target) || title.includes(target)
+        )
+      })
+      if (match) {
+        store.setActiveThread(match.id)
+        return slashAbort({
+          threadId,
+          output,
+          outputMessageId,
+          outputMessageCreatedAt,
+          outputMessageCompactionGeneration,
+          outputUserMessageId,
+          outputUserMessageCreatedAt,
+        })
+      }
+    }
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "session.next",
+      "session-next",
+      "session.next.unseen",
+      "session-next-unseen"
+    )
+  ) {
+    const target = resolveAdjacentSessionThread(
+      filterThreadsForSessionDirectory(
+        store.threads,
+        threadId,
+        useAppearanceStore.getState().sessionDirectoryFilterEnabled
+      ),
+      threadId,
+      1
+    )
+    if (target) {
+      store.setActiveThread(target.id)
+      return slashAbort({
+        threadId,
+        output,
+        outputMessageId,
+        outputMessageCreatedAt,
+        outputMessageCompactionGeneration,
+        outputUserMessageId,
+        outputUserMessageCreatedAt,
+      })
+    }
+    output = "# Next Session\n\n> No other session is available."
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "session.previous",
+      "session-previous",
+      "session.prev",
+      "session-prev",
+      "session.previous.unseen",
+      "session-previous-unseen"
+    )
+  ) {
+    const target = resolveAdjacentSessionThread(
+      filterThreadsForSessionDirectory(
+        store.threads,
+        threadId,
+        useAppearanceStore.getState().sessionDirectoryFilterEnabled
+      ),
+      threadId,
+      -1
+    )
+    if (target) {
+      store.setActiveThread(target.id)
+      return slashAbort({
+        threadId,
+        output,
+        outputMessageId,
+        outputMessageCreatedAt,
+        outputMessageCompactionGeneration,
+        outputUserMessageId,
+        outputUserMessageCreatedAt,
+      })
+    }
+    output = "# Previous Session\n\n> No other session is available."
+  }
+
+  if (isSlashCommand(cmd, "fork", "session.fork")) {
+    if (!threadId) {
+      threadId = store.createThread("New Chat", "BetterC0de")
+      store.addMessage(threadId, {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: rawText,
+        createdAt: new Date().toISOString(),
+      })
+      store.addMessage(threadId, {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "# Fork Session\n\n> No existing chat history to fork yet.",
+        createdAt: new Date().toISOString(),
+      })
+      return slashAbort({
+        threadId,
+        output,
+        outputMessageId,
+        outputMessageCreatedAt,
+        outputMessageCompactionGeneration,
+        outputUserMessageId,
+        outputUserMessageCreatedAt,
+      })
+    }
+    const forkedThreadId = await store.forkThread(threadId)
+    if (forkedThreadId) {
+      return slashAbort({
+        threadId: forkedThreadId,
+        output,
+        outputMessageId,
+        outputMessageCreatedAt,
+        outputMessageCompactionGeneration,
+        outputUserMessageId,
+        outputUserMessageCreatedAt,
+      })
+    }
+    output = "# Fork Session\n\n> The active chat could not be found."
+  }
+
+  if (isSlashCommand(cmd, "parent", "session-parent", "session.parent")) {
+    const target = resolveParentThread(store.threads, threadId)
+    if (target) {
+      store.setActiveThread(target.id)
+      return slashAbort({
+        threadId,
+        output,
+        outputMessageId,
+        outputMessageCreatedAt,
+        outputMessageCompactionGeneration,
+        outputUserMessageId,
+        outputUserMessageCreatedAt,
+      })
+    }
+    output = "# Parent Session\n\n> This chat has no linked parent session."
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "child",
+      "children",
+      "session-child",
+      "session.child",
+      "session.children",
+      "session.child.first"
+    )
+  ) {
+    const target = resolveChildThread(store.threads, threadId, args.join(" "))
+    if (target) {
+      store.setActiveThread(target.id)
+      return slashAbort({
+        threadId,
+        output,
+        outputMessageId,
+        outputMessageCreatedAt,
+        outputMessageCompactionGeneration,
+        outputUserMessageId,
+        outputUserMessageCreatedAt,
+      })
+    }
+    output = "# Child Session\n\n> This chat has no linked child fork yet."
+  }
+
+  if (isSlashCommand(cmd, "child-next", "next-child", "session.child.next")) {
+    const target = resolveSiblingChildThread(store.threads, threadId, 1)
+    if (target) {
+      store.setActiveThread(target.id)
+      return slashAbort({
+        threadId,
+        output,
+        outputMessageId,
+        outputMessageCreatedAt,
+        outputMessageCompactionGeneration,
+        outputUserMessageId,
+        outputUserMessageCreatedAt,
+      })
+    }
+    output =
+      "# Next Child Session\n\n> This chat is not inside a child-session branch with siblings."
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "child-previous",
+      "prev-child",
+      "previous-child",
+      "session.child.previous"
+    )
+  ) {
+    const target = resolveSiblingChildThread(store.threads, threadId, -1)
+    if (target) {
+      store.setActiveThread(target.id)
+      return slashAbort({
+        threadId,
+        output,
+        outputMessageId,
+        outputMessageCreatedAt,
+        outputMessageCompactionGeneration,
+        outputUserMessageId,
+        outputUserMessageCreatedAt,
+      })
+    }
+    output =
+      "# Previous Child Session\n\n> This chat is not inside a child-session branch with siblings."
+  }
+
+  const quickSwitchSlot = resolveQuickSwitchSlot(cmd, args[0])
+  if (
+    isSlashCommand(
+      cmd,
+      "pin",
+      "pin-session",
+      "session.pin",
+      "session.pin.toggle"
+    )
+  ) {
+    output = buildPinThreadOutput(store, threadId)
+  }
+
+  if (isSlashCommand(cmd, "pins", "pinned", "pinned-sessions")) {
+    output = buildPinnedThreadsOutput(store.threads, store.pinnedThreadIds)
+  }
+
+  if (quickSwitchSlot !== null) {
+    const target = resolvePinnedThreadSlot(
+      store.threads,
+      store.pinnedThreadIds,
+      quickSwitchSlot
+    )
+    if (target) {
+      store.setActiveThread(target.id)
+      return slashAbort({
+        threadId,
+        output,
+        outputMessageId,
+        outputMessageCreatedAt,
+        outputMessageCompactionGeneration,
+        outputUserMessageId,
+        outputUserMessageCreatedAt,
+      })
+    }
+    output = buildQuickSwitchThreadOutput(quickSwitchSlot)
+  }
+
+  if (isSlashCommand(cmd, "archive", "archive-session", "session.archive")) {
+    output = await buildArchiveThreadOutput(
+      store.threads,
+      threadId,
+      args.join(" ")
+    )
+  }
+
+  if (
+    isSlashCommand(cmd, "unarchive", "unarchive-session", "session.unarchive")
+  ) {
+    output = await buildUnarchiveThreadOutput(
+      store.threads,
+      threadId,
+      args.join(" ")
+    )
+  }
+
+  if (isSlashCommand(cmd, "archives", "archived", "archived-sessions")) {
+    output = buildArchivedThreadsOutput(
+      store.threads,
+      useSettingsStore.getState().archivedThreadIds
+    )
+  }
+
+  if (isSlashCommand(cmd, "delete-session", "delete", "session.delete")) {
+    const deleteResult = buildDeleteThreadOutput(store.threads, threadId, args)
+    if (deleteResult.threadId && deleteResult.confirmed) {
+      const deletedActiveThread = deleteResult.threadId === threadId
+      store.deleteThread(deleteResult.threadId)
+      if (deletedActiveThread) {
+        const replacementThreadId = store.createThread("New Chat", "BetterC0de")
+        store.addMessage(replacementThreadId, {
+          id: crypto.randomUUID(),
+          role: "user",
+          content: rawText,
+          createdAt: new Date().toISOString(),
+        })
+        store.addMessage(replacementThreadId, {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: deleteResult.output,
+          createdAt: new Date().toISOString(),
+        })
+        return slashAbort({
+          threadId,
+          output,
+          outputMessageId,
+          outputMessageCreatedAt,
+          outputMessageCompactionGeneration,
+          outputUserMessageId,
+          outputUserMessageCreatedAt,
+        })
+      }
+    }
+    output = deleteResult.output
+  }
+
+  if (isSlashCommand(cmd, "share", "session.share")) {
+    output = await buildShareThreadOutput(threadId)
+  }
+
+  if (isSlashCommand(cmd, "unshare", "session.unshare")) {
+    output = buildUnshareThreadOutput(threadId)
+  }
+
+  if (isSlashCommand(cmd, "copy", "session.copy")) {
+    output = await buildCopyThreadOutput(threadId)
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "copy-last",
+      "copy-assistant",
+      "copy-message",
+      "messages.copy"
+    )
+  ) {
+    output = await buildCopyLastAssistantMessageOutput(threadId)
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "export",
+      "session.export",
+      "betterc0de-export",
+      "betterc0de.export",
+      "betterc0de-export",
+      "betterc0de.export"
+    )
+  ) {
+    const betterC0deExportMode = isSlashCommand(
+      cmd,
+      "session.export",
+      "betterc0de-export",
+      "betterc0de.export",
+      "betterc0de-export",
+      "betterc0de.export"
+    )
+    const terminalCommand = buildBetterC0deSessionIoTerminalCommand(
+      "export",
+      args
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = await buildExportThreadOutput(threadId, args, {
+      betterC0deMode: betterC0deExportMode,
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "import",
+      "session.import",
+      "betterc0de-import",
+      "betterc0de.import",
+      "betterc0de-import",
+      "betterc0de.import"
+    )
+  ) {
+    const terminalCommand = buildBetterC0deSessionIoTerminalCommand(
+      "import",
+      args
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = await buildImportThreadOutput(args, activeThread)
+  }
+
+  if (isSlashCommand(cmd, "diff", "diffs", "session.diff")) {
+    output = await buildDiffThreadOutput(threadId, args)
+  }
+
+  if (isSlashCommand(cmd, "session.update")) {
+    output = await buildSessionUpdateThreadOutput(store.threads, threadId, args)
+  }
+
+  if (isSlashCommand(cmd, "rename", "title", "session.rename")) {
+    output = buildRenameThreadOutput(threadId, args)
+  }
+
+  if (isSlashCommand(cmd, "timeline", "session.timeline")) {
+    output = await buildTimelineThreadOutput(threadId)
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "events",
+      "event.subscribe",
+      "event-subscribe",
+      "session.events"
+    )
+  ) {
+    output = await buildEventsThreadOutput(threadId)
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "messages",
+      "message-list",
+      "message",
+      "session.messages",
+      "session.message",
+      "session.message.list",
+      "v2.session.messages",
+      "v2-session-messages"
+    )
+  ) {
+    output = await buildMessagesThreadOutput(threadId, args)
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "context",
+      "session.context",
+      "context-list",
+      "v2.session.context",
+      "v2-session-context"
+    )
+  ) {
+    output = await buildContextThreadOutput(threadId, {
+      selectedProvider,
+      selectedModel,
+      chatMode: effectiveChatMode,
+      permissionLevel,
+      contextWindow,
+      full: args.includes("--full"),
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "first",
+      "first-message",
+      "messages.first",
+      "session.first"
+    )
+  ) {
+    dispatchChatMessageScroll("first", threadId)
+    return slashAbort({
+      threadId,
+      output,
+      outputMessageId,
+      outputMessageCreatedAt,
+      outputMessageCompactionGeneration,
+      outputUserMessageId,
+      outputUserMessageCreatedAt,
+    })
+  }
+
+  if (
+    isSlashCommand(cmd, "last", "last-message", "messages.last", "session.last")
+  ) {
+    dispatchChatMessageScroll("last", threadId)
+    return slashAbort({
+      threadId,
+      output,
+      outputMessageId,
+      outputMessageCreatedAt,
+      outputMessageCompactionGeneration,
+      outputUserMessageId,
+      outputUserMessageCreatedAt,
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "last-user",
+      "last-user-message",
+      "messages-last-user",
+      "messages.last_user",
+      "session.messages_last_user"
+    )
+  ) {
+    dispatchChatMessageScroll("last-user", threadId)
+    return slashAbort({
+      threadId,
+      output,
+      outputMessageId,
+      outputMessageCreatedAt,
+      outputMessageCompactionGeneration,
+      outputUserMessageId,
+      outputUserMessageCreatedAt,
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "next-message",
+      "message-next",
+      "message.next",
+      "messages.next",
+      "session.message.next"
+    )
+  ) {
+    dispatchChatMessageScroll("next", threadId)
+    return slashAbort({
+      threadId,
+      output,
+      outputMessageId,
+      outputMessageCreatedAt,
+      outputMessageCompactionGeneration,
+      outputUserMessageId,
+      outputUserMessageCreatedAt,
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "previous-message",
+      "prev-message",
+      "message-previous",
+      "message.previous",
+      "messages.previous",
+      "session.message.previous"
+    )
+  ) {
+    dispatchChatMessageScroll("previous", threadId)
+    return slashAbort({
+      threadId,
+      output,
+      outputMessageId,
+      outputMessageCreatedAt,
+      outputMessageCompactionGeneration,
+      outputUserMessageId,
+      outputUserMessageCreatedAt,
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "page-up",
+      "pageup",
+      "messages-page-up",
+      "message.page_up",
+      "messages.page_up",
+      "session.page.up"
+    )
+  ) {
+    dispatchChatMessageScroll("page-up", threadId)
+    return slashAbort({
+      threadId,
+      output,
+      outputMessageId,
+      outputMessageCreatedAt,
+      outputMessageCompactionGeneration,
+      outputUserMessageId,
+      outputUserMessageCreatedAt,
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "page-down",
+      "pagedown",
+      "messages-page-down",
+      "message.page_down",
+      "messages.page_down",
+      "session.page.down"
+    )
+  ) {
+    dispatchChatMessageScroll("page-down", threadId)
+    return slashAbort({
+      threadId,
+      output,
+      outputMessageId,
+      outputMessageCreatedAt,
+      outputMessageCompactionGeneration,
+      outputUserMessageId,
+      outputUserMessageCreatedAt,
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "line-up",
+      "lineup",
+      "messages-line-up",
+      "message.line_up",
+      "messages.line_up",
+      "session.line.up"
+    )
+  ) {
+    dispatchChatMessageScroll("line-up", threadId)
+    return slashAbort({
+      threadId,
+      output,
+      outputMessageId,
+      outputMessageCreatedAt,
+      outputMessageCompactionGeneration,
+      outputUserMessageId,
+      outputUserMessageCreatedAt,
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "line-down",
+      "linedown",
+      "messages-line-down",
+      "message.line_down",
+      "messages.line_down",
+      "session.line.down"
+    )
+  ) {
+    dispatchChatMessageScroll("line-down", threadId)
+    return slashAbort({
+      threadId,
+      output,
+      outputMessageId,
+      outputMessageCreatedAt,
+      outputMessageCompactionGeneration,
+      outputUserMessageId,
+      outputUserMessageCreatedAt,
+    })
+  }
+
+  if (
+    isSlashCommand(cmd, "half-page-up", "halfpage-up", "session.half.page.up")
+  ) {
+    dispatchChatMessageScroll("half-page-up", threadId)
+    return slashAbort({
+      threadId,
+      output,
+      outputMessageId,
+      outputMessageCreatedAt,
+      outputMessageCompactionGeneration,
+      outputUserMessageId,
+      outputUserMessageCreatedAt,
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "half-page-down",
+      "halfpage-down",
+      "session.half.page.down"
+    )
+  ) {
+    dispatchChatMessageScroll("half-page-down", threadId)
+    return slashAbort({
+      threadId,
+      output,
+      outputMessageId,
+      outputMessageCreatedAt,
+      outputMessageCompactionGeneration,
+      outputUserMessageId,
+      outputUserMessageCreatedAt,
+    })
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "open",
+      "editor",
+      "file.open",
+      "prompt.editor",
+      "prompt-editor"
+    )
+  ) {
+    output = await buildOpenFileOutput(threadId, args)
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "add-selection",
+      "context.addselection",
+      "context-add-selection",
+      "selection-context"
+    )
+  ) {
+    output = buildAddSelectionContextOutput(threadId)
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "editor-context-clear",
+      "prompt.editor_context.clear",
+      "prompt-editor-context-clear"
+    )
+  ) {
+    output = buildClearEditorContextOutput()
+  }
+
+  if (isSlashCommand(cmd, "close", "close-tab", "tab.close")) {
+    output = buildCloseEditorTabOutput()
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "warp",
+      "workspace",
+      "workspace.set",
+      "workspace-set",
+      "project.open",
+      "project-open",
+      "project.update",
+      "project-update"
+    )
+  ) {
+    output = await buildWarpWorkspaceOutput(threadId, args)
+  }
+
+  if (isSlashCommand(cmd, "project-next", "project.next")) {
+    const target = resolveAdjacentProjectThread(store.threads, threadId, 1)
+    if (target) {
+      store.setActiveThread(target.id)
+      return slashAbort({
+        threadId,
+        output,
+        outputMessageId,
+        outputMessageCreatedAt,
+        outputMessageCompactionGeneration,
+        outputUserMessageId,
+        outputUserMessageCreatedAt,
+      })
+    }
+    output =
+      "# Next Project\n\n> No other project is represented by recent chats."
+  }
+
+  if (
+    isSlashCommand(cmd, "project-previous", "project.previous", "project-prev")
+  ) {
+    const target = resolveAdjacentProjectThread(store.threads, threadId, -1)
+    if (target) {
+      store.setActiveThread(target.id)
+      return slashAbort({
+        threadId,
+        output,
+        outputMessageId,
+        outputMessageCreatedAt,
+        outputMessageCompactionGeneration,
+        outputUserMessageId,
+        outputUserMessageCreatedAt,
+      })
+    }
+    output =
+      "# Previous Project\n\n> No other project is represented by recent chats."
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "workspace-new",
+      "workspace.new",
+      "worktree.create",
+      "worktree-create"
+    )
+  ) {
+    output = await buildWorkspaceNewOutput(threadId)
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "workspace-toggle",
+      "workspace.toggle",
+      "project.list",
+      "project-list",
+      "project.current",
+      "project-current"
+    )
+  ) {
+    output = buildWorkspaceToggleOutput(activeThread)
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "workspace-list",
+      "workspace.list",
+      "worktree-list",
+      "worktree.list"
+    )
+  ) {
+    output = await buildWorkspaceListOutput(activeThread)
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "workspace-remove",
+      "workspace.remove",
+      "worktree-remove",
+      "worktree.remove"
+    )
+  ) {
+    output = await buildWorkspaceRemoveOutput(threadId, args)
+  }
+
+  if (
+    isSlashCommand(
+      cmd,
+      "workspace-reset",
+      "workspace.reset",
+      "worktree-reset",
+      "worktree.reset"
+    )
+  ) {
+    output = await buildWorkspaceResetOutput(threadId, args)
+  }
+
+  let mcpList: RuntimeMcpServer[] = []
+  let skillList: RuntimeSkill[] = []
+  let subagentList: RuntimeSubagent[] = []
+  let projectSubagentList: RuntimeSubagent[] = []
+  let projectCommandList: WorkspaceProjectCommand[] = []
+  let projectReferenceList: WorkspaceProjectReference[] = []
+  let projectFormatterList: WorkspaceProjectFormatter[] = []
+  let projectLspServerList: WorkspaceProjectLspServer[] = []
+  let projectPermissionList: WorkspaceProjectPermissionRule[] = []
+  let projectConfigList: WorkspaceProjectConfigSetting[] = []
+  let projectProvidersSummary: WorkspaceProjectProvidersSummary | null = null
+  let projectPluginList: WorkspaceProjectPlugin[] = []
+  let projectToolList: WorkspaceProjectToolFlag[] = []
+  try {
+    const [mcps, skills, subagents] = await Promise.all([
+      listRuntimeMcps(),
+      listRuntimeSkills(),
+      listRuntimeSubagents(),
+    ])
+    mcpList = mcps
+    skillList = skills
+    subagentList = subagents
+  } catch {
+    console.warn(
+      "Failed to load runtime MCPs/skills/subagents for slash commands"
+    )
+  }
+  const slashRuntimePath = resolveThreadRuntimePath(activeThread)
+  if (slashRuntimePath) {
+    try {
+      const [
+        commands,
+        projectMcps,
+        projectSkills,
+        projectSubagents,
+        projectReferences,
+        projectFormatters,
+        projectLspServers,
+        projectPermissions,
+        projectConfig,
+        projectProviders,
+        projectPlugins,
+        projectTools,
+      ] = await Promise.all([
+        listProjectCommands(slashRuntimePath),
+        listProjectRuntimeMcps(slashRuntimePath),
+        listProjectRuntimeSkills(slashRuntimePath),
+        listProjectRuntimeSubagents(slashRuntimePath),
+        listProjectReferences(slashRuntimePath),
+        listProjectFormatters(slashRuntimePath),
+        listProjectLspServers(slashRuntimePath),
+        listProjectPermissions(slashRuntimePath),
+        listProjectConfigSettings(slashRuntimePath),
+        listProjectProviders(slashRuntimePath),
+        listProjectPlugins(slashRuntimePath),
+        listProjectTools(slashRuntimePath),
+      ])
+      projectCommandList = commands
+      projectSubagentList = projectSubagents
+      projectReferenceList = projectReferences
+      projectFormatterList = projectFormatters
+      projectLspServerList = projectLspServers
+      projectPermissionList = projectPermissions
+      projectConfigList = projectConfig
+      projectProvidersSummary = projectProviders
+      projectPluginList = projectPlugins
+      projectToolList = projectTools
+      mcpList = mergeRuntimeMcps(mcpList, projectMcps)
+      skillList = mergeRuntimeSkills(skillList, projectSkills)
+      subagentList = mergeRuntimeSubagents(subagentList, projectSubagents)
+    } catch {
+      projectCommandList = []
+      projectSubagentList = []
+      projectReferenceList = []
+      projectFormatterList = []
+      projectLspServerList = []
+      projectPermissionList = []
+      projectConfigList = []
+      projectProvidersSummary = null
+      projectPluginList = []
+      projectToolList = []
+    }
+  }
+
+  if (isSlashCommand(cmd, "undo", "session.undo", "session.revert")) {
+    output = await buildUndoCheckpointOutput(threadId, args[0])
+  } else if (isSlashCommand(cmd, "redo", "session.redo", "session.unrevert")) {
+    output = await buildRedoCheckpointOutput(threadId)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "interrupt",
+      "stop",
+      "cancel",
+      "session.interrupt",
+      "session.abort"
+    )
+  ) {
+    output = await buildInterruptThreadOutput(
+      threadId,
+      selectedProvider,
+      selectedProviderId
+    )
+  } else if (isSlashCommand(cmd, "exit", "quit", "q", "app.exit", "app-exit")) {
+    scheduleWindowCloseFromChat()
+    output = "# Exit\n\nClosing BetterC0de window."
+  } else if (isSlashCommand(cmd, "help", "help.show", "help-show")) {
+    const sections: string[] = [
+      "# BetterC0de Commands\n",
+      "**Built-in**\n",
+      "| Command | What it does |",
+      "|:--------|:-------------|",
+      "| `/plan [prompt]` | Switch this thread into plan mode |",
+      "| `/ask [prompt]` | Switch this thread into read-only ask mode |",
+      "| `/security [prompt]` | Switch this thread into security review mode |",
+      "| `/debug [prompt]` | Switch this thread into debug mode |",
+      "| `/default`, `/build`, `/agent-mode` | Return this thread to normal build mode |",
+      "| `/agent`, `/agent.cycle` | Cycle the selected BetterC0de compatibility provider agent |",
+      "| `/model`, `/models` | Open the model picker |",
+      "| `/command-palette`, `/command.palette.show` | Open the command palette |",
+      "| `/model-next`, `/model-previous`, `/favorite-next`, `/favorite-previous` | Cycle models without opening the picker |",
+      "| `/favorite-toggle`, `/model.dialog.favorite` | Toggle the current model as favorite |",
+      "| `/sessions`, `/session.list --format json`, `/resume`, `/continue` | List or resume recent chats |",
+      "| `/session.next`, `/session.previous` | Navigate recent chats like BetterC0de app commands |",
+      "| `/new`, `/clear` | Start a new chat session |",
+      "| `/project.open`, `/project.next`, `/project.previous` | Open or navigate projects represented by chats |",
+      "| `/workspace.new`, `/workspace.toggle`, `/workspace.list`, `/workspace.remove`, `/workspace.reset` | Create, inspect, list, remove, or reset isolated worktree workspace state |",
+      "| `/init [focus]` | Create or update repo-local `AGENTS.md` instructions |",
+      "| `/review [commit|branch|pr]`, `/pr <number>` | Review uncommitted changes, a commit, branch, or PR |",
+      "| `/github`, `/github.install`, `/github.run` | Show BetterC0de GitHub agent setup and run guidance; `/github.install --workflow-only --provider <provider> --model <model>` writes the workflow file |",
+      "| `/commands`, `/project-commands` | List repo-local command templates and config commands; add `--config-only` to write a config command |",
+      "| `/references`, `/refs` | List configured BetterC0de project references; add `--config-only` to write an alias |",
+      "| `/format <file> [formatter] [--dry-run|--terminal]` | Run or preview a BetterC0de project formatter |",
+      "| `/formatters` | List BetterC0de project formatter config; add `--config-only` to write a formatter entry |",
+      "| `/lsp`, `/lsps`, `/debug.lsp` | List BetterC0de project LSP server config; add `--config-only` to write an LSP entry |",
+      "| `/lsp diagnostics <file> [--json]`, `/lsp symbols <query> [--json]`, `/lsp document-symbols <uri> [--json]` | Show BetterC0de LSP debug guidance and local JSON previews |",
+      "| `/permissions` | List BetterC0de project permission rules; add `--config-only` to write explicit permission config |",
+      "| `/approvals` | List pending provider/BetterC0de approval requests |",
+      "| `/approve <#|id>`, `/deny <#|id>` | Reply to a pending approval request |",
+      "| `/todos`, `/tasks`, `/session.todo` | Show the current BetterC0de session todo list |",
+      "| `/betterc0de-config`, `/project-config`, `/debug.config` | Show BetterC0de project config summary |",
+      "| `/betterc0de-audit`, `/betterc0de-parity` | Show BetterC0de feature-area compatibility coverage |",
+      "| `/betterc0de-cli`, `/betterc0de.commands` | Show command-by-command BetterC0de compatibility coverage |",
+      "| `/betterc0de-api`, `/betterc0de.api` | Show BetterC0de HTTP/API compatibility coverage |",
+      "| `/betterc0de-gaps`, `/betterc0de.missing` | Show partial and display-only BetterC0de compatibility gaps |",
+      "| `/betterc0de-sync`, `/sync.history.list` | Show BetterC0de sync compatibility and validation |",
+      "| `/betterc0de-workspace`, `/experimental.workspace.warp` | Show BetterC0de workspace sync/warp compatibility |",
+      "| `/betterc0de-lifecycle`, `/global.dispose` | Show BetterC0de lifecycle compatibility |",
+      "| `/tui-control`, `/tui.control.next` | Show BetterC0de terminal control compatibility |",
+      "| `/tui`, `/keybinds`, `/which-key` | Show BetterC0de terminal UI config, keybind overrides, and defaults; add `--config-only` to write safe `tui.json` settings |",
+      "| `/tips` | Show BetterC0de workflow tips |",
+      "| `/theme.cycle`, `/theme.scheme.cycle`, `/language.cycle` | BetterC0de app command compatibility |",
+      "| `/attachments`, `/tool-output`, `/compaction` | Show BetterC0de runtime limits and context controls; add `--config-only` to write safe limit settings |",
+      "| `/betterc0de-runtime` | Show BetterC0de shell, server, watcher, limits, share, enterprise, and app settings; add `--config-only` to write runtime config |",
+      "| `/betterc0de-tui`, `/betterc0de-run`, `/betterc0de-serve`, `/betterc0de-web`, `/betterc0de-acp` | Show BetterC0de runtime compatibility entrypoint guidance; add `--terminal` to prefill the integrated terminal |",
+      "| `/betterc0de-upgrade`, `/betterc0de-uninstall`, `/betterc0de-generate`, `/betterc0de-completion`, `/betterc0de-db`, `/db.query` | Show BetterC0de maintenance/database compatibility guidance; add `--terminal` to prefill the integrated terminal |",
+      "| `/project-providers` | Show BetterC0de project provider, model, and auth config |",
+      "| `/project-plugins` | Show BetterC0de project plugin specs |",
+      "| `/project-tools` | Show BetterC0de project tool flags and custom tool modules; add `--config-only` to write legacy tool flags |",
+      "| `/undo [turn]` | Restore the previous checkpoint, or a specific checkpoint turn |",
+      "| `/redo` | Reapply the last checkpoint undo |",
+      "| `/interrupt`, `/stop`, `/cancel` | Interrupt the active provider turn |",
+      "| `/fork` | Fork this chat into an independent session |",
+      "| `/parent`, `/child [id|title]`, `/child-next`, `/child-previous` | Navigate forked chat session branches |",
+      "| `/pin`, `/pins`, `/quick-switch <1-9>` | Pin sessions and jump to BetterC0de-compatible pinned slots |",
+      "| `/archive`, `/unarchive`, `/archives`, `/delete-session --yes` | Archive, restore, inspect, or permanently delete sessions |",
+      ...shareCommandHelpRows(projectConfigList),
+      "| `/copy` | Copy this chat transcript to the clipboard |",
+      "| `/copy-last`, `/copy-assistant`, `/copy-message` | Copy the latest assistant message to the clipboard |",
+      "| `/export [file.md]`, `/export --json [file.json]` | Export this chat transcript into the workspace; add `--terminal` for raw `betterc0de export` |",
+      "| `/import <file.json|url>`, `/session.import <file.json|url>` | Import a BetterC0de JSON session or compatibility share data; add `--terminal` for raw `betterc0de import` |",
+      "| `/diff [--full]`, `/session.diff` | Show the active chat session diff summary |",
+      "| `/rename <title>`, `/title <title>` | Rename the active chat session |",
+      "| `/timeline` | Show a compact timeline of this chat session |",
+      "| `/messages [--limit 20] [--order asc|desc] [--cursor n]`, `/session.message.list` | Page through chat messages |",
+      "| `/context [--full]`, `/session.context` | Inspect active chat context after the last compaction |",
+      "| `/vcs`, `/vcs diff`, `/vcs raw`, `/vcs.apply [patch.diff]` | Show BetterC0de-compatible VCS status, diff, or patch-apply guidance |",
+      "| `/history`, `/history-use [#|id]` | Show or restore BetterC0de-compatible prompt history |",
+      "| `/prompt-clear`, `/prompt-paste`, `/prompt-submit` | BetterC0de prompt controls |",
+      "| `/stash <prompt>` | Save prompt text to the BetterC0de-compatible prompt stash |",
+      "| `/stashes`, `/stash-pop [#|id]`, `/stash-delete <#|id>` | List, restore, or delete stashed prompts |",
+      "| `/first`, `/last`, `/last-user`, `/next-message`, `/previous-message` | Navigate chat messages without sending to the model |",
+      "| `/page-up`, `/page-down`, `/half-page-up`, `/half-page-down`, `/line-up`, `/line-down` | Scroll the chat transcript without sending to the model |",
+      "| `/open [path[:line[:column]]]`, `/editor` | Open Quick Open or a workspace file in Editor Mode |",
+      "| `/add-selection`, `/context.addSelection` | Add the active editor selection to the composer context |",
+      "| `/close`, `/close-tab` | Close the active editor tab |",
+      "| `/warp [folder]`, `/workspace [folder]` | Change the workspace for this chat |",
+      "| `/mode-next`, `/mode-previous` | Cycle between Agent, Plan, Ask, Security, and Debug modes |",
+      "| `/exit`, `/quit`, `/q` | Close the BetterC0de window |",
+      "| `/help` | Show this overview |",
+      "| `/mcps`, `/mcp.list` | Show installed MCP servers with connection details |",
+      "| `/mcp-resources`, `/experimental.resource.list` | Show BetterC0de-compatible MCP resource availability |",
+      "| `/mcp-auth`, `/mcp.auth.list` | Show OAuth authentication status for MCP servers |",
+      "| `/mcp-add`, `/mcp-logout`, `/mcp-debug <id>` | BetterC0de MCP add/logout/debug compatibility; add `--config-only` to write project MCP config |",
+      "| `/mcp-toggle <id> [on|off]` | Enable or disable an installed MCP server; add `--config-only` to write a project override |",
+      "| `/skills`, `/debug.skill` | Show installed skills and their content; add `--config-only` to add compatibility skill paths or URLs |",
+      "| `/agents`, `/debug.agent` | Show configured subagents and BetterC0de-compatible details; add `--terminal` for `betterc0de agent list` / `betterc0de debug agent` |",
+      "| `/agent-create`, `/agent.create` | Show BetterC0de agent create guidance; add `--terminal` to prefill raw `betterc0de agent create` |",
+      "| `/instructions`, `/project-rules` | Show injected project rules and BetterC0de instructions; add `--config-only` to add instruction file globs |",
+      "| `/status` | Show system status overview |",
+      "| `/debug-info`, `/debug.info` | Show BetterC0de-compatible app, OS, and runtime diagnostics |",
+      "| `/debug-paths`, `/debug.paths`, `/db.path` | Show BetterC0de data paths and SQLite database path |",
+      "| `/debug-rg [files|read|search|tree]`, `/debug.file.[status|list|read|search|tree]`, `/file.[status|list|read]` | Run read-only BetterC0de-compatible workspace file/search diagnostics |",
+      "| `/debug-snapshot [track|patch|diff]` | Show read-only BetterC0de-compatible snapshot/checkpoint diagnostics |",
+      "| `/debug-startup`, `/debug-scrap`, `/debug-v2`, `/debug-wait` | Show BetterC0de debug guidance |",
+      "| `/stats`, `/usage` | Show BetterC0de-compatible token, model, and tool usage statistics |",
+      "| `/plugin-install <module>`, `/plugin <module>`, `/plug <module>` | Show BetterC0de plugin install guidance |",
+      "| `/plugin-toggle <id> --enabled true --config-only` | Persist BetterC0de terminal UI `plugin_enabled` state |",
+      "| `/compact` | Compact this chat into a thread summary |",
+      "| `/docs` | Open BetterC0de documentation |",
+      "| `/settings [tab]` | Open Settings (`general`, `providers`, `appearance`, `rules`, `skills`, `tools`, `hooks`, `plugins`, `betterc0de`, `docs`) |",
+      "| `/org`, `/organization` | Open provider account and organization settings; add `--terminal` for `betterc0de console orgs/switch` |",
+      "| `/console`, `/app.debug` | Toggle the console/debug panel |",
+      "| `/app.log [level] <message>` | Write an BetterC0de-compatible local log entry |",
+      "| `/heap-snapshot`, `/app.heap_snapshot` | Write a Node backend heap snapshot to the logs directory |",
+      "| `/terminal`, `/terminal.suspend` | Toggle the terminal panel |",
+      "| `/terminal-title`, `/terminal.title.toggle` | Toggle integrated terminal tab titles |",
+      "| `/terminal-new`, `/terminal.new` | Open the terminal panel and create a new terminal session |",
+      "| `/review.toggle` | Toggle the review/diff panel |",
+      "| `/fileTree.toggle`, `/files` | Toggle the workspace file tree |",
+      "| `/sidebar` | Toggle the main app sidebar |",
+      "| `/input.focus` | Focus the chat input |",
+      "| `/animations`, `/file-context`, `/session-directory-filter` | Toggle BetterC0de-compatible app behavior flags |",
+      "| `/connect`, `/providers.login`, `/account.login`, `/console.login` | Show provider connection guidance; add `--terminal` to prefill the BetterC0de auth command |",
+      "| `/auth`, `/auth.list`, `/account.logout`, `/providers.logout` | Show provider authentication and setup status; add `--terminal` for logout/list commands |",
+      "| `/themes`, `/theme <dark|light>` | List or switch themes |",
+      "| `/theme-mode`, `/theme.switch_mode`, `/theme-mode-lock` | Switch or lock the light/dark theme mode |",
+      "| `/terminal-font [font|system]` | Show or set the integrated terminal font |",
+      "| `/variants`, `/variant.list` | Show model variant support |",
+      "| `/variant.cycle`, `/model.variant.cycle` | Cycle the current BetterC0de model variant |",
+      "| `/catalog [model|provider]`, `/models <query> --verbose`, `/catalog.model.list` | Inspect provider model catalog metadata |",
+      "| `/streaming [on|off]` | Toggle assistant response streaming |",
+      "| `/timestamps [on|off]`, `/toggle-timestamps [on|off]` | Toggle chat message timestamps |",
+      "| `/thinking [on|off]`, `/toggle-thinking [on|off]` | Toggle assistant thinking blocks |",
+      "| `/reasoning-summaries [on|off]` | Toggle compact reasoning summary headings |",
+      "| `/tool-details [on|off]`, `/actions [on|off]` | Toggle expanded tool details |",
+      "| `/progress [on|off]`, `/session.toggle.progress_bar [on|off]` | Toggle BetterC0de-compatible session progress rows |",
+      "| `/shell-expanded [on|off]`, `/edit-expanded [on|off]` | Toggle default expansion for shell and edit tool parts |",
+      "| `/scrollbar [on|off]`, `/toggle-scrollbar [on|off]` | Toggle the main chat scrollbar |",
+      "| `/generic-tool-output [on|off]` | Toggle raw output previews for generic tools |",
+      "| `/conceal [on|off]`, `/session.toggle.conceal [on|off]` | Toggle concealed code block previews |",
+      "| `/autosave [on|off]` | Toggle automatic conversation saving |",
+      "| `/diffwrap [on|off]` | Toggle diff viewer word wrap |",
+      "| `/diff-style [auto|stacked]` | Set BetterC0de-compatible diff layout |",
+      "| `/notifications [request|on|off|agent|permissions|errors]` | Show or change native notification settings |",
+      "| `/confirmations [on|off]` | Toggle archive and delete confirmations |",
+      "| `/autoaccept [on|off]` | Toggle automatic tool approval for this chat |",
+      "| `/density [on|off]`, `/compact-ui [on|off]` | Toggle compact chat spacing |",
+    ]
+    if (mcpList.length > 0) {
+      sections.push(
+        "",
+        "---",
+        "",
+        "**MCP Servers** - Type `/<name>` to reference\n"
+      )
+      for (const m of mcpList)
+        sections.push(
+          `- \`/${m.id}\` - **${m.name}** \`${m.command}\` ${m.enabled ? "" : "(disabled)"}`
+        )
+    }
+    const providerSlashCommands = selectedProvider?.slashCommands ?? []
+    if (providerSlashCommands.length > 0) {
+      sections.push(
+        "",
+        "---",
+        "",
+        `**${selectedProvider?.name ?? "Provider"} Commands** - Type \`/<command>\` to send a provider-native slash command\n`
+      )
+      for (const command of providerSlashCommands) {
+        const name = command.name.replace(/^\/+/, "")
+        sections.push(
+          `- \`/${name}\`${command.description ? ` - ${command.description}` : ""}`
+        )
+      }
+    }
+    const providerSkills = (selectedProvider?.skills ?? []).filter(
+      (skill) => skill.enabled
+    )
+    if (providerSkills.length > 0) {
+      sections.push(
+        "",
+        "---",
+        "",
+        `**${selectedProvider?.name ?? "Provider"} Skills** - Type \`/\` and choose **Skills**, or use \`$<skill>\` directly. Existing commands take precedence over a typed \`/<skill>\` alias.\n`
+      )
+      for (const skill of providerSkills) {
+        const name = skill.name.replace(/^\$+/, "")
+        sections.push(`- \`$${name}\` - **${skill.displayName ?? skill.name}**`)
+      }
+    }
+    if (skillList.length > 0) {
+      sections.push(
+        "",
+        "---",
+        "",
+        "**BetterC0de Runtime Skills** - Use `/<skill-id>` to run a skill as an BetterC0de-compatible command, or `@<skill-id>` to inline one explicitly for non-native providers\n"
+      )
+      for (const s of skillList)
+        sections.push(`- \`/${s.id}\` / \`@${s.id}\` - **${s.name}**`)
+    }
+    if (subagentList.length > 0) {
+      sections.push(
+        "",
+        "---",
+        "",
+        "**Subagents** - Type `/<name>` to inspect or `@<subagent-id>` to inject into the prompt\n"
+      )
+      for (const agent of subagentList)
+        sections.push(`- \`/${agent.id}\` - **${agent.name}**`)
+    }
+    if (projectCommandList.length > 0) {
+      sections.push(
+        "",
+        "---",
+        "",
+        "**Project Commands** - Type `/<command>` to run repo-local `.betterc0de/command(s)` templates\n"
+      )
+      for (const command of projectCommandList) {
+        sections.push(
+          `- \`/${command.name}\` - **${command.description ?? command.sourcePath}**`
+        )
+      }
+    }
+    if (projectReferenceList.length > 0) {
+      sections.push(
+        "",
+        "---",
+        "",
+        "**Project References** - Type `@<alias>` or `@<alias>/<path>` to point the agent at an BetterC0de reference\n"
+      )
+      for (const reference of projectReferenceList) {
+        sections.push(
+          `- \`@${reference.id}\` - **${reference.kind}** ${reference.repository ?? reference.relativePath ?? reference.message ?? reference.sourcePath}`
+        )
+      }
+    }
+    if (projectFormatterList.length > 0) {
+      sections.push(
+        "",
+        "---",
+        "",
+        "**Project Formatters** - Type `/formatters` for command details\n"
+      )
+      for (const formatter of projectFormatterList) {
+        sections.push(
+          `- \`${formatter.id}\` - **${formatter.enabled ? "enabled" : "disabled"}** ${formatter.command || "built-in"}`
+        )
+      }
+    }
+    if (projectLspServerList.length > 0) {
+      sections.push(
+        "",
+        "---",
+        "",
+        "**Project LSP Servers** - Type `/lsp` for command details\n"
+      )
+      for (const server of projectLspServerList) {
+        sections.push(
+          `- \`${server.id}\` - **${server.enabled ? "enabled" : "disabled"}** ${server.command || "built-in"}`
+        )
+      }
+    }
+    if (projectPermissionList.length > 0) {
+      sections.push(
+        "",
+        "---",
+        "",
+        "**Project Permissions** - Type `/permissions` for rules\n"
+      )
+      for (const rule of projectPermissionList) {
+        sections.push(
+          `- \`${rule.permission}\` \`${rule.pattern}\` - **${rule.action}**`
+        )
+      }
+    }
+    if (projectConfigList.length > 0) {
+      sections.push(
+        "",
+        "---",
+        "",
+        "**BetterC0de Project Config** - Type `/betterc0de` for the full summary\n"
+      )
+      for (const setting of projectConfigList.slice(0, 12)) {
+        sections.push(`- \`${setting.key}\` - **${setting.value}**`)
+      }
+    }
+    if (
+      projectProvidersSummary &&
+      (projectProvidersSummary.providers.length > 0 ||
+        projectProvidersSummary.defaultModel ||
+        projectProvidersSummary.enabledProviders.length > 0 ||
+        projectProvidersSummary.disabledProviders.length > 0)
+    ) {
+      sections.push(
+        "",
+        "---",
+        "",
+        "**BetterC0de Project Providers** - Type `/project-providers` for provider and model details\n"
+      )
+      if (projectProvidersSummary.defaultModel) {
+        sections.push(
+          `- Default model: \`${projectProvidersSummary.defaultModel}\``
+        )
+      }
+      for (const provider of projectProvidersSummary.providers) {
+        sections.push(
+          `- \`${provider.id}\` - **${provider.name ?? provider.id}** (${provider.models.length} model${provider.models.length === 1 ? "" : "s"})`
+        )
+      }
+    }
+    if (projectPluginList.length > 0) {
+      sections.push(
+        "",
+        "---",
+        "",
+        "**BetterC0de Project Plugins** - Type `/project-plugins` for plugin specs\n"
+      )
+      for (const plugin of projectPluginList) {
+        sections.push(
+          `- \`${plugin.spec}\` - **${plugin.kind}** ${plugin.message ?? ""}`
+        )
+      }
+    }
+    if (projectToolList.length > 0) {
+      sections.push(
+        "",
+        "---",
+        "",
+        "**BetterC0de Project Tools** - Type `/project-tools` for tool flags and custom tool modules\n"
+      )
+      for (const tool of projectToolList) {
+        sections.push(
+          `- \`${tool.tool}\` - **${formatProjectToolState(tool)}**`
+        )
+      }
+    }
+    output = sections.join("\n")
+  } else if (isBetterC0deSessionSlashSubcommand(cmd, args, "list")) {
+    const sessionArgs = stripBetterC0deSessionSlashSubcommand(args)
+    const terminalCommand = buildBetterC0deSessionCliTerminalCommand(
+      "/betterc0de-session-list",
+      sessionArgs
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = buildBetterC0deSessionCliOutput(
+      "/betterc0de-session-list",
+      sessionArgs,
+      activeThread
+    )
+  } else if (isBetterC0deSessionSlashSubcommand(cmd, args, "delete")) {
+    const sessionArgs = stripBetterC0deSessionSlashSubcommand(args)
+    const terminalCommand = buildBetterC0deSessionCliTerminalCommand(
+      "/betterc0de-session-delete",
+      sessionArgs
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = buildBetterC0deSessionCliOutput(
+      "/betterc0de-session-delete",
+      sessionArgs,
+      activeThread
+    )
+  } else if (
+    isSlashCommand(
+      cmd,
+      "sessions",
+      "session",
+      "resume",
+      "continue",
+      "session.list",
+      "session.get",
+      "session-list",
+      "v2.session.list",
+      "v2-session-list"
+    )
+  ) {
+    output = buildSessionsOutput(
+      filterThreadsForSessionDirectory(
+        store.threads,
+        threadId,
+        useAppearanceStore.getState().sessionDirectoryFilterEnabled
+      ),
+      threadId,
+      parseSessionListOptions(args)
+    )
+  } else if (isSlashCommand(cmd, "history", "prompt-history", "histories")) {
+    output = buildPromptHistoryListOutput(
+      usePreferencesStore.getState().promptHistoryEntries
+    )
+  } else if (
+    isSlashCommand(
+      cmd,
+      "history-use",
+      "history-pop",
+      "prompt-history-use",
+      "prompt.history.previous",
+      "prompt-history-previous",
+      "prompt.history.next",
+      "prompt-history-next"
+    )
+  ) {
+    if (!threadId) {
+      threadId = store.createThread("New Chat", "BetterC0de")
+    }
+    output = buildPromptHistoryUseOutput(args[0], threadId)
+  } else if (
+    isSlashCommand(cmd, "prompt-clear", "prompt.clear", "clear-prompt")
+  ) {
+    if (!threadId) {
+      threadId = store.createThread("New Chat", "BetterC0de")
+    }
+    output = buildPromptClearOutput(threadId)
+  } else if (isSlashCommand(cmd, "prompt-paste", "prompt.paste")) {
+    if (!threadId) {
+      threadId = store.createThread("New Chat", "BetterC0de")
+    }
+    output = await buildPromptPasteOutput(threadId, args.join(" "))
+  } else if (isSlashCommand(cmd, "prompt-submit", "prompt.submit")) {
+    output = buildPromptSubmitOutput()
+  } else if (
+    isSlashCommand(cmd, "input-actions", ...BETTERC0DE_INPUT_ACTION_COMMANDS)
+  ) {
+    output = buildComposerInputActionsOutput(cmd)
+  } else if (isSlashCommand(cmd, "stash", "prompt-stash", "prompt.stash")) {
+    output = buildPromptStashPushOutput(args.join(" "), threadId, activeThread)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "stashes",
+      "stash-list",
+      "prompt-stash-list",
+      "prompt.stash.list"
+    )
+  ) {
+    output = buildPromptStashListOutput(
+      usePreferencesStore.getState().promptStashEntries
+    )
+  } else if (
+    isSlashCommand(cmd, "stash-pop", "prompt-stash-pop", "prompt.stash.pop")
+  ) {
+    if (!threadId) {
+      threadId = store.createThread("New Chat", "BetterC0de")
+    }
+    output = buildPromptStashPopOutput(args[0], threadId)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "stash-delete",
+      "stash-remove",
+      "prompt-stash-delete",
+      "stash.delete"
+    )
+  ) {
+    output = buildPromptStashDeleteOutput(args[0])
+  } else if (
+    isSlashCommand(
+      cmd,
+      "commands",
+      "project-commands",
+      "command.list",
+      "command-list"
+    )
+  ) {
+    if (args.includes("--config-only")) {
+      output = await buildProjectCommandConfigOutput(args, activeThread)
+    } else {
+      output = buildProjectCommandsOutput(
+        projectCommandList,
+        skillList,
+        activeThread
+      )
+    }
+  } else if (isSlashCommand(cmd, "references", "refs", "project-references")) {
+    if (args.includes("--config-only")) {
+      output = await buildProjectReferenceConfigOutput(args, activeThread)
+    } else {
+      output = buildProjectReferencesOutput(projectReferenceList, activeThread)
+    }
+  } else if (isSlashCommand(cmd, "format", "project-format", "formatter.run")) {
+    const terminalCommand = buildProjectFormatTerminalCommand(
+      args,
+      projectFormatterList
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = await buildProjectFormatOutput(
+      args,
+      projectFormatterList,
+      activeThread
+    )
+  } else if (
+    isSlashCommand(
+      cmd,
+      "formatters",
+      "project-formatters",
+      "formatter.status",
+      "formatter-status"
+    )
+  ) {
+    if (args.includes("--config-only")) {
+      output = await buildProjectFormatterConfigOutput(args, activeThread)
+    } else {
+      output = buildProjectFormattersOutput(projectFormatterList, activeThread)
+    }
+  } else if (
+    isSlashCommand(
+      cmd,
+      "lsp",
+      "lsps",
+      "language-servers",
+      "debug.lsp",
+      "debug-lsp",
+      "lsp.status",
+      "lsp-status",
+      "debug.lsp.diagnostics",
+      "debug-lsp-diagnostics",
+      "debug.lsp.symbols",
+      "debug-lsp-symbols",
+      "debug.lsp.document-symbols",
+      "debug-lsp-document-symbols"
+    )
+  ) {
+    const terminalCommand = buildProjectLspTerminalCommand(cmd, args)
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    if (args.includes("--config-only")) {
+      output = await buildProjectLspConfigOutput(args, activeThread)
+    } else {
+      output = buildProjectLspServersOutput(
+        projectLspServerList,
+        activeThread,
+        cmd,
+        args
+      )
+    }
+  } else if (isSlashCommand(cmd, "permissions", "project-permissions")) {
+    if (args.includes("--config-only")) {
+      output = await buildProjectPermissionsConfigOutput(args, activeThread)
+    } else {
+      output = buildProjectPermissionsOutput(
+        projectPermissionList,
+        activeThread,
+        permissionLevel,
+        projectSubagentList
+      )
+    }
+  } else if (
+    isSlashCommand(
+      cmd,
+      "approvals",
+      "approval-list",
+      "permission-list",
+      "permission.list",
+      "permissions-pending",
+      "permission.prompt.fullscreen",
+      "permission-fullscreen"
+    )
+  ) {
+    output = await buildPendingApprovalsThreadOutput(threadId)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "approve",
+      "approval-approve",
+      "permission-approve",
+      "permission.reply",
+      "permission.respond"
+    )
+  ) {
+    output = await buildApprovalDecisionOutput(threadId, args[0], "approve")
+  } else if (
+    isSlashCommand(cmd, "deny", "reject", "approval-deny", "permission-deny")
+  ) {
+    output = await buildApprovalDecisionOutput(threadId, args[0], "deny")
+  } else if (
+    isSlashCommand(
+      cmd,
+      "questions",
+      "question-list",
+      "question.list",
+      "user-inputs",
+      "user-input-list"
+    )
+  ) {
+    output = await buildPendingUserInputsThreadOutput(threadId)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "answer",
+      "question-reply",
+      "question.reply",
+      "user-input-answer"
+    )
+  ) {
+    output = await buildUserInputAnswerOutput(threadId, args)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "reject-question",
+      "question-reject",
+      "question.reject",
+      "user-input-reject"
+    )
+  ) {
+    output = await buildUserInputRejectOutput(threadId, args[0])
+  } else if (isSlashCommand(cmd, "todos", "todo", "tasks", "session.todo")) {
+    output = await buildThreadTodosOutput(threadId)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "session-status",
+      "session.status",
+      "status.session",
+      "thread-status"
+    )
+  ) {
+    output = await buildSessionStatusOutput(threadId)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "vcs",
+      "vcs.status",
+      "vcs-status",
+      "vcs.get",
+      "vcs.diff",
+      "vcs-diff",
+      "vcs.diff.raw",
+      "vcs-diff-raw",
+      "vcs-apply",
+      "vcs.apply"
+    )
+  ) {
+    const terminalCommand = isVcsApplyCommand(cmd, args)
+      ? buildVcsApplyTerminalCommand(args)
+      : { command: "", shouldOpen: false }
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = await buildVcsOutput(cmd, args, activeThread)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "find",
+      "find.text",
+      "find-text",
+      "find.file",
+      "find-file",
+      "find.files",
+      "find-files",
+      "find.symbol",
+      "find-symbol",
+      "find.symbols",
+      "find-symbols"
+    )
+  ) {
+    output = await buildFindOutput(cmd, args, activeThread)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "betterc0de",
+      "betterc0de-config",
+      "betterc0de",
+      "project-config",
+      "betterc0de-config",
+      "debug.config",
+      "debug-config",
+      "config.get",
+      "config-get",
+      "config.update",
+      "config-update",
+      "global.config.get",
+      "global-config-get",
+      "global.config.update",
+      "global-config-update",
+      "betterc0de-config",
+      "betterc0de",
+      "compat-config"
+    )
+  ) {
+    if (isSlashCommand(cmd, "debug.config", "debug-config")) {
+      if (args.some(isBetterC0deRuntimeTerminalFlag)) {
+        dispatchPrefilledTerminalCommand(
+          activeThread,
+          "betterc0de debug config"
+        )
+      }
+      output = buildBetterC0deDebugConfigOutput(
+        projectConfigList,
+        activeThread,
+        args
+      )
+    } else {
+      output = buildProjectConfigOutput(projectConfigList, activeThread)
+    }
+  } else if (
+    isSlashCommand(
+      cmd,
+      "betterc0de-audit",
+      "betterc0de.parity",
+      "betterc0de-parity",
+      "compat",
+      "compat-audit",
+      "betterc0de-audit",
+      "betterc0de.parity",
+      "betterc0de-parity",
+      "parity"
+    )
+  ) {
+    output = buildBetterC0deParityMarkdown()
+  } else if (
+    isSlashCommand(
+      cmd,
+      "betterc0de-cli",
+      "betterc0de.commands",
+      "betterc0de-commands",
+      "betterc0de.entrypoints",
+      "betterc0de-entrypoints",
+      "betterc0de-cli",
+      "betterc0de.commands",
+      "betterc0de-commands",
+      "betterc0de.entrypoints",
+      "betterc0de-entrypoints"
+    )
+  ) {
+    output = buildBetterC0deCliParityMarkdown(args)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "betterc0de-api",
+      "betterc0de.api",
+      "betterc0de-http",
+      "betterc0de.http",
+      "betterc0de-http",
+      "betterc0de.api",
+      "betterc0de-api",
+      "betterc0de.http",
+      "openapi",
+      "openapi.operations"
+    )
+  ) {
+    output = buildBetterC0deHttpParityMarkdown(args)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "betterc0de-gaps",
+      "betterc0de.missing",
+      "betterc0de-missing",
+      "betterc0de.todo",
+      "betterc0de-todo",
+      "betterc0de-gaps",
+      "betterc0de.missing",
+      "betterc0de-missing",
+      "betterc0de.todo",
+      "betterc0de-todo"
+    )
+  ) {
+    output = buildBetterC0deGapMarkdown(args)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "betterc0de-sync",
+      "betterc0de.sync",
+      "betterc0de-sync",
+      "sync",
+      "sync.history.list",
+      "sync-history",
+      "sync.replay",
+      "sync-replay",
+      "sync.start",
+      "sync-start",
+      "sync.steal",
+      "sync-steal"
+    )
+  ) {
+    output = buildBetterC0deSyncRouteOutput(cmd, args, {
+      threads: store.threads,
+      activeThreadId: threadId,
+      activitiesByThread: store.activitiesByThread,
+      streamingByThread: store.streamingByThread,
+      activeThread,
+    })
+  } else if (
+    isSlashCommand(
+      cmd,
+      "betterc0de-workspace",
+      "betterc0de.workspace",
+      "betterc0de-workspace",
+      "experimental.workspace.syncList",
+      "experimental-workspace-sync-list",
+      "experimental.workspace.warp",
+      "experimental-workspace-warp"
+    )
+  ) {
+    output = buildBetterC0deWorkspaceRouteOutput(cmd, args, {
+      threads: store.threads,
+      activeThreadId: threadId,
+      activeThread,
+    })
+  } else if (
+    isSlashCommand(
+      cmd,
+      "betterc0de-lifecycle",
+      "betterc0de.lifecycle",
+      "betterc0de-lifecycle",
+      "global.dispose",
+      "global-dispose",
+      "instance.dispose",
+      "instance-dispose"
+    )
+  ) {
+    output = buildBetterC0deLifecycleRouteOutput(cmd, activeThread)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "tui-control",
+      "tui.control.next",
+      "tui-control-next",
+      "tui.control.response",
+      "tui-control-response"
+    )
+  ) {
+    output = buildBetterC0deTuiControlRouteOutput(cmd, args)
+  } else if (
+    isSlashCommand(cmd, "auth.set", "auth-set", "auth.remove", "auth-remove")
+  ) {
+    output = buildBetterC0deAuthControlOutput(cmd, args)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "betterc0de-internal",
+      "betterc0de.internal",
+      "betterc0de-internal"
+    ) ||
+    isBetterC0deInternalRouteCommand(cmd)
+  ) {
+    const terminalCommand = buildBetterC0deInternalRouteTerminalCommand(
+      cmd,
+      args
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = buildBetterC0deInternalRouteOutput(cmd, args)
+  } else if (isSlashCommand(cmd, "tui", "tui-config")) {
+    output = args.includes("--config-only")
+      ? await buildProjectTuiConfigWriteOutput(args, activeThread)
+      : buildProjectTuiConfigOutput(projectConfigList, activeThread)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "keybinds",
+      "keybindings",
+      "which-key",
+      "which-key.toggle",
+      "which-key.layout.toggle",
+      "which-key.pending.toggle",
+      "which-key.group.previous",
+      "which-key.group.next",
+      "which-key.scroll.up",
+      "which-key.scroll.down",
+      "which-key.page.up",
+      "which-key.page.down",
+      "which-key.home",
+      "which-key.end"
+    )
+  ) {
+    output = args.includes("--config-only")
+      ? await buildProjectTuiConfigWriteOutput(args, activeThread)
+      : buildProjectKeybindsOutput(projectConfigList, activeThread)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "tips",
+      "tips.toggle",
+      "betterc0de-tips",
+      "betterc0de-tips",
+      "tips-toggle"
+    )
+  ) {
+    output = buildBetterC0deTipsMarkdown()
+  } else if (
+    isSlashCommand(
+      cmd,
+      "attachments",
+      "attachment",
+      "image-attachments",
+      "betterc0de-attachments",
+      "betterc0de-attachments"
+    )
+  ) {
+    if (args.includes("--config-only")) {
+      output = await buildBetterC0deRuntimeConfigOutput(args, activeThread)
+    } else {
+      output = buildProjectConfigGroupOutput({
+        activeThread,
+        emptyTitle: "BetterC0de Attachments",
+        emptyMessage:
+          "No BetterC0de attachment config found. Defaults are auto resize on, max 2000x2000, and 5 MB base64 payload.",
+        heading: "BetterC0de Attachments",
+        match: isBetterC0deAttachmentConfigKey,
+        settings: projectConfigList,
+      })
+    }
+  } else if (
+    isSlashCommand(
+      cmd,
+      "tool-output",
+      "tool-output-limits",
+      "betterc0de-tool-output",
+      "betterc0de-tool-output"
+    )
+  ) {
+    if (args.includes("--config-only")) {
+      output = await buildBetterC0deRuntimeConfigOutput(args, activeThread)
+    } else {
+      output = buildProjectConfigGroupOutput({
+        activeThread,
+        emptyTitle: "BetterC0de Tool Output",
+        emptyMessage:
+          "No BetterC0de tool_output config found. BetterC0de will use its runtime defaults.",
+        heading: "BetterC0de Tool Output",
+        match: isBetterC0deToolOutputConfigKey,
+        settings: projectConfigList,
+      })
+    }
+  } else if (
+    isSlashCommand(
+      cmd,
+      "compaction",
+      "context-compaction",
+      "betterc0de-compaction",
+      "betterc0de-compaction"
+    )
+  ) {
+    if (args.includes("--config-only")) {
+      output = await buildBetterC0deRuntimeConfigOutput(args, activeThread)
+    } else {
+      output = buildProjectConfigGroupOutput({
+        activeThread,
+        emptyTitle: "BetterC0de Compaction",
+        emptyMessage:
+          "No BetterC0de compaction config found. BetterC0de will use its runtime defaults.",
+        heading: "BetterC0de Compaction",
+        match: isBetterC0deCompactionConfigKey,
+        settings: projectConfigList,
+      })
+    }
+  } else if (
+    isSlashCommand(
+      cmd,
+      "betterc0de-runtime",
+      "betterc0de-runtime",
+      "betterc0de.server",
+      "betterc0de-app",
+      "runtime-config",
+      "betterc0de-server",
+      "betterc0de-app"
+    )
+  ) {
+    if (args.includes("--config-only")) {
+      output = await buildBetterC0deRuntimeConfigOutput(args, activeThread)
+    } else {
+      output = buildProjectConfigGroupOutput({
+        activeThread,
+        emptyTitle: "BetterC0de Runtime Config",
+        emptyMessage:
+          "No BetterC0de compatibility runtime/app config found. BetterC0de will use its own app defaults.",
+        heading: "BetterC0de Runtime Config",
+        match: isBetterC0deRuntimeConfigKey,
+        settings: projectConfigList,
+      })
+    }
+  } else if (
+    isSlashCommand(
+      cmd,
+      "betterc0de-tui",
+      "betterc0de-tui",
+      "betterc0de.thread",
+      "betterc0de-thread",
+      "betterc0de.ui",
+      "betterc0de-ui",
+      "betterc0de.thread",
+      "betterc0de-thread",
+      "betterc0de.ui",
+      "betterc0de-ui",
+      "betterc0de-run",
+      "betterc0de-run",
+      "betterc0de.run",
+      "betterc0de-cli-run",
+      "betterc0de.run",
+      "betterc0de-cli-run",
+      "betterc0de-serve",
+      "betterc0de-serve",
+      "betterc0de.serve",
+      "betterc0de-server-start",
+      "betterc0de.serve",
+      "betterc0de-server-start",
+      "betterc0de-attach",
+      "betterc0de-attach",
+      "betterc0de.attach",
+      "betterc0de-server-switch",
+      "betterc0de.attach",
+      "attach",
+      "attach-server",
+      "server.switch",
+      "server-switch",
+      "betterc0de-web",
+      "betterc0de-web",
+      "betterc0de.web",
+      "betterc0de-web-ui",
+      "betterc0de.web",
+      "betterc0de-web-ui",
+      "betterc0de-acp",
+      "betterc0de-acp",
+      "betterc0de.acp",
+      "betterc0de.acp",
+      "acp"
+    )
+  ) {
+    const terminalCommand = buildBetterC0deRuntimeTerminalCommand(cmd, args)
+    const runtimePath = resolveThreadRuntimePath(activeThread)
+    if (runtimePath && terminalCommand.shouldOpen && terminalCommand.command) {
+      const prefs = usePreferencesStore.getState()
+      prefs.set("terminalOpen", true)
+      window.setTimeout(() => {
+        dispatchTerminalNewSession({
+          threadId,
+          mode: prefs.appMode,
+          cwd: runtimePath,
+          initialCommand: terminalCommand.command,
+        })
+      }, 0)
+    }
+    output = buildBetterC0deRuntimeEntrypointOutput(cmd, args, activeThread)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "betterc0de-upgrade",
+      "betterc0de-upgrade",
+      "betterc0de.upgrade",
+      "betterc0de-update",
+      "betterc0de.upgrade",
+      "betterc0de-update",
+      "betterc0de-uninstall",
+      "betterc0de-uninstall",
+      "betterc0de.uninstall",
+      "betterc0de.uninstall",
+      "betterc0de-generate",
+      "betterc0de-generate",
+      "betterc0de.generate",
+      "betterc0de-openapi",
+      "betterc0de.generate",
+      "betterc0de-openapi",
+      "betterc0de-completion",
+      "betterc0de-completion",
+      "betterc0de.completion",
+      "betterc0de.completion",
+      "completion",
+      "betterc0de-db",
+      "betterc0de-db",
+      "betterc0de.db",
+      "betterc0de-db-path",
+      "betterc0de-db-migrate",
+      "betterc0de-db-query",
+      "betterc0de.db",
+      "betterc0de-db-path",
+      "betterc0de-db-migrate",
+      "betterc0de-db-query",
+      "betterc0de.db.query",
+      "db",
+      "db.migrate",
+      "db.query",
+      "db-query"
+    )
+  ) {
+    const terminalCommand = buildBetterC0deMaintenanceTerminalCommand(cmd, args)
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      const prefs = usePreferencesStore.getState()
+      prefs.set("terminalOpen", true)
+      window.setTimeout(() => {
+        dispatchTerminalNewSession({
+          threadId,
+          mode: prefs.appMode,
+          cwd: resolveThreadRuntimePath(activeThread),
+          initialCommand: terminalCommand.command,
+        })
+      }, 0)
+    }
+    const maintenanceCommandKey = cmd.replace(/^\//, "").toLowerCase()
+    const isBetterC0deDbMaintenanceCommand =
+      maintenanceCommandKey.includes("db") ||
+      ["db", "db.migrate", "db.query", "db-query"].includes(
+        maintenanceCommandKey
+      )
+    output =
+      isBetterC0deDbMaintenanceCommand && betterC0deDbMode(cmd, args) === "path"
+        ? buildBetterC0deDbPathOutput(await getRuntimeDebugInfo(), cmd, args)
+        : buildBetterC0deMaintenanceOutput(cmd, args)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "betterc0de-session",
+      "betterc0de.session",
+      "betterc0de-session-list",
+      "betterc0de.session.list",
+      "betterc0de-session-delete",
+      "betterc0de.session.delete",
+      "session-cli",
+      "session.cli"
+    )
+  ) {
+    const terminalCommand = buildBetterC0deSessionCliTerminalCommand(cmd, args)
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = buildBetterC0deSessionCliOutput(cmd, args, activeThread)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "project-providers",
+      "provider-config",
+      "betterc0de-providers",
+      "betterc0de-providers",
+      "config.providers",
+      "config-providers",
+      "v2.provider.list",
+      "v2-provider-list",
+      "v2.provider.get",
+      "v2-provider-get"
+    )
+  ) {
+    if (args.includes("--config-only")) {
+      output = await buildProjectProviderConfigOutput(args, activeThread)
+    } else {
+      output = buildProjectProvidersOutput(
+        projectProvidersSummary,
+        activeThread
+      )
+    }
+  } else if (
+    isSlashCommand(
+      cmd,
+      "project-plugins",
+      "betterc0de-plugins",
+      "betterc0de-plugins"
+    )
+  ) {
+    output = buildProjectPluginsOutput(projectPluginList, activeThread, args)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "project-tools",
+      "betterc0de-tools",
+      "betterc0de-tools",
+      "tool.list",
+      "tool-list",
+      "tool.ids",
+      "tool-ids"
+    )
+  ) {
+    if (args.includes("--config-only")) {
+      output = await buildProjectToolsConfigOutput(args, activeThread)
+    } else {
+      output = buildProjectToolsOutput(
+        projectToolList,
+        activeThread,
+        permissionLevel
+      )
+    }
+  } else if (isBetterC0deMcpSlashSubcommand(cmd, args, "resources")) {
+    const mcpArgs = stripBetterC0deMcpSlashSubcommand(args)
+    if (mcpArgs.some(isBetterC0deRuntimeTerminalFlag)) {
+      dispatchPrefilledTerminalCommand(activeThread, "betterc0de serve")
+    }
+    output = buildMcpResourcesOutput(mcpList, mcpArgs)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "mcp-resources",
+      "mcp.resources",
+      "mcp-resource-list",
+      "resources",
+      "experimental.resource.list",
+      "experimental-resource-list"
+    )
+  ) {
+    if (args.some(isBetterC0deRuntimeTerminalFlag)) {
+      dispatchPrefilledTerminalCommand(activeThread, "betterc0de serve")
+    }
+    output = buildMcpResourcesOutput(mcpList, args)
+  } else if (isBetterC0deMcpSlashSubcommand(cmd, args, "auth")) {
+    const mcpArgs = stripBetterC0deMcpSlashSubcommand(args)
+    const terminalCommand = buildBetterC0deMcpTerminalCommand(
+      "/mcp-auth",
+      mcpArgs
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    const cleanArgs = stripBetterC0deRuntimeUiFlags(mcpArgs)
+    const listOnly =
+      cleanArgs[0]?.toLowerCase() === "list" ||
+      cleanArgs[0]?.toLowerCase() === "ls"
+    if (cleanArgs[0] && !listOnly) {
+      const matchedMcp = resolveRuntimeMcpServer(mcpList, cleanArgs[0])
+      output = matchedMcp
+        ? buildRuntimeMcpDetailOutput(matchedMcp)
+        : buildMcpNotFoundOutput(cleanArgs[0], mcpList)
+    } else {
+      output = buildMcpAuthOutput(mcpList, mcpArgs)
+    }
+  } else if (
+    isSlashCommand(
+      cmd,
+      "mcp-auth",
+      "mcp.auth",
+      "mcp.auth.list",
+      "mcp.auth.ls",
+      "mcp.auth.start",
+      "mcp.auth.callback",
+      "mcp.auth.authenticate",
+      "mcp-auth-list",
+      "mcp-auth-ls"
+    )
+  ) {
+    const terminalCommand = buildBetterC0deMcpTerminalCommand(cmd, args)
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    const cleanArgs = stripBetterC0deRuntimeUiFlags(args)
+    if (cleanArgs[0]) {
+      const matchedMcp = resolveRuntimeMcpServer(mcpList, cleanArgs[0])
+      output = matchedMcp
+        ? buildRuntimeMcpDetailOutput(matchedMcp)
+        : buildMcpNotFoundOutput(cleanArgs[0], mcpList)
+    } else {
+      output = buildMcpAuthOutput(mcpList, args)
+    }
+  } else if (isBetterC0deMcpSlashSubcommand(cmd, args, "add")) {
+    const mcpArgs = stripBetterC0deMcpSlashSubcommand(args)
+    if (mcpArgs.includes("--config-only")) {
+      output = await buildProjectMcpConfigOutput(mcpArgs, activeThread)
+    } else {
+      const terminalCommand = buildBetterC0deMcpTerminalCommand(
+        "/mcp-add",
+        mcpArgs
+      )
+      if (terminalCommand.shouldOpen && terminalCommand.command) {
+        dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+      }
+      openSettingsTab("tools")
+      output = buildMcpAddOutput(activeThread, mcpArgs)
+    }
+  } else if (
+    isSlashCommand(cmd, "mcp-add", "mcp.add", "mcp-install", "mcp.install")
+  ) {
+    if (args.includes("--config-only")) {
+      output = await buildProjectMcpConfigOutput(args, activeThread)
+    } else {
+      const terminalCommand = buildBetterC0deMcpTerminalCommand(cmd, args)
+      if (terminalCommand.shouldOpen && terminalCommand.command) {
+        dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+      }
+      openSettingsTab("tools")
+      output = buildMcpAddOutput(activeThread, args)
+    }
+  } else if (isBetterC0deMcpSlashSubcommand(cmd, args, "logout")) {
+    const mcpArgs = stripBetterC0deMcpSlashSubcommand(args)
+    const terminalCommand = buildBetterC0deMcpTerminalCommand(
+      "/mcp-logout",
+      mcpArgs
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    const cleanArgs = stripBetterC0deRuntimeUiFlags(mcpArgs)
+    output = buildMcpLogoutOutput(mcpList, cleanArgs[0], mcpArgs)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "mcp-logout",
+      "mcp.logout",
+      "mcp.auth.remove",
+      "mcp-auth-logout"
+    )
+  ) {
+    const terminalCommand = buildBetterC0deMcpTerminalCommand(cmd, args)
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    const cleanArgs = stripBetterC0deRuntimeUiFlags(args)
+    output = buildMcpLogoutOutput(mcpList, cleanArgs[0], args)
+  } else if (isBetterC0deMcpSlashSubcommand(cmd, args, "debug")) {
+    const mcpArgs = stripBetterC0deMcpSlashSubcommand(args)
+    const terminalCommand = buildBetterC0deMcpTerminalCommand(
+      "/mcp-debug",
+      mcpArgs
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    const cleanArgs = stripBetterC0deRuntimeUiFlags(mcpArgs)
+    output = buildMcpDebugOutput(mcpList, cleanArgs[0], mcpArgs)
+  } else if (isSlashCommand(cmd, "mcp-debug", "mcp.debug", "mcp-inspect")) {
+    const terminalCommand = buildBetterC0deMcpTerminalCommand(cmd, args)
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    const cleanArgs = stripBetterC0deRuntimeUiFlags(args)
+    output = buildMcpDebugOutput(mcpList, cleanArgs[0], args)
+  } else if (isBetterC0deMcpSlashSubcommand(cmd, args, "list")) {
+    const mcpArgs = stripBetterC0deMcpSlashSubcommand(args)
+    const terminalCommand = buildBetterC0deMcpTerminalCommand(
+      "/mcp.list",
+      mcpArgs
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = buildMcpServersOutput(mcpList, mcpArgs)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "mcps",
+      "mcp",
+      "mcp.list",
+      "mcp.ls",
+      "mcp.status",
+      "mcp-ls"
+    )
+  ) {
+    const terminalCommand = buildBetterC0deMcpTerminalCommand(cmd, args)
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    const cleanArgs = stripBetterC0deRuntimeUiFlags(args)
+    if (cleanArgs[0]) {
+      const matchedMcp = resolveRuntimeMcpServer(mcpList, cleanArgs[0])
+      if (!matchedMcp) {
+        output = buildMcpNotFoundOutput(cleanArgs[0], mcpList)
+      } else if (cleanArgs[1]) {
+        output = await buildRuntimeMcpToggleOutput(
+          matchedMcp,
+          resolveToggleArg(cleanArgs[1], matchedMcp.enabled)
+        )
+      } else {
+        output = buildRuntimeMcpDetailOutput(matchedMcp)
+      }
+    } else {
+      output = buildMcpServersOutput(mcpList, args)
+    }
+  } else if (
+    isSlashCommand(
+      cmd,
+      "mcp-toggle",
+      "toggle-mcp",
+      "mcp.toggle",
+      "mcp.connect",
+      "mcp.disconnect",
+      "dialog.mcp.toggle",
+      "dialog-mcp-toggle",
+      "mcp-enable",
+      "mcp-disable"
+    )
+  ) {
+    const forced = isSlashCommand(cmd, "mcp-enable")
+      ? true
+      : isSlashCommand(cmd, "mcp-disable")
+        ? false
+        : undefined
+    if (args.includes("--config-only")) {
+      const cleanArgs = args.filter(
+        (arg) =>
+          arg !== "--config-only" && !isBetterC0deRuntimeTerminalFlag(arg)
+      )
+      const target = cleanArgs[0]
+      if (!target) {
+        output =
+          "# MCP Toggle\n\n> Usage: `/mcp-toggle <id> [on|off] --config-only`"
+      } else {
+        const matchedMcp = resolveRuntimeMcpServer(mcpList, target)
+        const enabled =
+          typeof forced === "boolean"
+            ? forced
+            : resolveToggleArg(cleanArgs[1], matchedMcp?.enabled ?? true)
+        output = await buildProjectMcpConfigOutput(
+          ["--config-only", target, "--enabled", String(enabled)],
+          activeThread
+        )
+      }
+    } else {
+      const matchedMcp = args[0]
+        ? resolveRuntimeMcpServer(mcpList, args[0])
+        : null
+      if (!args[0]) {
+        output = "# MCP Toggle\n\n> Usage: `/mcp-toggle <id> [on|off]`"
+      } else if (!matchedMcp) {
+        output = buildMcpNotFoundOutput(args[0], mcpList)
+      } else {
+        output = await buildRuntimeMcpToggleOutput(
+          matchedMcp,
+          typeof forced === "boolean"
+            ? forced
+            : resolveToggleArg(args[1], matchedMcp.enabled)
+        )
+      }
+    }
+  } else if (
+    isSlashCommand(
+      cmd,
+      "skills",
+      "prompt.skills",
+      "prompt-skills",
+      "debug.skill",
+      "debug-skill",
+      "app.skills"
+    )
+  ) {
+    if (args.includes("--config-only")) {
+      output = await buildProjectSkillsConfigOutput(args, activeThread)
+    } else {
+      output = buildRuntimeSkillsOutput(
+        skillList,
+        isSlashCommand(cmd, "debug.skill", "debug-skill")
+          ? [...args, "--json"]
+          : args
+      )
+    }
+  } else if (isBetterC0deAgentSlashSubcommand(cmd, args, "list")) {
+    const agentArgs = stripBetterC0deAgentSlashSubcommand(args)
+    const terminalCommand = buildBetterC0deAgentTerminalCommand(
+      "/agents",
+      agentArgs
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = buildRuntimeSubagentListOutput(
+      subagentList,
+      terminalCommand.shouldOpen ? terminalCommand.command : undefined
+    )
+  } else if (isBetterC0deAgentSlashSubcommand(cmd, args, "debug")) {
+    const agentArgs = stripBetterC0deAgentSlashSubcommand(args)
+    const terminalCommand = buildBetterC0deAgentTerminalCommand(
+      "/debug.agent",
+      agentArgs
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    const cleanArgs = stripBetterC0deRuntimeUiFlags(agentArgs)
+    if (cleanArgs[0]) {
+      const matchedSubagent = resolveRuntimeSubagent(subagentList, cleanArgs[0])
+      output = matchedSubagent
+        ? buildRuntimeSubagentDebugOutput(
+            matchedSubagent,
+            cleanArgs,
             terminalCommand.command
-          ) {
-            const prefs = usePreferencesStore.getState()
-            prefs.set("terminalOpen", true)
-            window.setTimeout(() => {
-              dispatchTerminalNewSession({
-                threadId,
-                mode: prefs.appMode,
-                cwd: runtimePath,
-                initialCommand: terminalCommand.command,
-              })
-            }, 0)
-          }
-          output = buildBetterC0deRuntimeEntrypointOutput(
-            cmd,
-            args,
-            activeThread
           )
-        } else if (
-          isSlashCommand(
-            cmd,
-            "betterc0de-upgrade",
-            "betterc0de-upgrade",
-            "betterc0de.upgrade",
-            "betterc0de-update",
-            "betterc0de.upgrade",
-            "betterc0de-update",
-            "betterc0de-uninstall",
-            "betterc0de-uninstall",
-            "betterc0de.uninstall",
-            "betterc0de.uninstall",
-            "betterc0de-generate",
-            "betterc0de-generate",
-            "betterc0de.generate",
-            "betterc0de-openapi",
-            "betterc0de.generate",
-            "betterc0de-openapi",
-            "betterc0de-completion",
-            "betterc0de-completion",
-            "betterc0de.completion",
-            "betterc0de.completion",
-            "completion",
-            "betterc0de-db",
-            "betterc0de-db",
-            "betterc0de.db",
-            "betterc0de-db-path",
-            "betterc0de-db-migrate",
-            "betterc0de-db-query",
-            "betterc0de.db",
-            "betterc0de-db-path",
-            "betterc0de-db-migrate",
-            "betterc0de-db-query",
-            "betterc0de.db.query",
-            "db",
-            "db.migrate",
-            "db.query",
-            "db-query"
-          )
-        ) {
-          const terminalCommand = buildBetterC0deMaintenanceTerminalCommand(
-            cmd,
-            args
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            const prefs = usePreferencesStore.getState()
-            prefs.set("terminalOpen", true)
-            window.setTimeout(() => {
-              dispatchTerminalNewSession({
-                threadId,
-                mode: prefs.appMode,
-                cwd: resolveThreadRuntimePath(activeThread),
-                initialCommand: terminalCommand.command,
-              })
-            }, 0)
-          }
-          const maintenanceCommandKey = cmd.replace(/^\//, "").toLowerCase()
-          const isBetterC0deDbMaintenanceCommand =
-            maintenanceCommandKey.includes("db") ||
-            ["db", "db.migrate", "db.query", "db-query"].includes(
-              maintenanceCommandKey
-            )
-          output =
-            isBetterC0deDbMaintenanceCommand &&
-            betterC0deDbMode(cmd, args) === "path"
-              ? buildBetterC0deDbPathOutput(
-                  await getRuntimeDebugInfo(),
-                  cmd,
-                  args
-                )
-              : buildBetterC0deMaintenanceOutput(cmd, args)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "betterc0de-session",
-            "betterc0de.session",
-            "betterc0de-session-list",
-            "betterc0de.session.list",
-            "betterc0de-session-delete",
-            "betterc0de.session.delete",
-            "session-cli",
-            "session.cli"
-          )
-        ) {
-          const terminalCommand = buildBetterC0deSessionCliTerminalCommand(
-            cmd,
-            args
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = buildBetterC0deSessionCliOutput(cmd, args, activeThread)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "project-providers",
-            "provider-config",
-            "betterc0de-providers",
-            "betterc0de-providers",
-            "config.providers",
-            "config-providers",
-            "v2.provider.list",
-            "v2-provider-list",
-            "v2.provider.get",
-            "v2-provider-get"
-          )
-        ) {
-          if (args.includes("--config-only")) {
-            output = await buildProjectProviderConfigOutput(args, activeThread)
-          } else {
-            output = buildProjectProvidersOutput(
-              projectProvidersSummary,
-              activeThread
-            )
-          }
-        } else if (
-          isSlashCommand(
-            cmd,
-            "project-plugins",
-            "betterc0de-plugins",
-            "betterc0de-plugins"
-          )
-        ) {
-          output = buildProjectPluginsOutput(
-            projectPluginList,
-            activeThread,
-            args
-          )
-        } else if (
-          isSlashCommand(
-            cmd,
-            "project-tools",
-            "betterc0de-tools",
-            "betterc0de-tools",
-            "tool.list",
-            "tool-list",
-            "tool.ids",
-            "tool-ids"
-          )
-        ) {
-          if (args.includes("--config-only")) {
-            output = await buildProjectToolsConfigOutput(args, activeThread)
-          } else {
-            output = buildProjectToolsOutput(
-              projectToolList,
-              activeThread,
-              permissionLevel
-            )
-          }
-        } else if (isBetterC0deMcpSlashSubcommand(cmd, args, "resources")) {
-          const mcpArgs = stripBetterC0deMcpSlashSubcommand(args)
-          if (mcpArgs.some(isBetterC0deRuntimeTerminalFlag)) {
-            dispatchPrefilledTerminalCommand(activeThread, "betterc0de serve")
-          }
-          output = buildMcpResourcesOutput(mcpList, mcpArgs)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "mcp-resources",
-            "mcp.resources",
-            "mcp-resource-list",
-            "resources",
-            "experimental.resource.list",
-            "experimental-resource-list"
-          )
-        ) {
-          if (args.some(isBetterC0deRuntimeTerminalFlag)) {
-            dispatchPrefilledTerminalCommand(activeThread, "betterc0de serve")
-          }
-          output = buildMcpResourcesOutput(mcpList, args)
-        } else if (isBetterC0deMcpSlashSubcommand(cmd, args, "auth")) {
-          const mcpArgs = stripBetterC0deMcpSlashSubcommand(args)
-          const terminalCommand = buildBetterC0deMcpTerminalCommand(
-            "/mcp-auth",
-            mcpArgs
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          const cleanArgs = stripBetterC0deRuntimeUiFlags(mcpArgs)
-          const listOnly =
-            cleanArgs[0]?.toLowerCase() === "list" ||
-            cleanArgs[0]?.toLowerCase() === "ls"
-          if (cleanArgs[0] && !listOnly) {
-            const matchedMcp = resolveRuntimeMcpServer(mcpList, cleanArgs[0])
-            output = matchedMcp
-              ? buildRuntimeMcpDetailOutput(matchedMcp)
-              : buildMcpNotFoundOutput(cleanArgs[0], mcpList)
-          } else {
-            output = buildMcpAuthOutput(mcpList, mcpArgs)
-          }
-        } else if (
-          isSlashCommand(
-            cmd,
-            "mcp-auth",
-            "mcp.auth",
-            "mcp.auth.list",
-            "mcp.auth.ls",
-            "mcp.auth.start",
-            "mcp.auth.callback",
-            "mcp.auth.authenticate",
-            "mcp-auth-list",
-            "mcp-auth-ls"
-          )
-        ) {
-          const terminalCommand = buildBetterC0deMcpTerminalCommand(cmd, args)
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          const cleanArgs = stripBetterC0deRuntimeUiFlags(args)
-          if (cleanArgs[0]) {
-            const matchedMcp = resolveRuntimeMcpServer(mcpList, cleanArgs[0])
-            output = matchedMcp
-              ? buildRuntimeMcpDetailOutput(matchedMcp)
-              : buildMcpNotFoundOutput(cleanArgs[0], mcpList)
-          } else {
-            output = buildMcpAuthOutput(mcpList, args)
-          }
-        } else if (isBetterC0deMcpSlashSubcommand(cmd, args, "add")) {
-          const mcpArgs = stripBetterC0deMcpSlashSubcommand(args)
-          if (mcpArgs.includes("--config-only")) {
-            output = await buildProjectMcpConfigOutput(mcpArgs, activeThread)
-          } else {
-            const terminalCommand = buildBetterC0deMcpTerminalCommand(
-              "/mcp-add",
-              mcpArgs
-            )
-            if (terminalCommand.shouldOpen && terminalCommand.command) {
-              dispatchPrefilledTerminalCommand(
-                activeThread,
-                terminalCommand.command
-              )
-            }
-            openSettingsTab("tools")
-            output = buildMcpAddOutput(activeThread, mcpArgs)
-          }
-        } else if (
-          isSlashCommand(
-            cmd,
-            "mcp-add",
-            "mcp.add",
-            "mcp-install",
-            "mcp.install"
-          )
-        ) {
-          if (args.includes("--config-only")) {
-            output = await buildProjectMcpConfigOutput(args, activeThread)
-          } else {
-            const terminalCommand = buildBetterC0deMcpTerminalCommand(cmd, args)
-            if (terminalCommand.shouldOpen && terminalCommand.command) {
-              dispatchPrefilledTerminalCommand(
-                activeThread,
-                terminalCommand.command
-              )
-            }
-            openSettingsTab("tools")
-            output = buildMcpAddOutput(activeThread, args)
-          }
-        } else if (isBetterC0deMcpSlashSubcommand(cmd, args, "logout")) {
-          const mcpArgs = stripBetterC0deMcpSlashSubcommand(args)
-          const terminalCommand = buildBetterC0deMcpTerminalCommand(
-            "/mcp-logout",
-            mcpArgs
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          const cleanArgs = stripBetterC0deRuntimeUiFlags(mcpArgs)
-          output = buildMcpLogoutOutput(mcpList, cleanArgs[0], mcpArgs)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "mcp-logout",
-            "mcp.logout",
-            "mcp.auth.remove",
-            "mcp-auth-logout"
-          )
-        ) {
-          const terminalCommand = buildBetterC0deMcpTerminalCommand(cmd, args)
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          const cleanArgs = stripBetterC0deRuntimeUiFlags(args)
-          output = buildMcpLogoutOutput(mcpList, cleanArgs[0], args)
-        } else if (isBetterC0deMcpSlashSubcommand(cmd, args, "debug")) {
-          const mcpArgs = stripBetterC0deMcpSlashSubcommand(args)
-          const terminalCommand = buildBetterC0deMcpTerminalCommand(
-            "/mcp-debug",
-            mcpArgs
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          const cleanArgs = stripBetterC0deRuntimeUiFlags(mcpArgs)
-          output = buildMcpDebugOutput(mcpList, cleanArgs[0], mcpArgs)
-        } else if (
-          isSlashCommand(cmd, "mcp-debug", "mcp.debug", "mcp-inspect")
-        ) {
-          const terminalCommand = buildBetterC0deMcpTerminalCommand(cmd, args)
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          const cleanArgs = stripBetterC0deRuntimeUiFlags(args)
-          output = buildMcpDebugOutput(mcpList, cleanArgs[0], args)
-        } else if (isBetterC0deMcpSlashSubcommand(cmd, args, "list")) {
-          const mcpArgs = stripBetterC0deMcpSlashSubcommand(args)
-          const terminalCommand = buildBetterC0deMcpTerminalCommand(
-            "/mcp.list",
-            mcpArgs
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = buildMcpServersOutput(mcpList, mcpArgs)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "mcps",
-            "mcp",
-            "mcp.list",
-            "mcp.ls",
-            "mcp.status",
-            "mcp-ls"
-          )
-        ) {
-          const terminalCommand = buildBetterC0deMcpTerminalCommand(cmd, args)
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          const cleanArgs = stripBetterC0deRuntimeUiFlags(args)
-          if (cleanArgs[0]) {
-            const matchedMcp = resolveRuntimeMcpServer(mcpList, cleanArgs[0])
-            if (!matchedMcp) {
-              output = buildMcpNotFoundOutput(cleanArgs[0], mcpList)
-            } else if (cleanArgs[1]) {
-              output = await buildRuntimeMcpToggleOutput(
-                matchedMcp,
-                resolveToggleArg(cleanArgs[1], matchedMcp.enabled)
-              )
-            } else {
-              output = buildRuntimeMcpDetailOutput(matchedMcp)
-            }
-          } else {
-            output = buildMcpServersOutput(mcpList, args)
-          }
-        } else if (
-          isSlashCommand(
-            cmd,
-            "mcp-toggle",
-            "toggle-mcp",
-            "mcp.toggle",
-            "mcp.connect",
-            "mcp.disconnect",
-            "dialog.mcp.toggle",
-            "dialog-mcp-toggle",
-            "mcp-enable",
-            "mcp-disable"
-          )
-        ) {
-          const forced = isSlashCommand(cmd, "mcp-enable")
-            ? true
-            : isSlashCommand(cmd, "mcp-disable")
-              ? false
-              : undefined
-          if (args.includes("--config-only")) {
-            const cleanArgs = args.filter(
-              (arg) =>
-                arg !== "--config-only" && !isBetterC0deRuntimeTerminalFlag(arg)
-            )
-            const target = cleanArgs[0]
-            if (!target) {
-              output =
-                "# MCP Toggle\n\n> Usage: `/mcp-toggle <id> [on|off] --config-only`"
-            } else {
-              const matchedMcp = resolveRuntimeMcpServer(mcpList, target)
-              const enabled =
-                typeof forced === "boolean"
-                  ? forced
-                  : resolveToggleArg(cleanArgs[1], matchedMcp?.enabled ?? true)
-              output = await buildProjectMcpConfigOutput(
-                ["--config-only", target, "--enabled", String(enabled)],
-                activeThread
-              )
-            }
-          } else {
-            const matchedMcp = args[0]
-              ? resolveRuntimeMcpServer(mcpList, args[0])
-              : null
-            if (!args[0]) {
-              output = "# MCP Toggle\n\n> Usage: `/mcp-toggle <id> [on|off]`"
-            } else if (!matchedMcp) {
-              output = buildMcpNotFoundOutput(args[0], mcpList)
-            } else {
-              output = await buildRuntimeMcpToggleOutput(
-                matchedMcp,
-                typeof forced === "boolean"
-                  ? forced
-                  : resolveToggleArg(args[1], matchedMcp.enabled)
-              )
-            }
-          }
-        } else if (
-          isSlashCommand(
-            cmd,
-            "skills",
-            "prompt.skills",
-            "prompt-skills",
-            "debug.skill",
-            "debug-skill",
-            "app.skills"
-          )
-        ) {
-          if (args.includes("--config-only")) {
-            output = await buildProjectSkillsConfigOutput(args, activeThread)
-          } else {
-            output = buildRuntimeSkillsOutput(
-              skillList,
-              isSlashCommand(cmd, "debug.skill", "debug-skill")
-                ? [...args, "--json"]
-                : args
-            )
-          }
-        } else if (isBetterC0deAgentSlashSubcommand(cmd, args, "list")) {
-          const agentArgs = stripBetterC0deAgentSlashSubcommand(args)
-          const terminalCommand = buildBetterC0deAgentTerminalCommand(
-            "/agents",
-            agentArgs
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = buildRuntimeSubagentListOutput(
-            subagentList,
-            terminalCommand.shouldOpen ? terminalCommand.command : undefined
-          )
-        } else if (isBetterC0deAgentSlashSubcommand(cmd, args, "debug")) {
-          const agentArgs = stripBetterC0deAgentSlashSubcommand(args)
-          const terminalCommand = buildBetterC0deAgentTerminalCommand(
-            "/debug.agent",
-            agentArgs
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          const cleanArgs = stripBetterC0deRuntimeUiFlags(agentArgs)
-          if (cleanArgs[0]) {
-            const matchedSubagent = resolveRuntimeSubagent(
-              subagentList,
-              cleanArgs[0]
-            )
-            output = matchedSubagent
-              ? buildRuntimeSubagentDebugOutput(
-                  matchedSubagent,
-                  cleanArgs,
-                  terminalCommand.command
-                )
-              : buildSubagentNotFoundOutput(cleanArgs[0], subagentList)
-          } else {
-            output = buildRuntimeSubagentListOutput(
-              subagentList,
-              terminalCommand.shouldOpen ? terminalCommand.command : undefined
-            )
-          }
-        } else if (
-          isSlashCommand(
-            cmd,
-            "agents",
-            "agent.list",
-            "agent-list",
-            "debug.agent",
-            "debug-agent",
-            "app.agents"
-          )
-        ) {
-          const terminalCommand = buildBetterC0deAgentTerminalCommand(cmd, args)
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          const cleanArgs = stripBetterC0deRuntimeUiFlags(args)
-          if (
-            isSlashCommand(cmd, "debug.agent", "debug-agent") &&
-            cleanArgs[0]
-          ) {
-            const matchedSubagent = resolveRuntimeSubagent(
-              subagentList,
-              cleanArgs[0]
-            )
-            output = matchedSubagent
-              ? buildRuntimeSubagentDebugOutput(
-                  matchedSubagent,
-                  cleanArgs,
-                  terminalCommand.command
-                )
-              : buildSubagentNotFoundOutput(cleanArgs[0], subagentList)
-          } else {
-            output = buildRuntimeSubagentListOutput(
-              subagentList,
-              terminalCommand.shouldOpen ? terminalCommand.command : undefined
-            )
-          }
-        } else if (isBetterC0deAgentSlashSubcommand(cmd, args, "create")) {
-          const agentArgs = stripBetterC0deAgentSlashSubcommand(args)
-          const terminalCommand = buildBetterC0deAgentTerminalCommand(
-            "/agent-create",
-            agentArgs
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          openSettingsTab("skills")
-          output = await buildAgentCreateOutput(agentArgs, activeThread)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "agent-create",
-            "agent.create",
-            "agents.create",
-            "create-agent"
-          )
-        ) {
-          const terminalCommand = buildBetterC0deAgentTerminalCommand(cmd, args)
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          openSettingsTab("skills")
-          output = await buildAgentCreateOutput(args, activeThread)
-        } else if (isSlashCommand(cmd, "instructions", "project-rules")) {
-          if (args.includes("--config-only")) {
-            output = await buildProjectInstructionsConfigOutput(
-              args,
-              activeThread
-            )
-          } else {
-            output = await buildProjectInstructionsOutput(activeThread)
-          }
-        } else if (
-          isSlashCommand(
-            cmd,
-            "status",
-            "betterc0de.status",
-            "betterc0de-status",
-            "betterc0de.status",
-            "betterc0de-status",
-            "global.health"
-          )
-        ) {
-          output = buildSystemStatusOutput({
-            mcpList,
-            skillList,
-            subagentList,
-            selectedProvider,
-            selectedModel,
-            chatMode: effectiveChatMode,
-            permissionLevel,
-            activeThread,
-          })
-        } else if (
-          isSlashCommand(
-            cmd,
-            "debug-info",
-            "debug.info",
-            "betterc0de.debug.info",
-            "betterc0de-debug-info",
-            "betterc0de.debug.info",
-            "betterc0de-debug-info"
-          )
-        ) {
-          output = buildRuntimeDebugInfoOutput(await getRuntimeDebugInfo())
-        } else if (
-          isSlashCommand(
-            cmd,
-            "debug-paths",
-            "debug.paths",
-            "betterc0de.debug.paths",
-            "betterc0de-debug-paths",
-            "betterc0de.debug.paths",
-            "betterc0de-debug-paths",
-            "db.path",
-            "db-path",
-            "paths",
-            "path.get",
-            "path-get"
-          )
-        ) {
-          output = buildRuntimeDebugPathsOutput(await getRuntimeDebugInfo())
-        } else if (
-          isSlashCommand(
-            cmd,
-            "debug-rg",
-            "debug.rg",
-            "debug.rg.files",
-            "debug.rg.search",
-            "debug.file",
-            "debug.file.read",
-            "debug-file-read",
-            "debug.file.list",
-            "debug-file-list",
-            "debug.file.status",
-            "debug-file-status",
-            "debug.file.search",
-            "debug.file.tree",
-            "file",
-            "file.read",
-            "file-read",
-            "file.list",
-            "file-list",
-            "file.status",
-            "file-status"
-          )
-        ) {
-          output = await buildDebugRgOutput(cmd, args, activeThread)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "debug-snapshot",
-            "debug.snapshot",
-            "debug.snapshot.track",
-            "debug.snapshot.patch",
-            "debug.snapshot.diff",
-            "debug-snapshot-track",
-            "debug-snapshot-patch",
-            "debug-snapshot-diff"
-          )
-        ) {
-          output = await buildDebugSnapshotOutput(threadId, cmd, args)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "debug-utility",
-            "debug.startup",
-            "debug-startup",
-            "debug.scrap",
-            "debug-scrap",
-            "debug.v2",
-            "debug-v2",
-            "debug.wait",
-            "debug-wait"
-          )
-        ) {
-          const terminalCommand = buildBetterC0deDebugUtilityTerminalCommand(
-            cmd,
-            args
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = buildBetterC0deDebugUtilityOutput(cmd, args)
-        } else if (isSlashCommand(cmd, "usage", "cli-usage")) {
-          if (typeof window !== "undefined") {
-            window.dispatchEvent(new CustomEvent("betterc0de:open-usage"))
-          }
-          output = ""
-        } else if (
-          isSlashCommand(
-            cmd,
-            "stats",
-            "token-usage",
-            "session.stats",
-            "session-stats"
-          )
-        ) {
-          const statsOptions = parseStatsCommandOptions(args, activeThread)
-          if (statsOptions.terminalCommand) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              statsOptions.terminalCommand
-            )
-          }
-          const stats =
-            (statsOptions.validation?.length ?? 0) > 0
-              ? emptyThreadUsageStats()
-              : await loadThreadStats(statsOptions)
-          output = buildThreadStatsOutput(stats, statsOptions)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "github",
-            "github-agent",
-            "github.install",
-            "github-install",
-            "github.run",
-            "github-run"
-          )
-        ) {
-          const githubSubcommand = betterC0deGithubSlashSubcommand(cmd, args)
-          const githubCommand =
-            githubSubcommand === "run"
-              ? "/github.run"
-              : githubSubcommand === "install"
-                ? "/github.install"
-                : cmd
-          const githubArgs = githubSubcommand
-            ? stripBetterC0deGithubSlashSubcommand(args)
-            : args
-          const terminalCommand = buildBetterC0deGithubTerminalCommand(
-            githubCommand,
-            githubArgs
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = await buildGithubAgentOutput(
-            githubCommand,
-            githubArgs,
-            activeThread
-          )
-        } else if (
-          isSlashCommand(cmd, "docs", "documentation", "docs.open", "docs-open")
-        ) {
-          const docsUrl = "https://github.com/BetterC0de/docs"
-          const electronApi = window.electronAPI
-          void (
-            electronApi?.openExternal?.(docsUrl) ??
-            window.open(docsUrl, "_blank")
-          )
-          output = `# Docs\n\nOpened ${docsUrl}`
-        } else if (
-          isSlashCommand(
-            cmd,
-            "org",
-            "organization",
-            "orgs",
-            "switch-org",
-            "console.orgs",
-            "console-orgs",
-            "console.switch",
-            "console-switch",
-            "console.org.switch",
-            "console-org-switch",
-            "account.orgs",
-            "account.switch"
-          )
-        ) {
-          const terminalCommand = buildBetterC0deAccountTerminalCommand(
-            cmd,
-            args
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          openSettingsTab("models")
-          output = buildProviderOrganizationOutput(cmd, args)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "plugin-install",
-            "plugin",
-            "plug",
-            "plugin.install",
-            "plugins.install",
-            "plugins-install",
-            "dialog.plugins.install",
-            "dialog-plugins-install"
-          )
-        ) {
-          const terminalCommand = buildBetterC0dePluginTerminalCommand(args)
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          openSettingsTab("plugins")
-          output = await buildPluginInstallOutput(args, activeThread)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "plugin-toggle",
-            "plugins.toggle",
-            "plugins-toggle"
-          )
-        ) {
-          openSettingsTab("plugins")
-          output = await buildPluginToggleOutput(args, activeThread)
-        } else if (isBetterC0deProviderSlashSubcommand(cmd, args, "login")) {
-          const providerArgs = stripBetterC0deProviderSlashSubcommand(args)
-          const providerMode = isSlashCommand(cmd, "auth")
-            ? "/auth.login"
-            : "/providers.login"
-          const terminalCommand = buildBetterC0deProviderConnectTerminalCommand(
-            providerMode,
-            providerArgs,
-            selectedProvider
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = buildProviderConnectionOutput(
-            selectedProvider,
-            providerMode,
-            providerArgs
-          )
-        } else if (
-          isBetterC0deProviderSlashSubcommand(cmd, args, "list") ||
-          isBetterC0deProviderSlashSubcommand(cmd, args, "logout")
-        ) {
-          const providerArgs = stripBetterC0deProviderSlashSubcommand(args)
-          const authRoot = isSlashCommand(cmd, "auth")
-          const providerMode = isBetterC0deProviderSlashSubcommand(
-            cmd,
-            args,
-            "logout"
-          )
-            ? authRoot
-              ? "/auth.logout"
-              : "/providers.logout"
-            : authRoot
-              ? "/auth.list"
-              : "/providers.list"
-          const terminalCommand = buildBetterC0deProviderAuthTerminalCommand(
-            providerMode,
-            providerArgs
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = buildProviderAuthOutput(
-            providers,
-            selectedProvider,
-            providerMode,
-            providerArgs
-          )
-        } else if (
-          isBetterC0deConsoleSlashSubcommand(cmd, args, "login") ||
-          isBetterC0deConsoleSlashSubcommand(cmd, args, "open")
-        ) {
-          const consoleArgs = stripBetterC0deConsoleSlashSubcommand(args)
-          const consoleMode = isBetterC0deConsoleSlashSubcommand(
-            cmd,
-            args,
-            "open"
-          )
-            ? "/console.open"
-            : "/console.login"
-          const terminalCommand = buildBetterC0deProviderConnectTerminalCommand(
-            consoleMode,
-            consoleArgs,
-            selectedProvider
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = buildProviderConnectionOutput(
-            selectedProvider,
-            consoleMode,
-            consoleArgs
-          )
-        } else if (isBetterC0deConsoleSlashSubcommand(cmd, args, "logout")) {
-          const consoleArgs = stripBetterC0deConsoleSlashSubcommand(args)
-          const terminalCommand = buildBetterC0deProviderAuthTerminalCommand(
-            "/console.logout",
-            consoleArgs
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = buildProviderAuthOutput(
-            providers,
-            selectedProvider,
-            "/console.logout",
-            consoleArgs
-          )
-        } else if (
-          isBetterC0deConsoleSlashSubcommand(cmd, args, "orgs") ||
-          isBetterC0deConsoleSlashSubcommand(cmd, args, "switch")
-        ) {
-          const consoleArgs = stripBetterC0deConsoleSlashSubcommand(args)
-          const consoleMode = isBetterC0deConsoleSlashSubcommand(
-            cmd,
-            args,
-            "switch"
-          )
-            ? "/console.switch"
-            : "/console.orgs"
-          const terminalCommand = buildBetterC0deAccountTerminalCommand(
-            consoleMode,
-            consoleArgs
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          openSettingsTab("models")
-          output = buildProviderOrganizationOutput(consoleMode, consoleArgs)
-        } else if (isSlashCommand(cmd, "remote", "remote-access")) {
-          output = await executeRemoteAccessCommand(args)
-        } else if (resolveSettingsTabCommand(cmd, args[0])) {
-          const tab = resolveSettingsTabCommand(cmd, args[0]) ?? "general"
-          openSettingsTab(tab)
-          output = `# Settings\n\nOpened **${settingsTabLabel(tab)}**.`
-        } else if (
-          isSlashCommand(
-            cmd,
-            "console",
-            "app.console",
-            "app-console",
-            "app.debug",
-            "app-debug"
-          )
-        ) {
-          const prefs = usePreferencesStore.getState()
-          const next = !prefs.consolePanelOpen
-          prefs.set("consolePanelOpen", next)
-          output = buildToggleOutput("Console Panel", next)
-        } else if (isSlashCommand(cmd, "app.log", "app-log")) {
-          const parsed = parseAppLogCommandArgs(args)
-          if (parsed.payload) {
-            emitAppLog(parsed.payload)
-            usePreferencesStore.getState().set("consolePanelOpen", true)
-          }
-          output = buildAppLogOutput(parsed)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "heap-snapshot",
-            "app.heap_snapshot",
-            "app-heap-snapshot"
-          )
-        ) {
-          output = buildRuntimeHeapSnapshotOutput(
-            await writeRuntimeHeapSnapshot()
-          )
-        } else if (
-          isSlashCommand(
-            cmd,
-            "review-toggle",
-            "review.toggle",
-            "review-panel-toggle"
-          )
-        ) {
-          const next = toggleDiffView()
-          output = buildToggleOutput("Review / Diff Panel", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "terminal-title",
-            "terminal.title.toggle",
-            "terminal-title-toggle",
-            "pty.update"
-          )
-        ) {
-          const appearance = useAppearanceStore.getState()
-          const next = resolveToggleArg(
-            args[0],
-            appearance.terminalTitleEnabled
-          )
-          appearance.set("terminalTitleEnabled", next)
-          output = buildToggleOutput("Terminal Titles", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "terminal",
-            "terminal.toggle",
-            "terminal.suspend",
-            "pty",
-            "pty.list",
-            "pty-list",
-            "pty.shells",
-            "pty-shells",
-            "pty.get",
-            "pty-get",
-            "pty.connect",
-            "pty-connect",
-            "pty.connectToken",
-            "pty.connect-token",
-            "pty.remove",
-            "pty-remove"
-          )
-        ) {
-          const prefs = usePreferencesStore.getState()
-          const next = !prefs.terminalOpen
-          prefs.set("terminalOpen", next)
-          output = buildPtyTerminalOutput(cmd, next, activeThread)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "terminal-new",
-            "terminal.new",
-            "new-terminal",
-            "pty.create",
-            "pty-create"
-          )
-        ) {
-          const prefs = usePreferencesStore.getState()
-          const wasOpen = prefs.terminalOpen
-          prefs.set("terminalOpen", true)
-          if (wasOpen) {
-            window.setTimeout(() => {
-              dispatchTerminalNewSession({
-                threadId,
-                mode: prefs.appMode,
-                cwd: resolveThreadRuntimePath(activeThread),
-              })
-            }, 0)
-          }
-          output = [
-            "# New Terminal\n",
-            isSlashCommand(cmd, "pty.create", "pty-create")
-              ? "Compatibility reference: `pty.create`.\n"
-              : "",
-            "Opened a new terminal session.",
-          ]
-            .filter(Boolean)
-            .join("\n")
-        } else if (
-          isSlashCommand(
-            cmd,
-            "file-tree-toggle",
-            "filetree.toggle",
-            "filetree-toggle",
-            "file-tree.toggle",
-            "file-tree",
-            "files",
-            "files.toggle"
-          )
-        ) {
-          const prefs = usePreferencesStore.getState()
-          const active =
-            prefs.appMode === "editor"
-              ? prefs.sidebarOpen && prefs.editorSidebarView === "files"
-              : prefs.rightSidebarOpen && prefs.workspaceTab === "files"
-          const next = resolveToggleArg(args[0], active)
-          if (prefs.appMode === "editor") {
-            if (next) prefs.set("editorSidebarView", "files")
-            prefs.set("sidebarOpen", next)
-          } else if (next) {
-            prefs.set("rightSidebarOpen", true)
-            prefs.set("workspaceTab", "files")
-          } else if (prefs.workspaceTab === "files") {
-            prefs.set("workspaceTab", "plan")
-          }
-          output = buildToggleOutput("File Tree", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "sidebar",
-            "toggle-sidebar",
-            "sidebar.toggle",
-            "session.sidebar.toggle"
-          )
-        ) {
-          const prefs = usePreferencesStore.getState()
-          const next = resolveToggleArg(args[0], prefs.sidebarOpen)
-          prefs.set("sidebarOpen", next)
-          output = buildToggleOutput("File Tree / Sidebar", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "input-focus",
-            "input.focus",
-            "focus-input",
-            "composer-focus"
-          )
-        ) {
-          focusChatComposerInput(threadId)
-          output = "# Input Focus\n\nFocused the chat input."
-        } else if (
-          isSlashCommand(
-            cmd,
-            "animations",
-            "app.toggle.animations",
-            "app-toggle-animations"
-          )
-        ) {
-          const appearance = useAppearanceStore.getState()
-          const next = resolveToggleArg(args[0], appearance.animationsEnabled)
-          appearance.set("animationsEnabled", next)
-          output = buildToggleOutput("Animations", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "file-context",
-            "app.toggle.file_context",
-            "app-toggle-file-context"
-          )
-        ) {
-          const appearance = useAppearanceStore.getState()
-          const next = resolveToggleArg(args[0], appearance.fileContextEnabled)
-          appearance.set("fileContextEnabled", next)
-          output = buildToggleOutput("File Context", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "paste-summary",
-            "app.toggle.paste_summary",
-            "app-toggle-paste-summary"
-          )
-        ) {
-          output =
-            "Pasted text is always inserted directly and remains editable. Paste summaries have been removed."
-        } else if (
-          isSlashCommand(
-            cmd,
-            "session-directory-filter",
-            "app.toggle.session_directory_filter",
-            "app-toggle-session-directory-filter"
-          )
-        ) {
-          const appearance = useAppearanceStore.getState()
-          const next = resolveToggleArg(
-            args[0],
-            appearance.sessionDirectoryFilterEnabled
-          )
-          appearance.set("sessionDirectoryFilterEnabled", next)
-          output = buildToggleOutput("Session Directory Filter", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "connect",
-            "provider.connect",
-            "provider-connect",
-            "providers.login",
-            "provider.login",
-            "auth.login",
-            "auth.connect",
-            "console.login",
-            "console.open",
-            "account.login",
-            "account.open"
-          )
-        ) {
-          const terminalCommand = buildBetterC0deProviderConnectTerminalCommand(
-            cmd,
-            args,
-            selectedProvider
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = buildProviderConnectionOutput(selectedProvider, cmd, args)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "auth",
-            "auth.list",
-            "auth.ls",
-            "auth.get",
-            "provider-auth",
-            "provider.auth",
-            "providers.list",
-            "providers.ls",
-            "provider.list",
-            "provider.ls",
-            "providers.logout",
-            "provider.logout",
-            "auth.logout",
-            "console.logout",
-            "account",
-            "account.list",
-            "account.logout"
-          )
-        ) {
-          const terminalCommand = buildBetterC0deProviderAuthTerminalCommand(
-            cmd,
-            args
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = buildProviderAuthOutput(
-            providers,
-            selectedProvider,
-            cmd,
-            args
-          )
-        } else if (
-          isSlashCommand(
-            cmd,
-            "theme-mode",
-            "theme.switch_mode",
-            "theme-switch-mode"
-          )
-        ) {
-          const appearance = useAppearanceStore.getState()
-          const nextTemplate = nextThemeTemplateId(appearance.template)
-          appearance.applyTemplate(nextTemplate)
-          output = buildThemeModeOutput(
-            useAppearanceStore.getState().template,
-            appearance.themeModeLocked
-          )
-        } else if (
-          isSlashCommand(
-            cmd,
-            "theme-mode-lock",
-            "theme.mode.lock",
-            "theme-lock"
-          )
-        ) {
-          const appearance = useAppearanceStore.getState()
-          const next = resolveToggleArg(args[0], appearance.themeModeLocked)
-          appearance.set("themeModeLocked", next)
-          output = buildToggleOutput("Theme Mode Lock", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "themes",
-            "theme",
-            "theme.switch",
-            "theme-switch",
-            "theme.cycle",
-            "theme-cycle",
-            "theme.scheme.cycle",
-            "theme-scheme-cycle"
-          )
-        ) {
-          const appearance = useAppearanceStore.getState()
-          const cycleRequested = isSlashCommand(
-            cmd,
-            "theme.cycle",
-            "theme-cycle",
-            "theme.scheme.cycle",
-            "theme-scheme-cycle"
-          )
-          const requestedTheme =
-            cycleRequested && !args[0]
-              ? nextThemeTemplateId(appearance.template)
-              : args[0]?.toLowerCase()
-          const nextTemplate = requestedTheme
-            ? resolveThemeTemplateId(requestedTheme)
-            : null
-          if (nextTemplate) {
-            appearance.applyTemplate(nextTemplate)
-          }
-          output = buildThemesOutput(
-            nextTemplate
-              ? useAppearanceStore.getState().template
-              : appearance.template,
-            Boolean(nextTemplate)
-          )
-        } else if (
-          isSlashCommand(cmd, "language", "language.cycle", "language-cycle")
-        ) {
-          output = buildLanguageCompatibilityOutput()
-        } else if (
-          isSlashCommand(
-            cmd,
-            "terminal-font",
-            "font.terminal",
-            "terminal.font",
-            "appearance.terminal_font"
-          )
-        ) {
-          output = handleTerminalFontCommand(args)
-        } else if (
-          isSlashCommand(cmd, "variants", "variant.list", "variant-list")
-        ) {
-          output = buildVariantsOutput(
-            selectedProvider,
-            selectedModel,
-            readActiveProviderComposerSelection(selectedProvider?.id, threadId)
-              ?.optionSelections
-          )
-        } else if (
-          isSlashCommand(
-            cmd,
-            "variant.cycle",
-            "variant-cycle",
-            "model.variant.cycle",
-            "model-variant-cycle"
-          )
-        ) {
-          output = applyModelVariantCycleCommand({
-            threadId,
-            provider: selectedProvider,
-            selectedModel,
-            requestedOptionId: args[0],
-          })
-        } else if (
-          isSlashCommand(
-            cmd,
-            "catalog",
-            "model-catalog",
-            "model-info",
-            "models",
-            "models.list",
-            "models-list",
-            "catalog.model.list",
-            "catalog.model.get",
-            "v2.model.list",
-            "v2-model-list"
-          )
-        ) {
-          const terminalCommand = buildBetterC0deModelsTerminalCommand(
-            args,
-            providers
-          )
-          if (terminalCommand.shouldOpen && terminalCommand.command) {
-            dispatchPrefilledTerminalCommand(
-              activeThread,
-              terminalCommand.command
-            )
-          }
-          output = buildProviderCatalogOutput(providers, args)
-        } else if (cmd === "/streaming") {
-          const settings = useSettingsStore.getState()
-          const next = resolveToggleArg(
-            args[0],
-            settings.enableAssistantStreaming
-          )
-          await settings.update({ enable_assistant_streaming: next })
-          output = buildToggleOutput("Assistant Streaming", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "timestamps",
-            "toggle-timestamps",
-            "toggle.timestamps",
-            "session.toggle.timestamps"
-          )
-        ) {
-          const settings = useSettingsStore.getState()
-          const next = resolveToggleArg(args[0], settings.showMessageTimestamps)
-          await settings.update({ show_message_timestamps: next })
-          output = buildToggleOutput("Message Timestamps", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "thinking",
-            "toggle-thinking",
-            "toggle.thinking",
-            "session.toggle.thinking"
-          )
-        ) {
-          const settings = useSettingsStore.getState()
-          const next = resolveToggleArg(args[0], settings.showThinkingBlocks)
-          await settings.update({ show_thinking_blocks: next })
-          output = buildToggleOutput("Thinking Blocks", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "reasoning-summaries",
-            "reasoning-summary",
-            "session.toggle.reasoning_summaries",
-            "session-toggle-reasoning-summaries"
-          )
-        ) {
-          const settings = useSettingsStore.getState()
-          const next = resolveToggleArg(
-            args[0],
-            settings.showReasoningSummaries
-          )
-          await settings.update({ show_reasoning_summaries: next })
-          output = buildToggleOutput("Reasoning Summaries", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "tool-details",
-            "actions",
-            "toggle-actions",
-            "toggle.actions",
-            "session.toggle.actions"
-          )
-        ) {
-          const settings = useSettingsStore.getState()
-          const next = resolveToggleArg(args[0], settings.showToolDetails)
-          await settings.update({ show_tool_details: next })
-          output = buildToggleOutput("Tool Details", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "progress",
-            "session-progress",
-            "session.toggle.progress_bar",
-            "session-toggle-progress-bar"
-          )
-        ) {
-          const settings = useSettingsStore.getState()
-          const next = resolveToggleArg(
-            args[0],
-            settings.showSessionProgressBar
-          )
-          await settings.update({ show_session_progress_bar: next })
-          output = buildToggleOutput("Session Progress", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "shell-expanded",
-            "shell-tool-parts",
-            "shell-tool-parts-expanded",
-            "session.toggle.shell_tool_parts_expanded"
-          )
-        ) {
-          const settings = useSettingsStore.getState()
-          const next = resolveToggleArg(
-            args[0],
-            settings.shellToolPartsExpanded
-          )
-          await settings.update({ shell_tool_parts_expanded: next })
-          output = buildToggleOutput("Shell Tool Parts Expanded", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "edit-expanded",
-            "edit-tool-parts",
-            "edit-tool-parts-expanded",
-            "session.toggle.edit_tool_parts_expanded"
-          )
-        ) {
-          const settings = useSettingsStore.getState()
-          const next = resolveToggleArg(args[0], settings.editToolPartsExpanded)
-          await settings.update({ edit_tool_parts_expanded: next })
-          output = buildToggleOutput("Edit Tool Parts Expanded", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "scrollbar",
-            "toggle-scrollbar",
-            "toggle.scrollbar",
-            "session.toggle.scrollbar"
-          )
-        ) {
-          const settings = useSettingsStore.getState()
-          const next = resolveToggleArg(args[0], settings.showChatScrollbar)
-          await settings.update({ show_chat_scrollbar: next })
-          output = buildToggleOutput("Chat Scrollbar", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "generic-tool-output",
-            "generic-output",
-            "toggle-generic-tool-output",
-            "toggle.generic_tool_output",
-            "session.toggle.generic_tool_output"
-          )
-        ) {
-          const settings = useSettingsStore.getState()
-          const next = resolveToggleArg(args[0], settings.showGenericToolOutput)
-          await settings.update({ show_generic_tool_output: next })
-          output = buildToggleOutput("Generic Tool Output", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "conceal",
-            "toggle-conceal",
-            "session.toggle.conceal"
-          )
-        ) {
-          const settings = useSettingsStore.getState()
-          const next = resolveToggleArg(args[0], settings.concealCodeBlocks)
-          await settings.update({ conceal_code_blocks: next })
-          output = buildToggleOutput("Code Concealment", next)
-        } else if (isSlashCommand(cmd, "autosave", "auto-save")) {
-          const settings = useSettingsStore.getState()
-          const next = resolveToggleArg(args[0], settings.autoSaveConversations)
-          await settings.update({ auto_save_conversations: next })
-          output = buildToggleOutput("Auto-save Conversations", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "diffwrap",
-            "wrap",
-            "app.toggle.diffwrap",
-            "app-toggle-diffwrap"
-          )
-        ) {
-          const settings = useSettingsStore.getState()
-          const next = resolveToggleArg(args[0], settings.diffWordWrap)
-          await settings.update({ diff_word_wrap: next })
-          output = buildToggleOutput("Diff Word Wrap", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "diff-style",
-            "diff_style",
-            "diff.style",
-            "app.diff_style"
-          )
-        ) {
-          output = await handleDiffStyleCommand(args)
-        } else if (
-          isSlashCommand(cmd, "notifications", "notify", "notification")
-        ) {
-          output = await handleNotificationsCommand(args)
-        } else if (isSlashCommand(cmd, "confirmations", "confirm")) {
-          const settings = useSettingsStore.getState()
-          const next = resolveToggleArg(
-            args[0],
-            settings.confirmArchive && settings.confirmDelete
-          )
-          await settings.update({
-            confirm_archive: next,
-            confirm_delete: next,
-          })
-          output = buildToggleOutput("Archive/Delete Confirmations", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "autoaccept",
-            "auto-accept",
-            "permissions.autoaccept"
-          )
-        ) {
-          const current = permissionLevel === "bypass"
-          const next = resolveToggleArg(args[0], current)
-          const nextPermission = next ? "bypass" : "ask-on-edit"
-          if (threadId) {
-            useChatStore
-              .getState()
-              .setThreadSetting(threadId, "permissionLevel", nextPermission)
-          } else {
-            usePreferencesStore
-              .getState()
-              .set("permissionLevel", nextPermission)
-          }
-          await applyPermissionModeLive(nextPermission, selectedProvider, threadId)
-          output = buildToggleOutput("Auto Accept", next)
-        } else if (
-          isSlashCommand(
-            cmd,
-            "compact",
-            "summarize",
-            "session.compact",
-            "v2.session.compact",
-            "v2-session-compact"
-          )
-        ) {
-          const commandMessage = {
-            messageId: crypto.randomUUID(),
-            content: rawText,
-            createdAt: new Date().toISOString(),
-          }
-          const compaction = await buildThreadCompactionOutput({
-            threadId,
-            selectedProvider,
-            selectedModel,
-            thinkingMode,
-            command: commandMessage,
-          })
-          output = compaction.content
-          outputMessageId = compaction.messageId
-          outputMessageCreatedAt = compaction.createdAt
-          outputMessageCompactionGeneration = compaction.generation
-          outputUserMessageId = commandMessage.messageId
-          outputUserMessageCreatedAt = commandMessage.createdAt
-        } else if (isSlashCommand(cmd, "density", "compact-ui")) {
-          const appearance = useAppearanceStore.getState()
-          const arg = trimmedText.split(/\s+/)[1]?.toLowerCase()
-          const next =
-            arg === "on" || arg === "1" || arg === "true"
-              ? true
-              : arg === "off" || arg === "0" || arg === "false"
-                ? false
-                : !appearance.compactMode
-          appearance.set("compactMode", next)
-          output = `# Compact UI\n\n${next ? "Enabled" : "Disabled"}`
-        }
+        : buildSubagentNotFoundOutput(cleanArgs[0], subagentList)
+    } else {
+      output = buildRuntimeSubagentListOutput(
+        subagentList,
+        terminalCommand.shouldOpen ? terminalCommand.command : undefined
+      )
+    }
+  } else if (
+    isSlashCommand(
+      cmd,
+      "agents",
+      "agent.list",
+      "agent-list",
+      "debug.agent",
+      "debug-agent",
+      "app.agents"
+    )
+  ) {
+    const terminalCommand = buildBetterC0deAgentTerminalCommand(cmd, args)
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    const cleanArgs = stripBetterC0deRuntimeUiFlags(args)
+    if (isSlashCommand(cmd, "debug.agent", "debug-agent") && cleanArgs[0]) {
+      const matchedSubagent = resolveRuntimeSubagent(subagentList, cleanArgs[0])
+      output = matchedSubagent
+        ? buildRuntimeSubagentDebugOutput(
+            matchedSubagent,
+            cleanArgs,
+            terminalCommand.command
+          )
+        : buildSubagentNotFoundOutput(cleanArgs[0], subagentList)
+    } else {
+      output = buildRuntimeSubagentListOutput(
+        subagentList,
+        terminalCommand.shouldOpen ? terminalCommand.command : undefined
+      )
+    }
+  } else if (isBetterC0deAgentSlashSubcommand(cmd, args, "create")) {
+    const agentArgs = stripBetterC0deAgentSlashSubcommand(args)
+    const terminalCommand = buildBetterC0deAgentTerminalCommand(
+      "/agent-create",
+      agentArgs
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    openSettingsTab("skills")
+    output = await buildAgentCreateOutput(agentArgs, activeThread)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "agent-create",
+      "agent.create",
+      "agents.create",
+      "create-agent"
+    )
+  ) {
+    const terminalCommand = buildBetterC0deAgentTerminalCommand(cmd, args)
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    openSettingsTab("skills")
+    output = await buildAgentCreateOutput(args, activeThread)
+  } else if (isSlashCommand(cmd, "instructions", "project-rules")) {
+    if (args.includes("--config-only")) {
+      output = await buildProjectInstructionsConfigOutput(args, activeThread)
+    } else {
+      output = await buildProjectInstructionsOutput(activeThread)
+    }
+  } else if (
+    isSlashCommand(
+      cmd,
+      "status",
+      "betterc0de.status",
+      "betterc0de-status",
+      "betterc0de.status",
+      "betterc0de-status",
+      "global.health"
+    )
+  ) {
+    output = buildSystemStatusOutput({
+      mcpList,
+      skillList,
+      subagentList,
+      selectedProvider,
+      selectedModel,
+      chatMode: effectiveChatMode,
+      permissionLevel,
+      activeThread,
+    })
+  } else if (
+    isSlashCommand(
+      cmd,
+      "debug-info",
+      "debug.info",
+      "betterc0de.debug.info",
+      "betterc0de-debug-info",
+      "betterc0de.debug.info",
+      "betterc0de-debug-info"
+    )
+  ) {
+    output = buildRuntimeDebugInfoOutput(await getRuntimeDebugInfo())
+  } else if (
+    isSlashCommand(
+      cmd,
+      "debug-paths",
+      "debug.paths",
+      "betterc0de.debug.paths",
+      "betterc0de-debug-paths",
+      "betterc0de.debug.paths",
+      "betterc0de-debug-paths",
+      "db.path",
+      "db-path",
+      "paths",
+      "path.get",
+      "path-get"
+    )
+  ) {
+    output = buildRuntimeDebugPathsOutput(await getRuntimeDebugInfo())
+  } else if (
+    isSlashCommand(
+      cmd,
+      "debug-rg",
+      "debug.rg",
+      "debug.rg.files",
+      "debug.rg.search",
+      "debug.file",
+      "debug.file.read",
+      "debug-file-read",
+      "debug.file.list",
+      "debug-file-list",
+      "debug.file.status",
+      "debug-file-status",
+      "debug.file.search",
+      "debug.file.tree",
+      "file",
+      "file.read",
+      "file-read",
+      "file.list",
+      "file-list",
+      "file.status",
+      "file-status"
+    )
+  ) {
+    output = await buildDebugRgOutput(cmd, args, activeThread)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "debug-snapshot",
+      "debug.snapshot",
+      "debug.snapshot.track",
+      "debug.snapshot.patch",
+      "debug.snapshot.diff",
+      "debug-snapshot-track",
+      "debug-snapshot-patch",
+      "debug-snapshot-diff"
+    )
+  ) {
+    output = await buildDebugSnapshotOutput(threadId, cmd, args)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "debug-utility",
+      "debug.startup",
+      "debug-startup",
+      "debug.scrap",
+      "debug-scrap",
+      "debug.v2",
+      "debug-v2",
+      "debug.wait",
+      "debug-wait"
+    )
+  ) {
+    const terminalCommand = buildBetterC0deDebugUtilityTerminalCommand(
+      cmd,
+      args
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = buildBetterC0deDebugUtilityOutput(cmd, args)
+  } else if (isSlashCommand(cmd, "usage", "cli-usage")) {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("betterc0de:open-usage"))
+    }
+    output = ""
+  } else if (
+    isSlashCommand(
+      cmd,
+      "stats",
+      "token-usage",
+      "session.stats",
+      "session-stats"
+    )
+  ) {
+    const statsOptions = parseStatsCommandOptions(args, activeThread)
+    if (statsOptions.terminalCommand) {
+      dispatchPrefilledTerminalCommand(
+        activeThread,
+        statsOptions.terminalCommand
+      )
+    }
+    const stats =
+      (statsOptions.validation?.length ?? 0) > 0
+        ? emptyThreadUsageStats()
+        : await loadThreadStats(statsOptions)
+    output = buildThreadStatsOutput(stats, statsOptions)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "github",
+      "github-agent",
+      "github.install",
+      "github-install",
+      "github.run",
+      "github-run"
+    )
+  ) {
+    const githubSubcommand = betterC0deGithubSlashSubcommand(cmd, args)
+    const githubCommand =
+      githubSubcommand === "run"
+        ? "/github.run"
+        : githubSubcommand === "install"
+          ? "/github.install"
+          : cmd
+    const githubArgs = githubSubcommand
+      ? stripBetterC0deGithubSlashSubcommand(args)
+      : args
+    const terminalCommand = buildBetterC0deGithubTerminalCommand(
+      githubCommand,
+      githubArgs
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = await buildGithubAgentOutput(
+      githubCommand,
+      githubArgs,
+      activeThread
+    )
+  } else if (
+    isSlashCommand(cmd, "docs", "documentation", "docs.open", "docs-open")
+  ) {
+    const docsUrl = "https://github.com/BetterC0de/docs"
+    const electronApi = window.electronAPI
+    void (
+      electronApi?.openExternal?.(docsUrl) ?? window.open(docsUrl, "_blank")
+    )
+    output = `# Docs\n\nOpened ${docsUrl}`
+  } else if (
+    isSlashCommand(
+      cmd,
+      "org",
+      "organization",
+      "orgs",
+      "switch-org",
+      "console.orgs",
+      "console-orgs",
+      "console.switch",
+      "console-switch",
+      "console.org.switch",
+      "console-org-switch",
+      "account.orgs",
+      "account.switch"
+    )
+  ) {
+    const terminalCommand = buildBetterC0deAccountTerminalCommand(cmd, args)
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    openSettingsTab("models")
+    output = buildProviderOrganizationOutput(cmd, args)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "plugin-install",
+      "plugin",
+      "plug",
+      "plugin.install",
+      "plugins.install",
+      "plugins-install",
+      "dialog.plugins.install",
+      "dialog-plugins-install"
+    )
+  ) {
+    const terminalCommand = buildBetterC0dePluginTerminalCommand(args)
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    openSettingsTab("plugins")
+    output = await buildPluginInstallOutput(args, activeThread)
+  } else if (
+    isSlashCommand(cmd, "plugin-toggle", "plugins.toggle", "plugins-toggle")
+  ) {
+    openSettingsTab("plugins")
+    output = await buildPluginToggleOutput(args, activeThread)
+  } else if (isBetterC0deProviderSlashSubcommand(cmd, args, "login")) {
+    const providerArgs = stripBetterC0deProviderSlashSubcommand(args)
+    const providerMode = isSlashCommand(cmd, "auth")
+      ? "/auth.login"
+      : "/providers.login"
+    const terminalCommand = buildBetterC0deProviderConnectTerminalCommand(
+      providerMode,
+      providerArgs,
+      selectedProvider
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = buildProviderConnectionOutput(
+      selectedProvider,
+      providerMode,
+      providerArgs
+    )
+  } else if (
+    isBetterC0deProviderSlashSubcommand(cmd, args, "list") ||
+    isBetterC0deProviderSlashSubcommand(cmd, args, "logout")
+  ) {
+    const providerArgs = stripBetterC0deProviderSlashSubcommand(args)
+    const authRoot = isSlashCommand(cmd, "auth")
+    const providerMode = isBetterC0deProviderSlashSubcommand(
+      cmd,
+      args,
+      "logout"
+    )
+      ? authRoot
+        ? "/auth.logout"
+        : "/providers.logout"
+      : authRoot
+        ? "/auth.list"
+        : "/providers.list"
+    const terminalCommand = buildBetterC0deProviderAuthTerminalCommand(
+      providerMode,
+      providerArgs
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = buildProviderAuthOutput(
+      providers,
+      selectedProvider,
+      providerMode,
+      providerArgs
+    )
+  } else if (
+    isBetterC0deConsoleSlashSubcommand(cmd, args, "login") ||
+    isBetterC0deConsoleSlashSubcommand(cmd, args, "open")
+  ) {
+    const consoleArgs = stripBetterC0deConsoleSlashSubcommand(args)
+    const consoleMode = isBetterC0deConsoleSlashSubcommand(cmd, args, "open")
+      ? "/console.open"
+      : "/console.login"
+    const terminalCommand = buildBetterC0deProviderConnectTerminalCommand(
+      consoleMode,
+      consoleArgs,
+      selectedProvider
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = buildProviderConnectionOutput(
+      selectedProvider,
+      consoleMode,
+      consoleArgs
+    )
+  } else if (isBetterC0deConsoleSlashSubcommand(cmd, args, "logout")) {
+    const consoleArgs = stripBetterC0deConsoleSlashSubcommand(args)
+    const terminalCommand = buildBetterC0deProviderAuthTerminalCommand(
+      "/console.logout",
+      consoleArgs
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = buildProviderAuthOutput(
+      providers,
+      selectedProvider,
+      "/console.logout",
+      consoleArgs
+    )
+  } else if (
+    isBetterC0deConsoleSlashSubcommand(cmd, args, "orgs") ||
+    isBetterC0deConsoleSlashSubcommand(cmd, args, "switch")
+  ) {
+    const consoleArgs = stripBetterC0deConsoleSlashSubcommand(args)
+    const consoleMode = isBetterC0deConsoleSlashSubcommand(cmd, args, "switch")
+      ? "/console.switch"
+      : "/console.orgs"
+    const terminalCommand = buildBetterC0deAccountTerminalCommand(
+      consoleMode,
+      consoleArgs
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    openSettingsTab("models")
+    output = buildProviderOrganizationOutput(consoleMode, consoleArgs)
+  } else if (isSlashCommand(cmd, "remote", "remote-access")) {
+    output = await executeRemoteAccessCommand(args)
+  } else if (resolveSettingsTabCommand(cmd, args[0])) {
+    const tab = resolveSettingsTabCommand(cmd, args[0]) ?? "general"
+    openSettingsTab(tab)
+    output = `# Settings\n\nOpened **${settingsTabLabel(tab)}**.`
+  } else if (
+    isSlashCommand(
+      cmd,
+      "console",
+      "app.console",
+      "app-console",
+      "app.debug",
+      "app-debug"
+    )
+  ) {
+    const prefs = usePreferencesStore.getState()
+    const next = !prefs.consolePanelOpen
+    prefs.set("consolePanelOpen", next)
+    output = buildToggleOutput("Console Panel", next)
+  } else if (isSlashCommand(cmd, "app.log", "app-log")) {
+    const parsed = parseAppLogCommandArgs(args)
+    if (parsed.payload) {
+      emitAppLog(parsed.payload)
+      usePreferencesStore.getState().set("consolePanelOpen", true)
+    }
+    output = buildAppLogOutput(parsed)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "heap-snapshot",
+      "app.heap_snapshot",
+      "app-heap-snapshot"
+    )
+  ) {
+    output = buildRuntimeHeapSnapshotOutput(await writeRuntimeHeapSnapshot())
+  } else if (
+    isSlashCommand(cmd, "review-toggle", "review.toggle", "review-panel-toggle")
+  ) {
+    const next = toggleDiffView()
+    output = buildToggleOutput("Review / Diff Panel", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "terminal-title",
+      "terminal.title.toggle",
+      "terminal-title-toggle",
+      "pty.update"
+    )
+  ) {
+    const appearance = useAppearanceStore.getState()
+    const next = resolveToggleArg(args[0], appearance.terminalTitleEnabled)
+    appearance.set("terminalTitleEnabled", next)
+    output = buildToggleOutput("Terminal Titles", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "terminal",
+      "terminal.toggle",
+      "terminal.suspend",
+      "pty",
+      "pty.list",
+      "pty-list",
+      "pty.shells",
+      "pty-shells",
+      "pty.get",
+      "pty-get",
+      "pty.connect",
+      "pty-connect",
+      "pty.connectToken",
+      "pty.connect-token",
+      "pty.remove",
+      "pty-remove"
+    )
+  ) {
+    const prefs = usePreferencesStore.getState()
+    const next = !prefs.terminalOpen
+    prefs.set("terminalOpen", next)
+    output = buildPtyTerminalOutput(cmd, next, activeThread)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "terminal-new",
+      "terminal.new",
+      "new-terminal",
+      "pty.create",
+      "pty-create"
+    )
+  ) {
+    const prefs = usePreferencesStore.getState()
+    const wasOpen = prefs.terminalOpen
+    prefs.set("terminalOpen", true)
+    if (wasOpen) {
+      window.setTimeout(() => {
+        dispatchTerminalNewSession({
+          threadId,
+          mode: prefs.appMode,
+          cwd: resolveThreadRuntimePath(activeThread),
+        })
+      }, 0)
+    }
+    output = [
+      "# New Terminal\n",
+      isSlashCommand(cmd, "pty.create", "pty-create")
+        ? "Compatibility reference: `pty.create`.\n"
+        : "",
+      "Opened a new terminal session.",
+    ]
+      .filter(Boolean)
+      .join("\n")
+  } else if (
+    isSlashCommand(
+      cmd,
+      "file-tree-toggle",
+      "filetree.toggle",
+      "filetree-toggle",
+      "file-tree.toggle",
+      "file-tree",
+      "files",
+      "files.toggle"
+    )
+  ) {
+    const prefs = usePreferencesStore.getState()
+    const active =
+      prefs.appMode === "editor"
+        ? prefs.sidebarOpen && prefs.editorSidebarView === "files"
+        : prefs.rightSidebarOpen && prefs.workspaceTab === "files"
+    const next = resolveToggleArg(args[0], active)
+    if (prefs.appMode === "editor") {
+      if (next) prefs.set("editorSidebarView", "files")
+      prefs.set("sidebarOpen", next)
+    } else if (next) {
+      prefs.set("rightSidebarOpen", true)
+      prefs.set("workspaceTab", "files")
+    } else if (prefs.workspaceTab === "files") {
+      prefs.set("workspaceTab", "plan")
+    }
+    output = buildToggleOutput("File Tree", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "sidebar",
+      "toggle-sidebar",
+      "sidebar.toggle",
+      "session.sidebar.toggle"
+    )
+  ) {
+    const prefs = usePreferencesStore.getState()
+    const next = resolveToggleArg(args[0], prefs.sidebarOpen)
+    prefs.set("sidebarOpen", next)
+    output = buildToggleOutput("File Tree / Sidebar", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "input-focus",
+      "input.focus",
+      "focus-input",
+      "composer-focus"
+    )
+  ) {
+    focusChatComposerInput(threadId)
+    output = "# Input Focus\n\nFocused the chat input."
+  } else if (
+    isSlashCommand(
+      cmd,
+      "animations",
+      "app.toggle.animations",
+      "app-toggle-animations"
+    )
+  ) {
+    const appearance = useAppearanceStore.getState()
+    const next = resolveToggleArg(args[0], appearance.animationsEnabled)
+    appearance.set("animationsEnabled", next)
+    output = buildToggleOutput("Animations", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "file-context",
+      "app.toggle.file_context",
+      "app-toggle-file-context"
+    )
+  ) {
+    const appearance = useAppearanceStore.getState()
+    const next = resolveToggleArg(args[0], appearance.fileContextEnabled)
+    appearance.set("fileContextEnabled", next)
+    output = buildToggleOutput("File Context", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "paste-summary",
+      "app.toggle.paste_summary",
+      "app-toggle-paste-summary"
+    )
+  ) {
+    output =
+      "Pasted text is always inserted directly and remains editable. Paste summaries have been removed."
+  } else if (
+    isSlashCommand(
+      cmd,
+      "session-directory-filter",
+      "app.toggle.session_directory_filter",
+      "app-toggle-session-directory-filter"
+    )
+  ) {
+    const appearance = useAppearanceStore.getState()
+    const next = resolveToggleArg(
+      args[0],
+      appearance.sessionDirectoryFilterEnabled
+    )
+    appearance.set("sessionDirectoryFilterEnabled", next)
+    output = buildToggleOutput("Session Directory Filter", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "connect",
+      "provider.connect",
+      "provider-connect",
+      "providers.login",
+      "provider.login",
+      "auth.login",
+      "auth.connect",
+      "console.login",
+      "console.open",
+      "account.login",
+      "account.open"
+    )
+  ) {
+    const terminalCommand = buildBetterC0deProviderConnectTerminalCommand(
+      cmd,
+      args,
+      selectedProvider
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = buildProviderConnectionOutput(selectedProvider, cmd, args)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "auth",
+      "auth.list",
+      "auth.ls",
+      "auth.get",
+      "provider-auth",
+      "provider.auth",
+      "providers.list",
+      "providers.ls",
+      "provider.list",
+      "provider.ls",
+      "providers.logout",
+      "provider.logout",
+      "auth.logout",
+      "console.logout",
+      "account",
+      "account.list",
+      "account.logout"
+    )
+  ) {
+    const terminalCommand = buildBetterC0deProviderAuthTerminalCommand(
+      cmd,
+      args
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = buildProviderAuthOutput(providers, selectedProvider, cmd, args)
+  } else if (
+    isSlashCommand(cmd, "theme-mode", "theme.switch_mode", "theme-switch-mode")
+  ) {
+    const appearance = useAppearanceStore.getState()
+    const nextTemplate = nextThemeTemplateId(appearance.template)
+    appearance.applyTemplate(nextTemplate)
+    output = buildThemeModeOutput(
+      useAppearanceStore.getState().template,
+      appearance.themeModeLocked
+    )
+  } else if (
+    isSlashCommand(cmd, "theme-mode-lock", "theme.mode.lock", "theme-lock")
+  ) {
+    const appearance = useAppearanceStore.getState()
+    const next = resolveToggleArg(args[0], appearance.themeModeLocked)
+    appearance.set("themeModeLocked", next)
+    output = buildToggleOutput("Theme Mode Lock", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "themes",
+      "theme",
+      "theme.switch",
+      "theme-switch",
+      "theme.cycle",
+      "theme-cycle",
+      "theme.scheme.cycle",
+      "theme-scheme-cycle"
+    )
+  ) {
+    const appearance = useAppearanceStore.getState()
+    const cycleRequested = isSlashCommand(
+      cmd,
+      "theme.cycle",
+      "theme-cycle",
+      "theme.scheme.cycle",
+      "theme-scheme-cycle"
+    )
+    const requestedTheme =
+      cycleRequested && !args[0]
+        ? nextThemeTemplateId(appearance.template)
+        : args[0]?.toLowerCase()
+    const nextTemplate = requestedTheme
+      ? resolveThemeTemplateId(requestedTheme)
+      : null
+    if (nextTemplate) {
+      appearance.applyTemplate(nextTemplate)
+    }
+    output = buildThemesOutput(
+      nextTemplate
+        ? useAppearanceStore.getState().template
+        : appearance.template,
+      Boolean(nextTemplate)
+    )
+  } else if (
+    isSlashCommand(cmd, "language", "language.cycle", "language-cycle")
+  ) {
+    output = buildLanguageCompatibilityOutput()
+  } else if (
+    isSlashCommand(
+      cmd,
+      "terminal-font",
+      "font.terminal",
+      "terminal.font",
+      "appearance.terminal_font"
+    )
+  ) {
+    output = handleTerminalFontCommand(args)
+  } else if (isSlashCommand(cmd, "variants", "variant.list", "variant-list")) {
+    output = buildVariantsOutput(
+      selectedProvider,
+      selectedModel,
+      readActiveProviderComposerSelection(selectedProvider?.id, threadId)
+        ?.optionSelections
+    )
+  } else if (
+    isSlashCommand(
+      cmd,
+      "variant.cycle",
+      "variant-cycle",
+      "model.variant.cycle",
+      "model-variant-cycle"
+    )
+  ) {
+    output = applyModelVariantCycleCommand({
+      threadId,
+      provider: selectedProvider,
+      selectedModel,
+      requestedOptionId: args[0],
+    })
+  } else if (
+    isSlashCommand(
+      cmd,
+      "catalog",
+      "model-catalog",
+      "model-info",
+      "models",
+      "models.list",
+      "models-list",
+      "catalog.model.list",
+      "catalog.model.get",
+      "v2.model.list",
+      "v2-model-list"
+    )
+  ) {
+    const terminalCommand = buildBetterC0deModelsTerminalCommand(
+      args,
+      providers
+    )
+    if (terminalCommand.shouldOpen && terminalCommand.command) {
+      dispatchPrefilledTerminalCommand(activeThread, terminalCommand.command)
+    }
+    output = buildProviderCatalogOutput(providers, args)
+  } else if (cmd === "/streaming") {
+    const settings = useSettingsStore.getState()
+    const next = resolveToggleArg(args[0], settings.enableAssistantStreaming)
+    await settings.update({ enable_assistant_streaming: next })
+    output = buildToggleOutput("Assistant Streaming", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "timestamps",
+      "toggle-timestamps",
+      "toggle.timestamps",
+      "session.toggle.timestamps"
+    )
+  ) {
+    const settings = useSettingsStore.getState()
+    const next = resolveToggleArg(args[0], settings.showMessageTimestamps)
+    await settings.update({ show_message_timestamps: next })
+    output = buildToggleOutput("Message Timestamps", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "thinking",
+      "toggle-thinking",
+      "toggle.thinking",
+      "session.toggle.thinking"
+    )
+  ) {
+    const settings = useSettingsStore.getState()
+    const next = resolveToggleArg(args[0], settings.showThinkingBlocks)
+    await settings.update({ show_thinking_blocks: next })
+    output = buildToggleOutput("Thinking Blocks", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "reasoning-summaries",
+      "reasoning-summary",
+      "session.toggle.reasoning_summaries",
+      "session-toggle-reasoning-summaries"
+    )
+  ) {
+    const settings = useSettingsStore.getState()
+    const next = resolveToggleArg(args[0], settings.showReasoningSummaries)
+    await settings.update({ show_reasoning_summaries: next })
+    output = buildToggleOutput("Reasoning Summaries", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "tool-details",
+      "actions",
+      "toggle-actions",
+      "toggle.actions",
+      "session.toggle.actions"
+    )
+  ) {
+    const settings = useSettingsStore.getState()
+    const next = resolveToggleArg(args[0], settings.showToolDetails)
+    await settings.update({ show_tool_details: next })
+    output = buildToggleOutput("Tool Details", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "progress",
+      "session-progress",
+      "session.toggle.progress_bar",
+      "session-toggle-progress-bar"
+    )
+  ) {
+    const settings = useSettingsStore.getState()
+    const next = resolveToggleArg(args[0], settings.showSessionProgressBar)
+    await settings.update({ show_session_progress_bar: next })
+    output = buildToggleOutput("Session Progress", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "shell-expanded",
+      "shell-tool-parts",
+      "shell-tool-parts-expanded",
+      "session.toggle.shell_tool_parts_expanded"
+    )
+  ) {
+    const settings = useSettingsStore.getState()
+    const next = resolveToggleArg(args[0], settings.shellToolPartsExpanded)
+    await settings.update({ shell_tool_parts_expanded: next })
+    output = buildToggleOutput("Shell Tool Parts Expanded", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "edit-expanded",
+      "edit-tool-parts",
+      "edit-tool-parts-expanded",
+      "session.toggle.edit_tool_parts_expanded"
+    )
+  ) {
+    const settings = useSettingsStore.getState()
+    const next = resolveToggleArg(args[0], settings.editToolPartsExpanded)
+    await settings.update({ edit_tool_parts_expanded: next })
+    output = buildToggleOutput("Edit Tool Parts Expanded", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "scrollbar",
+      "toggle-scrollbar",
+      "toggle.scrollbar",
+      "session.toggle.scrollbar"
+    )
+  ) {
+    const settings = useSettingsStore.getState()
+    const next = resolveToggleArg(args[0], settings.showChatScrollbar)
+    await settings.update({ show_chat_scrollbar: next })
+    output = buildToggleOutput("Chat Scrollbar", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "generic-tool-output",
+      "generic-output",
+      "toggle-generic-tool-output",
+      "toggle.generic_tool_output",
+      "session.toggle.generic_tool_output"
+    )
+  ) {
+    const settings = useSettingsStore.getState()
+    const next = resolveToggleArg(args[0], settings.showGenericToolOutput)
+    await settings.update({ show_generic_tool_output: next })
+    output = buildToggleOutput("Generic Tool Output", next)
+  } else if (
+    isSlashCommand(cmd, "conceal", "toggle-conceal", "session.toggle.conceal")
+  ) {
+    const settings = useSettingsStore.getState()
+    const next = resolveToggleArg(args[0], settings.concealCodeBlocks)
+    await settings.update({ conceal_code_blocks: next })
+    output = buildToggleOutput("Code Concealment", next)
+  } else if (isSlashCommand(cmd, "autosave", "auto-save")) {
+    const settings = useSettingsStore.getState()
+    const next = resolveToggleArg(args[0], settings.autoSaveConversations)
+    await settings.update({ auto_save_conversations: next })
+    output = buildToggleOutput("Auto-save Conversations", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "diffwrap",
+      "wrap",
+      "app.toggle.diffwrap",
+      "app-toggle-diffwrap"
+    )
+  ) {
+    const settings = useSettingsStore.getState()
+    const next = resolveToggleArg(args[0], settings.diffWordWrap)
+    await settings.update({ diff_word_wrap: next })
+    output = buildToggleOutput("Diff Word Wrap", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "diff-style",
+      "diff_style",
+      "diff.style",
+      "app.diff_style"
+    )
+  ) {
+    output = await handleDiffStyleCommand(args)
+  } else if (isSlashCommand(cmd, "notifications", "notify", "notification")) {
+    output = await handleNotificationsCommand(args)
+  } else if (isSlashCommand(cmd, "confirmations", "confirm")) {
+    const settings = useSettingsStore.getState()
+    const next = resolveToggleArg(
+      args[0],
+      settings.confirmArchive && settings.confirmDelete
+    )
+    await settings.update({
+      confirm_archive: next,
+      confirm_delete: next,
+    })
+    output = buildToggleOutput("Archive/Delete Confirmations", next)
+  } else if (
+    isSlashCommand(cmd, "autoaccept", "auto-accept", "permissions.autoaccept")
+  ) {
+    const current = permissionLevel === "bypass"
+    const next = resolveToggleArg(args[0], current)
+    const nextPermission = next ? "bypass" : "ask-on-edit"
+    if (threadId) {
+      useChatStore
+        .getState()
+        .setThreadSetting(threadId, "permissionLevel", nextPermission)
+    } else {
+      usePreferencesStore.getState().set("permissionLevel", nextPermission)
+    }
+    await applyPermissionModeLive(nextPermission, selectedProvider, threadId)
+    output = buildToggleOutput("Auto Accept", next)
+  } else if (
+    isSlashCommand(
+      cmd,
+      "compact",
+      "summarize",
+      "session.compact",
+      "v2.session.compact",
+      "v2-session-compact"
+    )
+  ) {
+    const commandMessage = {
+      messageId: crypto.randomUUID(),
+      content: rawText,
+      createdAt: new Date().toISOString(),
+    }
+    const compaction = await buildThreadCompactionOutput({
+      threadId,
+      selectedProvider,
+      selectedModel,
+      thinkingMode,
+      command: commandMessage,
+    })
+    output = compaction.content
+    outputMessageId = compaction.messageId
+    outputMessageCreatedAt = compaction.createdAt
+    outputMessageCompactionGeneration = compaction.generation
+    outputUserMessageId = commandMessage.messageId
+    outputUserMessageCreatedAt = commandMessage.createdAt
+  } else if (isSlashCommand(cmd, "density", "compact-ui")) {
+    const appearance = useAppearanceStore.getState()
+    const arg = trimmedText.split(/\s+/)[1]?.toLowerCase()
+    const next =
+      arg === "on" || arg === "1" || arg === "true"
+        ? true
+        : arg === "off" || arg === "0" || arg === "false"
+          ? false
+          : !appearance.compactMode
+    appearance.set("compactMode", next)
+    output = `# Compact UI\n\n${next ? "Enabled" : "Disabled"}`
+  }
 
-        if (!output) {
-          const matchedMcp = mcpList.find((m) => cmd === `/${m.id}`)
-          if (matchedMcp) {
-            output = buildRuntimeMcpDetailOutput(matchedMcp)
-          }
-          const matchedSkill = skillList.find((s) => cmd === `/${s.id}`)
-          if (matchedSkill && !output) {
-            output = [
-              `# ${matchedSkill.name}\n`,
-              "| | |",
-              "|:--|:--|",
-              "| **Type** | Skill |",
-              `| **ID** | \`${matchedSkill.id}\` |`,
-              `| **Status** | ${matchedSkill.enabled ? "Enabled" : "Disabled"} |`,
-              "",
-              matchedSkill.content ? `---\n\n${matchedSkill.content}` : "",
-            ]
-              .filter(Boolean)
-              .join("\n")
-          }
-          const matchedSubagent = subagentList.find(
-            (agent) => cmd === `/${agent.id}`
-          )
-          if (matchedSubagent && !output) {
-            output = buildRuntimeSubagentDetailOutput(matchedSubagent)
-          }
-        }
+  if (!output) {
+    const matchedMcp = mcpList.find((m) => cmd === `/${m.id}`)
+    if (matchedMcp) {
+      output = buildRuntimeMcpDetailOutput(matchedMcp)
+    }
+    const matchedSkill = skillList.find((s) => cmd === `/${s.id}`)
+    if (matchedSkill && !output) {
+      output = [
+        `# ${matchedSkill.name}\n`,
+        "| | |",
+        "|:--|:--|",
+        "| **Type** | Skill |",
+        `| **ID** | \`${matchedSkill.id}\` |`,
+        `| **Status** | ${matchedSkill.enabled ? "Enabled" : "Disabled"} |`,
+        "",
+        matchedSkill.content ? `---\n\n${matchedSkill.content}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    }
+    const matchedSubagent = subagentList.find((agent) => cmd === `/${agent.id}`)
+    if (matchedSubagent && !output) {
+      output = buildRuntimeSubagentDetailOutput(matchedSubagent)
+    }
+  }
 
   if (!output) return null
   return {
@@ -4661,7 +5437,6 @@ function buildPromptStashPushOutput(
   ].join("\n")
 }
 
-
 function resolveQuickSwitchSlot(
   command: string,
   argument?: string
@@ -4686,7 +5461,10 @@ type ChatMessageScrollTarget =
   | "line-up"
   | "line-down"
 
-function dispatchChatMessageScroll(target: ChatMessageScrollTarget, threadId: string | null): void {
+function dispatchChatMessageScroll(
+  target: ChatMessageScrollTarget,
+  threadId: string | null
+): void {
   if (typeof window === "undefined") return
   window.dispatchEvent(
     new CustomEvent("betterc0de:chat-scroll-message", {
@@ -4868,7 +5646,10 @@ function settingsTabLabel(tab: SettingsTabId): string {
   }
 }
 
-export function stripModeSlashPrompt(text: string, mode: string | null): string {
+export function stripModeSlashPrompt(
+  text: string,
+  mode: string | null
+): string {
   if (mode === "plan") return text.replace(/^\/plan\b\s*/i, "").trim()
   if (mode === "ask") return text.replace(/^\/ask\b\s*/i, "").trim()
   if (mode === "security") {
@@ -6595,7 +7376,8 @@ function buildThemesOutput(currentTemplate: string, switched: boolean): string {
     a.name.localeCompare(b.name)
   )
   for (const theme of imported) {
-    const current = customTemplateId(theme.id) === currentTemplate ? "Active" : ""
+    const current =
+      customTemplateId(theme.id) === currentTemplate ? "Active" : ""
     rows.push(
       `| \`${theme.mode}\` | ${escapeMarkdownTableCell(theme.name)} | \`${theme.id}\` | ${current} |`
     )
@@ -6620,7 +7402,8 @@ function buildThemeModeOutput(
   const template = SELECTABLE_THEME_TEMPLATES.find(
     (entry) => entry.id === currentTemplate
   )
-  const importedName = readCustomThemes()[customThemeIdOf(currentTemplate) ?? ""]?.name
+  const importedName =
+    readCustomThemes()[customThemeIdOf(currentTemplate) ?? ""]?.name
   return [
     "# Theme Mode\n",
     `Switched to **${(templateMode(currentTemplate) ?? template?.mode) === "light" ? "Light" : "Dark"}** mode.`,
@@ -7965,5 +8748,14 @@ function formatObjectKeys(value: Record<string, unknown>): string {
   return keys.length > 0 ? keys.map((key) => `\`${key}\``).join(", ") : "-"
 }
 
-export { archivedThreadIdsAfterAction, resolveAdjacentProjectThread, resolveAdjacentSessionThread, resolveChildThread, resolveParentThread, resolvePinnedThreadSlot, resolveSessionCommandThread, resolveSiblingChildThread } from "@/hooks/chat-submit/thread-navigation"
+export {
+  archivedThreadIdsAfterAction,
+  resolveAdjacentProjectThread,
+  resolveAdjacentSessionThread,
+  resolveChildThread,
+  resolveParentThread,
+  resolvePinnedThreadSlot,
+  resolveSessionCommandThread,
+  resolveSiblingChildThread,
+} from "@/hooks/chat-submit/thread-navigation"
 export { betterC0deShareModeFromProjectSettings } from "@/lib/betterc0de-share-policy"

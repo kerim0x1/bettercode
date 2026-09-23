@@ -93,7 +93,9 @@ export function AppShell({
                   (MainArea's root has no flex-1 of its own). */}
               <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border/40 bg-background shadow-[0_18px_50px_-32px_rgba(0,0,0,0.9)] [&>*]:min-w-0 [&>*]:flex-1 [&>*]:bg-background">
                 {usageOpen ? (
-                  <Suspense fallback={<div className="min-h-0 flex-1 bg-background" />}>
+                  <Suspense
+                    fallback={<div className="min-h-0 flex-1 bg-background" />}
+                  >
                     <ErrorBoundary label="Usage">
                       <UsagePage onClose={() => setUsageOpen(false)} />
                     </ErrorBoundary>
@@ -113,7 +115,9 @@ export function AppShell({
           ) : (
             <>
               {usageOpen ? (
-                <Suspense fallback={<div className="min-h-0 flex-1 bg-background" />}>
+                <Suspense
+                  fallback={<div className="min-h-0 flex-1 bg-background" />}
+                >
                   <ErrorBoundary label="Usage">
                     <UsagePage onClose={() => setUsageOpen(false)} />
                   </ErrorBoundary>

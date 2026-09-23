@@ -263,15 +263,42 @@ describe("ThreadService round-trip", () => {
 
   it("lists the last assistant model without hydrating messages, including after a rewrite", () => {
     const body = sampleThreadBody()
-    svc.save(parseThreadSaveRequest({ ...body, messages: [...body.messages,
-      { id: "latest", role: "assistant", content: "new reply", modelId: "gpt-6-astra", createdAt: body.updatedAt },
-      { id: "followup", role: "user", content: "next", modelId: "selected-only", createdAt: body.updatedAt },
-    ] }))
-    expect(svc.listThreads()[0]).toMatchObject({ lastModelId: "gpt-6-astra", messages: [] })
+    svc.save(
+      parseThreadSaveRequest({
+        ...body,
+        messages: [
+          ...body.messages,
+          {
+            id: "latest",
+            role: "assistant",
+            content: "new reply",
+            modelId: "gpt-6-astra",
+            createdAt: body.updatedAt,
+          },
+          {
+            id: "followup",
+            role: "user",
+            content: "next",
+            modelId: "selected-only",
+            createdAt: body.updatedAt,
+          },
+        ],
+      })
+    )
+    expect(svc.listThreads()[0]).toMatchObject({
+      lastModelId: "gpt-6-astra",
+      messages: [],
+    })
     svc.save(parseThreadSaveRequest(body))
-    expect(svc.listThreads()[0]).toMatchObject({ lastModelId: "claude-opus-4-6", messages: [] })
+    expect(svc.listThreads()[0]).toMatchObject({
+      lastModelId: "claude-opus-4-6",
+      messages: [],
+    })
     svc.save(parseThreadSaveRequest({ ...body, messages: [] }))
-    expect(svc.listThreads()[0]).toMatchObject({ lastModelId: null, messages: [] })
+    expect(svc.listThreads()[0]).toMatchObject({
+      lastModelId: null,
+      messages: [],
+    })
   })
 
   it("listThreads surfaces the latest provider session binding", () => {
@@ -552,7 +579,9 @@ describe("ThreadService round-trip", () => {
       },
       { role: "tool", tool_call_id: "call-latest", content: "no matches" },
     ]
-    const maxBytes = new TextEncoder().encode(JSON.stringify(newestGroup)).byteLength
+    const maxBytes = new TextEncoder().encode(
+      JSON.stringify(newestGroup)
+    ).byteLength
     svc.save(
       parseThreadSaveRequest({
         ...sampleThreadBody(),
@@ -592,9 +621,9 @@ describe("ThreadService round-trip", () => {
       maxBytes,
     })
     expect(history).toEqual(newestGroup)
-    expect(new TextEncoder().encode(JSON.stringify(history)).byteLength).toBeLessThanOrEqual(
-      maxBytes
-    )
+    expect(
+      new TextEncoder().encode(JSON.stringify(history)).byteLength
+    ).toBeLessThanOrEqual(maxBytes)
   })
 
   it("limits valid unique tool calls after discarding malformed entries", () => {
@@ -771,7 +800,10 @@ describe("ThreadService round-trip", () => {
     expect(stats.providerUsage.codex?.tokens.output).toBe(7)
     expect(stats.dailyUsage).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ date: "2026-01-01", provider: "anthropic_cli" }),
+        expect.objectContaining({
+          date: "2026-01-01",
+          provider: "anthropic_cli",
+        }),
         expect.objectContaining({ date: "2026-01-02", provider: "codex" }),
       ])
     )
@@ -1043,9 +1075,9 @@ describe("ThreadService round-trip", () => {
     })
 
     expect(
-      (svc.listMessages("thread-1") as Array<{ id: string; content: string }>).map(
-        (message) => [message.id, message.content]
-      )
+      (
+        svc.listMessages("thread-1") as Array<{ id: string; content: string }>
+      ).map((message) => [message.id, message.content])
     ).toEqual([
       ["msg-user", "hello"],
       ["msg-assistant", "world"],
@@ -1522,7 +1554,8 @@ describe("ThreadService round-trip", () => {
         ],
       })
     )
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO turn_diffs
         (thread_id, turn_index, turn_id, dispatch_turn_id,
          boundary_message_id, boundary_sequence, diff_text, created_at)
@@ -1534,8 +1567,10 @@ describe("ThreadService round-trip", () => {
         ('thread-1', 3, 'native-3', 'dispatch-3', 'msg-u3-failed', 5,
          'diff 3',
          '2026-01-01T00:00:05.000Z')
-    `).run()
-    db.prepare(`
+    `
+    ).run()
+    db.prepare(
+      `
       INSERT INTO projection_turns
         (turn_id, thread_id, status, started_at, completed_at)
       VALUES
@@ -1543,8 +1578,10 @@ describe("ThreadService round-trip", () => {
          '2026-01-01T00:00:03.000Z', '2026-01-01T00:00:04.000Z'),
         ('native-3', 'thread-1', 'interrupted',
          '2026-01-01T00:00:05.000Z', '2026-01-01T00:00:05.000Z')
-    `).run()
-    db.prepare(`
+    `
+    ).run()
+    db.prepare(
+      `
       INSERT INTO projection_thread_activities
         (activity_id, thread_id, turn_id, kind, tone, summary, payload_json,
          created_at)
@@ -1553,8 +1590,10 @@ describe("ThreadService round-trip", () => {
          '2026-01-01T00:00:04.000Z'),
         ('activity-3', 'thread-1', 'native-3', 'error', 'error', 'failed', '{}',
          '2026-01-01T00:00:05.000Z')
-    `).run()
-    db.prepare(`
+    `
+    ).run()
+    db.prepare(
+      `
       INSERT INTO projection_approvals
         (approval_id, thread_id, turn_id, request_type, status, payload_json,
          created_at)
@@ -1563,8 +1602,10 @@ describe("ThreadService round-trip", () => {
          '2026-01-01T00:00:04.000Z'),
         ('approval-3', 'thread-1', 'native-3', 'tool', 'denied', '{}',
          '2026-01-01T00:00:05.000Z')
-    `).run()
-    db.prepare(`
+    `
+    ).run()
+    db.prepare(
+      `
       INSERT INTO checkpoint_diffs
         (thread_id, turn_id, checkpoint_ref, diff_content, created_at)
       VALUES
@@ -1572,7 +1613,8 @@ describe("ThreadService round-trip", () => {
          '2026-01-01T00:00:04.000Z'),
         ('thread-1', 'dispatch-3', 'refs/turn-3', '',
          '2026-01-01T00:00:05.000Z')
-    `).run()
+    `
+    ).run()
 
     expect(
       (svc.listThreads() as Array<{ turnCount: number }>)[0]?.turnCount
@@ -1593,13 +1635,7 @@ describe("ThreadService round-trip", () => {
       (svc.listMessages("thread-1") as Array<{ id: string }>).map(
         (message) => message.id
       )
-    ).toEqual([
-      "msg-u1",
-      "msg-a1",
-      "msg-compaction",
-      "msg-u2",
-      "msg-a2",
-    ])
+    ).toEqual(["msg-u1", "msg-a1", "msg-compaction", "msg-u2", "msg-a2"])
     for (const [table, idColumn] of [
       ["projection_turns", "turn_id"],
       ["projection_thread_activities", "turn_id"],

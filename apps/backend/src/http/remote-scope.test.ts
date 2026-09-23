@@ -104,7 +104,10 @@ describe("remote access scope", () => {
       const response = await app.request(route, {
         method,
         headers: REMOTE_HEADERS,
-        body: method === "GET" ? undefined : JSON.stringify({ type: "api", key: "k" }),
+        body:
+          method === "GET"
+            ? undefined
+            : JSON.stringify({ type: "api", key: "k" }),
       })
       expect(response.status, `${method} ${route}`).toBe(403)
       expect(await response.json(), `${method} ${route}`).toEqual({
@@ -127,21 +130,43 @@ describe("remote access scope", () => {
   })
 
   it("keeps credential-bearing global workspace templates on the desktop", async () => {
-    const registered = await fs.mkdtemp(path.join(os.tmpdir(), "bc0de-template-scope-"))
+    const registered = await fs.mkdtemp(
+      path.join(os.tmpdir(), "bc0de-template-scope-")
+    )
     temporaryDirectories.push(registered)
-    vi.stubEnv("BETTERC0DE_CONFIG_CONTENT", JSON.stringify({
-      mcp: { private: { type: "remote", url: "https://example.invalid/mcp", headers: { Authorization: "global-mcp-secret" } } },
-      lsp: { private: { command: ["language-server"], extensions: [".txt"], env: { TOKEN: "global-lsp-secret" } } },
-      private_key: "global-config-secret",
-    }))
-    const { app } = makeApp({ projectProjections: { listAll: () => [{ path: registered }] } })
+    vi.stubEnv(
+      "BETTERC0DE_CONFIG_CONTENT",
+      JSON.stringify({
+        mcp: {
+          private: {
+            type: "remote",
+            url: "https://example.invalid/mcp",
+            headers: { Authorization: "global-mcp-secret" },
+          },
+        },
+        lsp: {
+          private: {
+            command: ["language-server"],
+            extensions: [".txt"],
+            env: { TOKEN: "global-lsp-secret" },
+          },
+        },
+        private_key: "global-config-secret",
+      })
+    )
+    const { app } = makeApp({
+      projectProjections: { listAll: () => [{ path: registered }] },
+    })
     for (const [route, secret] of [
       ["project-lsp-servers", "global-lsp-secret"],
       ["project-config", "global-config-secret"],
     ]) {
-      const request = (headers: Record<string, string>) => app.request(`/api/v1/workspace/${route}`, {
-        method: "POST", headers, body: JSON.stringify({ cwd: registered }),
-      })
+      const request = (headers: Record<string, string>) =>
+        app.request(`/api/v1/workspace/${route}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ cwd: registered }),
+        })
       const remote = await request(REMOTE_HEADERS)
       expect(remote.status, route).toBe(403)
       expect(await remote.text()).not.toContain(secret)
@@ -152,50 +177,126 @@ describe("remote access scope", () => {
   })
 
   it("returns only safe MCP metadata without breaking remote workspace context reads", async () => {
-    const registered = await fs.mkdtemp(path.join(os.tmpdir(), "bc0de-mcp-projection-"))
-    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "bc0de-mcp-outside-"))
+    const registered = await fs.mkdtemp(
+      path.join(os.tmpdir(), "bc0de-mcp-projection-")
+    )
+    const outside = await fs.mkdtemp(
+      path.join(os.tmpdir(), "bc0de-mcp-outside-")
+    )
     temporaryDirectories.push(registered, outside)
     vi.stubEnv("BETTERC0DE_HOME", registered)
     vi.stubEnv("BETTERC0DE_DATA_DIR", registered)
-    const skillDirectory = path.join(registered, ".betterc0de", "skills", "review")
+    const skillDirectory = path.join(
+      registered,
+      ".betterc0de",
+      "skills",
+      "review"
+    )
     await fs.mkdir(skillDirectory, { recursive: true })
-    await fs.writeFile(path.join(skillDirectory, "SKILL.md"), "---\nname: review\ndescription: Project review guidance\n---\nFollow the project review checklist.\n")
-    vi.stubEnv("BETTERC0DE_CONFIG_CONTENT", JSON.stringify({
-      mcp: {
-        local: { type: "local", command: ["/private/server", "--token=argument-secret"], environment: { PRIVATE_ENV: "environment-secret" }, enabled: false },
-        remote: { type: "remote", url: "https://user:password@example.invalid/mcp?token=url-secret", headers: { PrivateHeader: "header-secret" }, oauth: { clientSecret: "oauth-secret" } },
-      },
-      permission: { bash: "deny" },
-    }))
-    const { app } = makeApp({ projectProjections: { listAll: () => [{ path: registered }] } })
-    const request = (route: string, headers: Record<string, string> = REMOTE_HEADERS, cwd = registered) => app.request(`/api/v1/workspace/${route}`, {
-      method: "POST", headers, body: JSON.stringify({ cwd }),
+    await fs.writeFile(
+      path.join(skillDirectory, "SKILL.md"),
+      "---\nname: review\ndescription: Project review guidance\n---\nFollow the project review checklist.\n"
+    )
+    vi.stubEnv(
+      "BETTERC0DE_CONFIG_CONTENT",
+      JSON.stringify({
+        mcp: {
+          local: {
+            type: "local",
+            command: ["/private/server", "--token=argument-secret"],
+            environment: { PRIVATE_ENV: "environment-secret" },
+            enabled: false,
+          },
+          remote: {
+            type: "remote",
+            url: "https://user:password@example.invalid/mcp?token=url-secret",
+            headers: { PrivateHeader: "header-secret" },
+            oauth: { clientSecret: "oauth-secret" },
+          },
+        },
+        permission: { bash: "deny" },
+      })
+    )
+    const { app } = makeApp({
+      projectProjections: { listAll: () => [{ path: registered }] },
     })
+    const request = (
+      route: string,
+      headers: Record<string, string> = REMOTE_HEADERS,
+      cwd = registered
+    ) =>
+      app.request(`/api/v1/workspace/${route}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ cwd }),
+      })
     // The paired web client batches these endpoints with Promise.all.
-    const responses = await Promise.all([
-      "project-mcp-servers", "project-skills", "project-agents", "project-permissions",
-    ].map((route) => request(route)))
-    expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200])
-    expect(await responses[0]!.json()).toEqual([
-      { id: "local", name: "local", type: "local", enabled: false, command: "", args: [], env: {}, sourcePath: "" },
-      { id: "remote", name: "remote", type: "remote", enabled: true, command: "", args: [], env: {}, sourcePath: "" },
+    const responses = await Promise.all(
+      [
+        "project-mcp-servers",
+        "project-skills",
+        "project-agents",
+        "project-permissions",
+      ].map((route) => request(route))
+    )
+    expect(responses.map((response) => response.status)).toEqual([
+      200, 200, 200, 200,
     ])
-    expect(await responses[1]!.json()).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: "review", content: expect.stringContaining("Follow the project review checklist.") }),
-    ]))
-    expect(await responses[3]!.json()).toEqual(expect.arrayContaining([
-      expect.objectContaining({ permission: "bash", action: "deny" }),
-    ]))
+    expect(await responses[0]!.json()).toEqual([
+      {
+        id: "local",
+        name: "local",
+        type: "local",
+        enabled: false,
+        command: "",
+        args: [],
+        env: {},
+        sourcePath: "",
+      },
+      {
+        id: "remote",
+        name: "remote",
+        type: "remote",
+        enabled: true,
+        command: "",
+        args: [],
+        env: {},
+        sourcePath: "",
+      },
+    ])
+    expect(await responses[1]!.json()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "review",
+          content: expect.stringContaining(
+            "Follow the project review checklist."
+          ),
+        }),
+      ])
+    )
+    expect(await responses[3]!.json()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ permission: "bash", action: "deny" }),
+      ])
+    )
     const local = await request("project-mcp-servers", LOCAL_HEADERS)
     expect(local.status).toBe(200)
     expect(await local.text()).toContain("argument-secret")
-    const blocked = await request("project-mcp-servers", REMOTE_HEADERS, outside)
+    const blocked = await request(
+      "project-mcp-servers",
+      REMOTE_HEADERS,
+      outside
+    )
     expect(blocked.status).toBe(403)
-    expect(await blocked.json()).toMatchObject({ code: "workspace_not_registered" })
+    expect(await blocked.json()).toMatchObject({
+      code: "workspace_not_registered",
+    })
   })
 
   it("confines remote filesystem browsing to registered workspace roots", async () => {
-    const registered = await fs.mkdtemp(path.join(os.tmpdir(), "bc0de-scope-in-"))
+    const registered = await fs.mkdtemp(
+      path.join(os.tmpdir(), "bc0de-scope-in-")
+    )
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), "bc0de-scope-out-"))
     temporaryDirectories.push(registered, outside)
     await fs.writeFile(path.join(registered, "README.md"), "hi", "utf8")
@@ -209,7 +310,9 @@ describe("remote access scope", () => {
       body: JSON.stringify({ path: outside }),
     })
     expect(blocked.status).toBe(403)
-    expect(await blocked.json()).toMatchObject({ code: "workspace_not_registered" })
+    expect(await blocked.json()).toMatchObject({
+      code: "workspace_not_registered",
+    })
 
     const blockedSearch = await app.request("/api/v1/filesystem/search", {
       method: "POST",
@@ -263,7 +366,14 @@ describe("remote access scope", () => {
       { mcp_servers: [] },
       { hooks: [] },
       { providers: {} },
-      { provider_instances: { codex: { driver: "codex", config: { binaryPath: "C:\\attacker\\agent.exe" } } } },
+      {
+        provider_instances: {
+          codex: {
+            driver: "codex",
+            config: { binaryPath: "C:\\attacker\\agent.exe" },
+          },
+        },
+      },
       { providerInstances: {} },
       { remove_provider_instance_ids: ["codex"] },
       { future_host_setting: true },
@@ -298,34 +408,53 @@ describe("remote access scope", () => {
   it("rejects every remote permission mutation while retaining owner access and remote reads", async () => {
     const deleteGrant = vi.fn(() => true)
     const setWorkspaceTrust = vi.fn((body) => body)
-    const { app } = makeApp({ agentPermissions: {
-      deleteGrant, setWorkspaceTrust, listGrants: () => [],
-    } })
+    const { app } = makeApp({
+      agentPermissions: {
+        deleteGrant,
+        setWorkspaceTrust,
+        listGrants: () => [],
+      },
+    })
     for (const route of [
-      "claude-rules/delete", "session-rules/delete", "grants/upsert",
-      "grants/delete", "workspace-trust/set", "workspace-trust/ensure",
+      "claude-rules/delete",
+      "session-rules/delete",
+      "grants/upsert",
+      "grants/delete",
+      "workspace-trust/set",
+      "workspace-trust/ensure",
     ]) {
       const response = await app.request(`/api/v1/permissions/${route}`, {
-        method: "POST", headers: REMOTE_HEADERS,
-        body: JSON.stringify({ id: "owner-deny-rule", workspacePath: "C:\\repo", state: "trusted" }),
+        method: "POST",
+        headers: REMOTE_HEADERS,
+        body: JSON.stringify({
+          id: "owner-deny-rule",
+          workspacePath: "C:\\repo",
+          state: "trusted",
+        }),
       })
       expect(response.status, route).toBe(403)
     }
     expect(deleteGrant).not.toHaveBeenCalled()
     expect(setWorkspaceTrust).not.toHaveBeenCalled()
     const owner = await app.request("/api/v1/permissions/grants/delete", {
-      method: "POST", headers: LOCAL_HEADERS, body: JSON.stringify({ id: "owner-deny-rule" }),
+      method: "POST",
+      headers: LOCAL_HEADERS,
+      body: JSON.stringify({ id: "owner-deny-rule" }),
     })
     expect(owner.status).toBe(200)
     expect(deleteGrant).toHaveBeenCalledExactlyOnceWith("owner-deny-rule")
     const read = await app.request("/api/v1/permissions/grants/list", {
-      method: "POST", headers: REMOTE_HEADERS, body: "{}",
+      method: "POST",
+      headers: REMOTE_HEADERS,
+      body: "{}",
     })
     expect(read.status).toBe(200)
   })
 
   it("does not let a remote session register a workspace root by saving a thread", async () => {
-    const registered = await fs.mkdtemp(path.join(os.tmpdir(), "bc0de-root-in-"))
+    const registered = await fs.mkdtemp(
+      path.join(os.tmpdir(), "bc0de-root-in-")
+    )
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), "bc0de-root-out-"))
     temporaryDirectories.push(registered, outside)
     const save = vi.fn()
@@ -357,7 +486,9 @@ describe("remote access scope", () => {
     // been a registration the desktop never made.
     const blocked = await saveThread(REMOTE_HEADERS, outside)
     expect(blocked.status).toBe(403)
-    expect(await blocked.json()).toMatchObject({ code: "workspace_not_registered" })
+    expect(await blocked.json()).toMatchObject({
+      code: "workspace_not_registered",
+    })
     expect(save).not.toHaveBeenCalled()
 
     const allowed = await saveThread(REMOTE_HEADERS, registered)
@@ -439,13 +570,17 @@ describe("rate limited third-party endpoints", () => {
       for (let index = 0; index < 31; index += 1) {
         expect((await app.request("/api/v1/remote/bootstrap")).status).toBe(200)
       }
-      const scanner = { incoming: { socket: { remoteAddress: "198.51.100.7" } } }
+      const scanner = {
+        incoming: { socket: { remoteAddress: "198.51.100.7" } },
+      }
       const url = "http://203.0.113.9:3773/api/v1/remote/bootstrap"
       const statuses: number[] = []
       for (let index = 0; index < 601; index += 1) {
         statuses.push((await app.request(url, {}, scanner)).status)
       }
-      expect(statuses.slice(0, 600).every((status) => status === 200)).toBe(true)
+      expect(statuses.slice(0, 600).every((status) => status === 200)).toBe(
+        true
+      )
       expect(statuses[600]).toBe(429)
     } finally {
       vi.useRealTimers()

@@ -1,8 +1,15 @@
 import type { Db } from "../../persistence/db"
 import { prepareThreadStatements, type ThreadStatements } from "./statements"
 import type { HistoryMessage } from "../../provider/types"
-import { normalizeProviderGoal, threadGoalSchema, type ThreadGoal } from "@betterc0de/schema"
-import { CHAT_HISTORY_MAX_BYTES, withBrowserElementContext } from "@betterc0de/schema"
+import {
+  normalizeProviderGoal,
+  threadGoalSchema,
+  type ThreadGoal,
+} from "@betterc0de/schema"
+import {
+  CHAT_HISTORY_MAX_BYTES,
+  withBrowserElementContext,
+} from "@betterc0de/schema"
 import { HttpError } from "../../http/errors"
 import type {
   ThreadSaveRequest,
@@ -106,7 +113,10 @@ export interface ThreadStats {
 }
 
 export class ThreadService {
-  private readonly statsCache = new Map<string, { revision: number; expires: number; value: ThreadStats }>()
+  private readonly statsCache = new Map<
+    string,
+    { revision: number; expires: number; value: ThreadStats }
+  >()
   private readonly stmts: ThreadStatements
 
   constructor(private readonly db: Db) {
@@ -125,7 +135,12 @@ export class ThreadService {
   // every row change, so the writer statements only own the message-derived
   // columns.
   private syncThreadFromMessages(threadId: string, updatedAt: string): void {
-    this.stmts.syncThreadFromMessagesStmt.run(updatedAt, threadId, threadId, threadId)
+    this.stmts.syncThreadFromMessagesStmt.run(
+      updatedAt,
+      threadId,
+      threadId,
+      threadId
+    )
   }
 
   private threadSessionFromRow(row: {
@@ -191,7 +206,9 @@ export class ThreadService {
   }
 
   getThreadGoal(threadId: string) {
-    const row = this.stmts.getThreadGoalStmt.get(threadId) as { provider_goal_json: string | null } | undefined
+    const row = this.stmts.getThreadGoalStmt.get(threadId) as
+      | { provider_goal_json: string | null }
+      | undefined
     return row ? parsePersistedThreadGoal(row.provider_goal_json) : undefined
   }
 
@@ -214,7 +231,9 @@ export class ThreadService {
     const previous = parsePersistedThreadGoal(row.provider_goal_json)
     const timestamp = Date.parse(updatedAt ?? row.updated_at)
     const goal = normalizeProviderGoal(
-      value, previous, providerKind,
+      value,
+      previous,
+      providerKind,
       Number.isFinite(timestamp) ? timestamp : 0
     )
     if (goal === undefined) return
@@ -231,7 +250,9 @@ export class ThreadService {
       this.upsertThreadMeta(req)
       const serverOwnedMessages = new Map(
         (
-          this.stmts.listServerOwnedDispatchMessagesStmt.all(req.thread_id) as Array<{
+          this.stmts.listServerOwnedDispatchMessagesStmt.all(
+            req.thread_id
+          ) as Array<{
             message_id: string
             turn_id: string | null
             role: string
@@ -264,7 +285,9 @@ export class ThreadService {
       }
       const persistedMessages = new Map(
         (
-          this.stmts.listPersistedMessagesStmt.all(req.thread_id) as PersistedMessageRow[]
+          this.stmts.listPersistedMessagesStmt.all(
+            req.thread_id
+          ) as PersistedMessageRow[]
         ).map((row) => [row.message_id, row] as const)
       )
       // Rows the provider runtime wrote (streamed or recovered assistant
@@ -330,10 +353,7 @@ export class ThreadService {
           : dispatchStatus
             ? {
                 ...message,
-                extra: mergeChatDispatchMetadata(
-                  message.extra,
-                  dispatchStatus
-                ),
+                extra: mergeChatDispatchMetadata(message.extra, dispatchStatus),
               }
             : message
         const serialized = serializeMessage(durableMessage)
@@ -386,7 +406,10 @@ export class ThreadService {
       // The HTTP parser never forwards the runtime sequence. An unsequenced
       // snapshot may acknowledge an owned row, but cannot replace its content,
       // metadata or timestamps. Provider snapshots retain their sequence guard.
-      if (typeof runtimeSequence !== "number" || !Number.isSafeInteger(runtimeSequence)) {
+      if (
+        typeof runtimeSequence !== "number" ||
+        !Number.isSafeInteger(runtimeSequence)
+      ) {
         const persisted = this.stmts.findPersistedMessageStmt.get(
           input.thread_id,
           input.message.message_id
@@ -416,7 +439,10 @@ export class ThreadService {
 
   upsertRecoveredAssistantMessage(req: ThreadMessageUpsertRequest): void {
     if (req.message.role !== "assistant") {
-      throw new HttpError(400, "Recovered transcript message must be assistant-owned.")
+      throw new HttpError(
+        400,
+        "Recovered transcript message must be assistant-owned."
+      )
     }
     const txn = this.db.transaction((input: ThreadMessageUpsertRequest) => {
       this.assertThreadExists(input.thread_id)
@@ -480,7 +506,9 @@ export class ThreadService {
     ) {
       return false
     }
-    const existing = this.stmts.findRuntimeSequenceStmt.get(input.message.message_id) as
+    const existing = this.stmts.findRuntimeSequenceStmt.get(
+      input.message.message_id
+    ) as
       | { thread_id: string; role: string; runtime_sequence: number | null }
       | undefined
     if (
@@ -499,90 +527,94 @@ export class ThreadService {
   }
 
   persistUserMessageForTurn(req: ThreadUserMessageDispatchRequest): void {
-    const txn = this.db.transaction((input: ThreadUserMessageDispatchRequest) => {
-      this.stmts.ensureThreadForTurnStmt.run(
-        input.thread_id,
-        input.project_name,
-        input.title,
-        input.created_at,
-        input.created_at,
-        input.project_path
-      )
-      this.assertDispatchMessageWritable(
-        input.thread_id,
-        input.message.message_id
-      )
-      const durableDispatch = this.stmts.findChatDispatchStatusStmt.get(
-        input.thread_id,
-        input.message.message_id
-      ) as { status: ChatDispatchStatus } | undefined
-      const existing = this.stmts.findDispatchMessageStmt.get(
-        input.message.message_id
-      ) as
-        | {
-            thread_id: string
-            turn_id: string | null
-            role: string
-            content_json: string
-            created_at: string
+    const txn = this.db.transaction(
+      (input: ThreadUserMessageDispatchRequest) => {
+        this.stmts.ensureThreadForTurnStmt.run(
+          input.thread_id,
+          input.project_name,
+          input.title,
+          input.created_at,
+          input.created_at,
+          input.project_path
+        )
+        this.assertDispatchMessageWritable(
+          input.thread_id,
+          input.message.message_id
+        )
+        const durableDispatch = this.stmts.findChatDispatchStatusStmt.get(
+          input.thread_id,
+          input.message.message_id
+        ) as { status: ChatDispatchStatus } | undefined
+        const existing = this.stmts.findDispatchMessageStmt.get(
+          input.message.message_id
+        ) as
+          | {
+              thread_id: string
+              turn_id: string | null
+              role: string
+              content_json: string
+              created_at: string
+            }
+          | undefined
+        const serializedMessage = serializeMessage(input.message)
+        if (existing) {
+          const storedMessage = parseStoredMessage(existing.content_json, {
+            threadId: existing.thread_id,
+            messageId: input.message.message_id,
+          })
+          const samePayload =
+            existing.thread_id === input.thread_id &&
+            existing.turn_id === input.message.turn_id &&
+            existing.role === "user" &&
+            input.message.role === "user" &&
+            storedMessage.text === input.message.content
+          if (!samePayload) {
+            throw new HttpError(
+              409,
+              `message ${input.message.message_id} conflicts with an existing durable message`,
+              "dispatch_message_conflict"
+            )
           }
-        | undefined
-      const serializedMessage = serializeMessage(input.message)
-      if (existing) {
-        const storedMessage = parseStoredMessage(existing.content_json, {
-          threadId: existing.thread_id,
-          messageId: input.message.message_id,
-        })
-        const samePayload =
-          existing.thread_id === input.thread_id &&
-          existing.turn_id === input.message.turn_id &&
-          existing.role === "user" &&
-          input.message.role === "user" &&
-          storedMessage.text === input.message.content
-        if (!samePayload) {
+          if (!durableDispatch && storedMessage.extra.dispatchFailed === true) {
+            this.stmts.updateMessageStmt.run(
+              input.message.turn_id,
+              input.message.role,
+              serializedMessage,
+              existing.created_at,
+              input.thread_id,
+              input.message.message_id
+            )
+          }
+          return
+        }
+        if (input.message.role !== "user") {
           throw new HttpError(
             409,
-            `message ${input.message.message_id} conflicts with an existing durable message`,
+            `message ${input.message.message_id} is not a user dispatch message`,
             "dispatch_message_conflict"
           )
         }
-        if (!durableDispatch && storedMessage.extra.dispatchFailed === true) {
-          this.stmts.updateMessageStmt.run(
-            input.message.turn_id,
-            input.message.role,
-            serializedMessage,
-            existing.created_at,
-            input.thread_id,
-            input.message.message_id
-          )
+        const next = this.stmts.nextMessageSequenceStmt.get(
+          input.thread_id
+        ) as {
+          next_sequence: number
         }
-        return
-      }
-      if (input.message.role !== "user") {
-        throw new HttpError(
-          409,
-          `message ${input.message.message_id} is not a user dispatch message`,
-          "dispatch_message_conflict"
+        const effectiveCreatedAt = this.monotonicUserMessageCreatedAt(
+          input.thread_id,
+          input.message.created_at
         )
+        this.stmts.insertMessageStmt.run(
+          input.message.message_id,
+          input.thread_id,
+          input.message.turn_id,
+          input.message.role,
+          serializedMessage,
+          effectiveCreatedAt,
+          next.next_sequence
+        )
+        this.syncThreadFromMessages(input.thread_id, effectiveCreatedAt)
       }
-      const next = this.stmts.nextMessageSequenceStmt.get(input.thread_id) as {
-        next_sequence: number
-      }
-      const effectiveCreatedAt = this.monotonicUserMessageCreatedAt(
-        input.thread_id,
-        input.message.created_at
-      )
-      this.stmts.insertMessageStmt.run(
-        input.message.message_id,
-        input.thread_id,
-        input.message.turn_id,
-        input.message.role,
-        serializedMessage,
-        effectiveCreatedAt,
-        next.next_sequence
-      )
-      this.syncThreadFromMessages(input.thread_id, effectiveCreatedAt)
-    })
+    )
     txn(req)
   }
 
@@ -635,7 +667,14 @@ export class ThreadService {
     const existing = this.stmts.findMessageSequenceStmt.get(
       input.thread_id,
       input.message.message_id
-    ) as { sequence: number; created_at: string; role: string; turn_id: string | null } | undefined
+    ) as
+      | {
+          sequence: number
+          created_at: string
+          role: string
+          turn_id: string | null
+        }
+      | undefined
 
     const durableMessage = this.serverOwnedDispatchMessage(
       input.thread_id,
@@ -650,9 +689,7 @@ export class ThreadService {
         message.turn_id,
         message.role,
         serializeMessage(message),
-        message.role === "user"
-          ? existing.created_at
-          : message.created_at,
+        message.role === "user" ? existing.created_at : message.created_at,
         input.thread_id,
         message.message_id
       )
@@ -680,12 +717,19 @@ export class ThreadService {
       return
     }
 
-    if (existing.role === message.role && existing.turn_id === message.turn_id && existing.created_at === message.created_at) {
+    if (
+      existing.role === message.role &&
+      existing.turn_id === message.turn_id &&
+      existing.created_at === message.created_at
+    ) {
       // Content snapshots cannot change membership, timestamps, or turn count.
       // Keep the sidebar current without scanning the conversation again.
       this.stmts.touchThreadStmt.run(message.created_at, input.thread_id)
     } else {
-      this.syncThreadFromMessages(input.thread_id, message.role === "user" ? existing.created_at : message.created_at)
+      this.syncThreadFromMessages(
+        input.thread_id,
+        message.role === "user" ? existing.created_at : message.created_at
+      )
     }
   }
 
@@ -813,9 +857,10 @@ export class ThreadService {
     threadId: string,
     messageId: string
   ): void {
-    const row = this.stmts.findChatDispatchStatusStmt.get(threadId, messageId) as
-      | { status: ChatDispatchStatus }
-      | undefined
+    const row = this.stmts.findChatDispatchStatusStmt.get(
+      threadId,
+      messageId
+    ) as { status: ChatDispatchStatus } | undefined
     if (row?.status !== "reverted") return
     throw new HttpError(
       409,
@@ -828,9 +873,10 @@ export class ThreadService {
     threadId: string,
     messageId: string
   ): ThreadSaveMessage | null {
-    const status = this.stmts.findChatDispatchStatusStmt.get(threadId, messageId) as
-      | { status: ChatDispatchStatus }
-      | undefined
+    const status = this.stmts.findChatDispatchStatusStmt.get(
+      threadId,
+      messageId
+    ) as { status: ChatDispatchStatus } | undefined
     if (!status) return null
     const row = this.stmts.findDispatchMessageStmt.get(messageId) as
       | {
@@ -917,14 +963,20 @@ export class ThreadService {
         ) as { generation: number | null }
         const generation = Math.max(0, epochRow.generation ?? 0) + 1
         const updatedAt = input.checkpoint_message.created_at
-        this.stmts.upsertThreadEpochStmt.run(input.thread_id, generation, updatedAt)
+        this.stmts.upsertThreadEpochStmt.run(
+          input.thread_id,
+          generation,
+          updatedAt
+        )
         this.stmts.rotateThreadBindingsStmt.run(
           generation,
           updatedAt,
           input.thread_id
         )
 
-        const next = this.stmts.nextMessageSequenceStmt.get(input.thread_id) as {
+        const next = this.stmts.nextMessageSequenceStmt.get(
+          input.thread_id
+        ) as {
           next_sequence: number
         }
         this.stmts.insertMessageStmt.run(
@@ -973,7 +1025,14 @@ export class ThreadService {
       const boundary = this.stmts.findMessageBoundaryStmt.get(
         input.thread_id,
         input.message_id
-      ) as { sequence: number; created_at: string; role: string; turn_id: string | null } | undefined
+      ) as
+        | {
+            sequence: number
+            created_at: string
+            role: string
+            turn_id: string | null
+          }
+        | undefined
       if (!boundary) {
         throw new HttpError(404, `message ${input.message_id} not found`)
       }
@@ -1073,7 +1132,10 @@ export class ThreadService {
         input.turn_count
       )
       for (const checkpointRef of input.stale_checkpoint_refs) {
-        this.stmts.deleteCheckpointDiffByRefStmt.run(input.thread_id, checkpointRef)
+        this.stmts.deleteCheckpointDiffByRefStmt.run(
+          input.thread_id,
+          checkpointRef
+        )
       }
       this.stmts.deleteTurnsAfterTurnCountStmt.run(
         input.thread_id,
@@ -1152,9 +1214,15 @@ export class ThreadService {
       options.beforeThreadId.length > 0
         ? options.beforeThreadId
         : null
-    const rows = (beforeThreadId
-      ? this.stmts.listThreadsBeforeStmt.all(beforeUpdatedAt, beforeThreadId, limit + 1)
-      : this.stmts.listThreadsStmt.all(limit + 1)) as Array<{
+    const rows = (
+      beforeThreadId
+        ? this.stmts.listThreadsBeforeStmt.all(
+            beforeUpdatedAt,
+            beforeThreadId,
+            limit + 1
+          )
+        : this.stmts.listThreadsStmt.all(limit + 1)
+    ) as Array<{
       thread_id: string
       project_id: string
       title: string | null
@@ -1388,7 +1456,16 @@ export class ThreadService {
       if (message.role === "user") {
         if (message.content.length > 0) {
           groups.push([
-            { role: "user", content: clipProviderHistoryText(withBrowserElementContext(message.content, message.extra.attachments), maxContentChars) },
+            {
+              role: "user",
+              content: clipProviderHistoryText(
+                withBrowserElementContext(
+                  message.content,
+                  message.extra.attachments
+                ),
+                maxContentChars
+              ),
+            },
           ])
         }
         continue
@@ -1404,7 +1481,10 @@ export class ThreadService {
           groups.push([
             {
               role: "assistant",
-              content: clipProviderHistoryText(message.content, maxContentChars),
+              content: clipProviderHistoryText(
+                message.content,
+                maxContentChars
+              ),
             },
           ])
         }
@@ -1432,14 +1512,23 @@ export class ThreadService {
   }
 
   stats(options: ThreadStatsOptions = {}): ThreadStats {
-    const revision = (this.stmts.statsRevisionStmt.get() as { version: number }).version
-    const key = JSON.stringify([options.days ?? null, options.projectPath ?? null])
+    const revision = (this.stmts.statsRevisionStmt.get() as { version: number })
+      .version
+    const key = JSON.stringify([
+      options.days ?? null,
+      options.projectPath ?? null,
+    ])
     const cached = this.statsCache.get(key)
-    if (cached?.revision === revision && cached.expires > Date.now()) return structuredClone(cached.value)
+    if (cached?.revision === revision && cached.expires > Date.now())
+      return structuredClone(cached.value)
     const value = this.computeStats(options)
     if (this.statsCache.size >= 32) this.statsCache.clear()
     // Time windows move even when storage is unchanged.
-    this.statsCache.set(key, { revision, expires: Date.now() + 1_000, value: structuredClone(value) })
+    this.statsCache.set(key, {
+      revision,
+      expires: Date.now() + 1_000,
+      value: structuredClone(value),
+    })
     return value
   }
 
@@ -1607,7 +1696,9 @@ export class ThreadService {
       const placeholders = chunk.map(() => "?").join(", ")
       const timePredicate = "(? IS NULL OR created_at >= ?)"
       const bindings = [...chunk, cutoffIso, cutoffIso]
-      const sessionRows = this.db.prepare(`
+      const sessionRows = this.db
+        .prepare(
+          `
         SELECT
           thread_id,
           COUNT(*) AS messages,
@@ -1621,7 +1712,9 @@ export class ThreadService {
         WHERE thread_id IN (${placeholders})
           AND ${timePredicate}
         GROUP BY thread_id
-      `).all(...bindings) as Array<{
+      `
+        )
+        .all(...bindings) as Array<{
         thread_id: string
         messages: number
         input: number
@@ -1643,7 +1736,9 @@ export class ThreadService {
         })
       }
 
-      const modelRows = this.db.prepare(`
+      const modelRows = this.db
+        .prepare(
+          `
         SELECT
           model_id,
           COUNT(*) AS messages,
@@ -1659,7 +1754,9 @@ export class ThreadService {
           AND role = 'assistant'
           AND typeof(model_id) = 'text'
         GROUP BY model_id
-      `).all(...bindings) as Array<{
+      `
+        )
+        .all(...bindings) as Array<{
         model_id: string
         messages: number
         input: number
@@ -1690,7 +1787,9 @@ export class ThreadService {
         models[row.model_id] = current
       }
 
-      const providerRows = this.db.prepare(`
+      const providerRows = this.db
+        .prepare(
+          `
         SELECT
           COALESCE(turn.provider_kind, binding.provider_kind, 'unknown') AS provider_kind,
           COUNT(*) AS messages,
@@ -1713,7 +1812,9 @@ export class ThreadService {
           AND (? IS NULL OR usage.created_at >= ?)
           AND usage.role = 'assistant'
         GROUP BY COALESCE(turn.provider_kind, binding.provider_kind, 'unknown')
-      `).all(...bindings) as Array<{
+      `
+        )
+        .all(...bindings) as Array<{
         provider_kind: string
         messages: number
         input: number
@@ -1744,7 +1845,9 @@ export class ThreadService {
         providers[row.provider_kind] = current
       }
 
-      const dailyRows = this.db.prepare(`
+      const dailyRows = this.db
+        .prepare(
+          `
         SELECT
           substr(usage.created_at, 1, 10) AS date,
           COALESCE(turn.provider_kind, binding.provider_kind, 'unknown') AS provider,
@@ -1764,7 +1867,9 @@ export class ThreadService {
           AND usage.role = 'assistant'
         GROUP BY date, COALESCE(turn.provider_kind, binding.provider_kind, 'unknown')
         ORDER BY date ASC
-      `).all(...bindings) as Array<{
+      `
+        )
+        .all(...bindings) as Array<{
         date: string
         provider: string
         tokens: number
@@ -1779,7 +1884,9 @@ export class ThreadService {
         }))
       )
 
-      const toolRows = this.db.prepare(`
+      const toolRows = this.db
+        .prepare(
+          `
         SELECT
           tool.value AS tool_name,
           COUNT(*) AS uses
@@ -1789,7 +1896,9 @@ export class ThreadService {
           AND (? IS NULL OR message.created_at >= ?)
           AND typeof(tool.value) = 'text'
         GROUP BY tool_name
-      `).all(...bindings) as Array<{ tool_name: string; uses: number }>
+      `
+        )
+        .all(...bindings) as Array<{ tool_name: string; uses: number }>
       for (const row of toolRows) {
         tools[row.tool_name] =
           (tools[row.tool_name] ?? 0) + finiteNumber(row.uses)
@@ -2049,7 +2158,10 @@ function safeString(value: unknown): string {
   }
 }
 
-function clipProviderHistoryText(text: string, maxContentChars: number): string {
+function clipProviderHistoryText(
+  text: string,
+  maxContentChars: number
+): string {
   return text.length > maxContentChars
     ? `${text.slice(0, maxContentChars)}\n\n[…truncated for transport…]`
     : text
@@ -2066,10 +2178,7 @@ function newestProviderHistoryGroups(
   for (let index = groups.length - 1; index >= 0; index -= 1) {
     const group = groups[index]
     if (!group || group.length === 0) continue
-    if (
-      selectedMessages + group.length >
-      PROVIDER_HISTORY_MAX_WIRE_MESSAGES
-    ) {
+    if (selectedMessages + group.length > PROVIDER_HISTORY_MAX_WIRE_MESSAGES) {
       break
     }
     const groupBytes = group.reduce(
@@ -2271,7 +2380,9 @@ function median(values: number[]): number {
     : (sorted[mid] ?? 0)
 }
 
-function parsePersistedThreadGoal(value: string | null): ThreadGoal | null | undefined {
+function parsePersistedThreadGoal(
+  value: string | null
+): ThreadGoal | null | undefined {
   if (value === null) return undefined
   try {
     const parsed = threadGoalSchema.nullable().safeParse(JSON.parse(value))

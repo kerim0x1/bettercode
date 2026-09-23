@@ -179,10 +179,7 @@ function trustedForwardedClient(
  * buckets on, so loopback classification and rate limiting cannot disagree
  * about who the caller is.
  */
-function requestClientAddress(
-  c: Context,
-  config: ServerConfig
-): string | null {
+function requestClientAddress(c: Context, config: ServerConfig): string | null {
   return trustedForwardedClient(c, config) ?? directPeerAddress(c)
 }
 
@@ -209,8 +206,8 @@ export function bootstrapRateLimitKeys(
 ): BootstrapRateLimitKeys | null {
   if (requestPeerIsLoopback(c, config)) return null
   const credential =
-    bearerToken(c.req.header("Authorization"))
-    ?? readCookie(c.req.header("Cookie"), REMOTE_SESSION_COOKIE)
+    bearerToken(c.req.header("Authorization")) ??
+    readCookie(c.req.header("Cookie"), REMOTE_SESSION_COOKIE)
   return {
     // Already carries its `peer:`/`forwarded:` prefix.
     peer: pairClientKey(c, config),
@@ -250,7 +247,10 @@ function requestIsSecure(c: Context, config: ServerConfig): boolean {
  * physical NIC fails the local-address check because those addresses are not
  * in `tailscale status`.
  */
-export function requestPeerIsTailnet(c: Context, config: ServerConfig): boolean {
+export function requestPeerIsTailnet(
+  c: Context,
+  config: ServerConfig
+): boolean {
   if (trustedForwardedClient(c, config)) return false
   const own = config.tailnetSelfAddresses?.()
   if (!own || own.size === 0) return false
@@ -259,9 +259,9 @@ export function requestPeerIsTailnet(c: Context, config: ServerConfig): boolean 
   const local = socket?.localAddress?.trim()
   if (!peer || !local) return false
   return (
-    isTailscaleAddress(peer)
-    && isTailscaleAddress(local)
-    && own.has(normalizeSocketAddress(local))
+    isTailscaleAddress(peer) &&
+    isTailscaleAddress(local) &&
+    own.has(normalizeSocketAddress(local))
   )
 }
 
@@ -288,11 +288,11 @@ export function isRemoteRequestTransportAllowed(
   config: ServerConfig
 ): boolean {
   return (
-    requestIsSecure(c, config)
-    || requestPeerIsLoopback(c, config)
-    || requestPeerIsTailnet(c, config)
-    || requestPeerIsPrivateNetwork(c, config)
-    || config.allowInsecureRemoteAccess === true
+    requestIsSecure(c, config) ||
+    requestPeerIsLoopback(c, config) ||
+    requestPeerIsTailnet(c, config) ||
+    requestPeerIsPrivateNetwork(c, config) ||
+    config.allowInsecureRemoteAccess === true
   )
 }
 
@@ -305,10 +305,10 @@ export function isInsecureNonLoopbackRequest(
   config: ServerConfig
 ): boolean {
   return (
-    !requestIsSecure(c, config)
-    && !requestPeerIsLoopback(c, config)
-    && !requestPeerIsTailnet(c, config)
-    && !requestPeerIsPrivateNetwork(c, config)
+    !requestIsSecure(c, config) &&
+    !requestPeerIsLoopback(c, config) &&
+    !requestPeerIsTailnet(c, config) &&
+    !requestPeerIsPrivateNetwork(c, config)
   )
 }
 
@@ -341,24 +341,19 @@ export function requiresReadOnlyRemoteAccess(
   identity: RemoteRequestIdentity
 ): boolean {
   return (
-    identity.kind === "remote"
-    && (
-      identity.session?.accessLevel === "read_only"
-      || isInsecureNonLoopbackRequest(c, config)
-    )
+    identity.kind === "remote" &&
+    (identity.session?.accessLevel === "read_only" ||
+      isInsecureNonLoopbackRequest(c, config))
   )
 }
 
 export function isReadOnlyRemoteRequestAllowed(c: Context): boolean {
-  if (
-    c.req.method === "POST"
-    && c.req.path === "/api/v1/remote/logout"
-  ) {
+  if (c.req.method === "POST" && c.req.path === "/api/v1/remote/logout") {
     return true
   }
   return (
-    c.req.method === "GET"
-    && READ_ONLY_REMOTE_GET_PATHS.some((pattern) => pattern.test(c.req.path))
+    c.req.method === "GET" &&
+    READ_ONLY_REMOTE_GET_PATHS.some((pattern) => pattern.test(c.req.path))
   )
 }
 
@@ -380,9 +375,15 @@ const DESKTOP_ONLY_PATHS: ReadonlyArray<{
   // These templates merge host-global configuration, including arbitrary
   // environment values. MCP metadata has an explicit remote-safe projection
   // in its route; workspace approval cannot authorize raw host configuration.
-  { methods: null, pattern: /^\/api\/v1\/workspace\/project-(?:lsp-servers|config)$/ },
+  {
+    methods: null,
+    pattern: /^\/api\/v1\/workspace\/project-(?:lsp-servers|config)$/,
+  },
   { methods: null, pattern: /^\/api\/v1\/providers\/[^/]+\/credential$/ },
-  { methods: new Set(["POST"]), pattern: /^\/api\/v1\/providers\/instances\/[^/]+\/update$/ },
+  {
+    methods: new Set(["POST"]),
+    pattern: /^\/api\/v1\/providers\/instances\/[^/]+\/update$/,
+  },
   { methods: null, pattern: /^\/api\/v1\/runtime\/debug-info$/ },
   { methods: null, pattern: /^\/api\/v1\/runtime\/heap-snapshot$/ },
   // Provider CLI reports include subscription quotas and local session
@@ -400,8 +401,8 @@ const DESKTOP_ONLY_PATHS: ReadonlyArray<{
 export function isDesktopOnlyRequest(c: Context): boolean {
   return DESKTOP_ONLY_PATHS.some(
     (entry) =>
-      (entry.methods === null || entry.methods.has(c.req.method))
-      && entry.pattern.test(c.req.path)
+      (entry.methods === null || entry.methods.has(c.req.method)) &&
+      entry.pattern.test(c.req.path)
   )
 }
 
@@ -425,13 +426,15 @@ function requestPeerIsLoopback(c: Context, config: ServerConfig): boolean {
   }
 }
 
-function incomingRequest(c: Context): {
-  socket?: {
-    remoteAddress?: string
-    localAddress?: string
-    encrypted?: boolean
-  }
-} | undefined {
+function incomingRequest(c: Context):
+  | {
+      socket?: {
+        remoteAddress?: string
+        localAddress?: string
+        encrypted?: boolean
+      }
+    }
+  | undefined {
   const environment = c.env as
     | {
         incoming?: {
@@ -499,7 +502,8 @@ export async function discoverTailscaleEndpoints(
   const found: AdvertisedRemoteEndpoint[] = []
   try {
     const status = await state.tailscale.status()
-    const address = status.state === "running" ? status.tailnetIpv4Addresses[0] : null
+    const address =
+      status.state === "running" ? status.tailnetIpv4Addresses[0] : null
     if (address) {
       found.push(
         endpoint(
@@ -545,12 +549,10 @@ export async function discoverRemoteEndpoints(
     state.settings.get().remote_access_custom_url
   )
   if (
-    custom
-    && (
-      custom.startsWith("https://")
-      || isLoopbackHostname(new URL(custom).hostname)
-      || config.allowInsecureRemoteAccess === true
-    )
+    custom &&
+    (custom.startsWith("https://") ||
+      isLoopbackHostname(new URL(custom).hostname) ||
+      config.allowInsecureRemoteAccess === true)
   ) {
     candidates.push(
       endpoint(
@@ -742,11 +744,9 @@ export function registerRemotePublicRoutes(
     c.header("Cache-Control", "no-store")
     const enabled = state.remoteAccess?.enabled() === true
     if (
-      !isRemoteRequestTransportAllowed(c, config)
-      && (
-        c.req.header("Authorization") !== undefined
-        || c.req.header("Cookie") !== undefined
-      )
+      !isRemoteRequestTransportAllowed(c, config) &&
+      (c.req.header("Authorization") !== undefined ||
+        c.req.header("Cookie") !== undefined)
     ) {
       return c.json({ error: "secure transport required" }, 426)
     }
@@ -1025,9 +1025,7 @@ export function registerRemoteRoutes(
     const service = remoteService(state)
     const identity = requestIdentity(c, config, state)
     return c.json({
-      revoked: await service.revokeOtherSessionsAndWait(
-        identity?.session?.id
-      ),
+      revoked: await service.revokeOtherSessionsAndWait(identity?.session?.id),
     })
   })
 
