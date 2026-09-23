@@ -320,7 +320,10 @@ describe("git mutation serialisation", () => {
       postJson(app, "/git/commit", { cwd: registered, message: "second" }),
       postJson(app, "/git/stage", { cwd: registered, paths: ["a"] }),
     ]
-    await vi.waitFor(() => expect(started).toBe(1))
+    // Only a precondition: the first request has passed routing and the
+    // workspace checks. That exceeded vi.waitFor's 1 s default on the macOS
+    // Intel runner; the serialisation assertions below are what matter.
+    await vi.waitFor(() => expect(started).toBe(1), { timeout: 10_000 })
     // Give the queued requests every chance to (wrongly) enter the repo.
     for (let i = 0; i < 5; i += 1) {
       await new Promise<void>((resolve) => setImmediate(resolve))
