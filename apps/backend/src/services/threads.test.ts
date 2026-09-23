@@ -733,6 +733,25 @@ describe("ThreadService round-trip", () => {
       })
     )
 
+    db.prepare(
+      `INSERT INTO projection_turns
+        (turn_id, thread_id, status, provider_kind, model_id, started_at, completed_at)
+       VALUES ('turn-claude', 'thread-1', 'completed', 'anthropic_cli', 'claude-opus-4-6', ?, ?)`
+    ).run("2026-01-01T00:00:00.000Z", "2026-01-01T00:00:01.000Z")
+    db.prepare(
+      `UPDATE projection_messages SET turn_id = 'turn-claude'
+       WHERE message_id = 'msg-assistant'`
+    ).run()
+    db.prepare(
+      `INSERT INTO projection_turns
+        (turn_id, thread_id, status, provider_kind, model_id, started_at, completed_at)
+       VALUES ('turn-codex', 'thread-2', 'completed', 'codex', 'openai/gpt-5.5', ?, ?)`
+    ).run("2026-01-02T00:00:00.000Z", "2026-01-02T00:00:01.000Z")
+    db.prepare(
+      `UPDATE projection_messages SET turn_id = 'turn-codex'
+       WHERE message_id = 'msg-assistant-2'`
+    ).run()
+
     const perThreadMessageQuery = vi.spyOn(svc, "listMessages")
     const stats = svc.stats()
 
@@ -748,6 +767,14 @@ describe("ThreadService round-trip", () => {
     expect(stats.toolUsage).toEqual({ Read: 1, Bash: 1 })
     expect(stats.modelUsage["claude-opus-4-6"]?.messages).toBe(1)
     expect(stats.modelUsage["openai/gpt-5.5"]?.tokens.reasoning).toBe(3)
+    expect(stats.providerUsage.anthropic_cli?.messages).toBe(1)
+    expect(stats.providerUsage.codex?.tokens.output).toBe(7)
+    expect(stats.dailyUsage).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ date: "2026-01-01", provider: "anthropic_cli" }),
+        expect.objectContaining({ date: "2026-01-02", provider: "codex" }),
+      ])
+    )
     expect(stats.medianTokensPerSession).toBe(23.5)
     expect(perThreadMessageQuery).not.toHaveBeenCalled()
   })

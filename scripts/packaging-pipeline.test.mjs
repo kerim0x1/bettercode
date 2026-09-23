@@ -376,3 +376,29 @@ test("CI includes signing metadata and electron-builder preserves its boolean ty
     assert.equal(typeof normalized.config.extraMetadata.betterc0deCodeSigned, "boolean")
   }
 })
+
+// Regression guard for the 0.1.0-beta.2 Windows installer crash. Through
+// app-builder-lib 26.11.1 the per-user install-mode path read a fixed
+// NSIS_MAX_STRLEN-sized block (16 KB, since electron-builder ships the large
+// string NSIS build) out of the much smaller CoTaskMem buffer returned by
+// SHGetKnownFolderPath. Whenever that allocation landed near the end of a heap
+// region the over-read faulted inside $PLUGINSDIR\System.dll and killed the
+// installer in .onInit, before anything was unpacked. 26.12.0 replaced it with
+// a bounded lstrcpynW copy.
+test("bundled NSIS per-user install mode reads the known folder path within bounds", () => {
+  const template = fs.readFileSync(
+    require.resolve("app-builder-lib/templates/nsis/multiUser.nsh"),
+    "utf8"
+  )
+  assert.match(template, /SHELL32::SHGetKnownFolderPath/)
+  assert.doesNotMatch(
+    template,
+    /\*\$\w+\(&w\$\{NSIS_MAX_STRLEN\}/,
+    "app-builder-lib reintroduced the unbounded SHGetKnownFolderPath struct read"
+  )
+  assert.match(
+    template,
+    /KERNEL32::lstrcpynW/,
+    "app-builder-lib dropped the bounded copy of the per-user install root"
+  )
+})

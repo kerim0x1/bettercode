@@ -25,6 +25,7 @@ import { registerGitRoutes } from "./routes/git";
 import { registerWorkspaceRoutes } from "./routes/workspace";
 import { registerFilesystemRoutes } from "./routes/filesystem";
 import { registerShellRoutes } from "./routes/shell";
+import { registerUsageRoutes } from "./routes/usage";
 import { sanitizeError } from "./errors";
 import { createRateLimiter, rateLimitMiddleware } from "./middleware/rateLimit";
 import {
@@ -105,6 +106,7 @@ function buildApiRoutes(state: AppState, config: ServerConfig): Hono {
   registerWorkspaceRoutes(api, state);
   registerFilesystemRoutes(api, state);
   registerShellRoutes(api, config, state.remoteAccess, state);
+  registerUsageRoutes(api, config);
   return api;
 }
 

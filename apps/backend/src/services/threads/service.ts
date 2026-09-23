@@ -73,6 +73,28 @@ export interface ThreadStats {
       cost: number
     }
   >
+  providerUsage: Record<
+    string,
+    {
+      messages: number
+      tokens: {
+        input: number
+        output: number
+        reasoning: number
+        cache: {
+          read: number
+          write: number
+        }
+      }
+      cost: number
+    }
+  >
+  dailyUsage: Array<{
+    date: string
+    provider: string
+    tokens: number
+    cost: number
+  }>
   dateRange: {
     earliest: string | null
     latest: string | null
@@ -1461,6 +1483,8 @@ export class ThreadService {
       },
       toolUsage: {},
       modelUsage: {},
+      providerUsage: {},
+      dailyUsage: [],
       dateRange: {
         earliest: null,
         latest: null,
@@ -1516,6 +1540,8 @@ export class ThreadService {
     }
 
     stats.modelUsage = aggregate.models
+    stats.providerUsage = aggregate.providers
+    stats.dailyUsage = aggregate.daily
     stats.toolUsage = aggregate.tools
 
     const effectiveEarliest = Number.isFinite(earliest) ? earliest : Date.now()
@@ -1555,6 +1581,8 @@ export class ThreadService {
       }
     >
     models: ThreadStats["modelUsage"]
+    providers: ThreadStats["providerUsage"]
+    daily: ThreadStats["dailyUsage"]
     tools: Record<string, number>
   } {
     const sessions = new Map<
@@ -1570,6 +1598,8 @@ export class ThreadService {
       }
     >()
     const models: ThreadStats["modelUsage"] = Object.create(null)
+    const providers: ThreadStats["providerUsage"] = Object.create(null)
+    const daily: ThreadStats["dailyUsage"] = []
     const tools: Record<string, number> = Object.create(null)
     const chunkSize = 400
     for (let offset = 0; offset < threadIds.length; offset += chunkSize) {
@@ -1660,6 +1690,95 @@ export class ThreadService {
         models[row.model_id] = current
       }
 
+      const providerRows = this.db.prepare(`
+        SELECT
+          COALESCE(turn.provider_kind, binding.provider_kind, 'unknown') AS provider_kind,
+          COUNT(*) AS messages,
+          SUM(usage.input_tokens) AS input,
+          SUM(usage.output_tokens) AS output,
+          SUM(usage.reasoning_tokens) AS reasoning,
+          SUM(usage.cache_read_tokens) AS cache_read,
+          SUM(usage.cache_write_tokens) AS cache_write,
+          SUM(usage.cost) AS cost
+        FROM projection_message_usage AS usage
+        JOIN projection_messages AS message ON message.message_id = usage.message_id
+        LEFT JOIN projection_turns AS turn ON turn.turn_id = message.turn_id
+        LEFT JOIN provider_session_bindings AS binding ON binding.rowid = (
+          SELECT rowid FROM provider_session_bindings AS latest_binding
+          WHERE latest_binding.thread_id = usage.thread_id
+          ORDER BY latest_binding.updated_at DESC, latest_binding.created_at DESC
+          LIMIT 1
+        )
+        WHERE usage.thread_id IN (${placeholders})
+          AND (? IS NULL OR usage.created_at >= ?)
+          AND usage.role = 'assistant'
+        GROUP BY COALESCE(turn.provider_kind, binding.provider_kind, 'unknown')
+      `).all(...bindings) as Array<{
+        provider_kind: string
+        messages: number
+        input: number
+        output: number
+        reasoning: number
+        cache_read: number
+        cache_write: number
+        cost: number
+      }>
+      for (const row of providerRows) {
+        const current = providers[row.provider_kind] ?? {
+          messages: 0,
+          tokens: {
+            input: 0,
+            output: 0,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
+          },
+          cost: 0,
+        }
+        current.messages += finiteNumber(row.messages)
+        current.tokens.input += finiteNumber(row.input)
+        current.tokens.output += finiteNumber(row.output)
+        current.tokens.reasoning += finiteNumber(row.reasoning)
+        current.tokens.cache.read += finiteNumber(row.cache_read)
+        current.tokens.cache.write += finiteNumber(row.cache_write)
+        current.cost += finiteNumber(row.cost)
+        providers[row.provider_kind] = current
+      }
+
+      const dailyRows = this.db.prepare(`
+        SELECT
+          substr(usage.created_at, 1, 10) AS date,
+          COALESCE(turn.provider_kind, binding.provider_kind, 'unknown') AS provider,
+          SUM(usage.input_tokens + usage.output_tokens + usage.reasoning_tokens + usage.cache_read_tokens + usage.cache_write_tokens) AS tokens,
+          SUM(usage.cost) AS cost
+        FROM projection_message_usage AS usage
+        JOIN projection_messages AS message ON message.message_id = usage.message_id
+        LEFT JOIN projection_turns AS turn ON turn.turn_id = message.turn_id
+        LEFT JOIN provider_session_bindings AS binding ON binding.rowid = (
+          SELECT rowid FROM provider_session_bindings AS latest_binding
+          WHERE latest_binding.thread_id = usage.thread_id
+          ORDER BY latest_binding.updated_at DESC, latest_binding.created_at DESC
+          LIMIT 1
+        )
+        WHERE usage.thread_id IN (${placeholders})
+          AND (? IS NULL OR usage.created_at >= ?)
+          AND usage.role = 'assistant'
+        GROUP BY date, COALESCE(turn.provider_kind, binding.provider_kind, 'unknown')
+        ORDER BY date ASC
+      `).all(...bindings) as Array<{
+        date: string
+        provider: string
+        tokens: number
+        cost: number
+      }>
+      daily.push(
+        ...dailyRows.map((row) => ({
+          date: row.date,
+          provider: row.provider,
+          tokens: finiteNumber(row.tokens),
+          cost: finiteNumber(row.cost),
+        }))
+      )
+
       const toolRows = this.db.prepare(`
         SELECT
           tool.value AS tool_name,
@@ -1676,7 +1795,7 @@ export class ThreadService {
           (tools[row.tool_name] ?? 0) + finiteNumber(row.uses)
       }
     }
-    return { sessions, models, tools }
+    return { sessions, models, providers, daily, tools }
   }
 
   delete(threadId: string): void {

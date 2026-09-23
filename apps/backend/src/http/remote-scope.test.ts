@@ -93,6 +93,7 @@ describe("remote access scope", () => {
       ["POST", "/api/v1/workspace/project-config"],
       ["GET", "/api/v1/runtime/debug-info"],
       ["POST", "/api/v1/runtime/heap-snapshot"],
+      ["GET", "/api/v1/usage/providers"],
       ["POST", "/api/v1/providers/openai/credential"],
       ["DELETE", "/api/v1/providers/openai/credential"],
       ["POST", "/api/v1/providers/instances/codex/update"],

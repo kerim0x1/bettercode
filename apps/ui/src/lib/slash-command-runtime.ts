@@ -3472,11 +3472,15 @@ async function runSlashLadder(
             )
           }
           output = buildBetterC0deDebugUtilityOutput(cmd, args)
+        } else if (isSlashCommand(cmd, "usage", "cli-usage")) {
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("betterc0de:open-usage"))
+          }
+          output = ""
         } else if (
           isSlashCommand(
             cmd,
             "stats",
-            "usage",
             "token-usage",
             "session.stats",
             "session-stats"

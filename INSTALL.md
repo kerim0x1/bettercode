@@ -8,6 +8,8 @@ Download the build for your operating system from [GitHub Releases](https://gith
 
 The installer files are published on the repository's [GitHub Releases page](https://github.com/kerim0x1/bettercode/releases). GitHub **Packages** is for npm/container packages and does not contain the desktop `.exe`, `.dmg`, or Linux installers. A release is created when a matching `v<version>` tag is pushed; the release then contains the installer and update metadata such as `latest.yml`.
 
+The installer files are published on the repository's [GitHub Releases page](https://github.com/kerim0x1/bettercode/releases). GitHub **Packages** is for npm/container packages and does not contain the desktop `.exe`, `.dmg`, or Linux installers. A release is created when a matching `v<version>` tag is pushed; the release then contains the installer and update metadata such as `latest.yml`.
+
 | System | File |
 | --- | --- |
 | Windows 10/11, 64-bit | `.exe` installer |

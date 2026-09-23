@@ -26,6 +26,29 @@ const MAX_ZOOM = 4
 /** Padding kept around the artboard when fitting, px per side. */
 const FIT_MARGIN = 48
 const GRID_SIZE = 24
+export const EDITABLE_SELECTOR =
+  "input,textarea,select,[contenteditable]:not([contenteditable=false])"
+
+/**
+ * Whether the caret currently sits in a text field on the canvas.
+ *
+ * Ctrl and Cmd then belong to the text, not to the camera: arming the zoom
+ * shield makes the stage `inert`, which blurs whatever was focused, so the
+ * second half of Ctrl+A would land on the document and select the whole app
+ * chrome instead of the note being written. The same goes for Cmd+A, and for
+ * Ctrl+C / V / Z while typing.
+ */
+export function isEditingInside(
+  viewport: Element | null | undefined,
+  active: Element | null
+): boolean {
+  return Boolean(
+    viewport &&
+    active &&
+    viewport.contains(active) &&
+    active.matches(EDITABLE_SELECTOR)
+  )
+}
 
 interface CanvasTransform {
   zoom: number
@@ -269,8 +292,10 @@ export function useCanvasTransform(
         (el as HTMLElement).isContentEditable
       )
     }
+    const editing = () =>
+      isEditingInside(viewportRef.current, document.activeElement)
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey) updateZoomHeld(true)
+      if ((e.ctrlKey || e.metaKey) && !editing()) updateZoomHeld(true)
       // AltGr produces Ctrl+Alt on Windows; it must remain available for text.
       updateAltHeld(e.altKey && !e.ctrlKey && !e.metaKey)
       if (
@@ -278,9 +303,7 @@ export function useCanvasTransform(
         !e.ctrlKey &&
         !e.metaKey &&
         viewportRef.current?.contains(document.activeElement) &&
-        !(document.activeElement as HTMLElement)?.matches(
-          "input,textarea,select,[contenteditable]:not([contenteditable=false])"
-        )
+        !editing()
       )
         e.preventDefault()
       if (e.code !== "Space" || e.repeat || isTypingTarget()) return
@@ -288,7 +311,7 @@ export function useCanvasTransform(
       setSpaceHeld(true)
     }
     const onKeyUp = (e: KeyboardEvent) => {
-      updateZoomHeld(e.ctrlKey || e.metaKey)
+      updateZoomHeld((e.ctrlKey || e.metaKey) && !editing())
       updateAltHeld(e.altKey && !e.ctrlKey && !e.metaKey)
       if (e.code !== "Space") return
       setSpaceHeld(false)
@@ -301,7 +324,7 @@ export function useCanvasTransform(
       setIsPanning(false)
     }
     const onPointerMove = (e: PointerEvent) => {
-      updateZoomHeld(e.ctrlKey || e.metaKey)
+      updateZoomHeld((e.ctrlKey || e.metaKey) && !editing())
       updateAltHeld(e.altKey && !e.ctrlKey && !e.metaKey)
     }
     const onVisibility = () => {

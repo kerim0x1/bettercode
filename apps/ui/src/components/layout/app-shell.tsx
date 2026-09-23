@@ -1,3 +1,4 @@
+import { lazy, Suspense, useEffect, useState } from "react"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Onboarding } from "@/components/onboarding"
 import { ErrorBoundary } from "@/components/error-boundary"
@@ -11,6 +12,13 @@ import type {
   MainAreaProps,
   WorkspaceRightPanelProps,
 } from "@/hooks/use-app-shell-bundles"
+
+// The usage page is a whole dashboard that only appears once the user asks
+// for it, so a static import parked it in the entry chunk and pushed it past
+// the pre-first-paint budget. Lazy keeps it off the critical path.
+const UsagePage = lazy(() =>
+  import("@/components/usage-page").then((m) => ({ default: m.UsagePage }))
+)
 
 /**
  * Top-level app layout shell. Composes:
@@ -40,10 +48,34 @@ export function AppShell({
   workspaceRightPanelProps: WorkspaceRightPanelProps
   showWorkspaceRightPanel: boolean
 }) {
+  const [usageOpen, setUsageOpen] = useState(false)
+
+  useEffect(() => {
+    const openUsage = () => setUsageOpen(true)
+    window.addEventListener("betterc0de:open-usage", openUsage)
+    return () => window.removeEventListener("betterc0de:open-usage", openUsage)
+  }, [])
+
+  useEffect(() => {
+    if (!usageOpen) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setUsageOpen(false)
+    }
+    window.addEventListener("keydown", closeOnEscape)
+    return () => window.removeEventListener("keydown", closeOnEscape)
+  }, [usageOpen])
+
   // Codex-style shell in agent mode: the main body floats as its own
   // rounded card on the dark sidebar surface (gap all around), and the
   // right workspace panel floats next to it as a second card.
-  const floatingShell = leftSidebarProps.appMode === "agent"
+  //
+  // Canvas gets the same frame. Its sidebar is already an inset card
+  // (`my-2 ml-2 rounded-xl` in LeftSidebar), so a square body butting
+  // straight against that card's rounded corner left a visible cut in the
+  // seam. Editor keeps the flush IDE layout.
+  const floatingShell =
+    leftSidebarProps.appMode === "agent" ||
+    leftSidebarProps.appMode === "design"
   return (
     <TooltipProvider>
       <Onboarding />
@@ -60,9 +92,17 @@ export function AppShell({
               {/* Main body card — every direct child stretches to fill it
                   (MainArea's root has no flex-1 of its own). */}
               <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border/40 bg-background shadow-[0_18px_50px_-32px_rgba(0,0,0,0.9)] [&>*]:min-w-0 [&>*]:flex-1 [&>*]:bg-background">
-                <ErrorBoundary label="Main Area">
-                  <MainArea {...mainAreaProps} />
-                </ErrorBoundary>
+                {usageOpen ? (
+                  <Suspense fallback={<div className="min-h-0 flex-1 bg-background" />}>
+                    <ErrorBoundary label="Usage">
+                      <UsagePage onClose={() => setUsageOpen(false)} />
+                    </ErrorBoundary>
+                  </Suspense>
+                ) : (
+                  <ErrorBoundary label="Main Area">
+                    <MainArea {...mainAreaProps} />
+                  </ErrorBoundary>
+                )}
               </div>
               {showWorkspaceRightPanel && (
                 <ErrorBoundary label="Workspace Right Panel">
@@ -72,9 +112,17 @@ export function AppShell({
             </div>
           ) : (
             <>
-              <ErrorBoundary label="Main Area">
-                <MainArea {...mainAreaProps} />
-              </ErrorBoundary>
+              {usageOpen ? (
+                <Suspense fallback={<div className="min-h-0 flex-1 bg-background" />}>
+                  <ErrorBoundary label="Usage">
+                    <UsagePage onClose={() => setUsageOpen(false)} />
+                  </ErrorBoundary>
+                </Suspense>
+              ) : (
+                <ErrorBoundary label="Main Area">
+                  <MainArea {...mainAreaProps} />
+                </ErrorBoundary>
+              )}
               {showWorkspaceRightPanel && (
                 <ErrorBoundary label="Workspace Right Panel">
                   <WorkspaceRightPanel {...workspaceRightPanelProps} />
