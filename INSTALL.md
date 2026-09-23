@@ -8,42 +8,56 @@ Download the build for your operating system from [GitHub Releases](https://gith
 
 The installer files are published on the repository's [GitHub Releases page](https://github.com/kerim0x1/bettercode/releases). GitHub **Packages** is for npm/container packages and does not contain the desktop `.exe`, `.dmg`, or Linux installers. A release is created when a matching `v<version>` tag is pushed; the release then contains the installer and update metadata such as `latest.yml`.
 
-The installer files are published on the repository's [GitHub Releases page](https://github.com/kerim0x1/bettercode/releases). GitHub **Packages** is for npm/container packages and does not contain the desktop `.exe`, `.dmg`, or Linux installers. A release is created when a matching `v<version>` tag is pushed; the release then contains the installer and update metadata such as `latest.yml`.
+| System | File | Install |
+| --- | --- | --- |
+| Windows 10/11, 64-bit | `BetterC0de-Setup-<version>.exe` | Run it. SmartScreen warns because the build is unsigned: **More info → Run anyway**. |
+| macOS 12+ Apple Silicon | `BetterC0de-<version>-arm64.dmg` | Open it and drag BetterC0de to **Applications**. |
+| macOS 12+ Intel | `BetterC0de-<version>.dmg` | Same as above. |
+| Linux x64 (Debian, Ubuntu) | `betterc0de_<version>_amd64.deb` | `sudo apt install ./betterc0de_<version>_amd64.deb` |
+| Linux x64 (Fedora, RHEL) | `betterc0de-<version>.x86_64.rpm` | `sudo dnf install ./betterc0de-<version>.x86_64.rpm` |
+| Linux x64 (any) | `BetterC0de-<version>.AppImage` or `.tar.gz` | `chmod +x` the AppImage and run it, or extract the tarball and run `betterc0de`. |
 
-| System | File |
-| --- | --- |
-| Windows 10/11, 64-bit | `.exe` installer |
-| macOS Apple Silicon | `.dmg` for `arm64` |
-| macOS Intel | `.dmg` for `x64` |
-| Linux | `.AppImage`, `.deb`, `.rpm`, or `.tar.gz` package |
+The `.deb` and `.rpm` pull in the system libraries Electron needs; the AppImage and tarball expect them to be present already (any desktop installation has them). On macOS, an unsigned app is blocked on first launch: open **System Settings → Privacy & Security** and choose **Open Anyway**, or run `xattr -dr com.apple.quarantine /Applications/BetterC0de.app`. [Code signing](docs/development/code-signing.md) explains why.
+
+To check a download, compare it with the release's `SHA256SUMS.txt`: `sha256sum -c SHA256SUMS.txt --ignore-missing` on Linux, `shasum -a 256 -c SHA256SUMS.txt --ignore-missing` on macOS, or `Get-FileHash <file>` in PowerShell.
 
 After installation, open **Settings → Providers**, connect a supported provider, open a project folder, and start a conversation. Provider accounts, API keys, and usage limits belong to the provider you connect.
 
-Unsigned Windows builds do not install updates automatically. Download and run the newer `.exe` installer from Releases to update them. A successful CI run alone does not publish a download: the tag-triggered Release workflow builds installers into a draft and publishes it only after all platform jobs succeed. Beta versions are marked as prereleases.
+Unsigned Windows and macOS builds do not install updates automatically. Download and run the newer installer from Releases to update them. A successful CI run alone does not publish a download: the tag-triggered Release workflow runs the full release check on every platform and publishes the release only after all of them pass. Beta versions are marked as prereleases. Known problems of each version are listed in the [changelog](CHANGELOG.md).
 
 ## Requirements for a source checkout
 
-- Node.js **22.15.0 or newer** and npm **10 or newer**. CI uses Node 22.
-- Git.
-- A desktop environment for Electron.
-- Native build tools when npm cannot use a prebuilt module:
-  - Windows: Python and Visual Studio C++ Build Tools.
-  - macOS: Xcode Command Line Tools (`xcode-select --install`).
-  - Linux: a C/C++ toolchain, Python, and the packages required by Electron Builder.
+| Tool | Version |
+| --- | --- |
+| Node.js | **22.23.2**, pinned in `.nvmrc` and `.node-version`. Releases and CI use exactly this version. Node 22.15 or newer and Node 24 are supported for development (`engines` in `package.json`); other majors are not. |
+| npm | 10.9 or newer (Node 22.23.2 includes npm 10.9.8). |
+| Git | 2.x. |
+| Python | 3.10 or newer, used by `node-gyp` to compile native modules. |
+| C/C++ toolchain | See below. |
 
-Node 24 may work, but Node 22 is the supported and continuously tested version. Do not copy `node_modules` between operating systems or between different Node versions.
+Native modules (`better-sqlite3`, `node-pty`) are compiled when no prebuilt binary matches your platform, and packaging rebuilds them for Electron. Install the toolchain for your OS:
 
-## Install with mise
+- **Windows 10/11 (64-bit):** Visual Studio 2022 Build Tools or newer with the **Desktop development with C++** workload, and Python 3.
+- **macOS 12 or newer:** Xcode Command Line Tools: `xcode-select --install`.
+- **Linux:** `sudo apt-get install -y build-essential python3` on Debian/Ubuntu, `sudo dnf install -y gcc-c++ make python3` on Fedora. `node-pty` ships no prebuilt Linux binaries, so this is always required.
 
-If you use [mise](https://mise.jdx.dev/), select the repository's Node major version before installing:
+To package and smoke-test on Linux you also need `rpmbuild` and a virtual display: `sudo apt-get install -y rpm xvfb`. Running the desktop app needs a graphical session (X11 or Wayland).
+
+Nothing has to be installed globally with npm: TypeScript, Electron and electron-builder come from the lockfile. Do not copy `node_modules` between operating systems or between Node versions.
+
+## Select the Node version
+
+Any version manager that reads `.nvmrc` or `.node-version` works:
 
 ```sh
-mise use --local node@22
-node --version
-npm --version
+nvm install && nvm use          # nvm (macOS/Linux) reads .nvmrc
+fnm use --install-if-missing    # fnm, all platforms
+mise use --local node@22.23.2   # mise
+volta pin node@22.23.2          # Volta
+node --version                  # v22.23.2
 ```
 
-The Node version must be `22.15.0` or newer and npm must be version 10 or newer. If `mise exec node@24 -- npm ci` is being used, switch to Node 22 for a setup that matches CI.
+Without a version manager, install Node.js 22.23.2 from [nodejs.org](https://nodejs.org/dist/v22.23.2/). `npm run release:check` refuses a Node version outside the supported range and warns when it is not exactly 22.23.2; release builds in CI require the exact version.
 
 ## Install dependencies
 
@@ -53,7 +67,7 @@ cd bettercode
 npm ci --no-audit --no-fund
 ```
 
-`npm ci` installs exactly what is recorded in `package-lock.json`. The root `postinstall` hook rebuilds `better-sqlite3` for the active Node runtime. A clean install can take several minutes because the repository contains desktop, mobile, and Electron dependencies.
+`npm ci` installs exactly what is recorded in `package-lock.json`. The root `postinstall` hook rebuilds `better-sqlite3` for the active Node runtime, and the `prepare` hook installs the repository's git hooks (husky). A clean install can take several minutes because the repository contains desktop, mobile, and Electron dependencies.
 
 On macOS or Linux, the repository also includes a checked-in setup helper:
 
@@ -102,22 +116,41 @@ npm run dev
 
 ## Verify the checkout
 
-Run the full source gate before submitting a change:
+Run the fast source gate before submitting a change:
 
 ```sh
 npm run verify:source
 ```
 
-Useful focused checks are:
+It checks workspace versions, type-checks every project, runs the format check on the files you changed, lint, and all test suites. Useful focused checks are:
 
 ```sh
 npm run typecheck:backend
 npm run test:backend
 npm test
+npm run format:changed   # apply Prettier to the TS/TSX files you changed
 npm run build
 ```
 
-The CI source gate runs on Ubuntu and Windows. A successful local run on one operating system does not replace the other platform's checks.
+### The release check
+
+`npm run release:check` is the gate every release passes, and CI runs it on every push and pull request:
+
+```text
+preflight → npm ci → versions → format → lint → typecheck → test → build →
+package → smoke (launch the packaged app) → installers → installer-smoke
+```
+
+It starts with a clean `npm ci`, so stop `npm run dev` and any BetterC0de window started from this checkout first. The installer smoke installs, launches and uninstalls the installers. That changes the machine (on Windows it would replace an installed BetterC0de), so it only runs by default in CI. Useful options:
+
+```sh
+npm run release:check -- --list             # show the steps
+npm run release:check -- --until build      # stop before packaging
+npm run release:check -- --skip-install     # reuse node_modules while iterating
+npm run release:check -- --installer-smoke  # include the install/uninstall test here
+```
+
+A run with skipped steps says so in its summary. CI covers Ubuntu, Windows and both Mac architectures; a local run covers only your own platform.
 
 ## Build an installer locally
 
@@ -134,9 +167,38 @@ npm run build:mac
 npm run build:linux
 ```
 
-Artifacts are written to `release/`. Packaging rebuilds native modules for Electron. Close BetterC0de and other processes using this checkout before packaging so native files are not locked. macOS installers cannot be built on Windows.
+Artifacts are written to `release/`. Packaging rebuilds native modules for Electron. Close BetterC0de and other processes using this checkout before packaging so native files are not locked. macOS installers cannot be built on Windows, and a Mac build packages only the architecture of the Mac it runs on. `npm run release:check` builds the same installers and also tests them.
 
 ## Troubleshooting
+
+### `npm ci` fails with `EPERM`, `EBUSY` or "resource busy or locked" (Windows)
+
+Another process holds a file in `node_modules`, typically a running `npm run dev`, a Vite server, or a BetterC0de/Electron window started from this checkout. Stop them (or reboot) and run `npm ci` again. `npm run release:check` starts with `npm ci`, so the same applies to it.
+
+### `gyp ERR!`, `MSB8036`, or "could not find any Visual Studio installation"
+
+A native module is compiling and the toolchain is missing. Install the build tools listed under [requirements](#requirements-for-a-source-checkout), open a new terminal, and rerun `npm ci`.
+
+### `release:check` stops at preflight
+
+Preflight names the problem and the fix: a Node version outside the supported range, a missing `xvfb-run` or `rpmbuild` on Linux, or missing Xcode Command Line Tools. In CI it also requires the exact Node version from `.nvmrc`.
+
+### The format check fails
+
+`npm run format:check` runs Prettier on the TS/TSX files that differ from `origin/main` (or from `FORMAT_BASE`). Run `npm run format:changed`, review the result and commit it. Files you did not touch are never checked.
+
+### A tag push is rejected by the pre-push hook
+
+Pushing a `v<version>` tag runs `npm run release:check` first. The hook also refuses the push when the tag does not match the version in `package.json`, points at a commit other than the checked-out one, the working tree has uncommitted files, or `CHANGELOG.md` has no section for the version. Fix what it reports and push the tag again. `git push --no-verify` skips the hook, but the Release workflow runs the same check on every platform before anything is published.
+
+### Linux: the app exits with a sandbox error
+
+Messages like "The SUID sandbox helper binary was found, but is not configured correctly" or "No usable sandbox!" appear on distributions that restrict unprivileged user namespaces (Ubuntu 24.04 and newer). The `.deb` installs an AppArmor profile, and the AppImage turns the sandbox off by itself when it cannot work. For the extracted `.tar.gz`, start `./betterc0de --no-sandbox`, or give `chrome-sandbox` the permissions Chromium expects: `sudo chown root:root chrome-sandbox && sudo chmod 4755 chrome-sandbox`.
+
+### Linux: the app does not start and reports a missing `.so` library
+
+The AppImage and tarball use the system's GTK, NSS, ALSA and GBM libraries. `ldd ./betterc0de | grep "not found"` lists what is missing. Install those packages, or use the `.deb`/`.rpm`, which declare them as dependencies.
+
 
 ### `npm ERR! code ENOTFOUND` or registry DNS errors
 

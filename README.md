@@ -66,6 +66,16 @@ BetterC0de is free during the beta. The [GitHub Releases page](https://github.co
 
 Not sure which Mac you have? Open **About This Mac** — an "Apple M…" chip means Apple Silicon. Or just use [betterc0de.com/download](https://betterc0de.com/download), which picks the right build for your system.
 
+### Installing a beta build
+
+The beta installers are not code-signed yet, so your operating system warns before the first launch:
+
+- **Windows:** SmartScreen shows "Windows protected your PC". Choose **More info → Run anyway**. Unsigned Windows builds do not update themselves; install a newer version by running its installer.
+- **macOS:** open the `.dmg` and drag BetterC0de to **Applications**. If macOS blocks the first launch, open **System Settings → Privacy & Security** and choose **Open Anyway**. If it reports that the app is damaged, run `xattr -dr com.apple.quarantine /Applications/BetterC0de.app` in Terminal.
+- **Linux:** install the `.deb` with `sudo apt install ./betterc0de_<version>_amd64.deb` or the `.rpm` with `sudo dnf install ./betterc0de-<version>.x86_64.rpm`. Either one installs the libraries the app needs. For the AppImage, run `chmod +x BetterC0de-<version>.AppImage` first.
+
+Each release lists SHA-256 checksums of its files in `SHA256SUMS.txt`. Known problems of each version are in the [changelog](CHANGELOG.md). For 0.1.0-beta.2, the Apple Silicon download contains the Intel build, which runs through Rosetta 2.
+
 ## Start here
 
 1. [Download](#download) BetterC0de for your platform.
@@ -83,9 +93,80 @@ Follow the [getting-started guide](GETTING_STARTED.md) for a walkthrough without
 | [How BetterC0de works](PRODUCT_GUIDE.md) | Workspace concepts, everyday workflows, and diagnostic data. |
 | [Brand guide](BRAND.md) | The name, logo, visual direction, and reusable product descriptions. |
 
-## Build and contribute
+## Build from source
 
-The application source, mobile companion, tests, and build tools are included in this repository. Start with the [installation and setup guide](INSTALL.md), then use the [development guide](docs/development/README.md) for local workflows and platform builds. Read [Contributing](CONTRIBUTING.md), [Security](SECURITY.md), and [third-party notices](THIRD_PARTY_NOTICES.md) before submitting changes or distributing a build.
+The application source, mobile companion, tests and build tools are all in this repository. [INSTALL.md](INSTALL.md) has the full walkthrough and troubleshooting; this is the short version.
+
+### Requirements
+
+| Tool | Version | Notes |
+| --- | --- | --- |
+| Node.js | **22.23.2** (pinned in `.nvmrc`) | Releases are built with exactly this version. Node 22.15 or newer and Node 24 are also supported for development. |
+| npm | 10.9 or newer | Node 22.23.2 includes npm 10.9.8. |
+| Git | 2.x | Several build steps read repository metadata. |
+| Python | 3.10 or newer | Only used by `node-gyp` when a native module has no prebuilt binary. |
+| C/C++ build tools | see below | Same condition as Python. |
+
+Operating-system specifics:
+
+- **Windows 10/11, 64-bit:** Visual Studio 2022 Build Tools (or newer) with the **Desktop development with C++** workload. For example: `winget install Microsoft.VisualStudio.2022.BuildTools` and select that workload.
+- **macOS 12 or newer:** Xcode Command Line Tools (`xcode-select --install`). Build on a Mac with the architecture you want to package.
+- **Linux (x64):** `sudo apt-get install -y build-essential python3` (Debian/Ubuntu) or `sudo dnf install -y gcc-c++ make python3` (Fedora). node-pty has no prebuilt Linux binary, so the compiler is always needed. Packaging additionally needs `rpm` (for `rpmbuild`) and `xvfb` (for the packaged-app smoke test): `sudo apt-get install -y rpm xvfb`.
+
+No global npm packages are needed. TypeScript, Electron, electron-builder and every other tool come from the lockfile. Docker is optional: when available, `release:check` also tests the `.rpm` in a Fedora container.
+
+### Install
+
+```sh
+git clone https://github.com/kerim0x1/bettercode.git
+cd bettercode
+nvm use            # or: fnm use / mise use / volta — anything that reads .nvmrc
+npm ci             # exact versions from package-lock.json; also installs the git hooks
+npm run dev        # backend, Vite and Electron with hot reload
+```
+
+On Windows, run the same commands in PowerShell. On macOS and Linux, `./setup.sh` checks the Node and npm versions and then runs the same install.
+
+### Setup
+
+No `.env` file or account is needed to build, test or start the app. Optional environment variables, such as a separate profile directory or turning off the diagnostic heartbeat during development, are listed in [.env.example](.env.example). Set them in the shell that starts the app. Development data lives in `~/.betterc0de-dev`; installed builds use `~/.betterc0de`. To use AI features, connect a provider in **Settings → Providers**.
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Development app with the backend watcher, Vite and Electron. |
+| `npm run verify:source` | Fast source gate: versions, type-checks, format check, lint and all test suites. |
+| `npm test` / `npm run test:backend` / `npm run test:mobile` / `npm run test:packaging` | One test suite. |
+| `npm run lint` / `npm run typecheck` | Lint, or type-check the UI (`typecheck:backend`, `typecheck:shell` and `typecheck:mobile` cover the rest). |
+| `npm run format:check` / `npm run format:changed` | Check or apply Prettier on the TS/TSX files you changed. |
+| `npm run build` | Production build of the backend and renderer, with bundle budgets. |
+| `npm run build:win` / `build:mac` / `build:linux` | Installers for the current OS in `release/`. |
+| `npm run release:check` | **The release gate.** Clean install → versions → format → lint → type-check → tests → production build → package → launch the packaged app → installers → install/launch/uninstall test. Exits non-zero on the first failure. |
+
+`npm run release:check -- --list` shows the steps. Locally, the install/uninstall test is skipped because it would change your machine (and replace an installed BetterC0de); CI runs it on clean runners. Pass `--installer-smoke` to run it anyway.
+
+### Releasing
+
+1. Update the version in every workspace (`npm run check:versions` verifies them) and add a `## [<version>]` section to [CHANGELOG.md](CHANGELOG.md).
+2. Commit, tag `v<version>` and push the tag. The pre-push hook runs `npm run release:check` first and refuses the push if it fails.
+3. The Release workflow runs `release:check` on Linux, Windows and both Mac architectures, and publishes the GitHub release only when every platform passed.
+
+The [release checklist](docs/release-checklist.md) has the details, and [code signing](docs/development/code-signing.md) lists the certificates a signed release needs.
+
+### Troubleshooting
+
+- **`npm ci` fails with `EPERM`/`EBUSY` on Windows:** a running `npm run dev`, Vite server or BetterC0de window holds files in `node_modules`. Stop them and run `npm ci` again.
+- **`gyp ERR!` or a missing compiler during `npm ci`:** install the build tools listed above, then rerun `npm ci`.
+- **`release:check` stops at preflight:** it names the missing tool (for example `xvfb-run` or `rpmbuild` on Linux) or the wrong Node version, and prints the command that fixes it.
+- **Format check failed:** run `npm run format:changed`, review the diff and commit it.
+- **Native module or ABI errors after switching Node versions:** delete `node_modules` and run `npm ci`.
+
+More cases, including registry/DNS failures and backend start-up timeouts, are in [INSTALL.md](INSTALL.md#troubleshooting).
+
+### Contribute
+
+Read [Contributing](CONTRIBUTING.md), [Security](SECURITY.md) and the [third-party notices](THIRD_PARTY_NOTICES.md) before submitting changes or distributing a build. The [development guide](docs/development/README.md) covers the repository layout and architecture.
 
 BetterC0de source is released under the MIT License. Third-party terms stay with their owners; see [third-party notices](THIRD_PARTY_NOTICES.md).
 

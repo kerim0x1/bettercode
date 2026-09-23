@@ -6,10 +6,12 @@ For a first-time installation, supported Node versions, `mise`, npm registry err
 
 ## Requirements
 
-- Node.js 22, version 22.15.0 or newer, and npm 10 or newer. CI uses Node 22; `.nvmrc` selects that major version.
+- Node.js **22.23.2**, pinned in `.nvmrc` and `.node-version`; CI and releases use exactly this version. Node 22.15+ and Node 24 are supported for development. npm 10.9 or newer.
 - Git and a desktop environment for running Electron.
 - A supported AI provider account or API connection to use AI features. Building and running the test suites does not require provider credentials.
-- Native build tools if a dependency has no prebuilt binary for your platform: Python and Visual Studio C++ Build Tools on Windows, Xcode Command Line Tools on macOS, or a C/C++ toolchain on Linux.
+- Native build tools: Python 3.10+ with Visual Studio 2022 Build Tools (Desktop development with C++) on Windows, Xcode Command Line Tools on macOS, or `build-essential`/`gcc-c++`, `make` and Python 3 on Linux. Linux packaging also needs `rpm` and `xvfb`.
+
+[INSTALL.md](../../INSTALL.md#requirements-for-a-source-checkout) has the full list with install commands.
 
 ## Install and run
 
@@ -45,12 +47,28 @@ The source export intentionally excludes installed dependencies, build outputs, 
 ## Verify a change
 
 ```sh
-npm run verify:source
-npm run build
-npm run perf:backend
+npm run verify:source    # fast: versions, type-checks, format check, lint, all test suites
+npm run release:check    # full gate: clean install through installers (see below)
 ```
 
-The source gate checks workspace versions, builds the backend and shared schema, checks desktop/backend/mobile/demo types, runs lint, and executes packaging, UI, backend, and mobile tests. The production build also checks frontend bundle size and chunk cycles. Performance smoke requires the compiled backend. CI additionally exports the mobile web bundle to verify Metro resolves the shared source correctly.
+The source gate checks workspace versions, builds the backend and shared schema, checks desktop/backend/shell/mobile/demo types, runs the format check on changed TS/TSX files, runs lint, and executes packaging, UI, backend, and mobile tests.
+
+`npm run release:check` is what CI runs on every push and pull request, on Linux, Windows and both Mac architectures, and what every release passes:
+
+| Step | What it runs |
+| --- | --- |
+| preflight | Node version against `.nvmrc`/`engines`, npm, git, and platform packaging tools |
+| install | `npm ci` from the lockfile |
+| versions, format, lint | `check:versions`, `format:check`, `lint` |
+| typecheck | schema/backend build, then UI, backend, shell, mobile and demo type-checks |
+| test | packaging (`node:test`), UI, backend and mobile suites |
+| build | production build with bundle budgets, backend start-up/memory budgets (`perf:backend`), mobile web export |
+| package | Electron native rebuild, unpacked package, package size budgets |
+| smoke | launches the packaged app: backend health, renderer mounted, no fatal diagnostics |
+| installers | installers built from that exact app, plus checksums |
+| installer-smoke | install → launch → uninstall on the host (CI only by default) |
+
+`--list`, `--until <step>`, `--from <step>`, `--skip-install` and `--installer-smoke` control a run; see `npm run release:check -- --help`. The scripts live in `scripts/release-check.mjs`, `scripts/packaged-startup-smoke.mjs` and `scripts/installer-smoke.mjs`.
 
 For a focused edit, use the relevant scripts: `npm test`, `npm run test:backend`, `npm run test:mobile`, or `npm run test:packaging`. The optional local video compositions have a separate `npm run typecheck:remotion` check; it skips cleanly when the ignored `remotion/` directory is absent.
 
@@ -64,7 +82,7 @@ For a focused edit, use the relevant scripts: `npm test`, `npm run test:backend`
 
 Artifacts are written to `release/`. These local commands explicitly disable publishing. Packaging rebuilds native modules for Electron and then restores the development dependency setup. Close apps using this checkout before packaging so native files are not locked.
 
-Build and test on the target operating system. The installed builder does not build macOS packages from Windows. macOS signing requires a Mac and suitable signing credentials. See the [release checklist](../release-checklist.md) for the maintainer workflow.
+Build and test on the target operating system and architecture: macOS packages cannot be built on Windows, and a Mac build packages only its own architecture. Signing needs credentials described in [code signing](code-signing.md). See the [release checklist](../release-checklist.md) for the maintainer workflow.
 
 Fork maintainers must change the repository/publishing target in `package.json` and review app IDs, mobile bundle identifiers, diagnostic endpoints, and branding before distributing their own builds. The current package metadata points to `kerim0x1/bettercode`.
 
