@@ -301,7 +301,10 @@ describe("CodexSessionRuntime", () => {
       )
     } finally {
       await runtime.close().catch(() => {})
-      fs.rmSync(fake.dir, {
+      // fs.rmSync ignores maxRetries/retryDelay for EBUSY on Windows (Node 22):
+      // it throws at once while a just-killed fake CLI still holds the directory
+      // as its working directory. fs.promises.rm retries as configured.
+      await fs.promises.rm(fake.dir, {
         recursive: true,
         force: true,
         maxRetries: 20,
@@ -378,7 +381,7 @@ describe("CodexSessionRuntime", () => {
       )
     } finally {
       await runtime.close().catch(() => {})
-      fs.rmSync(fake.dir, {
+      await fs.promises.rm(fake.dir, {
         recursive: true,
         force: true,
         maxRetries: 20,
@@ -431,7 +434,7 @@ describe("CodexSessionRuntime", () => {
         expect(fs.existsSync(path.join(fake.dir, "config.toml"))).toBe(false)
       } finally {
         await runtime.close()
-        fs.rmSync(fake.dir, {
+        await fs.promises.rm(fake.dir, {
           recursive: true,
           force: true,
           maxRetries: 20,
@@ -481,7 +484,7 @@ describe("CodexSessionRuntime", () => {
         expect(fs.existsSync(path.join(fake.dir, "config.toml"))).toBe(false)
       } finally {
         await runtime.close()
-        fs.rmSync(fake.dir, {
+        await fs.promises.rm(fake.dir, {
           recursive: true,
           force: true,
           maxRetries: 20,
@@ -564,7 +567,7 @@ describe("CodexSessionRuntime", () => {
       )
     } finally {
       await runtime.close().catch(() => {})
-      fs.rmSync(fake.dir, {
+      await fs.promises.rm(fake.dir, {
         recursive: true,
         force: true,
         maxRetries: 20,
@@ -658,7 +661,7 @@ describe("CodexSessionRuntime", () => {
         )
       } finally {
         await runtime.close().catch(() => {})
-        fs.rmSync(fake.dir, {
+        await fs.promises.rm(fake.dir, {
           recursive: true,
           force: true,
           maxRetries: 20,
@@ -725,7 +728,7 @@ describe("CodexSessionRuntime", () => {
       })
     } finally {
       await runtime.close().catch(() => {})
-      fs.rmSync(fake.dir, {
+      await fs.promises.rm(fake.dir, {
         recursive: true,
         force: true,
         maxRetries: 20,
@@ -790,7 +793,7 @@ describe("CodexSessionRuntime", () => {
       )
     } finally {
       await runtime.close().catch(() => {})
-      fs.rmSync(fake.dir, {
+      await fs.promises.rm(fake.dir, {
         recursive: true,
         force: true,
         maxRetries: 20,

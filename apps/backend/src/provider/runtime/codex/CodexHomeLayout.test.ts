@@ -33,9 +33,12 @@ function isSymlink(filePath: string): boolean {
   }
 }
 
-afterEach(() => {
+// fs.rmSync ignores maxRetries/retryDelay for EBUSY on Windows (Node 22)
+// and throws at once while another handle is still closing; fs.promises.rm
+// retries as configured.
+afterEach(async () => {
   while (tempRoots.length > 0) {
-    fs.rmSync(tempRoots.pop()!, {
+    await fs.promises.rm(tempRoots.pop()!, {
       recursive: true,
       force: true,
       maxRetries: 20,

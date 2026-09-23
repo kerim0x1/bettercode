@@ -343,7 +343,10 @@ afterEach(async () => {
     sessionAdapters.splice(0).map((adapter) => adapter.stopAll())
   )
   while (tempRoots.length > 0) {
-    fs.rmSync(tempRoots.pop()!, {
+    // fs.rmSync ignores maxRetries/retryDelay for EBUSY on Windows (Node 22):
+    // it throws at once while a just-killed fake CLI still holds the directory
+    // as its working directory. fs.promises.rm retries as configured.
+    await fs.promises.rm(tempRoots.pop()!, {
       recursive: true,
       force: true,
       maxRetries: 20,
