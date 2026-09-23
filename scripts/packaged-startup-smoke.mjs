@@ -29,6 +29,7 @@ const keepLinuxSandbox = process.env.PACKAGED_SANDBOX === "1"
 const startupTimeoutMs = 30_000
 const stabilityWindowMs = 2_000
 const childExitTimeoutMs = 5_000
+const gracefulExitTimeoutMs = 10_000
 const taskkillTimeoutMs = 5_000
 const defaultBackendPorts = [3773, 3774, 3775, 3776]
 const packaged = explicitExecutable
@@ -113,19 +114,26 @@ try {
 } finally {
   const cleanupFailures = []
   if (child) {
+    // Quit the app itself first, the way a session shutdown does, while its
+    // display (Xvfb on Linux) is still up. Signalling only the launcher's
+    // process group tore the display down under the app and never reached
+    // the backend, which runs in its own group: on Linux CI the app, its
+    // crash handler and the backend all outlived the smoke, and the backend
+    // kept port 3773.
+    try {
+      await stopPackageProcesses(packaged)
+    } catch (error) {
+      cleanupFailures.push(error)
+    }
     try {
       await stopChildTree(child)
     } catch (error) {
       cleanupFailures.push(error)
     }
-    // A descendant that leaves the process group (for example a crash
-    // handler, which is meant to outlive the app) keeps the inherited
-    // stdout/stderr open. On Linux CI that held this script for five minutes
-    // after a passing smoke. The verdict is already made, so stop reading and
-    // name what is left.
+    // Anything that still holds the inherited stdout/stderr must not keep
+    // this script alive after the verdict.
     child.stdout?.destroy()
     child.stderr?.destroy()
-    reportSurvivingProcesses(packaged)
   }
   try {
     await removeDirectoryWithRetries(dataDir)
@@ -459,25 +467,89 @@ async function writeSmokeResult({ executable, packageRoot }) {
   )
 }
 
+/** Processes started from the package: the app, its helpers and backend. */
+function packageProcessIds({ packageRoot, executable }) {
+  const listing = spawnSync("ps", ["-eo", "pid=,args="], { encoding: "utf8" })
+  if (listing.status !== 0) return []
+  const markers = [packageRoot, executable, "/tmp/appimage_extracted_", "/tmp/.mount_"]
+  const processes = []
+  for (const line of listing.stdout.split("\n")) {
+    const match = line.trim().match(/^(\d+)\s+(.*)$/)
+    if (!match) continue
+    const [, pid, args] = match
+    // The display server and its wrapper go last, after the app has quit.
+    if (/\bxvfb-run\b|\bXvfb\b/.test(args)) continue
+    if (Number(pid) === process.pid || args.includes("packaged-startup-smoke")) continue
+    if (markers.some((marker) => args.includes(marker))) {
+      processes.push({ pid: Number(pid), args: args.slice(0, 200) })
+    }
+  }
+  return processes
+}
+
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error?.code === "EPERM"
+  }
+}
+
+function signalPids(pids, signal) {
+  for (const pid of pids) {
+    try {
+      process.kill(pid, signal)
+    } catch {
+      // Exited between listing and signalling.
+    }
+  }
+}
+
+async function waitForPidsExit(pids, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let alive = pids.filter(isPidAlive)
+  while (alive.length > 0 && Date.now() < deadline) {
+    await delay(200)
+    alive = alive.filter(isPidAlive)
+  }
+  return alive
+}
+
 /**
- * Lists processes still running from the package after the app was stopped.
- * Reported, not failed: such helpers can deliberately outlive the browser
- * process and exit on their own.
+ * Quits the app the way a session shutdown does: SIGTERM to the main process
+ * only (renderer or GPU helpers killed first would raise the app's
+ * "renderer process gone" dialog), which then stops its helpers and backend.
+ * Whatever is still running after the graceful window is reported and
+ * killed; anything that survives SIGKILL fails the smoke, because the next
+ * launch would meet a stale backend.
  */
-function reportSurvivingProcesses({ packageRoot, executable }) {
-  if (process.platform === "win32") return
-  const listing = spawnSync("ps", ["-eo", "pid=,etime=,args="], { encoding: "utf8" })
-  if (listing.status !== 0) return
-  const markers = [packageRoot, executable, "appimage_extracted_", "/tmp/.mount_"]
-  const survivors = listing.stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line && !line.includes("packaged-startup-smoke"))
-    .filter((line) => markers.some((marker) => line.includes(marker)))
-  if (survivors.length === 0) return
-  process.stdout.write(
-    `Still running from the package after the app was stopped (reported for diagnosis, not a failure):\n${survivors.map((line) => `  ${line.slice(0, 300)}`).join("\n")}\n`
+async function stopPackageProcesses(packaged) {
+  if (process.platform === "win32") return // taskkill /T covers the whole tree.
+  const mains = packageProcessIds(packaged).filter(
+    (entry) => entry.args.includes("--remote-debugging-port") && !entry.args.includes("--type=")
   )
+  if (mains.length > 0) {
+    signalPids(mains.map((entry) => entry.pid), "SIGTERM")
+    const deadline = Date.now() + gracefulExitTimeoutMs
+    while (Date.now() < deadline && packageProcessIds(packaged).length > 0) {
+      await delay(200)
+    }
+  }
+
+  const remaining = packageProcessIds(packaged)
+  if (remaining.length === 0) return
+  process.stdout.write(
+    `WARNING: ${remaining.length} process(es) from the package were still running ${gracefulExitTimeoutMs / 1000}s after the app was asked to quit, and are being stopped:\n${remaining.map((entry) => `  ${entry.pid} ${entry.args}`).join("\n")}\n`
+  )
+  const pids = remaining.map((entry) => entry.pid)
+  signalPids(pids, "SIGTERM")
+  const stubborn = await waitForPidsExit(pids, childExitTimeoutMs)
+  signalPids(stubborn, "SIGKILL")
+  const survivors = await waitForPidsExit(stubborn, childExitTimeoutMs)
+  if (survivors.length > 0) {
+    throw new Error(`Processes from the package survived SIGKILL: ${survivors.join(", ")}`)
+  }
 }
 
 async function publishPrepackagedPath(packageRoot) {
