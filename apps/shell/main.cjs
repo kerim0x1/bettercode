@@ -174,6 +174,7 @@ const { setBackendConnection } = require("./shared/backend-endpoint.cjs")
 const { IpcChannel, IpcEvent } = require("./shared/ipc-contract.cjs")
 const { ok } = require("./shared/ipc-envelope.cjs")
 const { broadcast } = require("./shared/broadcast.cjs")
+const { describeStartupFailure, projectLinks } = require("./shared/startup-failure.cjs")
 const { installPreviewRequestCapture } = require("./preview-request-capture.cjs")
 const {
   createBackendStartupWatchdog,
@@ -1196,8 +1197,9 @@ async function startSpawnedBackend() {
   try {
     require("fs").accessSync(backendEntry)
   } catch (err) {
-    const message =
-      "Could not load node-backend. Run `cd node-backend && npm install && npm run build` first."
+    // shared/startup-failure.cjs turns this into install- or build-specific
+    // advice for the dialog.
+    const message = `Could not load the backend at ${backendEntry}.`
     console.error(`[electron] ${message}`, err)
     emitBackendStatus("failed", { reason: message })
     throw new Error(message)
@@ -1259,6 +1261,11 @@ async function startSpawnedBackend() {
   stdoutReader.on("line", (line) => {
     if (line) console.log(`[backend] ${line}`)
   })
+  // The backend's recent stderr, for the start-up error dialog: an installed
+  // app has no visible console, and a crash while loading modules explains
+  // itself only there. Attached by reference, so lines that arrive after the
+  // exit event are still shown.
+  const stderrTail = []
 
   return await new Promise((resolve, reject) => {
     let settled = false
@@ -1271,6 +1278,7 @@ async function startSpawnedBackend() {
       settled = true
       startupWatchdog?.stop()
       const failure = err instanceof Error ? err : new Error(String(err))
+      if (!Array.isArray(failure.backendStderr)) failure.backendStderr = stderrTail
       healthAbort.abort(failure)
       void stopSpawnedBackend(handle).then(
         () => {
@@ -1390,6 +1398,8 @@ async function startSpawnedBackend() {
         return
       }
 
+      stderrTail.push(line)
+      if (stderrTail.length > 50) stderrTail.shift()
       console.error(`[backend] ${line}`)
     })
   })
@@ -2643,7 +2653,18 @@ app.whenReady().then(async () => {
   } catch (err) {
     void reportAppCrash(err)
     console.error("[electron] Failed to start:", err)
-    dialog.showErrorBox("BetterC0de", `Failed to start backend: ${err.message}`)
+    let links
+    try {
+      links = projectLinks(require(path.join(app.getAppPath(), "package.json")))
+    } catch {
+      links = undefined
+    }
+    const { title, message } = describeStartupFailure({
+      error: err,
+      isPackaged: app.isPackaged,
+      links,
+    })
+    dialog.showErrorBox(title, message)
     app.quit()
   }
 })
