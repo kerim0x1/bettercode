@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { lazy, Suspense, useEffect, useState } from "react"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Onboarding } from "@/components/onboarding"
 import { ErrorBoundary } from "@/components/error-boundary"
@@ -6,13 +6,19 @@ import { Titlebar } from "@/components/layout/titlebar"
 import { LeftSidebar } from "@/components/layout/left-sidebar"
 import { MainArea } from "@/components/layout/main-area"
 import { WorkspaceRightPanel } from "@/components/layout/workspace-right-panel"
-import { UsagePage } from "@/components/usage-page"
 import type {
   TitlebarProps,
   LeftSidebarProps,
   MainAreaProps,
   WorkspaceRightPanelProps,
 } from "@/hooks/use-app-shell-bundles"
+
+// The usage page is a whole dashboard that only appears once the user asks
+// for it, so a static import parked it in the entry chunk and pushed it past
+// the pre-first-paint budget. Lazy keeps it off the critical path.
+const UsagePage = lazy(() =>
+  import("@/components/usage-page").then((m) => ({ default: m.UsagePage }))
+)
 
 /**
  * Top-level app layout shell. Composes:
@@ -87,7 +93,11 @@ export function AppShell({
                   (MainArea's root has no flex-1 of its own). */}
               <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border/40 bg-background shadow-[0_18px_50px_-32px_rgba(0,0,0,0.9)] [&>*]:min-w-0 [&>*]:flex-1 [&>*]:bg-background">
                 {usageOpen ? (
-                  <UsagePage onClose={() => setUsageOpen(false)} />
+                  <Suspense fallback={<div className="min-h-0 flex-1 bg-background" />}>
+                    <ErrorBoundary label="Usage">
+                      <UsagePage onClose={() => setUsageOpen(false)} />
+                    </ErrorBoundary>
+                  </Suspense>
                 ) : (
                   <ErrorBoundary label="Main Area">
                     <MainArea {...mainAreaProps} />
@@ -103,7 +113,11 @@ export function AppShell({
           ) : (
             <>
               {usageOpen ? (
-                <UsagePage onClose={() => setUsageOpen(false)} />
+                <Suspense fallback={<div className="min-h-0 flex-1 bg-background" />}>
+                  <ErrorBoundary label="Usage">
+                    <UsagePage onClose={() => setUsageOpen(false)} />
+                  </ErrorBoundary>
+                </Suspense>
               ) : (
                 <ErrorBoundary label="Main Area">
                   <MainArea {...mainAreaProps} />
