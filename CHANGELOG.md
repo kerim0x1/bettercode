@@ -11,6 +11,7 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 - **macOS Apple Silicon downloads contain an Apple Silicon build.** In 0.1.0-beta.2, `BetterC0de-0.1.0-beta.2-arm64-mac.zip` and `BetterC0de-0.1.0-beta.2-arm64.dmg` contain the Intel (x86_64) app. The target configuration overrode the build's architecture flag, so each Mac build job packaged its one app under both architectures' names, and the Intel job's files are the ones that were published.
 - **macOS update metadata lists both architectures.** `latest-mac.yml` was taken from whichever Mac job uploaded last; it is now merged from both, and every entry is checked against the published file's sha512 before release.
 - **Start-up failures explain themselves.** When the background service cannot start, the dialog shows the lines the service printed and what to do (reinstall the matching build, rebuild native modules, free disk space, fix folder permissions), instead of only "Failed to start backend: Node backend exited (code=1 signal=none)".
+- **Building from a symlinked directory.** `npm run build:backend` refused a checkout reached through a symlink, such as one under macOS `/tmp` or a linked home directory. Symlinks inside the workspace are still refused.
 - **Windows installer checksum.** The installer is named `BetterC0de-Setup-<version>.exe` locally, in the release and in the checksum file. The checksum file used to list a name with spaces that did not exist in the release.
 
 ### Added
