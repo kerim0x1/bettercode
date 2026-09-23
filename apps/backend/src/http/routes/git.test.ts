@@ -105,7 +105,9 @@ function remoteState(
     config,
     remoteAccess,
     settings: {
-      get: () => ({ remote_access_allow_terminal: options.allowTerminal === true }),
+      get: () => ({
+        remote_access_allow_terminal: options.allowTerminal === true,
+      }),
     },
   })
 }
@@ -190,7 +192,9 @@ describe("git open-target routes", () => {
       })
       expect(response.status, editor).toBe(200)
     }
-    expect(openTargetMocks.launchOpenTarget).toHaveBeenCalledTimes(TARGET_IDS.size)
+    expect(openTargetMocks.launchOpenTarget).toHaveBeenCalledTimes(
+      TARGET_IDS.size
+    )
     for (const shellTarget of SHELL_TARGET_IDS) {
       expect(TARGET_IDS.has(shellTarget), shellTarget).toBe(true)
     }
@@ -227,7 +231,10 @@ describe("git open-target routes", () => {
     const readOnly = new Hono()
     registerGitRoutes(
       readOnly,
-      remoteState([registered], { allowTerminal: true, accessLevel: "read_only" })
+      remoteState([registered], {
+        allowTerminal: true,
+        accessLevel: "read_only",
+      })
     )
     const readOnlyTerminal = await postJson(
       readOnly,
@@ -244,14 +251,19 @@ describe("git open-target routes", () => {
     // Grant on with a full session: the shell targets follow the grant,
     // editors stay desktop-only, and the desktop itself is untouched.
     const granted = new Hono()
-    registerGitRoutes(granted, remoteState([registered], { allowTerminal: true }))
+    registerGitRoutes(
+      granted,
+      remoteState([registered], { allowTerminal: true })
+    )
     const grantedTerminal = await postJson(
       granted,
       "/git/open-editor",
       { editor: "terminal", path: registered },
       REMOTE_COOKIE
     )
-    expect(grantedTerminal.status, await grantedTerminal.clone().text()).toBe(200)
+    expect(grantedTerminal.status, await grantedTerminal.clone().text()).toBe(
+      200
+    )
     const grantedEditor = await postJson(
       granted,
       "/git/open-editor",
@@ -295,10 +307,12 @@ describe("git mutation serialisation", () => {
       if (index === 0) await gate
       events.push(`end:${label}`)
     }
-    gitMocks.commit.mockImplementation(async (_cwd: string, message: string) => {
-      await run(message)
-      return { ok: true }
-    })
+    gitMocks.commit.mockImplementation(
+      async (_cwd: string, message: string) => {
+        await run(message)
+        return { ok: true }
+      }
+    )
     gitMocks.stage.mockImplementation(() => run("stage"))
 
     const requests = [
@@ -316,7 +330,9 @@ describe("git mutation serialisation", () => {
 
     releaseGate()
     const responses = await Promise.all(requests)
-    expect(responses.map((response) => response.status)).toEqual([200, 200, 200])
+    expect(responses.map((response) => response.status)).toEqual([
+      200, 200, 200,
+    ])
     expect(events).toHaveLength(6)
     for (let index = 0; index < events.length; index += 2) {
       const label = events[index]!.slice("start:".length)
