@@ -16,3 +16,14 @@
 *.md text eol=lf
 *.sh text eol=lf
 *.plist text eol=lf
+
+# Git hooks run under sh on every OS, including Git for Windows; a CRLF in a
+# hook makes sh read `node\r` as the command name.
+.husky/** text eol=lf
+.nvmrc text eol=lf
+.node-version text eol=lf
+
+# Windows-only launch scripts keep CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
