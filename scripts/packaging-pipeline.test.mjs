@@ -444,3 +444,14 @@ test("installer file names contain no spaces", () => {
   }
   assert.doesNotMatch(manifest.build.productName, /\s/, "productName is part of most artifact names")
 })
+
+// fpm-built rpms own their files but not their directories unless told to, so
+// `dnf remove` left an empty /opt/BetterC0de tree behind (found by the
+// installer smoke's Fedora container).
+test("the rpm owns its install directory so removal deletes it", () => {
+  const manifest = readJson("package.json")
+  const fpm = manifest.build.rpm?.fpm ?? []
+  const index = fpm.indexOf("--directories")
+  assert.notEqual(index, -1, "build.rpm.fpm must pass --directories")
+  assert.equal(fpm[index + 1], `/opt/${manifest.build.productName}`)
+})

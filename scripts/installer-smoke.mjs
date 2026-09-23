@@ -447,7 +447,7 @@ function smokeRpm(rpm) {
     `missing="$(ldd "${executable}" | grep 'not found' || true)"`,
     'if [ -n "$missing" ]; then echo "Unresolved libraries:"; echo "$missing"; exit 1; fi',
     `dnf remove -y -q ${pkg}`,
-    `test ! -e "${path.posix.dirname(executable)}"`,
+    `if [ -e "${path.posix.dirname(executable)}" ]; then echo "Left behind after removal:"; find "${path.posix.dirname(executable)}" | head -50; exit 1; fi`,
   ].join("\n")
   run("docker", [
     "run",

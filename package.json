@@ -359,6 +359,12 @@
         "!**/node_modules/@anthropic-ai/claude-agent-sdk-linux-*-musl{,/**/*}"
       ]
     },
+    "rpm": {
+      "fpm": [
+        "--directories",
+        "/opt/BetterC0de"
+      ]
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
