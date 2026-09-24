@@ -526,8 +526,10 @@ The renderer's backend access layer:
 - `npm run package:dir:win` / `package:dir:mac` / `package:dir:linux` — electron-builder dir builds
 - `npm run package` — full Windows NSIS installer
 
-- `npm run mobile:start` — start the Expo development server for the native companion app
-- `npm run mobile:android` / `npm run mobile:ios` — open the mobile app on a device or simulator
+- `npm run mobile:android` / `npm run mobile:ios` — generate the native project, then build and start a development build on a device, emulator or simulator
+- `npm run mobile:start` — start Metro for an already installed development build
+- `npm run mobile:check` — check the app config, native dependencies and the Android/iOS/web bundles
+- `npm run mobile:prebuild` / `npm run mobile:icons` — regenerate the native projects or the icons
 - `npm run typecheck:mobile` / `npm run test:mobile` — verify the React Native workspace
 
 ## Codex CLI integration

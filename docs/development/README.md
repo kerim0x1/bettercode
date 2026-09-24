@@ -62,7 +62,7 @@ The source gate checks workspace versions, builds the backend and shared schema,
 | versions, format, lint | `check:versions`, `format:check`, `lint` |
 | typecheck | schema/backend build, then UI, backend, shell, mobile and demo type-checks |
 | test | packaging (`node:test`), UI, backend and mobile suites |
-| build | production build with bundle budgets, backend start-up/memory budgets (`perf:backend`), mobile web export |
+| build | production build with bundle budgets, backend start-up/memory budgets (`perf:backend`), mobile app config, native-dependency and bundle checks (`mobile:check`) |
 | package | Electron native rebuild, unpacked package, package size budgets |
 | smoke | launches the packaged app: backend health, renderer mounted, no fatal diagnostics |
 | installers | installers built from that exact app, plus checksums |
@@ -114,7 +114,7 @@ Manual **Send Report** remains available. The [product guide](../../PRODUCT_GUID
 
 ## Mobile and optional demos
 
-See [the mobile README](../../apps/mobile/README.md) for Expo development. The exported app configuration is not bound to the original maintainer's Expo account or EAS project. Link your own project before using EAS cloud builds and use your own bundle identifiers for distribution.
+See [the mobile README](../../apps/mobile/README.md) for Expo development. The app configuration names the published app's Expo project; forks set `BETTERC0DE_EXPO_OWNER` and `BETTERC0DE_EAS_PROJECT_ID` for their own project and use their own bundle identifiers for distribution.
 
 The `remotion/` source is intentionally kept local and ignored by Git. The tracked Remotion commands and typecheck helper remain in `package.json` and `scripts/` for maintainers who keep that optional project locally. Its dependencies have their own licensing requirements; see [third-party notices](../../THIRD_PARTY_NOTICES.md).
 

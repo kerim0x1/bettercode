@@ -12,11 +12,15 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 - **macOS update metadata lists both architectures.** `latest-mac.yml` was taken from whichever Mac job uploaded last; it is now merged from both, and every entry is checked against the published file's sha512 before release.
 - **Start-up failures explain themselves.** When the background service cannot start, the dialog shows the lines the service printed and what to do (reinstall the matching build, rebuild native modules, free disk space, fix folder permissions), instead of only "Failed to start backend: Node backend exited (code=1 signal=none)".
 - **Building from a symlinked directory.** `npm run build:backend` refused a checkout reached through a symlink, such as one under macOS `/tmp` or a linked home directory. Symlinks inside the workspace are still refused.
+- **Phone app dependencies.** Two versions of `react-native-gesture-handler` (2.31 and 3.1) were installed side by side, so the app linked one native version and could bundle the JavaScript of the other. The monorepo now resolves a single 2.31.x.
+- **Remote access documentation.** It described a separate switch for file access, which does not exist: a full session can read and change files, and only the terminal needs **Allow terminal from remote devices**. `.env.example` listed the BetterC0de provider's server login under remote access.
 - **Windows installer checksum.** The installer is named `BetterC0de-Setup-<version>.exe` locally, in the release and in the checksum file. The checksum file used to list a name with spaces that did not exist in the release.
 
 ### Added
 
 - `npm run release:check`: one command from a clean `npm ci` through lint, type-checks, all test suites, the production build, packaging, a launch of the packaged app, the installers, and an install → launch → uninstall test of the installers on a clean machine.
+- `npm run mobile:check`, part of the `release:check` build step: checks the phone app's configuration (identifiers, versions, network policy, Android ABIs), that its native dependencies match the Expo SDK without duplicates, and that the Android, iOS and web bundles build.
+- The phone app has its own icons and splash screen, rendered from the desktop logo (`npm run mobile:icons`).
 - CI runs `release:check` on Linux x64, Windows x64, macOS arm64 and macOS x64 for every push and pull request, and the source checks on Node 24.
 - The Linux `.deb` is installed with apt and started with the Chromium sandbox on in CI; the `.rpm` is installed in a clean Fedora container.
 - A pre-push hook runs `release:check` before a release tag is pushed.
@@ -28,6 +32,9 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 - Releases carry a single `SHA256SUMS.txt` instead of one checksum file per platform.
 - Releases are unsigned by decision; the Release workflow no longer passes signing secrets.
 - Node.js 22.23.2 is the pinned build toolchain (`.nvmrc`). Supported for development: Node 22.15+ and Node 24.
+- The phone app (BetterC0de Remote) carries the desktop's version and is released with it. iOS builds are numbered `X.Y.Z`, because the App Store accepts no prerelease suffix; Android builds get a version code that grows with every release, prereleases included.
+- The phone app's native projects are generated from `apps/mobile/app.config.ts` with the SDK 56 template pinned (`npm run mobile:prebuild`); `expo` 56.0.16 bundles the next SDK's template. Android release builds must be signed with a key from the environment and fail without one, instead of falling back to the template's debug key.
+- The iOS app's network policy names what it needs, local networking and Tailscale `ts.net` host names, instead of allowing arbitrary plain-HTTP loads, a setting iOS ignores when local networking is also allowed. Its permission prompts are in English.
 - A local `npm run build:mac` builds only for the architecture of the Mac it runs on, like the CI jobs. It used to also emit the other architecture's file names from the same app.
 
 ## [0.1.0-beta.2] - 2026-09-22

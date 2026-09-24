@@ -47,16 +47,30 @@ provides touch-native screens for:
 - project browsing plus chat-scoped files, text previews, diffs, and checkpoints;
 - host health, session identity, expiry, and self-revocation.
 
-Start it from the repository root with `npm run mobile:start`, then open it in
-Expo Go or a development build. Use **Pairing-QR scannen** inside the app; the
-existing desktop QR works for both the browser and native client. Manual entry
-also accepts the LAN host and short code separately.
+Build and start a development build from the repository root (see
+[apps/mobile/README.md](../apps/mobile/README.md)).
+Use **Scan QR** inside the app; the existing desktop QR works for both the
+browser and native client. **Enter manually** also accepts the LAN host and
+short code separately.
 
 The native client exchanges the one-time code at the dedicated mobile pairing
 endpoint. The returned opaque bearer is stored with iOS Keychain/Android
 Keystore via Expo SecureStore and sent only to the paired host. It authenticates
 both HTTP requests and the in-band WebSocket handshake. Browser pairing remains
 cookie-only and never exposes its session token to page JavaScript.
+
+### Plain HTTP on the phone
+
+Direct connections on a private network or tailnet use plain HTTP (see
+[Choosing an endpoint](#choosing-an-endpoint)), so the app has to allow it:
+
+| Platform | What the app allows | Why |
+| --- | --- | --- |
+| iOS | Plain HTTP to IP addresses, `.local` and single-label host names (`NSAllowsLocalNetworking`), and to Tailscale MagicDNS names under `ts.net`. HTTPS everywhere. | iOS App Transport Security does not apply to IP addresses, and the local-networking key covers local names. Other plain-HTTP host names, such as `desktop.fritz.box`, are refused by iOS; use the desktop's IP address or HTTPS instead. |
+| Android | Plain HTTP to any address (`usesCleartextTraffic`). | Android's network security configuration can allow host names but not address ranges, and the desktop's LAN or Tailscale IP is not known when the app is built. |
+
+The app itself only ever connects to the desktop it was paired with, using the
+addresses that desktop advertised.
 
 ## Choosing an endpoint
 
@@ -191,17 +205,19 @@ The **Paired devices** list shows each browser label and last activity. Use the
 trash action to revoke one device, or **Revoke all** to invalidate all remote
 sessions. Disabling Remote Access revokes every paired device at once and
 closes network listening after the backend restart; re-enabling it later
-means pairing each device again. Terminal and file access for paired devices
-is a separate switch, and a paired device can change neither switch, nor any
-setting that makes the desktop run something (MCP servers, hooks, skills,
-pipelines, rules, guardrails, provider credentials, workspace auto-trust,
-backend logging): those return 403 to a remote session.
+means pairing each device again. A terminal for paired devices is a separate
+switch, **Allow terminal from remote devices**, which is off by default. A
+paired device can change neither that switch nor any setting that makes the
+desktop run something (MCP servers, hooks, skills, pipelines, rules,
+guardrails, provider credentials, workspace auto-trust, backend logging):
+those return 403 to a remote session.
 
 A **full** session (HTTPS, loopback, private network, tailnet) can operate
-the chats and workspaces the host exposes, including terminal and file
-operations. An **opt-in public plaintext** session cannot; it is
-monitoring-only. Pair only devices you control, revoke
-lost devices promptly, and do not post pairing links in shared channels.
+the chats and workspaces the host exposes, including reading and changing
+files, and a terminal when the switch above is on. There is no separate switch
+for file access. An **opt-in public plaintext** session cannot do any of this;
+it is monitoring-only. Pair only devices you control, revoke lost devices
+promptly, and do not post pairing links in shared channels.
 
 ## Troubleshooting
 
