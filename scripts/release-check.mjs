@@ -386,7 +386,7 @@ function makeSteps(options) {
         }
       },
       test: () => {
-        for (const script of ["test:packaging", "test", "test:backend", "test:mobile"]) {
+        for (const script of ["test:packaging", "test", "test:backend", "test:mobile", "test:e2e:remote"]) {
           npm(["run", script])
         }
       },

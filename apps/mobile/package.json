@@ -14,10 +14,11 @@
     "export:web": "expo export --platform web --output-dir dist/web",
     "build:ios:dev": "eas build --platform ios --profile development",
     "build:ios:preview": "eas build --platform ios --profile preview",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.config.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.config.json && tsc --noEmit -p tsconfig.e2e.json",
     "test": "npm run test:unit && npm run test:components",
     "test:unit": "vitest run --config vitest.config.ts",
     "test:components": "jest --config jest.config.cjs",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "eas-build-post-install": "npm run build --workspace @betterc0de/schema"
   },
   "dependencies": {

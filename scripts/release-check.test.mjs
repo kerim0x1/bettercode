@@ -44,6 +44,7 @@ test("every npm script the release check calls exists", () => {
   assert.deepEqual(missing, [])
   assert.ok(called.has("format:check") && called.has("typecheck:shell") && called.has("test:mobile"))
   assert.ok(called.has("mobile:check"), "the build step checks the mobile app's config and bundles")
+  assert.ok(called.has("test:e2e:remote"), "the test step runs the phone app's client against a real backend")
 })
 
 test(".nvmrc pins an exact Node version inside the engines range", () => {
