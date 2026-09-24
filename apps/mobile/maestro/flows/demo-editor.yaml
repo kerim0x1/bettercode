@@ -1,0 +1,54 @@
+# The code editor in the demo: open a file, see it in the editor (CodeMirror
+# in the app's WebView), type in it and save. The only check of the
+# WebView and the editor's page on a device; the screen tests stand in for
+# the page.
+appId: com.betterc0de.remote
+name: The editor shows a file, and saves an edit in the demo
+tags:
+  - demo
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: pair-screen
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: pair-demo
+    direction: DOWN
+- tapOn:
+    id: pair-demo
+- extendedWaitUntil:
+    visible:
+      id: chats-screen
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      id: thread-row-demo-dark-mode
+    direction: DOWN
+- tapOn:
+    id: thread-row-demo-dark-mode
+- tapOn:
+    id: chat-files
+- tapOn:
+    id: file-row-src
+- tapOn:
+    id: file-row-theme\.ts
+- tapOn:
+    id: file-edit
+
+# CodeMirror splits a line into highlighted pieces; one is the colour.
+- extendedWaitUntil:
+    visible: '.*#0a0a0a.*'
+    timeout: 30000
+- tapOn: '.*#0a0a0a.*'
+- inputText: "1"
+- extendedWaitUntil:
+    visible: ".*UNSAVED.*"
+    timeout: 10000
+- tapOn:
+    id: editor-save
+- extendedWaitUntil:
+    notVisible: ".*UNSAVED.*"
+    timeout: 20000
