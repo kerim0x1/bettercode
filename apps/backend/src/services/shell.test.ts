@@ -219,6 +219,10 @@ describe("shell command argument delivery", () => {
     expect(JSON.parse(result.stdout)).toEqual(["-m", "fix: thing", "plain"])
   }, 30_000)
 
+  // Windows PowerShell starts slowly on a busy CI runner (6-8 s beside the
+  // rest of the suite). The command's own timeout must end before the
+  // test's, so a slow start fails as a timeout with the shell ended, not as
+  // an abandoned test whose shell still holds the temporary folder.
   it.runIf(process.platform === "win32")(
     "delivers a quoted argument intact through PowerShell",
     async () => {
@@ -227,13 +231,14 @@ describe("shell command argument delivery", () => {
         command: `node "${script}" -m "fix: thing" plain`,
         cwd: path.dirname(script),
         shell: "powershell",
-        timeoutMs: 30_000,
+        timeoutMs: 60_000,
       })
 
+      expect(result.timedOut).toBe(false)
       expect(result.success).toBe(true)
       expect(JSON.parse(result.stdout)).toEqual(["-m", "fix: thing", "plain"])
     },
-    30_000
+    90_000
   )
 
   // A child that reads stdin must see EOF immediately instead of blocking on
