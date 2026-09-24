@@ -37,6 +37,8 @@ export function terminalClosedMessage(reason: TerminalClosedReason): string {
       return `The desktop no longer allows terminals from paired devices (${TERMINAL_SETTING}).`
     case "detached":
       return "The terminal ended: the phone was away from it for 15 minutes."
+    case "ended_on_desktop":
+      return "The terminal was ended on the desktop."
     default:
       return "The terminal was closed."
   }
