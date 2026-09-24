@@ -848,7 +848,9 @@ function targetMatchesGlobs(
 function compileRuleGlob(rawPattern: string): (candidate: string) => boolean {
   const pattern = normalizeGlob(rawPattern).replace(/^\/+/, "")
   const alternatives = expandGlobBraces(pattern).map((alternative) =>
-    compileBoundedGlob(alternative, { caseInsensitive: process.platform === "win32" })
+    compileBoundedGlob(alternative, {
+      caseInsensitive: process.platform === "win32",
+    })
   )
   return (candidate) => alternatives.some((matches) => matches(candidate))
 }

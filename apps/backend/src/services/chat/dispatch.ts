@@ -1,4 +1,7 @@
-import { BROWSER_ELEMENT_ATTACHMENT_TYPE, type ChatSendBody } from "@betterc0de/schema"
+import {
+  BROWSER_ELEMENT_ATTACHMENT_TYPE,
+  type ChatSendBody,
+} from "@betterc0de/schema"
 import type { ChatSendResponse } from "@betterc0de/schema/http-contracts"
 import type { AppState } from "../../appState"
 import { HttpError } from "../../errors"
@@ -308,7 +311,9 @@ export async function dispatchChatTurn(
   const body = prepared
   // Element references are persisted with the message; their text is already
   // in the prompt. Never hand their metadata to a provider as a file.
-  const providerAttachments = body.attachments.filter(attachment => attachment.type !== BROWSER_ELEMENT_ATTACHMENT_TYPE)
+  const providerAttachments = body.attachments.filter(
+    (attachment) => attachment.type !== BROWSER_ELEMENT_ATTACHMENT_TYPE
+  )
   const remoteProviderReservation = reserveRemoteTurn()
   let remoteProviderReservationTransferred = false
   try {
@@ -466,7 +471,8 @@ export async function dispatchChatTurn(
           }
 
           goalHooks?.guard()
-          if (!goalHooks) threadGoals.get(state)?.pauseForMessage(body.thread_id)
+          if (!goalHooks)
+            threadGoals.get(state)?.pauseForMessage(body.thread_id)
           const durableDispatch = reserveDurableChatDispatch(
             state,
             body,
@@ -481,12 +487,19 @@ export async function dispatchChatTurn(
             persistedUserMessageId = persistDispatchUserMessage(state, body)
           }
           const dispatchMessageId = persistedUserMessageId
-          const providerHandoff = await prepareProviderHandoff(state, body, effectiveProviderKind, dispatchMessageId)
-          const automaticCompaction = providerHandoff ? null : await compactAutomaticallyBeforeSend(
+          const providerHandoff = await prepareProviderHandoff(
             state,
             body,
+            effectiveProviderKind,
             dispatchMessageId
           )
+          const automaticCompaction = providerHandoff
+            ? null
+            : await compactAutomaticallyBeforeSend(
+                state,
+                body,
+                dispatchMessageId
+              )
           const providerHistory = providerHistoryForDispatch(
             state,
             body,
@@ -494,7 +507,11 @@ export async function dispatchChatTurn(
           )
           setSessionPermission(body.thread_id, body.permission_level)
           const orchestrated = state.orchestrator
-            ? await state.orchestrator.prepareForTurn({ ...body, provider_instance_id: hubProviderInstanceId ?? body.provider_instance_id })
+            ? await state.orchestrator.prepareForTurn({
+                ...body,
+                provider_instance_id:
+                  hubProviderInstanceId ?? body.provider_instance_id,
+              })
             : body
           goalHooks?.guard()
           state.orchestrator?.assertDispatchAllowed(body.thread_id)
@@ -557,7 +574,10 @@ export async function dispatchChatTurn(
                   },
                 }
               )
-              goalHooks?.started({ turnId: turn.turnId, settled: turn.settled ?? turn.completion })
+              goalHooks?.started({
+                turnId: turn.turnId,
+                settled: turn.settled ?? turn.completion,
+              })
               const ownerAttachment =
                 remoteProviderReservation && state.remoteProviderTurns
                   ? state.remoteProviderTurns.attach(
@@ -755,10 +775,7 @@ export async function dispatchChatTurn(
           throw err
         } finally {
           if (sharedToken && !tokenTransferred) {
-            state.threadTurnCoordinator.releaseTurn(
-              body.thread_id,
-              sharedToken
-            )
+            state.threadTurnCoordinator.releaseTurn(body.thread_id, sharedToken)
           }
         }
       }
@@ -768,9 +785,9 @@ export async function dispatchChatTurn(
         return await response
       } finally {
         if (
-          admission
-          && admissionKey
-          && admissions.get(admissionKey) === admission
+          admission &&
+          admissionKey &&
+          admissions.get(admissionKey) === admission
         ) {
           admissions.delete(admissionKey)
         }

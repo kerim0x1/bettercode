@@ -33,7 +33,8 @@ function buildHookEnv(event: RuntimeHook["event"], payload: HookPayload) {
     BETTERC0DE_THREAD_ID: payload.threadId ?? payload.thread_id,
     BETTERC0DE_PROJECT_PATH: payload.projectPath ?? payload.project_path,
     BETTERC0DE_CWD: payload.cwd,
-    BETTERC0DE_FILE_PATH: payload.path ?? payload.filePath ?? payload.relativePath,
+    BETTERC0DE_FILE_PATH:
+      payload.path ?? payload.filePath ?? payload.relativePath,
     BETTERC0DE_RELATIVE_PATH: payload.relativePath,
     BETTERC0DE_MESSAGE: payload.message,
     BETTERC0DE_RESPONSE: payload.response,
@@ -74,13 +75,12 @@ async function executeSingleHook(
     return result
   }
 
-  const error = truncate(result.stderr || result.stdout || `Hook exited with code ${result.exitCode ?? 1}`)
-  await updateRuntimeHookRun(
-    hook.id,
-    "error",
-    result.exitCode ?? 1,
-    error
+  const error = truncate(
+    result.stderr ||
+      result.stdout ||
+      `Hook exited with code ${result.exitCode ?? 1}`
   )
+  await updateRuntimeHookRun(hook.id, "error", result.exitCode ?? 1, error)
 
   if (blocking) {
     throw new Error(`Hook "${hook.command}" failed: ${error}`)
@@ -133,14 +133,29 @@ export function useRuntimeHookBridge() {
       void queueRuntimeHooks("on_commit", detail)
     }
 
-    window.addEventListener("betterc0de:response-complete", onResponse as EventListener)
-    window.addEventListener("betterc0de:file-changed", onFileChange as EventListener)
+    window.addEventListener(
+      "betterc0de:response-complete",
+      onResponse as EventListener
+    )
+    window.addEventListener(
+      "betterc0de:file-changed",
+      onFileChange as EventListener
+    )
     window.addEventListener("betterc0de:git-commit", onCommit as EventListener)
 
     return () => {
-      window.removeEventListener("betterc0de:response-complete", onResponse as EventListener)
-      window.removeEventListener("betterc0de:file-changed", onFileChange as EventListener)
-      window.removeEventListener("betterc0de:git-commit", onCommit as EventListener)
+      window.removeEventListener(
+        "betterc0de:response-complete",
+        onResponse as EventListener
+      )
+      window.removeEventListener(
+        "betterc0de:file-changed",
+        onFileChange as EventListener
+      )
+      window.removeEventListener(
+        "betterc0de:git-commit",
+        onCommit as EventListener
+      )
     }
   }, [])
 }
