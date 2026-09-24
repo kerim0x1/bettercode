@@ -73,6 +73,18 @@ test("CI and release run release:check on Linux, Windows and both Mac architectu
   }
 })
 
+test("macOS legs turn off Spotlight before release:check builds the DMG", () => {
+  for (const name of ["ci.yml", "release.yml"]) {
+    const workflow = YAML.parse(fs.readFileSync(path.join(root, ".github", "workflows", name), "utf8"))
+    const steps = workflow.jobs["release-check"].steps
+    const spotlight = steps.findIndex((step) => step.run === "sudo mdutil -a -i off")
+    assert.notEqual(spotlight, -1, `${name} turns off Spotlight`)
+    assert.equal(steps[spotlight].if, "runner.os == 'macOS'", name)
+    const check = steps.findIndex((step) => String(step.run ?? "").startsWith("npm run release:check"))
+    assert.ok(spotlight < check, `${name} turns it off before release:check`)
+  }
+})
+
 test("publishing waits for every platform and the Node compatibility leg", () => {
   const release = YAML.parse(fs.readFileSync(path.join(root, ".github", "workflows", "release.yml"), "utf8"))
   assert.deepEqual(release.jobs.publish.needs.sort(), ["node-compat", "release-check", "tag"])

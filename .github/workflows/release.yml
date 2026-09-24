@@ -88,6 +88,14 @@ jobs:
       - name: Prepare
         uses: ./.github/actions/prepare
 
+      # The DMG is laid out on a mounted disk image, which is then ejected.
+      # While Spotlight indexes the freshly mounted volume, the eject fails
+      # ("hdiutil: couldn't eject disk4 - Resource busy") and with it the
+      # build. A CI machine needs no search index.
+      - name: Turn off Spotlight indexing
+        if: runner.os == 'macOS'
+        run: sudo mdutil -a -i off
+
       - name: release:check
         # The phone app is built by its own jobs.
         run: npm run release:check -- --arch ${{ matrix.arch }} --mobile none
