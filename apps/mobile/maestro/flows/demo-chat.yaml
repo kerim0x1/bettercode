@@ -41,13 +41,26 @@ tags:
 # the keyboard (where there is one: CI's Android emulator shows none).
 - tapOn:
     id: chat-send
-# The keyboard stays open after sending. While it is up, the chat's first
-# tap only closes it (React Native's default for a list), on both platforms,
-# and on iOS it also covers the approval card, whose buttons Maestro still
-# counts as visible (the keyboard is another window). So a tap on the sent
-# message closes the keyboard first; the message itself does nothing on a
-# tap, so without a keyboard (CI's Android emulator) the tap is a no-op.
-- tapOn: Draft the release notes
+# The keyboard stays open after sending, and while it is up the chat's first
+# tap only closes it (React Native's default for a list). So it is closed
+# first, as a user would:
+# - on Android with the back key (hideKeyboard does nothing where no
+#   keyboard shows, as on CI's emulator). On a small screen the sent message
+#   has scrolled away by then, so it cannot be tapped instead;
+# - on iOS, which offers no key that hides this multiline input's keyboard,
+#   by a tap on the sent message, which does nothing else. The keyboard also
+#   covers the approval card there, whose buttons Maestro still counts as
+#   visible (the keyboard is another window).
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - hideKeyboard
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: Draft the release notes
 - scrollUntilVisible:
     element:
       id: request-approve
