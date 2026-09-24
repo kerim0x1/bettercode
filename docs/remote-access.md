@@ -56,6 +56,10 @@ provides touch-native screens for:
   `threads.rename` feature and sent to clients as a `thread.metadata`
   frame), and deleting one, which also removes its worktree on the desktop,
   with any changes there that are not committed;
+- starting a chat in its own git worktree, on a new branch from a branch the
+  phone lists, and restoring a checkpoint: the chat and the whole project
+  folder return to the end of an earlier turn, after the desktop's warning
+  of what that discards;
 - project browsing plus chat-scoped files, text previews, diffs, and checkpoints;
 - host health, session identity, expiry, and self-revocation.
 

@@ -104,6 +104,12 @@ against sample chats and files (see [Demo mode](#demo-mode)).
   own copy keeps the new name. Desktops without the `threads.rename` feature
   get no Rename: their next write would undo it. Deleting asks first, in the
   desktop's words, and says when the chat's worktree goes with it.
+- **New worktree chat** (Projects) lists the project's branches and starts the
+  chat in its own git worktree from the one chosen; the desktop records the
+  worktree on the chat. Under a reply whose turn has a checkpoint
+  (`checkpoint.captured`, ready), **Restore checkpoint** returns the chat and
+  the project folder to it, after the desktop's warning
+  (`@betterc0de/schema/chat-controls`), and loads the chat again.
 - `queue-store.ts` and `queue-runner.ts` queue messages written while the agent
   works, with the desktop's rules from `@betterc0de/schema/message-queue` (30
   per chat, one at a time, paused after a failure or a restart). The queue and
