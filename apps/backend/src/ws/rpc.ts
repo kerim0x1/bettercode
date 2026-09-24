@@ -157,7 +157,9 @@ export function createWsRpcHandler(
               port: config.port,
               // The host data directory is a desktop-only detail; a paired
               // device has no use for it and must not learn host paths.
-              ...(principal.kind === "local" ? { dataDir: config.dataDir } : {}),
+              ...(principal.kind === "local"
+                ? { dataDir: config.dataDir }
+                : {}),
               providerInstances: await state.providerHub.listInstances(),
             }
 

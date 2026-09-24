@@ -34,8 +34,8 @@ export function remoteTerminalRefusal(
     }
   }
   if (
-    identity.session?.accessLevel !== "full"
-    || requiresReadOnlyRemoteAccess(c, config, identity)
+    identity.session?.accessLevel !== "full" ||
+    requiresReadOnlyRemoteAccess(c, config, identity)
   ) {
     return {
       error:
