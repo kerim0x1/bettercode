@@ -26,7 +26,8 @@ function openDatabase(dbPath: string): Db {
 }
 afterEach(() => {
   for (const db of databases.splice(0)) db.close()
-  for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true })
+  for (const directory of directories.splice(0))
+    fs.rmSync(directory, { recursive: true, force: true })
 })
 
 function tmpDbPath(label: string): string {
@@ -39,12 +40,22 @@ describe("runMigrations", () => {
   it("refuses a newer database before applying any pending migrations", () => {
     const db = openDatabase(tmpDbPath("future-version"))
     runMigrations(db, MIGRATIONS.slice(0, 1))
-    db.prepare("INSERT INTO schema_migrations VALUES (?, 'future-version', ?)")
-      .run(Math.max(...MIGRATIONS.map(migration => migration.version)) + 1, "2026-09-20T00:00:00.000Z")
-    const before = db.prepare("SELECT name, sql FROM sqlite_master ORDER BY name").all()
+    db.prepare(
+      "INSERT INTO schema_migrations VALUES (?, 'future-version', ?)"
+    ).run(
+      Math.max(...MIGRATIONS.map((migration) => migration.version)) + 1,
+      "2026-09-20T00:00:00.000Z"
+    )
+    const before = db
+      .prepare("SELECT name, sql FROM sqlite_master ORDER BY name")
+      .all()
     expect(() => runMigrations(db)).toThrow(/newer database schema/)
-    expect(db.prepare("SELECT name, sql FROM sqlite_master ORDER BY name").all()).toEqual(before)
-    expect(db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: 2 })
+    expect(
+      db.prepare("SELECT name, sql FROM sqlite_master ORDER BY name").all()
+    ).toEqual(before)
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()
+    ).toEqual({ count: 2 })
   })
 
   it("creates every expected table on a fresh database", () => {
@@ -96,7 +107,10 @@ describe("runMigrations", () => {
 
   it("adds durable agent grants and explicit workspace trust on upgrade", () => {
     const db = openDatabase(tmpDbPath("agent-permissions"))
-    runMigrations(db, MIGRATIONS.filter((migration) => migration.version < 45))
+    runMigrations(
+      db,
+      MIGRATIONS.filter((migration) => migration.version < 45)
+    )
 
     expect(
       db
@@ -109,7 +123,8 @@ describe("runMigrations", () => {
     runMigrations(db)
 
     const now = "2026-07-24T00:00:00.000Z"
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO agent_permission_grants
         (id, destination, workspace_path, tool_name, path_scope, behavior,
          created_at, updated_at)
@@ -117,12 +132,15 @@ describe("runMigrations", () => {
         ('grant-user', 'user', '', '*', '.', 'ask', ?, ?),
         ('grant-project', 'workspace', '/workspace', 'bash', 'scripts',
          'deny', ?, ?)
-    `).run(now, now, now, now)
-    db.prepare(`
+    `
+    ).run(now, now, now, now)
+    db.prepare(
+      `
       INSERT INTO agent_workspace_trust
         (workspace_path, state, created_at, updated_at)
       VALUES ('/workspace', 'untrusted', ?, ?)
-    `).run(now, now)
+    `
+    ).run(now, now)
 
     expect(
       db
@@ -143,12 +161,16 @@ describe("runMigrations", () => {
     ).toEqual({ state: "untrusted" })
 
     expect(() =>
-      db.prepare(`
+      db
+        .prepare(
+          `
         INSERT INTO agent_permission_grants
           (id, destination, workspace_path, tool_name, path_scope, behavior,
            created_at, updated_at)
         VALUES ('invalid', 'user', '/must-be-empty', '*', '.', 'allow', ?, ?)
-      `).run(now, now)
+      `
+        )
+        .run(now, now)
     ).toThrow()
 
     db.close()
@@ -156,8 +178,12 @@ describe("runMigrations", () => {
 
   it("seeds existing provider audit events as already projected", () => {
     const db = openDatabase(tmpDbPath("provider-projection-seed"))
-    runMigrations(db, MIGRATIONS.filter((migration) => migration.version < 25))
-    db.prepare(`
+    runMigrations(
+      db,
+      MIGRATIONS.filter((migration) => migration.version < 25)
+    )
+    db.prepare(
+      `
       INSERT INTO orchestration_events
         (event_id, aggregate_kind, stream_id, stream_version, event_type,
          occurred_at, command_id, causation_event_id, correlation_id,
@@ -169,54 +195,70 @@ describe("runMigrations", () => {
         ('thread-event', 'thread', 'thread-1', 1,
          'ThreadCreated', '2026-01-01T00:00:00.000Z',
          NULL, NULL, NULL, 'user', '{}', '{}')
-    `).run()
+    `
+    ).run()
 
     runMigrations(db)
 
     const receipts = db
-      .prepare(`
+      .prepare(
+        `
         SELECT e.event_id, r.status
         FROM provider_runtime_projection_receipts r
         JOIN orchestration_events e ON e.sequence = r.event_sequence
         ORDER BY e.sequence
-      `)
+      `
+      )
       .all() as Array<{ event_id: string; status: string }>
     expect(receipts).toEqual([
       { event_id: "provider-event", status: "projected" },
     ])
     expect(
-      db.prepare(`
+      db
+        .prepare(
+          `
         SELECT last_sequence
         FROM orchestration_projection_cursors
         WHERE projection_name = 'durable_api'
-      `).get()
+      `
+        )
+        .get()
     ).toEqual({ last_sequence: 2 })
     db.close()
   })
 
   it("removes ambiguous pre-admission plan links when adding accepted turn identity", () => {
     const db = openDatabase(tmpDbPath("accepted-plan-turn"))
-    runMigrations(db, MIGRATIONS.filter((migration) => migration.version < 27))
+    runMigrations(
+      db,
+      MIGRATIONS.filter((migration) => migration.version < 27)
+    )
     const now = "2026-07-11T00:00:00.000Z"
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO projection_threads
         (thread_id, project_id, created_at, updated_at)
       VALUES
         ('source-thread', 'project-1', ?, ?),
         ('implementation-thread', 'project-1', ?, ?)
-    `).run(now, now, now, now)
-    db.prepare(`
+    `
+    ).run(now, now, now, now)
+    db.prepare(
+      `
       INSERT INTO pending_source_proposed_plan_implementations
         (implementation_thread_id, source_thread_id, source_plan_id,
          provider_kind, provider_instance_id, created_at, updated_at)
       VALUES ('implementation-thread', 'source-thread', 'plan-1',
               'claude', 'claude-main', ?, ?)
-    `).run(now, now)
+    `
+    ).run(now, now)
 
     runMigrations(db)
 
     const columns = db
-      .prepare("PRAGMA table_info(pending_source_proposed_plan_implementations)")
+      .prepare(
+        "PRAGMA table_info(pending_source_proposed_plan_implementations)"
+      )
       .all() as Array<{ name: string }>
     expect(columns.map((column) => column.name)).toContain("accepted_turn_id")
     expect(
@@ -231,7 +273,10 @@ describe("runMigrations", () => {
 
   it("upgrades a version-27 database with the constrained chat dispatch outbox", () => {
     const db = openDatabase(tmpDbPath("chat-dispatch-outbox"))
-    runMigrations(db, MIGRATIONS.filter((migration) => migration.version < 28))
+    runMigrations(
+      db,
+      MIGRATIONS.filter((migration) => migration.version < 28)
+    )
     expect(
       db
         .prepare(
@@ -242,7 +287,9 @@ describe("runMigrations", () => {
 
     runMigrations(db)
 
-    const columns = db.prepare("PRAGMA table_info(chat_dispatches)").all() as Array<{
+    const columns = db
+      .prepare("PRAGMA table_info(chat_dispatches)")
+      .all() as Array<{
       name: string
     }>
     expect(columns.map((column) => column.name)).toEqual([
@@ -263,7 +310,9 @@ describe("runMigrations", () => {
       "failed_at",
       "recovery_completed_at",
     ])
-    const indexes = db.prepare("PRAGMA index_list(chat_dispatches)").all() as Array<{
+    const indexes = db
+      .prepare("PRAGMA index_list(chat_dispatches)")
+      .all() as Array<{
       name: string
     }>
     expect(indexes.map((index) => index.name)).toEqual(
@@ -272,7 +321,9 @@ describe("runMigrations", () => {
         "idx_chat_dispatches_recovery",
       ])
     )
-    const foreignKeys = db.prepare("PRAGMA foreign_key_list(chat_dispatches)").all() as Array<{
+    const foreignKeys = db
+      .prepare("PRAGMA foreign_key_list(chat_dispatches)")
+      .all() as Array<{
       from: string
       table: string
       on_delete: string
@@ -286,32 +337,45 @@ describe("runMigrations", () => {
     ])
 
     const now = "2026-07-11T00:00:00.000Z"
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO projection_threads
         (thread_id, project_id, created_at, updated_at)
       VALUES ('thread-1', 'project-1', ?, ?)
-    `).run(now, now)
+    `
+    ).run(now, now)
     const insert = db.prepare(`
       INSERT INTO chat_dispatches
         (dispatch_id, thread_id, message_id, provider_kind,
          request_fingerprint, status, created_at, updated_at)
       VALUES (?, 'thread-1', ?, 'claude', 'fingerprint', ?, ?, ?)
     `)
-    expect(() => insert.run("message-reverted", "message-reverted", "reverted", now, now)).not.toThrow()
-    expect(() => insert.run("message-invalid", "message-invalid", "invalid", now, now)).toThrow()
-    expect(() => insert.run("message-duplicate", "message-reverted", "pending", now, now)).toThrow()
+    expect(() =>
+      insert.run("message-reverted", "message-reverted", "reverted", now, now)
+    ).not.toThrow()
+    expect(() =>
+      insert.run("message-invalid", "message-invalid", "invalid", now, now)
+    ).toThrow()
+    expect(() =>
+      insert.run("message-duplicate", "message-reverted", "pending", now, now)
+    ).toThrow()
     db.close()
   })
 
   it("upgrades an applied version-28 outbox without losing lifecycle rows", () => {
     const db = openDatabase(tmpDbPath("chat-dispatch-terminal-receipts"))
-    runMigrations(db, MIGRATIONS.filter((migration) => migration.version <= 28))
+    runMigrations(
+      db,
+      MIGRATIONS.filter((migration) => migration.version <= 28)
+    )
     const now = "2026-07-11T00:00:00.000Z"
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO projection_threads
         (thread_id, project_id, created_at, updated_at)
       VALUES ('thread-v28', 'project-v28', ?, ?)
-    `).run(now, now)
+    `
+    ).run(now, now)
     const insertV28 = db.prepare(`
       INSERT INTO chat_dispatches
         (dispatch_id, thread_id, message_id, provider_kind,
@@ -320,41 +384,109 @@ describe("runMigrations", () => {
       VALUES (?, 'thread-v28', ?, 'codex', 'codex-explicit', 'fingerprint',
               ?, ?, ?, ?, ?, ?)
     `)
-    insertV28.run("pending-v28", "pending-v28", "pending", null, now, now, null, null)
-    insertV28.run("accepted-v28", "accepted-v28", "accepted", "turn-accepted", now, now, now, null)
-    insertV28.run("failed-v28", "failed-v28", "failed", "turn-failed", now, now, now, now)
-    insertV28.run("uncertain-v28", "uncertain-v28", "uncertain", null, now, now, null, now)
+    insertV28.run(
+      "pending-v28",
+      "pending-v28",
+      "pending",
+      null,
+      now,
+      now,
+      null,
+      null
+    )
+    insertV28.run(
+      "accepted-v28",
+      "accepted-v28",
+      "accepted",
+      "turn-accepted",
+      now,
+      now,
+      now,
+      null
+    )
+    insertV28.run(
+      "failed-v28",
+      "failed-v28",
+      "failed",
+      "turn-failed",
+      now,
+      now,
+      now,
+      now
+    )
+    insertV28.run(
+      "uncertain-v28",
+      "uncertain-v28",
+      "uncertain",
+      null,
+      now,
+      now,
+      null,
+      now
+    )
 
     runMigrations(db)
 
     expect(
-      db.prepare(`
+      db
+        .prepare(
+          `
         SELECT dispatch_id, status, provider_turn_id, provider_instance_id
         FROM chat_dispatches
         ORDER BY dispatch_id
-      `).all()
+      `
+        )
+        .all()
     ).toEqual([
-      { dispatch_id: "accepted-v28", status: "accepted", provider_turn_id: "turn-accepted", provider_instance_id: "codex-explicit" },
-      { dispatch_id: "failed-v28", status: "failed", provider_turn_id: "turn-failed", provider_instance_id: "codex-explicit" },
-      { dispatch_id: "pending-v28", status: "pending", provider_turn_id: null, provider_instance_id: "codex-explicit" },
-      { dispatch_id: "uncertain-v28", status: "uncertain", provider_turn_id: null, provider_instance_id: "codex-explicit" },
+      {
+        dispatch_id: "accepted-v28",
+        status: "accepted",
+        provider_turn_id: "turn-accepted",
+        provider_instance_id: "codex-explicit",
+      },
+      {
+        dispatch_id: "failed-v28",
+        status: "failed",
+        provider_turn_id: "turn-failed",
+        provider_instance_id: "codex-explicit",
+      },
+      {
+        dispatch_id: "pending-v28",
+        status: "pending",
+        provider_turn_id: null,
+        provider_instance_id: "codex-explicit",
+      },
+      {
+        dispatch_id: "uncertain-v28",
+        status: "uncertain",
+        provider_turn_id: null,
+        provider_instance_id: "codex-explicit",
+      },
     ])
     expect(
       db.prepare("PRAGMA table_info(chat_dispatches)").all()
     ).toContainEqual(expect.objectContaining({ name: "completed_at" }))
     expect(() =>
-      db.prepare(`
+      db
+        .prepare(
+          `
         UPDATE chat_dispatches
         SET status = 'completed', completed_at = ?
         WHERE dispatch_id = 'accepted-v28'
-      `).run(now)
+      `
+        )
+        .run(now)
     ).not.toThrow()
     expect(() =>
-      db.prepare(`
+      db
+        .prepare(
+          `
         UPDATE chat_dispatches
         SET status = 'reverted'
         WHERE dispatch_id = 'pending-v28'
-      `).run()
+      `
+        )
+        .run()
     ).not.toThrow()
     db.close()
   })
@@ -452,11 +584,15 @@ describe("runMigrations", () => {
     runMigrations(db)
 
     expect(
-      db.prepare(`
+      db
+        .prepare(
+          `
         SELECT activity_id, sequence
         FROM projection_thread_activities
         ORDER BY thread_id, created_at, activity_id
-      `).all()
+      `
+        )
+        .all()
     ).toEqual([
       { activity_id: "existing", sequence: 7 },
       { activity_id: "null-old", sequence: 5 },
@@ -464,11 +600,15 @@ describe("runMigrations", () => {
       { activity_id: "other-thread", sequence: 0 },
     ])
 
-    const indexes = db.prepare(`
+    const indexes = db
+      .prepare(
+        `
       SELECT name
       FROM sqlite_master
       WHERE type = 'index'
-    `).all() as Array<{ name: string }>
+    `
+      )
+      .all() as Array<{ name: string }>
     expect(indexes.map((row) => row.name)).toEqual(
       expect.arrayContaining([
         "idx_thread_activities_page",
@@ -477,9 +617,7 @@ describe("runMigrations", () => {
       ])
     )
     expect(
-      db.prepare(
-        "SELECT name FROM schema_migrations WHERE version = 41"
-      ).get()
+      db.prepare("SELECT name FROM schema_migrations WHERE version = 41").get()
     ).toEqual({ name: "activity_pagination_and_cleanup_indexes" })
     db.close()
   })
@@ -490,7 +628,8 @@ describe("runMigrations", () => {
       db,
       MIGRATIONS.filter((migration) => migration.version < 42)
     )
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO projection_threads(
         thread_id,
         project_id,
@@ -499,11 +638,10 @@ describe("runMigrations", () => {
         updated_at
       )
       VALUES ('thread-1', 'project-1', 'active', ?, ?)
-    `).run(
-      "2026-07-23T00:00:00.000Z",
-      "2026-07-23T00:00:00.000Z"
-    )
-    db.prepare(`
+    `
+    ).run("2026-07-23T00:00:00.000Z", "2026-07-23T00:00:00.000Z")
+    db.prepare(
+      `
       INSERT INTO turn_diffs(
         thread_id,
         turn_index,
@@ -511,8 +649,10 @@ describe("runMigrations", () => {
         created_at
       )
       VALUES ('thread-1', 3, '', ?)
-    `).run("2026-07-23T00:00:03.000Z")
-    db.prepare(`
+    `
+    ).run("2026-07-23T00:00:03.000Z")
+    db.prepare(
+      `
       INSERT INTO checkpoint_ref_cleanup_queue(
         cwd,
         checkpoint_ref,
@@ -522,38 +662,46 @@ describe("runMigrations", () => {
         updated_at
       )
       VALUES ('/repo', 'refs/checkpoint/old', 'thread-1', 0, ?, ?)
-    `).run(
-      "2026-07-23T00:00:04.000Z",
-      "2026-07-23T00:00:04.000Z"
-    )
+    `
+    ).run("2026-07-23T00:00:04.000Z", "2026-07-23T00:00:04.000Z")
 
     runMigrations(db)
 
     expect(
-      db.prepare(`
+      db
+        .prepare(
+          `
         SELECT intent_id
         FROM checkpoint_ref_cleanup_queue
         WHERE checkpoint_ref = 'refs/checkpoint/old'
-      `).get()
+      `
+        )
+        .get()
     ).toEqual({ intent_id: expect.any(String) })
     expect(
-      db.prepare(`
+      db
+        .prepare(
+          `
         SELECT next_slot
         FROM checkpoint_turn_slots
         WHERE thread_id = 'thread-1'
-      `).get()
+      `
+        )
+        .get()
     ).toEqual({ next_slot: 3 })
     expect(
-      db.prepare(`
+      db
+        .prepare(
+          `
         SELECT name
         FROM sqlite_master
         WHERE type = 'table' AND name = 'checkpoint_baselines'
-      `).get()
+      `
+        )
+        .get()
     ).toEqual({ name: "checkpoint_baselines" })
     expect(
-      db.prepare(
-        "SELECT name FROM schema_migrations WHERE version = 42"
-      ).get()
+      db.prepare("SELECT name FROM schema_migrations WHERE version = 42").get()
     ).toEqual({
       name: "checkpoint_cleanup_generations_and_turn_slots",
     })
@@ -566,13 +714,14 @@ describe("runMigrations", () => {
       db,
       MIGRATIONS.filter((migration) => migration.version < 43)
     )
-    const time = (second: number) =>
-      `2026-07-23T00:00:0${second}.000Z`
-    db.prepare(`
+    const time = (second: number) => `2026-07-23T00:00:0${second}.000Z`
+    db.prepare(
+      `
       INSERT INTO projection_threads
         (thread_id, project_id, created_at, updated_at)
       VALUES ('thread-boundary', 'project-1', ?, ?)
-    `).run(time(0), time(0))
+    `
+    ).run(time(0), time(0))
     const insertMessage = db.prepare(`
       INSERT INTO projection_messages
         (message_id, thread_id, turn_id, role, content_json, created_at,
@@ -584,14 +733,9 @@ describe("runMigrations", () => {
     insertMessage.run("compaction", null, "assistant", time(2), 2)
     insertMessage.run("user-2", null, "user", time(3), 3)
     insertMessage.run("assistant-2", "native-2", "assistant", time(4), 4)
-    insertMessage.run(
-      "user-failed",
-      null,
-      "user",
-      time(5),
-      5
-    )
-    db.prepare(`
+    insertMessage.run("user-failed", null, "user", time(5), 5)
+    db.prepare(
+      `
       INSERT INTO chat_dispatches
         (dispatch_id, thread_id, message_id, provider_kind,
          request_fingerprint, status, provider_turn_id, created_at,
@@ -601,15 +745,18 @@ describe("runMigrations", () => {
          'fingerprint-2', 'completed', 'dispatch-2', ?, ?, ?),
         ('dispatch-row-failed', 'thread-boundary', 'user-failed', 'codex',
          'fingerprint-failed', 'failed', 'dispatch-failed', ?, ?, ?)
-    `).run(time(3), time(4), time(3), time(5), time(6), time(5))
-    db.prepare(`
+    `
+    ).run(time(3), time(4), time(3), time(5), time(6), time(5))
+    db.prepare(
+      `
       INSERT INTO orchestration_events
         (event_id, aggregate_kind, stream_id, stream_version, event_type,
          occurred_at, payload_json)
       VALUES
         ('terminal-failed', 'provider_runtime', 'thread-boundary', 1,
          'ProviderRuntime:turn_error', ?, ?)
-    `).run(
+    `
+    ).run(
       time(6),
       JSON.stringify({
         event_type: "turn_error",
@@ -620,28 +767,33 @@ describe("runMigrations", () => {
         },
       })
     )
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO checkpoint_diffs
         (thread_id, turn_id, checkpoint_ref, diff_content, created_at)
       VALUES
         ('thread-boundary', 'turn-1', 'refs/turn-1', '', ?),
         ('thread-boundary', 'dispatch-2', 'refs/turn-2', '', ?),
         ('thread-boundary', 'dispatch-failed', 'refs/turn-failed', '', ?)
-    `).run(time(1), time(4), time(6))
-    db.prepare(`
+    `
+    ).run(time(1), time(4), time(6))
+    db.prepare(
+      `
       INSERT INTO turn_diffs
         (thread_id, turn_index, diff_text, created_at)
       VALUES
         ('thread-boundary', 1, '', ?),
         ('thread-boundary', 2, '', ?),
         ('thread-boundary', 3, '', ?)
-    `).run(time(1), time(4), time(6))
+    `
+    ).run(time(1), time(4), time(6))
 
     runMigrations(db)
 
     expect(
       db
-        .prepare(`
+        .prepare(
+          `
           SELECT
             turn_index,
             turn_id,
@@ -651,7 +803,8 @@ describe("runMigrations", () => {
           FROM turn_diffs
           WHERE thread_id = 'thread-boundary'
           ORDER BY turn_index
-        `)
+        `
+        )
         .all()
     ).toEqual([
       {
@@ -685,11 +838,7 @@ describe("runMigrations", () => {
         .get()
     ).toEqual({ turn_count: 3 })
     expect(
-      db
-        .prepare(
-          `SELECT name FROM schema_migrations WHERE version = 43`
-        )
-        .get()
+      db.prepare(`SELECT name FROM schema_migrations WHERE version = 43`).get()
     ).toEqual({ name: "checkpoint_turn_message_boundaries" })
     expect(
       (
@@ -722,11 +871,15 @@ describe("runMigrations", () => {
       db.prepare("PRAGMA table_info(projection_threads)").all()
     ).toContainEqual(expect.objectContaining({ name: "recovery_required" }))
     expect(
-      db.prepare(`
+      db
+        .prepare(
+          `
         SELECT name
         FROM sqlite_master
         WHERE type = 'table' AND name = 'checkpoint_turn_admissions'
-      `).get()
+      `
+        )
+        .get()
     ).toEqual({ name: "checkpoint_turn_admissions" })
     expect(
       db.prepare("PRAGMA table_info(worktree_registry)").all()
@@ -734,17 +887,25 @@ describe("runMigrations", () => {
       expect.objectContaining({ name: "delete_branch_on_remove" })
     )
     expect(
-      db.prepare(`
+      db
+        .prepare(
+          `
         SELECT last_sequence
         FROM orchestration_projection_cursors
         WHERE projection_name = 'durable_api'
-      `).get()
+      `
+        )
+        .get()
     ).toEqual({ last_sequence: 0 })
 
-    const indexes = db.prepare(`
+    const indexes = db
+      .prepare(
+        `
       SELECT name FROM sqlite_master
       WHERE type = 'index'
-    `).all() as Array<{ name: string }>
+    `
+      )
+      .all() as Array<{ name: string }>
     expect(indexes.map((row) => row.name)).toEqual(
       expect.arrayContaining([
         "idx_events_unique_stream_version",
@@ -755,96 +916,124 @@ describe("runMigrations", () => {
     )
 
     const now = "2026-07-23T00:00:00.000Z"
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO projection_threads
         (thread_id, project_id, created_at, updated_at)
       VALUES ('turn-count-thread', 'project', ?, ?)
-    `).run(now, now)
-    db.prepare(`
+    `
+    ).run(now, now)
+    db.prepare(
+      `
       INSERT INTO projection_turns
         (turn_id, thread_id, status, started_at, completed_at)
       VALUES ('turn-1', 'turn-count-thread', 'completed', ?, ?)
-    `).run(now, now)
+    `
+    ).run(now, now)
     expect(
-      db.prepare(
-        "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
-      ).get()
+      db
+        .prepare(
+          "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
+        )
+        .get()
     ).toEqual({ turn_count: 1 })
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO projection_messages
         (message_id, thread_id, turn_id, role, content_json, created_at,
          sequence)
       VALUES
         ('assistant-1', 'turn-count-thread', 'turn-1', 'assistant', '{}', ?, 0),
         ('assistant-compaction', 'turn-count-thread', NULL, 'assistant', '{}', ?, 1)
-    `).run(now, now)
+    `
+    ).run(now, now)
     expect(
-      db.prepare(
-        "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
-      ).get()
+      db
+        .prepare(
+          "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
+        )
+        .get()
     ).toEqual({ turn_count: 1 })
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO projection_messages
         (message_id, thread_id, turn_id, role, content_json, created_at,
          sequence)
       VALUES
         ('assistant-2', 'turn-count-thread', 'turn-2', 'assistant', '{}', ?, 2)
-    `).run(now)
+    `
+    ).run(now)
     expect(
-      db.prepare(
-        "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
-      ).get()
+      db
+        .prepare(
+          "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
+        )
+        .get()
     ).toEqual({ turn_count: 2 })
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO turn_diffs
         (thread_id, turn_index, diff_text, created_at)
       VALUES ('turn-count-thread', 4, '', ?)
-    `).run(now)
+    `
+    ).run(now)
     expect(
-      db.prepare(
-        "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
-      ).get()
+      db
+        .prepare(
+          "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
+        )
+        .get()
     ).toEqual({ turn_count: 4 })
-    db.prepare(`
+    db.prepare(
+      `
       DELETE FROM turn_diffs
       WHERE thread_id = 'turn-count-thread' AND turn_index = 4
-    `).run()
+    `
+    ).run()
     expect(
-      db.prepare(
-        "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
-      ).get()
+      db
+        .prepare(
+          "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
+        )
+        .get()
     ).toEqual({ turn_count: 2 })
     db.prepare(
       "DELETE FROM projection_messages WHERE message_id = 'assistant-2'"
     ).run()
     expect(
-      db.prepare(
-        "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
-      ).get()
+      db
+        .prepare(
+          "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
+        )
+        .get()
     ).toEqual({ turn_count: 1 })
     db.prepare(
       "DELETE FROM projection_messages WHERE message_id = 'assistant-compaction'"
     ).run()
     expect(
-      db.prepare(
-        "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
-      ).get()
+      db
+        .prepare(
+          "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
+        )
+        .get()
     ).toEqual({ turn_count: 1 })
     db.prepare(
       "DELETE FROM projection_messages WHERE message_id = 'assistant-1'"
     ).run()
     expect(
-      db.prepare(
-        "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
-      ).get()
+      db
+        .prepare(
+          "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
+        )
+        .get()
     ).toEqual({ turn_count: 1 })
-    db.prepare(
-      "DELETE FROM projection_turns WHERE turn_id = 'turn-1'"
-    ).run()
+    db.prepare("DELETE FROM projection_turns WHERE turn_id = 'turn-1'").run()
     expect(
-      db.prepare(
-        "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
-      ).get()
+      db
+        .prepare(
+          "SELECT turn_count FROM projection_threads WHERE thread_id = 'turn-count-thread'"
+        )
+        .get()
     ).toEqual({ turn_count: 0 })
     db.close()
   })
@@ -1031,7 +1220,9 @@ function preparedSql(store: object, statementName: string): string {
     statementName
   ]
   if (!statement || typeof statement.source !== "string") {
-    throw new Error(`${store.constructor.name} has no prepared ${statementName}`)
+    throw new Error(
+      `${store.constructor.name} has no prepared ${statementName}`
+    )
   }
   return statement.source
 }
@@ -1070,7 +1261,10 @@ describe("migration 49 redundant prefix indexes", () => {
 
   it("drops the prefix indexes on upgrade and refreshes planner statistics", () => {
     const db = openDatabase(tmpDbPath("drop-prefix-indexes"))
-    runMigrations(db, MIGRATIONS.filter((migration) => migration.version < 49))
+    runMigrations(
+      db,
+      MIGRATIONS.filter((migration) => migration.version < 49)
+    )
     const before = indexNames(db)
     for (const name of droppedIndexes) {
       expect(before.has(name), `${name} should exist before v49`).toBe(true)
@@ -1117,7 +1311,9 @@ describe("migration 49 redundant prefix indexes", () => {
     )
     expect(uniqueIndexMigrations.length).toBeGreaterThan(0)
     for (const migration of uniqueIndexMigrations) {
-      expect(INDEX_SHAPE_SQL.test(migration.sql), `v${migration.version}`).toBe(true)
+      expect(INDEX_SHAPE_SQL.test(migration.sql), `v${migration.version}`).toBe(
+        true
+      )
     }
   })
 
@@ -1148,7 +1344,11 @@ describe("migration 49 redundant prefix indexes", () => {
         "findCheckpointDiffRefByTurnStmt",
         /idx_checkpoint_thread_turn_latest/,
       ],
-      [events, "readFromStmt", /orchestration_events USING INTEGER PRIMARY KEY/],
+      [
+        events,
+        "readFromStmt",
+        /orchestration_events USING INTEGER PRIMARY KEY/,
+      ],
     ]
     for (const [store, statementName, expected, options] of cases) {
       const label = `${store.constructor.name}.${statementName}`
@@ -1190,14 +1390,19 @@ describe("migration 51 provider runtime journal schema backfill", () => {
   function metadataOf(db: Db, eventId: string): string {
     return (
       db
-        .prepare("SELECT metadata_json FROM orchestration_events WHERE event_id = ?")
+        .prepare(
+          "SELECT metadata_json FROM orchestration_events WHERE event_id = ?"
+        )
         .get(eventId) as { metadata_json: string }
     ).metadata_json
   }
 
   it("stamps schema 1 onto unmarked provider_runtime rows and nothing else", () => {
     const db = openDatabase(tmpDbPath("journal-schema-backfill"))
-    runMigrations(db, MIGRATIONS.filter((migration) => migration.version < 51))
+    runMigrations(
+      db,
+      MIGRATIONS.filter((migration) => migration.version < 51)
+    )
     const markedV2 = JSON.stringify({
       schema: 2,
       contract: "provider-runtime-event",
@@ -1205,17 +1410,41 @@ describe("migration 51 provider runtime journal schema backfill", () => {
       payloadTruncated: true,
       originalBytes: 2_000_000,
     })
-    insertRow(db, { eventId: "unmarked-default", metadata: "{}", streamVersion: 1 })
+    insertRow(db, {
+      eventId: "unmarked-default",
+      metadata: "{}",
+      streamVersion: 1,
+    })
     insertRow(db, {
       eventId: "unmarked-with-keys",
       metadata: JSON.stringify({ contract: "provider-runtime-event" }),
       streamVersion: 2,
     })
-    insertRow(db, { eventId: "marked-v1", metadata: JSON.stringify({ schema: 1 }), streamVersion: 3 })
-    insertRow(db, { eventId: "marked-v2", metadata: markedV2, streamVersion: 4 })
-    insertRow(db, { eventId: "marked-v3", metadata: JSON.stringify({ schema: 3 }), streamVersion: 5 })
-    insertRow(db, { eventId: "malformed", metadata: "{not json", streamVersion: 6 })
-    insertRow(db, { eventId: "scalar-json", metadata: "null", streamVersion: 7 })
+    insertRow(db, {
+      eventId: "marked-v1",
+      metadata: JSON.stringify({ schema: 1 }),
+      streamVersion: 3,
+    })
+    insertRow(db, {
+      eventId: "marked-v2",
+      metadata: markedV2,
+      streamVersion: 4,
+    })
+    insertRow(db, {
+      eventId: "marked-v3",
+      metadata: JSON.stringify({ schema: 3 }),
+      streamVersion: 5,
+    })
+    insertRow(db, {
+      eventId: "malformed",
+      metadata: "{not json",
+      streamVersion: 6,
+    })
+    insertRow(db, {
+      eventId: "scalar-json",
+      metadata: "null",
+      streamVersion: 7,
+    })
     insertRow(db, {
       eventId: "other-aggregate",
       aggregateKind: "checkpoint",
@@ -1227,13 +1456,18 @@ describe("migration 51 provider runtime journal schema backfill", () => {
     // tell it from an absent key; `json_type(..., '$.schema')` can).
     insertRow(db, {
       eventId: "marked-null",
-      metadata: JSON.stringify({ schema: null, contract: "provider-runtime-event" }),
+      metadata: JSON.stringify({
+        schema: null,
+        contract: "provider-runtime-event",
+      }),
       streamVersion: 9,
     })
 
     runMigrations(db)
 
-    expect(JSON.parse(metadataOf(db, "unmarked-default"))).toEqual({ schema: 1 })
+    expect(JSON.parse(metadataOf(db, "unmarked-default"))).toEqual({
+      schema: 1,
+    })
     expect(JSON.parse(metadataOf(db, "unmarked-with-keys"))).toEqual({
       contract: "provider-runtime-event",
       schema: 1,
