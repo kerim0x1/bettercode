@@ -82,6 +82,12 @@ provides touch-native screens for:
   meanwhile, and the phone offers to compare, take the desktop's version or
   overwrite it. The editor runs in a WebView that loads nothing from the
   network;
+- a terminal in a chat's folder, when the desktop allows paired devices one
+  (see [Terminals for paired devices](#terminals-for-paired-devices)): the
+  desktop's shell for that folder, with a row of the keys a phone keyboard
+  lacks (Esc, Tab, Ctrl and Alt, arrows, Home/End, Page Up/Down). It keeps
+  running when the phone loses its connection, and the phone picks up where
+  it left off;
 - host health, session identity, expiry, and self-revocation.
 
 The desktop prepares a message from the phone as it prepares its own (the
@@ -252,9 +258,10 @@ sessions.
 
 ## Managing devices
 
-The **Paired devices** list shows each browser label and last activity. Use the
-trash action to revoke one device, or **Revoke all** to invalidate all remote
-sessions. Disabling Remote Access revokes every paired device at once and
+The **Paired devices** list shows each browser label and last activity, and
+how many terminals a device runs, with **Close terminals** to end them while
+the device stays paired. Use the trash action to revoke one device, or
+**Revoke all** to invalidate all remote sessions. Disabling Remote Access revokes every paired device at once and
 closes network listening after the backend restart; re-enabling it later
 means pairing each device again. A terminal for paired devices is a separate
 switch, **Allow terminal from remote devices**, which is off by default. A
@@ -277,6 +284,50 @@ device is signed out or revoked, until it is removed on the desktop. An
 **opt-in public plaintext** session cannot do any of this; it is
 monitoring-only. Pair only devices you control, revoke lost devices promptly,
 and do not post pairing links in shared channels.
+
+## Terminals for paired devices
+
+A paired device gets a terminal only:
+
+- while **Allow terminal from remote devices** is on (off by default);
+- with a full session (a read-only session gets none);
+- in a folder the desktop knows as a workspace: a project's folder or a
+  worktree.
+
+The terminal runs the desktop's shell for that folder. The desktop's own
+terminals are never shown on a device: what was typed in them, passwords
+included, would be readable there.
+
+A terminal ends when:
+
+- the device closes it;
+- no device was attached to it for 15 minutes;
+- the switch is turned off (every device's terminals end, and the phone says
+  why);
+- the device is revoked or signs out;
+- someone chooses **Close terminals** for the device in **Paired devices**.
+
+The desktop's log records which device opened a terminal in which folder,
+and when and why it ended, never what was typed or shown.
+
+How it works, for developers (`packages/schema/src/remote-terminal.ts`,
+announced as the `terminal.ws` feature):
+
+- The phone app talks to the terminal over its WebSocket (`/ws`), with calls
+  (`terminal.open`, `attach`, `write`, `resize`, `ack`, `close`, `list`) and
+  frames from the desktop (`terminal.output`, `exit`, `gap`, `closed`). The
+  authenticated connection is the authorization: every call is checked
+  against the device's session, its access level and the switch.
+- Output is numbered. The desktop sends at most 256 KB ahead of what the
+  device acknowledged and keeps the rest in the terminal's buffer. Output the
+  buffer had to drop is announced as a gap, never skipped silently. After a
+  lost connection the device attaches again after the last output it has.
+- Input is numbered too, and each number is applied once and in order, so a
+  write sent again after a lost connection does not run twice.
+- The shell routes (`/api/v1/shell/*`) remain, for the desktop's renderer
+  and paired browsers: there, each input needs the one-shot capability
+  described under [Pairing and sessions](#pairing-and-sessions). The same
+  switch governs both ways, and **Close terminals** ends both.
 
 ## Phone app and desktop versions
 

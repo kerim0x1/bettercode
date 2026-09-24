@@ -131,6 +131,7 @@ The flows in `apps/mobile/maestro/flows` run against the demo mode, so they need
 - `demo-git.yaml`: source control from a project: a file and one of a README's two changes staged, a generated message, a commit and a push.
 - `demo-files.yaml`: a new file in a chat's files, then a search of the files' text that opens a match at its line.
 - `demo-editor.yaml`: a file in the code editor, an edit and a save. It is the only check that the WebView and the editor's page (`npm run mobile:pages`) work on a device; the screen tests use a stand-in for the page.
+- `demo-terminal.yaml`: a terminal from a chat's menu, a command typed into it and the demo shell's answer. Likewise the only check of the terminal's page (xterm.js) on a device. It reads the terminal's text through xterm's screen reader tree, which the page keeps on for VoiceOver and TalkBack.
 
 They find elements by `testID`, which Maestro sees as the element's id on both platforms. Renaming or removing one breaks a flow, and CI with it.
 

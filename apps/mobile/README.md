@@ -184,6 +184,28 @@ against sample chats and files (see [Demo mode](#demo-mode)).
   are unsaved); the pairing's end forgets them. When the system ends the
   page's process, a new WebView starts it with the newest text the phone
   has, and a page without text hands none to a save.
+- **Terminal** in a chat's menu opens the desktop's shell in the chat's folder
+  (`src/app/chat/[id]/terminal.tsx`), when the desktop allows paired devices
+  one:
+  - xterm.js runs in a WebView (`src/components/terminal-view.tsx`). Its page
+    is `terminal/terminal.ts`, bundled with xterm's CSS into
+    `src/terminal/terminal-html.ts` by `npm run mobile:pages`, under the same
+    CSP as the editor's.
+  - `src/terminal/terminal-client.ts` speaks the desktop's terminal calls
+    over the WebSocket (`packages/schema/src/remote-terminal.ts`). It numbers
+    the input and sends again what a lost connection may have swallowed,
+    acknowledges output as it is shown, and attaches again after the last
+    output it has.
+  - The key row (`src/components/terminal-keys.tsx`) sends Esc, Tab, the
+    arrows, Home/End, Page Up/Down and `| ~ / -`. Ctrl and Alt apply to the
+    next key (`src/terminal/modifiers.ts`).
+  - The page keeps xterm's screen reader mode on, so VoiceOver and TalkBack
+    read the output.
+  - The app remembers a running terminal per folder
+    (`src/terminal/terminal-link.ts`), so leaving the screen and coming back
+    finds it again.
+  - The demo has a pretend shell that runs nothing
+    (`src/transport/demo/terminal.ts`).
 - File navigation always starts from `worktreePath || projectPath`; client-side
   containment checks complement the backend workspace guards.
 - The interface is in English, like the desktop's; dates and sizes follow the
