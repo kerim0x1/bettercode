@@ -204,7 +204,11 @@ describe("the demo repositories", () => {
     })
     expect(git.log(WEATHER, 1)[0]!.hash).toMatch(/^[0-9a-f]{40}$/)
     expect(() => git.commit(WEATHER, "Again")).toThrow(
-      expect.objectContaining({ status: 400, message: NOTHING_TO_COMMIT })
+      expect.objectContaining({
+        status: 400,
+        code: "git_nothing_to_commit",
+        message: NOTHING_TO_COMMIT,
+      })
     )
   })
 

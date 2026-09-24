@@ -130,6 +130,20 @@ export function relativePathWithinRoot(
   return normalizedPath.slice(normalizedRoot.length + 1)
 }
 
+/**
+ * A file inside `root` from its path relative to the root (as git lists
+ * it), with the root's own separators, as the desktop joins them.
+ */
+export function pathWithinRoot(root: string, relativePath: string): string {
+  const base = root.trim().replace(/[\\/]+$/, "")
+  const separator = base.includes("\\") ? "\\" : "/"
+  const parts = relativePath.replace(/\\/g, "/").split("/").filter(Boolean)
+  if (parts.includes("..")) {
+    throw new Error("File is outside the chat's project.")
+  }
+  return parts.length > 0 ? `${base}${separator}${parts.join(separator)}` : base
+}
+
 export function isSecureEndpoint(baseUrl: string): boolean {
   return normalizeBaseUrl(baseUrl).startsWith("https://")
 }

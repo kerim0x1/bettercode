@@ -152,6 +152,21 @@ export function describeRemoteError(error: unknown): RemoteErrorDescription {
         message:
           "An earlier checkpoint restore in this chat was interrupted. Resolve it on the desktop before restoring another one.",
       }
+    case "git_hunk_conflict":
+      // The desktop's own review says this when a hunk moved underneath it.
+      return {
+        title: "Hunk review needs attention",
+        message:
+          "This hunk changed since it was loaded. The diff was refreshed; review the latest version before trying again.",
+      }
+    case "git_remote_error":
+      // Push, pull and fetch failures come classified: no upstream, no
+      // remote, authentication, remote ahead, local changes in the way.
+      return { title: "Remote refused", message: error.message }
+    case "commit_generation_unavailable":
+      return { title: "No commit message", message: error.message }
+    case "git_nothing_to_commit":
+      return { title: "Nothing to commit", message: error.message }
     case "worktree_removal_pending":
       return {
         title: "Worktree still being removed",

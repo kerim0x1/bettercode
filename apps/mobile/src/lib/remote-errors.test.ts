@@ -117,3 +117,55 @@ describe("a message a hook stopped", () => {
     })
   })
 })
+
+describe("git review refusals", () => {
+  it("explain a hunk that moved, and pass the desktop's git words through", () => {
+    expect(
+      describeRemoteError(
+        new RemoteApiError(
+          "This hunk no longer matches the workspace. Refresh the diff and review the latest changes.",
+          409,
+          "git_hunk_conflict"
+        )
+      )
+    ).toEqual({
+      title: "Hunk review needs attention",
+      message:
+        "This hunk changed since it was loaded. The diff was refreshed; review the latest version before trying again.",
+    })
+    expect(
+      describeRemoteError(
+        new RemoteApiError(
+          "Remote has new commits — pull first, then push again.",
+          409,
+          "git_remote_error"
+        )
+      )
+    ).toEqual({
+      title: "Remote refused",
+      message: "Remote has new commits — pull first, then push again.",
+    })
+    expect(
+      describeRemoteError(
+        new RemoteApiError(
+          "Enable Codex CLI or Claude CLI in Providers to generate a commit summary. Your draft was kept.",
+          422,
+          "commit_generation_unavailable"
+        )
+      ).title
+    ).toBe("No commit message")
+    expect(
+      describeRemoteError(
+        new RemoteApiError(
+          "Nothing to commit — stage changes first or modify a tracked file.",
+          400,
+          "git_nothing_to_commit"
+        )
+      )
+    ).toEqual({
+      title: "Nothing to commit",
+      message:
+        "Nothing to commit — stage changes first or modify a tracked file.",
+    })
+  })
+})

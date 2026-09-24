@@ -426,7 +426,7 @@ export class DemoGit {
   commit(cwd: string, message: string): { output: string } {
     const repo = this.repo(cwd)
     if (changedPaths(repo.head, repo.index).length === 0) {
-      throw new RemoteApiError(NOTHING_TO_COMMIT, 400)
+      throw new RemoteApiError(NOTHING_TO_COMMIT, 400, "git_nothing_to_commit")
     }
     this.commitCounter += 1
     const hash = `${this.commitCounter.toString(16).padStart(8, "0")}${"5eed".repeat(8)}`
