@@ -634,8 +634,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
         attachments: attachments ?? [],
       }),
     }
-    // The history is left out here: it is trimmed to fit when it is added.
-    if (!sentBefore && requestBytes(entry.body) > maxRequestBytesNow())
+    // Measured with an empty history: the history is trimmed to fit when it
+    // is added (dispatchOutboxMessage).
+    if (
+      !sentBefore &&
+      requestBytes({ ...entry.body, history: [] }) > maxRequestBytesNow()
+    )
       throw new Error(MESSAGE_TOO_LARGE)
     const sentAttachments = attachmentsOf(entry.body)
     const now = new Date().toISOString()
