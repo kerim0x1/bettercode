@@ -38,7 +38,10 @@ interface Frame {
 let workspace = ""
 
 beforeEach(() => {
-  workspace = fs.realpathSync(
+  // The OS's own realpath, as the desktop resolves a workspace: on Windows
+  // the JavaScript one keeps a short 8.3 name (a CI runner's temp folder is
+  // C:\Users\RUNNER~1\…) or a subst drive where the desktop has the long path.
+  workspace = fs.realpathSync.native(
     fs.mkdtempSync(path.join(os.tmpdir(), "remote-terminal-pty-"))
   )
 })
