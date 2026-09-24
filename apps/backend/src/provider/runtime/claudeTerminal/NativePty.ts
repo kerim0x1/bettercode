@@ -103,6 +103,8 @@ function spawnLoadedNativePty(
 
   const dataDisposable = proc.onData((data) => options.onData?.(data))
   let rootExited = false
+  /** A termination reached the whole tree (see `windowsTreeTermination`). */
+  let treeReached = false
   let terminationTail = Promise.resolve()
   const terminationErrors: Error[] = []
   const queueTermination = (signal?: string): Promise<void> => {
@@ -111,12 +113,14 @@ function spawnLoadedNativePty(
         proc,
         proc.pid,
         (signal ?? "SIGTERM") as NodeJS.Signals,
-        rootExited
+        rootExited,
+        treeReached
       )
     )
     void operation.catch(() => undefined)
     terminationTail = operation.then(
       () => {
+        treeReached = true
         terminationErrors.length = 0
       },
       (error) => {
@@ -174,14 +178,64 @@ function spawnLoadedNativePty(
   }
 }
 
+/** taskkill's exit code when it finds no process with the PID. */
+const TASKKILL_NO_SUCH_PROCESS = 128
+
+/**
+ * What a termination request does to a Windows PTY's process tree, given
+ * the requests before it. `taskkill /T` reaches the tree only while its
+ * root runs; once the root exited, its PID may name another process.
+ *
+ * - `run`: taskkill the tree.
+ * - `skip`: an earlier request reached the whole tree and this one adds
+ *   nothing: another graceful request, or any request once the root
+ *   exited. Terminations overlap (a device's close and the desktop's
+ *   teardown of its terminals, a teardown and the app quitting); the
+ *   later one must not count a tree that already ended as lost.
+ * - `unaddressable`: the root exited before any request reached the tree;
+ *   what became of its descendants cannot be checked.
+ */
+export function windowsTreeTermination(request: {
+  readonly signal: NodeJS.Signals
+  readonly rootExited: boolean
+  readonly treeReached: boolean
+}): "run" | "skip" | "unaddressable" {
+  if (
+    request.treeReached &&
+    (request.rootExited || request.signal !== "SIGKILL")
+  )
+    return "skip"
+  return request.rootExited ? "unaddressable" : "run"
+}
+
+/**
+ * A taskkill that found no process with the root's PID after an earlier
+ * request reached the whole tree: the tree ended in between (its root
+ * exits before Windows reports it), not escaped.
+ */
+export function windowsTreeEndedMeanwhile(
+  error: unknown,
+  treeReached: boolean
+): boolean {
+  const failure = error as { code?: unknown; exitCode?: unknown } | null
+  return (
+    treeReached &&
+    failure?.code === "NATIVE_PTY_TASKKILL_FAILED" &&
+    failure.exitCode === TASKKILL_NO_SUCH_PROCESS
+  )
+}
+
 async function terminateNativePtyProcessTree(
   proc: IPty,
   pid: number,
   signal: NodeJS.Signals,
-  rootExited: boolean
+  rootExited: boolean,
+  treeReached: boolean
 ): Promise<void> {
   if (process.platform === "win32") {
-    if (rootExited) {
+    const next = windowsTreeTermination({ signal, rootExited, treeReached })
+    if (next === "skip") return
+    if (next === "unaddressable") {
       throw Object.assign(
         new Error(
           `Cannot safely address Windows PTY tree ${pid} after its root exited.`
@@ -196,6 +250,7 @@ async function terminateNativePtyProcessTree(
       await runNativePtyWindowsTaskkill(pid, signal === "SIGKILL")
       return
     } catch (error) {
+      if (windowsTreeEndedMeanwhile(error, treeReached)) return
       if (!rootExited) {
         try {
           proc.kill(signal)
