@@ -101,10 +101,15 @@ export default function EditScreen() {
 
   const editor = useRef<CodeEditorHandle>(null)
   const [opened, setOpened] = useState<Opened | null>(null)
-  /** Unsaved changes from a draft, until they are saved or replaced. */
+  /**
+   * Unsaved changes the editor started with (a draft's, or the newest text
+   * after its page restarted), until they are saved or replaced.
+   */
   const [restored, setRestored] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
-  const [ready, setReady] = useState(false)
+  /** How often the editor's page said it is ready: again when it restarted. */
+  const [pageStarts, setPageStarts] = useState(0)
+  const pageStartsRef = useRef(0)
   const [dirty, setDirty] = useState(false)
   const [history, setHistory] = useState({ canUndo: false, canRedo: false })
   const [wrap, setWrap] = useState(true)
@@ -112,11 +117,41 @@ export default function EditScreen() {
   const [conflict, setConflict] = useState<Conflict | null>(null)
   const [comparing, setComparing] = useState(false)
   const baseSha256 = useRef("")
+  /**
+   * The newest text the phone has of the file (opened, drafted or saved),
+   * which goes back into the editor when its page restarts. `asked` orders
+   * the page's answers: a slow one does not replace a newer text.
+   */
+  const latest = useRef({ asked: 0, text: "" })
+  const asks = useRef(0)
+  /** The desktop's text as the phone knows it; null for a draft's base. */
+  const desktopText = useRef<string | null>(null)
   /** Read when the text is loaded; a change is sent on its own (setWrap). */
   const wrapRef = useRef(wrap)
   wrapRef.current = wrap
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const unsaved = dirty || restored
+
+  /** Puts a text into the editor: the file, a draft, or the desktop's. */
+  const show = useCallback((next: Opened) => {
+    baseSha256.current = next.baseSha256
+    asks.current += 1
+    latest.current = { asked: asks.current, text: next.text }
+    desktopText.current = next.restored ? null : next.text
+    setRestored(next.restored)
+    setOpened(next)
+  }, [])
+
+  /** The editor's text now, kept as the newest the phone has. */
+  const editorText = useCallback(async () => {
+    const handle = editor.current
+    if (!handle) throw new Error("The editor is not open.")
+    asks.current += 1
+    const asked = asks.current
+    const text = await handle.text()
+    if (asked > latest.current.asked) latest.current = { asked, text }
+    return text
+  }, [])
 
   // Open the file, or say why it cannot be edited here.
   useEffect(() => {
@@ -154,15 +189,10 @@ export default function EditScreen() {
           return
         }
         const sha256 = file.sha256
-        const open = (next: Opened) => {
-          baseSha256.current = next.baseSha256
-          setRestored(next.restored)
-          setOpened(next)
-        }
         const draft = draftFor(root, relative)
         if (!draft || draft.text === file.content) {
           if (draft) clearDraft(root, relative)
-          open({ text: file.content, baseSha256: sha256, restored: false })
+          show({ text: file.content, baseSha256: sha256, restored: false })
           return
         }
         Alert.alert(
@@ -174,7 +204,7 @@ export default function EditScreen() {
               style: "destructive",
               onPress: () => {
                 clearDraft(root, relative)
-                open({
+                show({
                   text: file.content,
                   baseSha256: sha256,
                   restored: false,
@@ -184,7 +214,7 @@ export default function EditScreen() {
             {
               text: "Continue",
               onPress: () =>
-                open({
+                show({
                   text: draft.text,
                   baseSha256: draft.baseSha256,
                   restored: true,
@@ -199,32 +229,34 @@ export default function EditScreen() {
     return () => {
       active = false
     }
-  }, [absolutePath, api, canSaveSafely, readOnly, relative, root])
+  }, [absolutePath, api, canSaveSafely, readOnly, relative, root, show])
 
-  // Hand the text to the editor once both are there.
+  // Hand the text to the editor once both are there, and again when its
+  // page restarted: the newest text the phone has.
   useEffect(() => {
-    if (!ready || !opened) return
+    if (!pageStarts || !opened) return
     editor.current?.send({
       type: "load",
-      text: opened.text,
+      text: latest.current.text,
       language: editorLanguageFor(name),
       readOnly: false,
       wrap: wrapRef.current,
       ...(line ? { line } : {}),
     })
-  }, [line, name, opened, ready])
+  }, [line, name, opened, pageStarts])
 
+  // A restarted page gets the wrapping with its text (above).
+  const pageReady = pageStarts > 0
   useEffect(() => {
-    if (ready) editor.current?.send({ type: "setWrap", wrap })
-  }, [ready, wrap])
+    if (pageReady) editor.current?.send({ type: "setWrap", wrap })
+  }, [pageReady, wrap])
 
   const writeDraft = useCallback(async () => {
     if (draftTimer.current) {
       clearTimeout(draftTimer.current)
       draftTimer.current = null
     }
-    const text = await editor.current?.text()
-    if (text === undefined) return
+    const text = await editorText()
     saveDraft({
       root,
       path: relative,
@@ -232,7 +264,7 @@ export default function EditScreen() {
       baseSha256: baseSha256.current,
       savedAt: new Date().toISOString(),
     })
-  }, [relative, root])
+  }, [editorText, relative, root])
 
   useEffect(
     () => () => {
@@ -243,8 +275,16 @@ export default function EditScreen() {
 
   const onEvent = useCallback(
     (event: Exclude<EditorEvent, { type: "text" }>) => {
-      if (event.type === "ready") setReady(true)
-      else if (event.type === "error") {
+      if (event.type === "ready") {
+        // Ready again: the page restarted and lost its text. The newest
+        // text the phone has goes back in (above), unsaved unless it is
+        // the desktop's.
+        if (pageStartsRef.current > 0 && latest.current.asked > 0) {
+          setRestored(latest.current.text !== desktopText.current)
+        }
+        pageStartsRef.current += 1
+        setPageStarts(pageStartsRef.current)
+      } else if (event.type === "error") {
         Alert.alert("Editor problem", event.message)
       } else {
         setDirty(event.dirty)
@@ -268,6 +308,7 @@ export default function EditScreen() {
    */
   const saved = (text: string, sha256 = sha256Hex(text)) => {
     baseSha256.current = sha256
+    desktopText.current = text
     setConflict(null)
     setRestored(false)
     editor.current?.send({ type: "markSaved", text })
@@ -298,7 +339,7 @@ export default function EditScreen() {
     if (!api || saving) return
     setSaving(true)
     try {
-      const text = await editor.current!.text()
+      const text = await editorText()
       await write(text, baseSha256.current)
     } catch (caught) {
       const described = describeRemoteError(caught)
@@ -326,13 +367,11 @@ export default function EditScreen() {
     clearDraft(root, relative)
     setConflict(null)
     setDirty(false)
-    setRestored(false)
-    setOpened({
+    show({
       text: conflict.theirs,
       baseSha256: conflict.theirsSha256,
       restored: false,
     })
-    baseSha256.current = conflict.theirsSha256
   }
 
   const leave = async () => {

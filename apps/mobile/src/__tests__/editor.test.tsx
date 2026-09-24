@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, jest } from "@jest/globals"
 import { act, fireEvent, screen, waitFor } from "@testing-library/react-native"
 import { renderRouter } from "expo-router/testing-library"
 import { Alert, type AlertButton } from "react-native"
+import { draftFor } from "@/lib/editor-drafts"
 import { useAppStore } from "@/store/app-store"
 import { useSessionStore } from "@/store/session-store"
 
@@ -14,12 +15,19 @@ const FLOW_TIMEOUT_MS = 60_000
 const ROOT = "/Users/demo/code/weather-app"
 
 type Send = (data: string) => void
+interface MockWebViewProps {
+  onMessage?: (event: { nativeEvent: { data: string } }) => void
+  onRenderProcessGone?: () => void
+}
 
 const mockEditor = {
   text: "",
   loaded: "",
+  /** Whether the page holds a text: not before a load, nor after it ended. */
+  holding: false,
   commands: [] as Array<{ type: string; [key: string]: unknown }>,
   send: null as Send | null,
+  webview: null as { current: MockWebViewProps } | null,
   emit(event: unknown) {
     this.send?.(JSON.stringify(event))
   },
@@ -39,6 +47,7 @@ const mockEditor = {
     if (command.type === "load") {
       this.text = String(command.text)
       this.loaded = this.text
+      this.holding = true
       this.emit({
         type: "changed",
         dirty: false,
@@ -46,7 +55,11 @@ const mockEditor = {
         canRedo: false,
       })
     } else if (command.type === "requestText") {
-      this.emit({ type: "text", requestId: command.requestId, text: this.text })
+      this.emit({
+        type: "text",
+        requestId: command.requestId,
+        text: this.holding ? this.text : null,
+      })
     } else if (command.type === "markSaved") {
       this.loaded = String(command.text)
       this.emit({
@@ -57,11 +70,20 @@ const mockEditor = {
       })
     }
   },
+  /** The system ends the page's process, and its text with it. */
+  endProcess() {
+    this.text = ""
+    this.loaded = ""
+    this.holding = false
+    this.webview?.current.onRenderProcessGone?.()
+  },
   reset() {
     this.text = ""
     this.loaded = ""
+    this.holding = false
     this.commands = []
     this.send = null
+    this.webview = null
   },
 }
 
@@ -70,16 +92,21 @@ jest.mock("react-native-webview", () => {
   const { View } =
     jest.requireActual<typeof import("react-native")>("react-native")
   const WebView = React.forwardRef(function WebView(
-    props: { onMessage?: (event: { nativeEvent: { data: string } }) => void },
+    props: MockWebViewProps,
     ref: React.Ref<{ postMessage: (data: string) => void }>
   ) {
+    const latest = React.useRef(props)
+    latest.current = props
     React.useImperativeHandle(ref, () => ({
       postMessage: (data: string) => mockEditor.receive(data),
     }))
     React.useEffect(() => {
-      mockEditor.send = (data) => props.onMessage?.({ nativeEvent: { data } })
+      mockEditor.webview = latest
+      mockEditor.send = (data) =>
+        latest.current.onMessage?.({ nativeEvent: { data } })
+      // The page says ready once, when it has started, as the real one does.
       mockEditor.emit({ type: "ready" })
-    }, [props])
+    }, [])
     return <View testID="webview" />
   })
   return { WebView }
@@ -274,6 +301,57 @@ describe("the editor", () => {
       // The draft's changes are unsaved, though the editor started with them.
       expect(screen.getByText(/UNSAVED/)).toBeTruthy()
       expect(screen.getByTestId("editor-save")).toBeEnabled()
+    },
+    FLOW_TIMEOUT_MS
+  )
+
+  it(
+    "starts the editor again with the newest text when the system ends its page",
+    async () => {
+      await openTheme()
+      await act(async () => mockEditor.type("drafted\n"))
+      await waitFor(
+        () => expect(draftFor(ROOT, "src/theme.ts")?.text).toBe("drafted\n"),
+        { timeout: 5_000 }
+      )
+
+      await act(async () => mockEditor.endProcess())
+      await waitFor(() => expect(mockEditor.loaded).toBe("drafted\n"))
+      const loads = mockEditor.commands.filter(({ type }) => type === "load")
+      expect(loads).toHaveLength(2)
+      expect(loads[1]).toMatchObject({ type: "load", text: "drafted\n" })
+      expect(screen.getByText(/UNSAVED/)).toBeTruthy()
+      await fireEvent.press(screen.getByTestId("editor-save"))
+      await waitFor(() => expect(screen.queryByText(/UNSAVED/)).toBeNull())
+      expect(
+        (await demoApi().readFile(ROOT, `${ROOT}/src/theme.ts`)).content
+      ).toBe("drafted\n")
+    },
+    FLOW_TIMEOUT_MS
+  )
+
+  it(
+    "never saves a text the editor does not hold",
+    async () => {
+      await openTheme()
+      const original = mockEditor.loaded
+      await act(async () => mockEditor.type("mine\n"))
+      // The page lost its text and has not said ready again.
+      mockEditor.holding = false
+      const alert = jest
+        .spyOn(Alert, "alert")
+        .mockImplementation(() => undefined)
+
+      await fireEvent.press(screen.getByTestId("editor-save"))
+      await waitFor(() =>
+        expect(alert).toHaveBeenCalledWith(
+          "Something went wrong",
+          "The editor has no text to hand over."
+        )
+      )
+      expect(
+        (await demoApi().readFile(ROOT, `${ROOT}/src/theme.ts`)).content
+      ).toBe(original)
     },
     FLOW_TIMEOUT_MS
   )

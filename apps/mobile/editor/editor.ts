@@ -291,7 +291,7 @@ function handle(command: EditorCommand): void {
       send({
         type: "text",
         requestId: command.requestId,
-        text: view ? currentText(view) : "",
+        text: view ? currentText(view) : null,
       })
       return
     case "markSaved":
@@ -335,8 +335,14 @@ function receive(data: unknown): void {
   }
 }
 
-// iOS delivers the app's messages to window, Android to document.
-window.addEventListener("message", (event) => receive(event.data))
-document.addEventListener("message", ((event: MessageEvent) =>
-  receive(event.data)) as EventListener)
+// iOS delivers the app's messages to window, Android to document (from
+// where an old WebView's event bubbles on to window): each once.
+const received = new WeakSet<Event>()
+function onMessage(event: Event): void {
+  if (received.has(event)) return
+  received.add(event)
+  receive((event as MessageEvent).data)
+}
+window.addEventListener("message", onMessage)
+document.addEventListener("message", onMessage)
 send({ type: "ready" })

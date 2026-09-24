@@ -29,6 +29,10 @@ describe("events from the editor", () => {
     expect(
       parseEditorEvent('{"type":"text","requestId":"text-1","text":"a\\nb"}')
     ).toEqual({ type: "text", requestId: "text-1", text: "a\nb" })
+    // An editor that holds no text says so, rather than sending "".
+    expect(
+      parseEditorEvent('{"type":"text","requestId":"text-2","text":null}')
+    ).toEqual({ type: "text", requestId: "text-2", text: null })
   })
 
   it("are ignored when they are anything else", () => {

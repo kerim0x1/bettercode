@@ -91,7 +91,12 @@ export const editorEventSchema = z.discriminatedUnion("type", [
     type: z.literal("text"),
     requestId: z.string().min(1).max(64),
     // Well above the editable size: a checked message, not a copy of it.
-    text: z.string().max(MAX_EDITABLE_BYTES * 4),
+    // Null when the editor holds no text (its page started over), rather
+    // than an empty text that a save would write.
+    text: z
+      .string()
+      .max(MAX_EDITABLE_BYTES * 4)
+      .nullable(),
   }),
   z.object({ type: z.literal("error"), message: z.string().max(2_000) }),
 ])

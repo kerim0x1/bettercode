@@ -1,4 +1,10 @@
-import { forwardRef, useCallback, useImperativeHandle, useRef } from "react"
+import {
+  forwardRef,
+  useCallback,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react"
 import { StyleSheet, View } from "react-native"
 import { WebView, type WebViewMessageEvent } from "react-native-webview"
 import { EDITOR_HTML } from "@/editor/editor-html"
@@ -18,6 +24,11 @@ export interface CodeEditorHandle {
 /** How long the editor may take to hand over its text. */
 const TEXT_TIMEOUT_MS = 5_000
 
+interface Waiter {
+  resolve(text: string): void
+  reject(error: Error): void
+}
+
 /**
  * The code editor (CodeMirror 6) in a WebView that shows nothing but its
  * own page: no navigation, no files, no storage, no other windows. The
@@ -29,7 +40,9 @@ export const CodeEditor = forwardRef<
   { onEvent: (event: Exclude<EditorEvent, { type: "text" }>) => void }
 >(function CodeEditor({ onEvent }, ref) {
   const webview = useRef<WebView>(null)
-  const waiting = useRef(new Map<string, (text: string) => void>())
+  const waiting = useRef(new Map<string, Waiter>())
+  /** A new WebView, when the system ended the last one's page. */
+  const [generation, setGeneration] = useState(0)
 
   useImperativeHandle(
     ref,
@@ -42,9 +55,15 @@ export const CodeEditor = forwardRef<
             waiting.current.delete(requestId)
             reject(new Error("The editor did not hand over its text."))
           }, TEXT_TIMEOUT_MS)
-          waiting.current.set(requestId, (text) => {
-            clearTimeout(timer)
-            resolve(text)
+          waiting.current.set(requestId, {
+            resolve: (text) => {
+              clearTimeout(timer)
+              resolve(text)
+            },
+            reject: (error) => {
+              clearTimeout(timer)
+              reject(error)
+            },
           })
           webview.current?.postMessage(
             JSON.stringify({ type: "requestText", requestId })
@@ -59,9 +78,11 @@ export const CodeEditor = forwardRef<
       const event = parseEditorEvent(message.nativeEvent.data)
       if (!event) return
       if (event.type === "text") {
-        const resolve = waiting.current.get(event.requestId)
+        const waiter = waiting.current.get(event.requestId)
         waiting.current.delete(event.requestId)
-        resolve?.(event.text)
+        if (event.text === null) {
+          waiter?.reject(new Error("The editor has no text to hand over."))
+        } else waiter?.resolve(event.text)
         return
       }
       onEvent(event)
@@ -69,9 +90,21 @@ export const CodeEditor = forwardRef<
     [onEvent]
   )
 
+  // The system can end the page's process: for memory, or while the app is
+  // in the background. Android would end the app with it unless this is
+  // handled. A new WebView starts the page again, which says ready again.
+  const restart = useCallback(() => {
+    for (const waiter of waiting.current.values()) {
+      waiter.reject(new Error("The editor started over."))
+    }
+    waiting.current.clear()
+    setGeneration((value) => value + 1)
+  }, [])
+
   return (
     <View style={styles.wrap} testID="code-editor">
       <WebView
+        key={generation}
         ref={webview}
         source={{ html: EDITOR_HTML }}
         originWhitelist={["about:*"]}
@@ -80,6 +113,8 @@ export const CodeEditor = forwardRef<
           request.url.startsWith("about:")
         }
         onMessage={onMessage}
+        onRenderProcessGone={restart}
+        onContentProcessDidTerminate={restart}
         javaScriptEnabled
         domStorageEnabled={false}
         cacheEnabled={false}
