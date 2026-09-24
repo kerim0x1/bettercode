@@ -16,7 +16,18 @@ tags:
 - tapOn:
     id: pair-input
 - inputText: ABCD-EFGH-JKLM
-- hideKeyboard
+# Maestro cannot hide the iOS keyboard, which covers Connect; Return ends
+# editing in this single-line field instead.
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - hideKeyboard
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - pressKey: Enter
 - tapOn:
     id: pair-connect
 - extendedWaitUntil:
