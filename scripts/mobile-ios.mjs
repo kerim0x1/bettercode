@@ -32,7 +32,7 @@ import { fileURLToPath } from "node:url"
 import { EXPECTED_ATS, sameJson } from "./mobile-checks.mjs"
 import { prebuild } from "./mobile-prebuild.mjs"
 import { capture, npm, releaseVersion, root, run, sleep } from "./mobile-run.mjs"
-import { MAESTRO_ENV, ensureMaestro, findJdk, maestroTestArgs, resolveIos } from "./mobile-toolchain.mjs"
+import { ensureMaestro, findJdk, iosMaestroEnv, maestroTestArgs, resolveIos } from "./mobile-toolchain.mjs"
 
 const require = createRequire(import.meta.url)
 const { iosMarketingVersion } = require("../apps/mobile/config/version.cjs")
@@ -209,7 +209,7 @@ export async function e2e({ app, env = process.env }) {
     const maestro = await ensureMaestro({ log: (line) => process.stdout.write(`${line}\n`) })
     fs.mkdirSync(E2E_OUTPUT_DIR, { recursive: true })
     run(maestro, maestroTestArgs(udid, FLOWS_DIR, E2E_OUTPUT_DIR), {
-      env: { ...env, ...(jdk.home ? { JAVA_HOME: jdk.home } : {}), ...MAESTRO_ENV },
+      env: { ...env, ...(jdk.home ? { JAVA_HOME: jdk.home } : {}), ...iosMaestroEnv(env) },
       label: "maestro",
     })
   } catch (error) {
