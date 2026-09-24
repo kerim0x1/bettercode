@@ -322,7 +322,7 @@ export default function GitReviewScreen() {
             <View style={styles.overview}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Branch ${status.branch || "main"}. Switch or create a branch`}
+                accessibilityLabel={`Branch ${status.branch || "main"}${status.ahead > 0 ? `, ${status.ahead} to push` : ""}${status.behind > 0 ? `, ${status.behind} to pull` : ""}. Switch or create a branch`}
                 testID="git-branch"
                 onPress={() => setBranchesOpen(true)}
                 style={({ pressed }) => [

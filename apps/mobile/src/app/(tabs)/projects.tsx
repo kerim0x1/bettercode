@@ -106,6 +106,7 @@ export default function ProjectsScreen() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityState={{ expanded: open }}
+                testID={`project-${item.name}`}
                 onPress={() => setExpanded(open ? null : key)}
                 style={({ pressed }) => [
                   styles.cardHeader,
