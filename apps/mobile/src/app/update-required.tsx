@@ -31,8 +31,9 @@ const TESTFLIGHT = "itms-beta://"
 const TESTFLIGHT_STORE = "https://apps.apple.com/app/testflight/id899247664"
 
 /**
- * The desktop needs a newer app. The pairing stays valid: after the update
- * the app connects again without a new pairing code.
+ * The desktop needs a newer app, or this app a newer desktop. The pairing
+ * stays valid: after the update the app connects again without a new
+ * pairing code.
  */
 export default function UpdateRequiredScreen() {
   const router = useRouter()
@@ -45,6 +46,7 @@ export default function UpdateRequiredScreen() {
     compatibility.kind === "app_update_required"
       ? compatibility.minClientVersion
       : null
+  const desktopTooOld = compatibility.kind === "desktop_update_required"
 
   const openUpdate = async () => {
     try {
@@ -87,23 +89,33 @@ export default function UpdateRequiredScreen() {
     <Screen edges={["top", "bottom"]}>
       <View style={styles.wrap} testID="update-required">
         <BrandMark />
-        <Text style={styles.title}>Update BetterC0de Remote</Text>
+        <Text style={styles.title}>
+          {desktopTooOld
+            ? "Update BetterC0de on the desktop"
+            : "Update BetterC0de Remote"}
+        </Text>
         <Text style={styles.message}>
-          {minimum
-            ? `This desktop needs version ${minimum} or newer of the app. This is ${APP_VERSION}.`
-            : `This desktop needs a newer version of the app. This is ${APP_VERSION}.`}{" "}
+          {desktopTooOld
+            ? `This version of the app (${APP_VERSION}) needs a newer BetterC0de desktop app. Update BetterC0de on your computer, then check again.`
+            : minimum
+              ? `This desktop needs version ${minimum} or newer of the app. This is ${APP_VERSION}.`
+              : `This desktop needs a newer version of the app. This is ${APP_VERSION}.`}{" "}
           Your pairing stays: after the update the app connects again by itself.
         </Text>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => void openUpdate()}
-          style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
-        >
-          <Download size={17} color={colors.primaryForeground} />
-          <Text style={styles.primaryText}>
-            {Platform.OS === "ios" ? "Open TestFlight" : "Download the update"}
-          </Text>
-        </Pressable>
+        {desktopTooOld ? null : (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void openUpdate()}
+            style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
+          >
+            <Download size={17} color={colors.primaryForeground} />
+            <Text style={styles.primaryText}>
+              {Platform.OS === "ios"
+                ? "Open TestFlight"
+                : "Download the update"}
+            </Text>
+          </Pressable>
+        )}
         <Pressable
           accessibilityRole="button"
           disabled={checking}

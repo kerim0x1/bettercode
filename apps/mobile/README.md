@@ -86,7 +86,9 @@ against sample chats and files (see [Demo mode](#demo-mode)).
   with every request and in the WebSocket `auth` frame. A desktop that needs a
   newer app answers `426 client_update_required` (WebSocket close `4426`); the
   app then shows **Update BetterC0de Remote** and keeps the pairing, so it
-  connects again after the update. See "Phone app and desktop versions" in
+  connects again after the update. A desktop older than the oldest protocol
+  the app speaks gets the same screen, asking to update BetterC0de on the
+  computer. See "Phone app and desktop versions" in
   [`docs/remote-access.md`](../../docs/remote-access.md).
 - While **Remote Access** is off on the desktop, the app says so and keeps the
   pairing. Turning Remote Access off ends the desktop's sessions, so once it is

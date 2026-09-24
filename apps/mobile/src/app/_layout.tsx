@@ -11,6 +11,7 @@ import {
 } from "@expo-google-fonts/figtree"
 import { AppRuntime } from "@/components/app-runtime"
 import { colors } from "@/design/theme"
+import { needsUpdate } from "@/lib/compat"
 import { useSessionStore } from "@/store/session-store"
 
 // The native splash stays until the fonts are ready; the start screen then
@@ -27,8 +28,8 @@ export default function RootLayout() {
     Figtree_700Bold,
   })
   const paired = useSessionStore((state) => state.profile !== null)
-  const appUpdateRequired = useSessionStore(
-    (state) => state.compatibility.kind === "app_update_required"
+  const updateRequired = useSessionStore((state) =>
+    needsUpdate(state.compatibility)
   )
   useEffect(() => {
     if (fontsLoaded) void SplashScreen.hideAsync().catch(() => undefined)
@@ -53,14 +54,14 @@ export default function RootLayout() {
         <Stack.Protected guard={!paired}>
           <Stack.Screen name="pair" options={{ animation: "fade" }} />
         </Stack.Protected>
-        <Stack.Protected guard={paired && !appUpdateRequired}>
+        <Stack.Protected guard={paired && !updateRequired}>
           <Stack.Screen name="(tabs)" options={{ animation: "fade" }} />
           <Stack.Screen name="chat/[id]" />
           <Stack.Screen name="chat/[id]/files" />
           <Stack.Screen name="chat/[id]/file" />
           <Stack.Screen name="chat/[id]/changes" />
         </Stack.Protected>
-        <Stack.Protected guard={paired && appUpdateRequired}>
+        <Stack.Protected guard={paired && updateRequired}>
           <Stack.Screen
             name="update-required"
             options={{ animation: "fade" }}

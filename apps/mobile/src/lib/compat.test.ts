@@ -3,7 +3,7 @@ import {
   type RemoteProtocol,
 } from "@betterc0de/schema/remote-protocol"
 import { describe, expect, it } from "vitest"
-import { assessCompatibility, hasFeature } from "./compat"
+import { assessCompatibility, hasFeature, needsUpdate } from "./compat"
 
 const protocol = (overrides: Partial<RemoteProtocol> = {}): RemoteProtocol => ({
   apiVersion: REMOTE_API_VERSION,
@@ -57,6 +57,15 @@ describe("desktop compatibility", () => {
     expect(assessCompatibility(protocol({ apiVersion: 0 }), "0.1.0")).toEqual({
       kind: "desktop_update_required",
     })
+  })
+
+  it("stops the app only when one side has to be updated", () => {
+    expect(needsUpdate({ kind: "ok" })).toBe(false)
+    expect(needsUpdate({ kind: "legacy_desktop" })).toBe(false)
+    expect(
+      needsUpdate({ kind: "app_update_required", minClientVersion: null })
+    ).toBe(true)
+    expect(needsUpdate({ kind: "desktop_update_required" })).toBe(true)
   })
 
   it("uses additive features only when the desktop lists them", () => {

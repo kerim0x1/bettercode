@@ -48,6 +48,14 @@ export function assessCompatibility(
   return { kind: "ok" }
 }
 
+/** The app cannot work with this desktop until one side is updated. */
+export function needsUpdate(compatibility: Compatibility): boolean {
+  return (
+    compatibility.kind === "app_update_required" ||
+    compatibility.kind === "desktop_update_required"
+  )
+}
+
 /** Additive features are used only when the desktop lists them. */
 export function hasFeature(
   protocol: RemoteProtocol | null,

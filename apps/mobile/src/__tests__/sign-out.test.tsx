@@ -102,6 +102,25 @@ describe("update required", () => {
       )
     ).toBeTruthy()
     expect(screen.getByText(/Your pairing stays/)).toBeTruthy()
+    expect(
+      screen.getByText(/^(?:Open TestFlight|Download the update)$/)
+    ).toBeTruthy()
+  })
+
+  it("asks for a newer desktop when the desktop is too old for the app", async () => {
+    pairWithTestDesktop()
+    useSessionStore.setState({
+      compatibility: { kind: "desktop_update_required" },
+    })
+    await renderRouter(routes, { initialUrl: "/update-required" })
+    expect(screen.getByText("Update BetterC0de on the desktop")).toBeTruthy()
+    expect(
+      screen.getByText(/needs a newer BetterC0de desktop app/)
+    ).toBeTruthy()
+    // The app's own download is not the fix here.
+    expect(screen.queryByText("Download the update")).toBeNull()
+    expect(screen.queryByText("Open TestFlight")).toBeNull()
+    expect(screen.getByText("Check again")).toBeTruthy()
   })
 
   it("connects again once the desktop accepts this app", async () => {

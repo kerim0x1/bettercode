@@ -33,7 +33,7 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 - Every refusal a paired device can receive names a `code` (see "Phone app and desktop versions" in `docs/remote-access.md`).
 - `GET /api/v1/threads/:id` returns one chat with its session state, also to read-only sessions.
 - The phone app has a demo mode (**Try the demo** on the pairing screen, or `betterc0de://demo`): sample projects, chats and files, and a reply that streams and asks for approval, without a desktop and without network access.
-- The phone app shows **Update BetterC0de Remote** when the desktop needs a newer app, and keeps the pairing for after the update. Its connection badge distinguishes live, connecting, reconnecting, offline, Remote Access off, watch-only and demo.
+- The phone app shows **Update BetterC0de Remote** when the desktop needs a newer app, or asks to update the desktop when it is too old for the app, and keeps the pairing for after the update. Its connection badge distinguishes live, connecting, reconnecting, offline, Remote Access off, watch-only and demo.
 - **Paired devices** on the desktop shows the phone's model (for example "Pixel 9"), instead of "iPhone" or "Android" for every device.
 - Screen tests for the phone app (Jest with Expo's preset and React Native Testing Library), and `npm run test:e2e:remote`, which runs the app's network client against a real desktop backend and checks that the demo answers like a real desktop. Both are part of `release:check`.
 - `/api/v1/workspace/read` returns the file's SHA-256, size and whether it is valid UTF-8; `/api/v1/workspace/write` accepts `expectedSha256` and refuses to overwrite a file that changed since it was read.
