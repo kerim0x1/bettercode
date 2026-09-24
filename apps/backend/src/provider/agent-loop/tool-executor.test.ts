@@ -25,12 +25,20 @@ const ctx: ToolExecContext = {
 
 beforeEach(() => vi.clearAllMocks())
 
+/** A `/workspace/read` result; the executor only uses `content`. */
+function readResult(content: string, path: string) {
+  return {
+    content,
+    path,
+    size: Buffer.byteLength(content),
+    sha256: "0".repeat(64),
+    isUtf8: true,
+  }
+}
+
 describe("Read", () => {
   it("reads a file and returns its content", async () => {
-    vi.mocked(readFile).mockResolvedValue({
-      content: "hello",
-      path: "/proj/a.txt",
-    })
+    vi.mocked(readFile).mockResolvedValue(readResult("hello", "/proj/a.txt"))
     const r = await executeTool("Read", { path: "a.txt" }, ctx)
     expect(readFile).toHaveBeenCalledWith({
       cwd: "/proj",
@@ -87,10 +95,7 @@ describe("Read", () => {
   })
 
   it("normalizes established provider aliases before strict validation", async () => {
-    vi.mocked(readFile).mockResolvedValue({
-      content: "legacy",
-      path: "/proj/a.txt",
-    })
+    vi.mocked(readFile).mockResolvedValue(readResult("legacy", "/proj/a.txt"))
 
     await expect(
       executeTool("Read", { file_path: "a.txt" }, ctx)
@@ -141,7 +146,7 @@ describe("Write", () => {
 
 describe("Edit", () => {
   it("replaces a unique match", async () => {
-    vi.mocked(readFile).mockResolvedValue({ content: "foo bar baz", path: "p" })
+    vi.mocked(readFile).mockResolvedValue(readResult("foo bar baz", "p"))
     const r = await executeTool(
       "Edit",
       { path: "a.txt", old_string: "bar", new_string: "qux" },
@@ -162,7 +167,7 @@ describe("Edit", () => {
   })
 
   it("fails when old_string is not found", async () => {
-    vi.mocked(readFile).mockResolvedValue({ content: "foo", path: "p" })
+    vi.mocked(readFile).mockResolvedValue(readResult("foo", "p"))
     const r = await executeTool(
       "Edit",
       { path: "a.txt", old_string: "zzz", new_string: "q" },
@@ -173,7 +178,7 @@ describe("Edit", () => {
   })
 
   it("fails when old_string is ambiguous without replace_all", async () => {
-    vi.mocked(readFile).mockResolvedValue({ content: "x x x", path: "p" })
+    vi.mocked(readFile).mockResolvedValue(readResult("x x x", "p"))
     const r = await executeTool(
       "Edit",
       { path: "a.txt", old_string: "x", new_string: "y" },
@@ -184,7 +189,7 @@ describe("Edit", () => {
   })
 
   it("replace_all rewrites every occurrence", async () => {
-    vi.mocked(readFile).mockResolvedValue({ content: "x x x", path: "p" })
+    vi.mocked(readFile).mockResolvedValue(readResult("x x x", "p"))
     const r = await executeTool(
       "Edit",
       { path: "a.txt", old_string: "x", new_string: "y", replace_all: true },
@@ -197,7 +202,7 @@ describe("Edit", () => {
   })
 
   it("treats $-sequences in new_string literally", async () => {
-    vi.mocked(readFile).mockResolvedValue({ content: "a TOKEN b", path: "p" })
+    vi.mocked(readFile).mockResolvedValue(readResult("a TOKEN b", "p"))
     await executeTool(
       "Edit",
       { path: "a.txt", old_string: "TOKEN", new_string: "$&$1" },
@@ -209,7 +214,7 @@ describe("Edit", () => {
   })
 
   it("redirects the model when a concurrent file change invalidates the preimage", async () => {
-    vi.mocked(readFile).mockResolvedValue({ content: "old", path: "p" })
+    vi.mocked(readFile).mockResolvedValue(readResult("old", "p"))
     vi.mocked(writeFile).mockRejectedValue(
       Object.assign(new Error("private workspace diagnostic"), {
         statusCode: 409,
@@ -444,7 +449,7 @@ describe("central execution lifecycle", () => {
 
   it("bounds a non-process workspace primitive without leaking rejection", async () => {
     vi.useFakeTimers()
-    let finishRead!: (value: { content: string; path: string }) => void
+    let finishRead!: (value: ReturnType<typeof readResult>) => void
     try {
       vi.mocked(readFile).mockImplementationOnce(
         () =>
@@ -470,7 +475,7 @@ describe("central execution lifecycle", () => {
       // The underlying Node filesystem primitive is not forcibly cancellable;
       // its handled promise may settle later without changing the published
       // result or creating an unhandled rejection.
-      finishRead({ content: "late", path: "/proj/a.txt" })
+      finishRead(readResult("late", "/proj/a.txt"))
       await Promise.resolve()
     } finally {
       vi.useRealTimers()
@@ -598,7 +603,7 @@ describe("Glob / Grep", () => {
 describe("truncation + unknown", () => {
   it("truncates output by line cap", async () => {
     const big = Array.from({ length: 10 }, (_, i) => `line${i}`).join("\n")
-    vi.mocked(readFile).mockResolvedValue({ content: big, path: "p" })
+    vi.mocked(readFile).mockResolvedValue(readResult(big, "p"))
     const r = await executeTool(
       "Read",
       { path: "a.txt" },
@@ -613,10 +618,7 @@ describe("truncation + unknown", () => {
   })
 
   it("enforces the byte cap without splitting Unicode code points", async () => {
-    vi.mocked(readFile).mockResolvedValue({
-      content: "😀".repeat(100),
-      path: "p",
-    })
+    vi.mocked(readFile).mockResolvedValue(readResult("😀".repeat(100), "p"))
     const r = await executeTool(
       "Read",
       { path: "a.txt" },

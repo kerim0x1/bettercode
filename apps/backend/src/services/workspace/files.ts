@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer"
 import { createHash, randomUUID } from "node:crypto"
 import fsSync, { type Stats } from "node:fs"
 import fs from "node:fs/promises"
@@ -460,11 +461,27 @@ async function readPreview(input: ReadFileInput, maxBytes: number) {
   }
 }
 
-export async function readFile(
-  input: ReadFileInput
-): Promise<{ content: string; path: string }> {
+/**
+ * The whole file as text. `sha256` covers the exact bytes read, so a client
+ * that edits the text can pass it back as `expectedSha256` and never
+ * overwrite a change made since (by an agent, for example). `isUtf8` is
+ * false when decoding lost bytes; such a file must not be saved as text.
+ */
+export async function readFile(input: ReadFileInput): Promise<{
+  content: string
+  path: string
+  size: number
+  sha256: string
+  isUtf8: boolean
+}> {
   const result = await readPreview(input, TEXT_PREVIEW_MAX_BYTES)
-  return { content: result.content.toString("utf8"), path: result.path }
+  return {
+    content: result.content.toString("utf8"),
+    path: result.path,
+    size: result.content.length,
+    sha256: createHash("sha256").update(result.content).digest("hex"),
+    isUtf8: isUtf8(result.content),
+  }
 }
 
 export async function readBinaryFile(

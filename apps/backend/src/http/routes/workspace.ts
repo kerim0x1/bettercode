@@ -394,7 +394,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
           operation: "write a workspace file",
         })
         await withCheckpointRecoveryMutation(state, { workspaces: [cwd] }, () =>
-          workspace.writeFile(cwd, b.relativePath, b.contents)
+          workspace.writeFile(cwd, b.relativePath, b.contents, {
+            expectedContentHash: b.expectedSha256,
+          })
         )
         return ctx.body(null, 204)
       },
