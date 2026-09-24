@@ -14,6 +14,7 @@ import {
   emulatorImage,
   extractZip,
   findJdk,
+  iosMaestroEnv,
   javaMajorVersion,
   maestroCacheRoot,
   maestroFailures,
@@ -213,6 +214,14 @@ test("extracts an archive, and refuses entries that point outside the target", (
   } finally {
     fs.rmSync(target, { recursive: true, force: true })
   }
+})
+
+test("gives Maestro's iOS driver five minutes to start, unless the environment sets a limit", () => {
+  const defaults = iosMaestroEnv({})
+  assert.equal(defaults.MAESTRO_DRIVER_STARTUP_TIMEOUT, "300000")
+  assert.equal(defaults.MAESTRO_CLI_NO_ANALYTICS, "1")
+  assert.equal(iosMaestroEnv({ MAESTRO_DRIVER_STARTUP_TIMEOUT: " 600000 " }).MAESTRO_DRIVER_STARTUP_TIMEOUT, "600000")
+  assert.equal(iosMaestroEnv({ MAESTRO_DRIVER_STARTUP_TIMEOUT: " " }).MAESTRO_DRIVER_STARTUP_TIMEOUT, "300000")
 })
 
 test("runs every flow on one device and keeps a report", () => {
