@@ -1,6 +1,10 @@
 # The demo, as App Review sees it: start it from the pairing screen, open a
 # chat, send a message, approve the agent's request, read the reply, and
 # leave the demo from the Host tab.
+#
+# Every target is scrolled to before it is used: on a small phone (and the
+# CI emulator's 320x640 screen) "Try the demo", the approval and Exit demo
+# start below the fold.
 appId: com.betterc0de.remote
 name: The demo from the pairing screen to Exit demo
 tags:
@@ -10,8 +14,12 @@ tags:
     clearState: true
 - extendedWaitUntil:
     visible:
-      id: pair-demo
+      id: pair-screen
     timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: pair-demo
+    direction: DOWN
 - tapOn:
     id: pair-demo
 - extendedWaitUntil:
@@ -20,6 +28,10 @@ tags:
     timeout: 20000
 - assertVisible:
     id: connection-demo
+- scrollUntilVisible:
+    element:
+      id: thread-row-demo-release-notes
+    direction: DOWN
 - tapOn:
     id: thread-row-demo-release-notes
 - tapOn:
@@ -28,18 +40,26 @@ tags:
 - hideKeyboard
 - tapOn:
     id: chat-send
-- extendedWaitUntil:
-    visible: Run npm test
+- scrollUntilVisible:
+    element:
+      id: request-approve
+    direction: DOWN
     timeout: 30000
+- assertVisible: Run npm test
 - tapOn:
     id: request-approve
-- extendedWaitUntil:
-    visible: .*24 passed.*
+- scrollUntilVisible:
+    element: .*24 passed.*
+    direction: DOWN
     timeout: 30000
 - assertNotVisible:
     id: request-approve
 - tapOn: Back
 - tapOn: Host
+- scrollUntilVisible:
+    element:
+      id: exit-demo
+    direction: DOWN
 - tapOn:
     id: exit-demo
 - extendedWaitUntil:
