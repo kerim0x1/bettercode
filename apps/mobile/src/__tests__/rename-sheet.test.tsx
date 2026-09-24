@@ -5,7 +5,7 @@ import { RenameSheet } from "@/components/rename-sheet"
 describe("RenameSheet", () => {
   it("saves the latest text when Save arrives before the next render", async () => {
     const onSave = jest.fn(async (_name: string) => {})
-    render(
+    await render(
       <RenameSheet
         visible
         title=""
@@ -31,7 +31,7 @@ describe("RenameSheet", () => {
 
   it("validates the latest text before saving in the same batch", async () => {
     const onSave = jest.fn(async (_name: string) => {})
-    render(
+    await render(
       <RenameSheet
         visible
         title=""
