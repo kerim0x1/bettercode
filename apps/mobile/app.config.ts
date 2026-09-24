@@ -95,6 +95,7 @@ export default function appConfig({ config }: ConfigContext): ExpoConfig {
         },
       ],
       "./plugins/with-android-release-signing.cjs",
+      "./plugins/with-gradle-memory.cjs",
     ],
     experiments: {
       typedRoutes: true,
