@@ -114,6 +114,19 @@ export const BYPASS_CONFIRM_ACTION = "Enable Bypass"
  * apply it to the next turn (`/chat/permission-mode` answered other than
  * `applied: "live"`).
  */
+/**
+ * Restoring a checkpoint, in words that say what it does: the restore runs
+ * `git restore` and `git clean` across the whole worktree, so it discards
+ * the user's own edits and deletes untracked files, not only the agent's.
+ */
+export const CHECKPOINT_RESTORE_TITLE = "Restore checkpoint?"
+export const CHECKPOINT_RESTORE_BODY =
+  "This reverts the ENTIRE project folder to this point, not just the files the agent changed:\n\n" +
+  "• Messages after this point are deleted.\n" +
+  "• Every tracked file is reset — including edits you made yourself since then.\n" +
+  "• Untracked files created since this point are deleted.\n\n" +
+  "BetterC0de saves a snapshot of the current folder first, so this can be undone."
+
 export const PERMISSION_MODE_QUEUED = {
   title: "Permission mode saved for the next turn",
   description:

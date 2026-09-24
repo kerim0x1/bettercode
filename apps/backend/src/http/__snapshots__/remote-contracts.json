@@ -2541,6 +2541,115 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema"
       }
     },
+    "createThreadWorktree": {
+      "method": "POST",
+      "path": "/threads/:id/worktree",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "worktreeId": {
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          },
+          "worktreePath": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "baseBranch": {
+            "type": "string"
+          },
+          "headSha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "worktreeId",
+          "threadId",
+          "worktreePath",
+          "branch",
+          "baseBranch",
+          "headSha"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "revertThreadCheckpoint": {
+      "method": "POST",
+      "path": "/threads/:id/checkpoint/revert",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "reverted": {
+            "type": "boolean"
+          },
+          "rolledBackTurns": {
+            "type": "number",
+            "minimum": 0
+          },
+          "deletedMessages": {
+            "type": "number",
+            "minimum": 0
+          },
+          "boundaryMessageId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reverted",
+          "rolledBackTurns",
+          "deletedMessages",
+          "boundaryMessageId"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "gitBranches": {
+      "method": "POST",
+      "path": "/git/branches",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "branches": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "current": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "branches",
+          "current"
+        ],
+        "additionalProperties": {}
+      }
+    },
     "saveMessage": {
       "method": "POST",
       "path": "/threads/:id/messages",

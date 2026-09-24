@@ -28,11 +28,14 @@ export {
   threadMetadataUpdateSchema,
   type ThreadMetadataUpdate,
 } from "./thread-metadata"
+import { gitCwdSchema } from "./git"
 import {
+  threadCheckpointRevertSchema,
   threadMessageSchema,
   threadMetaSchema,
   threadRenameSchema,
   threadSaveSchema,
+  threadWorktreeCreateSchema,
 } from "./threads"
 
 const text = z.string()
@@ -215,6 +218,34 @@ const contextCheckpointResponseFields = {
   generation: count,
 }
 
+/** The repository's local branches, and the checked-out one ("" when detached). */
+export const gitBranchesResponseSchema = z
+  .object({ branches: z.array(text), current: text })
+  .passthrough()
+
+/** A chat's own git worktree, on a new branch from `baseBranch`. */
+export const threadWorktreeCreateResponseSchema = z
+  .object({
+    worktreeId: text,
+    threadId: text,
+    worktreePath: text,
+    branch: text,
+    baseBranch: text,
+    headSha: text.nullable(),
+  })
+  .passthrough()
+
+/** A checkpoint restore: `reverted: false` comes with the reason. */
+export const threadCheckpointRevertResponseSchema = z
+  .object({
+    reverted: z.boolean(),
+    rolledBackTurns: count,
+    deletedMessages: count,
+    boundaryMessageId: text.nullable(),
+    reason: text.optional(),
+  })
+  .passthrough()
+
 export const chatSendResponseSchema = z
   .object({
     status: z.enum(["streaming", "completed"]),
@@ -379,6 +410,24 @@ export const httpContracts = {
     threadMetadataUpdateSchema
   ),
   deleteThread: endpoint("DELETE", "/threads/:id", noBody, z.void()),
+  createThreadWorktree: endpoint(
+    "POST",
+    "/threads/:id/worktree",
+    threadWorktreeCreateSchema,
+    threadWorktreeCreateResponseSchema
+  ),
+  revertThreadCheckpoint: endpoint(
+    "POST",
+    "/threads/:id/checkpoint/revert",
+    threadCheckpointRevertSchema,
+    threadCheckpointRevertResponseSchema
+  ),
+  gitBranches: endpoint(
+    "POST",
+    "/git/branches",
+    gitCwdSchema,
+    gitBranchesResponseSchema
+  ),
   saveMessage: endpoint(
     "POST",
     "/threads/:id/messages",

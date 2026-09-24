@@ -1,11 +1,10 @@
+import {
+  CHECKPOINT_RESTORE_BODY,
+  CHECKPOINT_RESTORE_TITLE,
+} from "@betterc0de/schema/chat-controls"
 import { copyText } from "@/lib/clipboard"
 import React from "react"
-import {
-  ClockIcon,
-  CopyIcon,
-  RefreshCwIcon,
-  UndoIcon,
-} from "lucide-react"
+import { ClockIcon, CopyIcon, RefreshCwIcon, UndoIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { MessageAttachments } from "@/components/chat/message-attachments"
 import { readBrowserElementAttachment } from "@betterc0de/schema"
@@ -244,11 +243,11 @@ function ChatMessageItemInner({
   // machinery starts directly with thinking/steps, and mid-chat model
   // changes are announced by the ModelSwitchNotice divider instead.
   const modelInfo = msg.role === "user" ? getModelInfo(msg.modelId) : null
-  const browserElements = (msg.attachments ?? []).flatMap(attachment => {
+  const browserElements = (msg.attachments ?? []).flatMap((attachment) => {
     const element = readBrowserElementAttachment(attachment)
     return element ? [element] : []
   })
-  const visibleAttachments = msg.attachments?.filter(attachment => {
+  const visibleAttachments = msg.attachments?.filter((attachment) => {
     const element = readBrowserElementAttachment(attachment)
     return !element || !browserMentionRanges(msg.content, [element]).length
   })
@@ -410,7 +409,11 @@ function ChatMessageItemInner({
                   instruction={inlineEdit.instruction}
                 />
               ) : (
-                <BrowserElementMessage content={msg.content} elements={browserElements} skills={providerSkills} />
+                <BrowserElementMessage
+                  content={msg.content}
+                  elements={browserElements}
+                  skills={providerSkills}
+                />
               )
             })()
           )}
@@ -508,7 +511,7 @@ function ChatMessageItemInner({
             tooltip="Restore to this point (messages + files)"
             onClick={() =>
               onOpenConfirm({
-                title: "Restore checkpoint?",
+                title: CHECKPOINT_RESTORE_TITLE,
                 // Say what this actually does. `restoreCheckpoint` runs
                 // `git restore --worktree --staged -- .` followed by
                 // `git clean -fd -- .` across the WHOLE worktree: it reverts
@@ -518,16 +521,14 @@ function ChatMessageItemInner({
                 // BetterC0de snapshots the current worktree first so the
                 // operation can be undone, but the old wording ("file changes
                 // will be reverted") did not describe deletion at all.
-                description:
-                  "This reverts the ENTIRE project folder to this point, not just the files the agent changed:\n\n" +
-                  "• Messages after this point are deleted.\n" +
-                  "• Every tracked file is reset — including edits you made yourself since then.\n" +
-                  "• Untracked files created since this point are deleted.\n\n" +
-                  "BetterC0de saves a snapshot of the current folder first, so this can be undone.",
+                description: CHECKPOINT_RESTORE_BODY,
                 action: async () => {
                   try {
                     // 1. Find the user message before this assistant message (for SDK rewindFiles)
-                    const userMsgBefore = previousVisibleUserMessage(messages, idx)
+                    const userMsgBefore = previousVisibleUserMessage(
+                      messages,
+                      idx
+                    )
 
                     // 2. Try checkpoint-store first, then SDK plugin
                     const cpStore = useCheckpointStore.getState()
