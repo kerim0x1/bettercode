@@ -43,11 +43,16 @@ describe("resolveGrokBinary", () => {
 
   it("pins relative PATH entries to the directory that was inspected", async () => {
     const dir = makeTempDir("betterc0de-grok-relative-shim-")
-    const binary = path.join(dir, process.platform === "win32" ? "grok.cmd" : "grok")
+    const binary = path.join(
+      dir,
+      process.platform === "win32" ? "grok.cmd" : "grok"
+    )
     fs.writeFileSync(binary, "node node_modules/@xai-official/grok/bin/grok.js")
     process.env.PATH = path.relative(process.cwd(), dir)
     expect(resolveGrokBinary()).toMatchObject({ binaryPath: binary })
-    await expect(resolveGrokBinaryAsync()).resolves.toMatchObject({ binaryPath: binary })
+    await expect(resolveGrokBinaryAsync()).resolves.toMatchObject({
+      binaryPath: binary,
+    })
   })
 
   it("accepts an explicit configured path only when the file exists", () => {
@@ -108,6 +113,100 @@ describe("resolveGrokBinary", () => {
     })
   })
 
+  it("finds an xAI shim in a macOS user install directory with Finder's minimal PATH", async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!
+    Object.defineProperty(process, "platform", { ...platform, value: "darwin" })
+    try {
+      const binDir = path.join(fakeHome, ".local", "bin")
+      fs.mkdirSync(binDir, { recursive: true })
+      const binary = path.join(binDir, "grok")
+      fs.writeFileSync(
+        binary,
+        "node node_modules/@xai-official/grok/bin/grok.js"
+      )
+      process.env.PATH = makeTempDir("betterc0de-finder-path-")
+
+      expect(resolveGrokBinary()).toMatchObject({ binaryPath: binary })
+      await expect(resolveGrokBinaryAsync()).resolves.toMatchObject({
+        binaryPath: binary,
+      })
+    } finally {
+      Object.defineProperty(process, "platform", platform)
+    }
+  })
+
+  it("accepts a global npm symlink only when it resolves into @xai-official/grok", async () => {
+    const root = makeTempDir("betterc0de-grok-npm-link-")
+    const binDir = path.join(root, "bin")
+    const packageDir = path.join(
+      root,
+      "lib",
+      "node_modules",
+      "@xai-official",
+      "grok",
+      "bin"
+    )
+    fs.mkdirSync(binDir, { recursive: true })
+    fs.mkdirSync(packageDir, { recursive: true })
+    const target = path.join(packageDir, "grok.js")
+    fs.writeFileSync(target, "#!/usr/bin/env node\n")
+    const binary = path.join(
+      binDir,
+      process.platform === "win32" ? "grok.cmd" : "grok"
+    )
+    if (process.platform === "win32") {
+      // Creating file symlinks requires special privileges on Windows CI.
+      fs.writeFileSync(binary, "shim")
+      vi.spyOn(fs, "lstatSync").mockReturnValue({
+        isSymbolicLink: () => true,
+      } as fs.Stats)
+      vi.spyOn(fs, "realpathSync").mockReturnValue(target)
+      vi.spyOn(fs.promises, "lstat").mockResolvedValue({
+        isSymbolicLink: () => true,
+      } as fs.Stats)
+      vi.spyOn(fs.promises, "realpath").mockResolvedValue(target)
+    } else {
+      fs.symlinkSync(target, binary)
+    }
+    process.env.PATH = binDir
+
+    expect(resolveGrokBinary()).toMatchObject({ binaryPath: binary })
+    await expect(resolveGrokBinaryAsync()).resolves.toMatchObject({
+      binaryPath: binary,
+    })
+  })
+
+  it("rejects a global npm symlink into a different package", async () => {
+    const root = makeTempDir("betterc0de-grok-foreign-link-")
+    const binDir = path.join(root, "bin")
+    const packageDir = path.join(root, "lib", "node_modules", "grok-dev", "bin")
+    fs.mkdirSync(binDir, { recursive: true })
+    fs.mkdirSync(packageDir, { recursive: true })
+    const target = path.join(packageDir, "grok.js")
+    fs.writeFileSync(target, "#!/usr/bin/env node\n")
+    const binary = path.join(
+      binDir,
+      process.platform === "win32" ? "grok.cmd" : "grok"
+    )
+    if (process.platform === "win32") {
+      fs.writeFileSync(binary, "shim")
+      vi.spyOn(fs, "lstatSync").mockReturnValue({
+        isSymbolicLink: () => true,
+      } as fs.Stats)
+      vi.spyOn(fs, "realpathSync").mockReturnValue(target)
+      vi.spyOn(fs.promises, "lstat").mockResolvedValue({
+        isSymbolicLink: () => true,
+      } as fs.Stats)
+      vi.spyOn(fs.promises, "realpath").mockResolvedValue(target)
+    } else {
+      fs.symlinkSync(target, binary)
+    }
+    process.env.PATH = binDir
+
+    expect(resolveGrokBinary()).toBeNull()
+    await expect(resolveGrokBinaryAsync()).resolves.toBeNull()
+  })
+
   it("does not scan past the frontmost PATH hit", () => {
     // Foreign shim first on PATH, verified xAI shim later: the shell would
     // run the foreign one, so we must not "helpfully" pick the later one.
@@ -139,16 +238,12 @@ describe("resolveGrokBinary", () => {
       "utf8"
     )
     process.env.PATH = shimDir
-    const statSync = vi
-      .spyOn(fs, "statSync")
-      .mockImplementation(() => {
-        throw new Error("sync stat must not run")
-      })
-    const openSync = vi
-      .spyOn(fs, "openSync")
-      .mockImplementation(() => {
-        throw new Error("sync open must not run")
-      })
+    const statSync = vi.spyOn(fs, "statSync").mockImplementation(() => {
+      throw new Error("sync stat must not run")
+    })
+    const openSync = vi.spyOn(fs, "openSync").mockImplementation(() => {
+      throw new Error("sync open must not run")
+    })
 
     await expect(resolveGrokBinaryAsync(null)).resolves.toMatchObject({
       binaryPath: path.normalize(shimPath),

@@ -16,9 +16,15 @@ import {
 import { expandHomePath } from "../pathExpansion"
 import { deriveProviderInstanceConfigs } from "../provider/runtime/ProviderInstanceManager"
 import { resolveCodexHomeLayout } from "../provider/runtime/codex/CodexHomeLayout"
-import { createGrokAcpRuntime, type GrokAcpRuntimeOptions } from "../provider/runtime/grok-cli/GrokAcpRuntime"
+import {
+  createGrokAcpRuntime,
+  type GrokAcpRuntimeOptions,
+} from "../provider/runtime/grok-cli/GrokAcpRuntime"
 import { resolveGrokBinaryAsync } from "../provider/runtime/grok-cli/GrokBinaryResolution"
-import { CURSOR_BINARY_NAME, resolveCursorBinaryAsync } from "../provider/runtime/cursor/CursorBinaryResolution"
+import {
+  CURSOR_BINARY_NAME,
+  resolveCursorBinaryAsync,
+} from "../provider/runtime/cursor/CursorBinaryResolution"
 import {
   createCursorAcpRuntime,
   type CursorAcpRuntime,
@@ -85,7 +91,9 @@ export interface NativeTextGenerationRunner {
   readonly createCursorRuntime?: (
     input: CursorAcpRuntimeOptions
   ) => CursorAcpRuntime
-  readonly createGrokRuntime?: (input: GrokAcpRuntimeOptions) => CursorAcpRuntime
+  readonly createGrokRuntime?: (
+    input: GrokAcpRuntimeOptions
+  ) => CursorAcpRuntime
 }
 
 const DEFAULT_TIMEOUT_MS = 180_000
@@ -188,10 +196,13 @@ const activeNativeTextGenerations = new Map<
 const activeNativeTextChildren = new Set<ChildProcess>()
 const nativeTextChildStops = new Map<ChildProcess, Promise<void>>()
 const unconfirmedNativeTextChildren = new WeakSet<ChildProcess>()
-const nativeTextCleanupQuarantines = new Map<string, {
-  readonly stop: () => Promise<void>
-  pending: Promise<void> | null
-}>()
+const nativeTextCleanupQuarantines = new Map<
+  string,
+  {
+    readonly stop: () => Promise<void>
+    pending: Promise<void> | null
+  }
+>()
 const nativeTextGenerationQueue: QueuedNativeTextGeneration[] = []
 const pendingBetterC0deSessionCleanups = new Map<
   string,
@@ -252,8 +263,7 @@ export async function shutdownAllNativeTextGenerationResources(
   const operations = [...activeNativeTextGenerations.values()]
   beginNativeTextGenerationShutdown()
   const attemptedServers = new Set<SharedBetterC0deTextServer>()
-  const attemptedSessionCleanups =
-    new Set<PendingBetterC0deSessionCleanup>()
+  const attemptedSessionCleanups = new Set<PendingBetterC0deSessionCleanup>()
   const failures: unknown[] = []
 
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null
@@ -270,8 +280,7 @@ export async function shutdownAllNativeTextGenerationResources(
               activeOperations: activeNativeTextGenerations.size,
               activeChildren: activeNativeTextChildren.size,
               activeSharedServers: sharedBetterC0deTextServers.size,
-              pendingSessionCleanups:
-                pendingBetterC0deSessionCleanups.size,
+              pendingSessionCleanups: pendingBetterC0deSessionCleanups.size,
             }
           )
         ),
@@ -306,11 +315,7 @@ export async function shutdownAllNativeTextGenerationResources(
         )
       )
       const [serverResults, childResults, sessionCleanupResults] =
-        await Promise.all([
-        serverDrain,
-        childDrain,
-        sessionCleanupDrain,
-      ])
+        await Promise.all([serverDrain, childDrain, sessionCleanupDrain])
       for (const result of serverResults) {
         if (result.status === "rejected") failures.push(result.reason)
       }
@@ -388,8 +393,7 @@ export async function shutdownAllNativeTextGenerationResources(
           activeOperations: activeNativeTextGenerations.size,
           activeChildren: activeNativeTextChildren.size,
           activeSharedServers: sharedBetterC0deTextServers.size,
-          pendingSessionCleanups:
-            pendingBetterC0deSessionCleanups.size,
+          pendingSessionCleanups: pendingBetterC0deSessionCleanups.size,
         }
       )
     )
@@ -470,7 +474,7 @@ export async function runNativeTextGeneration(
         modelSelection,
         runner,
         operation.controller.signal,
-        driver,
+        driver
       )
     }
     return null
@@ -496,16 +500,11 @@ async function acquireNativeTextGenerationSlot(
     operation.slotAcquired = true
     return
   }
-  if (
-    nativeTextGenerationQueue.length >= nativeTextGenerationMaxQueued()
-  ) {
-    throw Object.assign(
-      new Error("Native text-generation queue is full."),
-      {
-        code: "NATIVE_TEXT_GENERATION_QUEUE_FULL",
-        statusCode: 503,
-      }
-    )
+  if (nativeTextGenerationQueue.length >= nativeTextGenerationMaxQueued()) {
+    throw Object.assign(new Error("Native text-generation queue is full."), {
+      code: "NATIVE_TEXT_GENERATION_QUEUE_FULL",
+      statusCode: 503,
+    })
   }
 
   await new Promise<void>((resolve, reject) => {
@@ -643,22 +642,27 @@ function configuredNativeTextGenerationLimit(
 }
 
 function nativeTextGenerationShutdownError(): Error {
-  return Object.assign(
-    new Error("Native text generation is shutting down."),
-    { code: "NATIVE_TEXT_GENERATION_SHUTDOWN" }
-  )
+  return Object.assign(new Error("Native text generation is shutting down."), {
+    code: "NATIVE_TEXT_GENERATION_SHUTDOWN",
+  })
 }
 
 class NativeTextProcessCleanupError extends Error {
   declare readonly child: ChildProcess
 
   constructor(child: ChildProcess, cause: unknown) {
-    super("Native text-generation process-tree cleanup could not be confirmed.", { cause })
+    super(
+      "Native text-generation process-tree cleanup could not be confirmed.",
+      { cause }
+    )
     Object.defineProperty(this, "child", { value: child })
   }
 }
 
-function quarantineNativeTextCleanup(directory: string, stop: () => Promise<void>): void {
+function quarantineNativeTextCleanup(
+  directory: string,
+  stop: () => Promise<void>
+): void {
   nativeTextCleanupQuarantines.set(directory, { stop, pending: null })
   beginNativeTextGenerationShutdown()
 }
@@ -679,7 +683,10 @@ async function cleanupNativeTextQuarantine(directory: string): Promise<void> {
   }
 }
 
-function retainFailedNativeTextProcess(directory: string, error: unknown): boolean {
+function retainFailedNativeTextProcess(
+  directory: string,
+  error: unknown
+): boolean {
   if (!(error instanceof NativeTextProcessCleanupError)) return false
   unconfirmedNativeTextChildren.add(error.child)
   quarantineNativeTextCleanup(directory, async () => {
@@ -783,7 +790,8 @@ async function runCodexTextGeneration(
     cleanupSafe = !retainFailedNativeTextProcess(tempDir, error)
     throw error
   } finally {
-    if (cleanupSafe) await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    if (cleanupSafe)
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
   }
 }
 
@@ -804,7 +812,12 @@ async function runClaudeTextGeneration(
   let cleanupSafe = true
   try {
     throwIfNativeTextGenerationUnavailable(lifecycleSignal)
-    const binaryPath = configString(config.config, "binaryPath") ?? "claude"
+    // The Finder-launched macOS app does not inherit the user's shell PATH.
+    // The shell process already resolved the installed Claude binary for SDK
+    // turns; handoff and compaction must use that same executable.
+    const binaryPath =
+      configString(config.config, "binaryPath") ??
+      (process.env.BETTERC0DE_CLAUDE_CODE_PATH?.trim() || "claude")
     const effort = normalizeClaudeCliEffort(
       getModelSelectionStringOptionValue(modelSelection, "effort") ??
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort")
@@ -847,7 +860,8 @@ async function runClaudeTextGeneration(
     cleanupSafe = !retainFailedNativeTextProcess(tempDir, error)
     throw error
   } finally {
-    if (cleanupSafe) await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    if (cleanupSafe)
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
   }
 }
 
@@ -873,11 +887,9 @@ async function runBetterC0deTextGeneration(
     process.env.BetterC0de_SERVER_USERNAME
   const serverPassword = configString(config.config, "serverPassword")
   const serverConnector =
-    runner.connectBetterC0deServer ??
-    connectBetterC0deServer
+    runner.connectBetterC0deServer ?? connectBetterC0deServer
   const createClient =
-    runner.createBetterC0deClient ??
-    defaultBetterC0deClientFactory
+    runner.createBetterC0deClient ?? defaultBetterC0deClientFactory
   reserveBetterC0deSessionCleanupCapacity()
   let cleanupReservationHeld = true
   let serverLease: BetterC0deTextServerLease
@@ -982,7 +994,8 @@ async function runBetterC0deTextGeneration(
     if (errorMessage) throw new Error(errorMessage)
 
     const rawText = betterC0deTextResponse(result.data?.parts)
-    if (!rawText) throw new Error("BetterC0de compatibility returned empty output.")
+    if (!rawText)
+      throw new Error("BetterC0de compatibility returned empty output.")
     output = extractJsonObject(rawText)
   } catch (error) {
     failure = error
@@ -995,10 +1008,7 @@ async function runBetterC0deTextGeneration(
       const cleanup = registerPendingBetterC0deSessionCleanup({
         sessionId,
         deleteSession: (signal) =>
-          sessionClient.delete!(
-            { sessionID: sessionId },
-            { signal }
-          ),
+          sessionClient.delete!({ sessionID: sessionId }, { signal }),
       })
       releaseBetterC0deSessionCleanupCapacity()
       cleanupReservationHeld = false
@@ -1102,7 +1112,7 @@ async function runAcpTextGeneration(
   modelSelection: ModelSelection,
   runner: NativeTextGenerationRunner,
   lifecycleSignal: AbortSignal,
-  driver: "cursor" | "grok",
+  driver: "cursor" | "grok"
 ): Promise<string> {
   // Native text-generation prompts already contain the required repository
   // context. Do not give the external ACP agent the repository as its cwd:
@@ -1110,9 +1120,10 @@ async function runAcpTextGeneration(
   const tempDir = await fs.mkdtemp(
     path.join(os.tmpdir(), `betterc0de-${driver}-text-generation-`)
   )
-  const createRuntime = driver === "grok"
-    ? runner.createGrokRuntime ?? createGrokAcpRuntime
-    : runner.createCursorRuntime ?? createCursorAcpRuntime
+  const createRuntime =
+    driver === "grok"
+      ? (runner.createGrokRuntime ?? createGrokAcpRuntime)
+      : (runner.createCursorRuntime ?? createCursorAcpRuntime)
   const label = driver === "grok" ? "Grok" : "Cursor Agent"
   let runtime: CursorAcpRuntime | null = null
   let unsubscribe = () => {}
@@ -1124,15 +1135,21 @@ async function runAcpTextGeneration(
   let failure: unknown
   let cleanupSafe = true
   try {
-    let binaryPath = configString(config.config, "binaryPath") ?? (driver === "grok" ? "grok" : CURSOR_BINARY_NAME)
+    let binaryPath =
+      configString(config.config, "binaryPath") ??
+      (driver === "grok" ? "grok" : CURSOR_BINARY_NAME)
     if (driver === "grok" && !runner.createGrokRuntime) {
       const resolved = await resolveGrokBinaryAsync(binaryPath)
-      if (!resolved) throw new Error("xAI Grok CLI is unavailable for the provider handoff.")
+      if (!resolved)
+        throw new Error("xAI Grok CLI is unavailable for the provider handoff.")
       binaryPath = resolved.binaryPath
     }
     if (driver === "cursor" && !runner.createCursorRuntime) {
       const resolved = await resolveCursorBinaryAsync(binaryPath)
-      if (!resolved) throw new Error("Cursor Agent CLI is unavailable for the provider handoff.")
+      if (!resolved)
+        throw new Error(
+          "Cursor Agent CLI is unavailable for the provider handoff."
+        )
       binaryPath = resolved.binaryPath
     }
     throwIfNativeTextGenerationUnavailable(lifecycleSignal)
@@ -1272,14 +1289,15 @@ async function runAcpTextGeneration(
           : error
       }
     }
-    if (cleanupSafe) await fs.rm(tempDir, { recursive: true, force: true }).catch((error) => {
-      failure = failure
-        ? new AggregateError(
-            [failure, error],
-            `${label} request and temporary-directory cleanup both failed.`
-          )
-        : error
-    })
+    if (cleanupSafe)
+      await fs.rm(tempDir, { recursive: true, force: true }).catch((error) => {
+        failure = failure
+          ? new AggregateError(
+              [failure, error],
+              `${label} request and temporary-directory cleanup both failed.`
+            )
+          : error
+      })
   }
   if (failure) throw failure
   return result!
@@ -1502,7 +1520,9 @@ async function acquireBetterC0deTextServer(input: {
       const admissionFailure =
         input.signal.reason ??
         Object.assign(
-          new Error("Native text generation stopped during server acquisition."),
+          new Error(
+            "Native text generation stopped during server acquisition."
+          ),
           { code: "NATIVE_TEXT_GENERATION_SHUTDOWN" }
         )
       try {
@@ -1575,7 +1595,9 @@ async function acquireSharedBetterC0deTextServer(input: {
       const admissionFailure =
         input.signal.reason ??
         Object.assign(
-          new Error("Native text generation stopped during server acquisition."),
+          new Error(
+            "Native text generation stopped during server acquisition."
+          ),
           { code: "NATIVE_TEXT_GENERATION_SHUTDOWN" }
         )
       try {
@@ -1708,21 +1730,17 @@ async function startBetterC0deServerProcess(input: {
     `--hostname=${DEFAULT_BETTERC0DE_HOSTNAME}`,
     `--port=${port}`,
   ])
-  const child = spawn(
-    spawnInput.command,
-    [...spawnInput.args],
-    {
-      detached: process.platform !== "win32",
-      shell: false,
-      windowsHide: true,
-      windowsVerbatimArguments: spawnInput.windowsVerbatimArguments,
-      env: {
-        ...input.env,
-        BETTERC0DE_CONFIG_CONTENT: BETTERC0DE_EMPTY_CONFIG_CONTENT,
-        BetterC0de_CONFIG_CONTENT: BETTERC0DE_EMPTY_CONFIG_CONTENT,
-      },
-    }
-  )
+  const child = spawn(spawnInput.command, [...spawnInput.args], {
+    detached: process.platform !== "win32",
+    shell: false,
+    windowsHide: true,
+    windowsVerbatimArguments: spawnInput.windowsVerbatimArguments,
+    env: {
+      ...input.env,
+      BETTERC0DE_CONFIG_CONTENT: BETTERC0DE_EMPTY_CONFIG_CONTENT,
+      BetterC0de_CONFIG_CONTENT: BETTERC0DE_EMPTY_CONFIG_CONTENT,
+    },
+  })
   activeNativeTextChildren.add(child)
   keepChildErrorObserved(child, "compatibility server")
   return new Promise((resolve, reject) => {
@@ -1836,11 +1854,14 @@ function findAvailablePort(): Promise<number> {
 
 function betterC0dePromptErrorMessage(error: unknown): string | null {
   const record = (value: unknown): Record<string, unknown> | undefined =>
-    value && typeof value === "object" ? value as Record<string, unknown> : undefined
+    value && typeof value === "object"
+      ? (value as Record<string, unknown>)
+      : undefined
   const source = record(error)
   const candidates = [record(source?.data)?.message, source?.name]
   for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim()) return candidate.trim()
+    if (typeof candidate === "string" && candidate.trim())
+      return candidate.trim()
   }
   return null
 }
@@ -2013,15 +2034,22 @@ function runProcess(
         () => settleRejected(error),
         (cleanupError) =>
           settleRejected(
-            new NativeTextProcessCleanupError(child, new AggregateError(
-              [error, cleanupError],
-              `${error.message}; process-tree cleanup also failed`
-            ))
+            new NativeTextProcessCleanupError(
+              child,
+              new AggregateError(
+                [error, cleanupError],
+                `${error.message}; process-tree cleanup also failed`
+              )
+            )
           )
       )
     }
     const timer = setTimeout(() => {
-      terminate(new Error(`${path.basename(command)} timed out after ${options.timeoutMs}ms`))
+      terminate(
+        new Error(
+          `${path.basename(command)} timed out after ${options.timeoutMs}ms`
+        )
+      )
     }, options.timeoutMs)
     timer.unref?.()
 
@@ -2118,7 +2146,6 @@ function nativeProcessSpawnInput(
   }
 }
 
-
 /**
  * Byte-bounded output accumulator that tracks its size incrementally. The
  * previous helper re-measured the whole buffer on every chunk, which is
@@ -2186,10 +2213,7 @@ async function signalChildProcessTree(
 ): Promise<void> {
   if (process.platform === "win32" && child.pid) {
     if (hasChildExited(child)) return
-    const killed = await runWindowsTaskkill(
-      child.pid,
-      signal === "SIGKILL"
-    )
+    const killed = await runWindowsTaskkill(child.pid, signal === "SIGKILL")
     if (killed || hasChildExited(child)) return
     if (signal !== "SIGKILL") return
   } else if (child.pid) {
@@ -2236,10 +2260,12 @@ async function terminateChildProcessTree(
 
   if (!isNativePosixProcessGroupAlive(pid)) return true
   await signalChildProcessTree(child, "SIGTERM")
-  if (await waitForNativePosixProcessGroupExit(
-    pid,
-    NATIVE_PROCESS_TERMINATE_GRACE_MS
-  )) {
+  if (
+    await waitForNativePosixProcessGroupExit(
+      pid,
+      NATIVE_PROCESS_TERMINATE_GRACE_MS
+    )
+  ) {
     return true
   }
   await signalChildProcessTree(child, "SIGKILL")
@@ -2260,10 +2286,18 @@ async function stopTrackedNativeTextChild(child: ChildProcess): Promise<void> {
   const existing = nativeTextChildStops.get(child)
   if (existing) return await existing
   const stop = (async () => {
-    if (unconfirmedNativeTextChildren.has(child) && process.platform === "win32" && child.pid != null && hasChildExited(child)) {
+    if (
+      unconfirmedNativeTextChildren.has(child) &&
+      process.platform === "win32" &&
+      child.pid != null &&
+      hasChildExited(child)
+    ) {
       // Once an unconfirmed root exits, its descendants cannot safely be found
       // using a potentially reused PID. Preserve ownership until restart.
-      throw new NativeTextProcessCleanupError(child, new Error("Unconfirmed Windows process root has exited."))
+      throw new NativeTextProcessCleanupError(
+        child,
+        new Error("Unconfirmed Windows process root has exited.")
+      )
     }
     await stopChildProcess(child)
     unconfirmedNativeTextChildren.delete(child)
@@ -2392,10 +2426,7 @@ async function waitForNativePosixProcessGroupExit(
 
 function redactSensitiveText(value: string): string {
   return value
-    .replace(
-      /\b(bearer|basic)\s+[a-z0-9._~+/=-]+/gi,
-      "$1 [REDACTED]"
-    )
+    .replace(/\b(bearer|basic)\s+[a-z0-9._~+/=-]+/gi, "$1 [REDACTED]")
     .replace(
       /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)\s*[:=]\s*[^\s,;]+/gi,
       "$1=[REDACTED]"

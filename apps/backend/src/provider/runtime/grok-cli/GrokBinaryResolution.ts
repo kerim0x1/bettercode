@@ -20,9 +20,9 @@ import path from "node:path"
  *     opted in deliberately).
  *  2. `~/.grok/bin/grok(.exe)` — the xAI installer's canonical location — is
  *     trusted.
- *  3. A bare `grok` found on PATH is trusted ONLY when it is an npm/pnpm/bun
- *     shim whose script text provably targets the `@xai-official/grok`
- *     package. Any other owner (e.g. `grok-dev`) is rejected.
+ *  3. A bare `grok` found on PATH or a known macOS install directory is
+ *     trusted ONLY when its shim or symlink provably targets the
+ *     `@xai-official/grok` package. Any other owner is rejected.
  */
 export interface ResolvedGrokBinary {
   readonly binaryPath: string
@@ -30,6 +30,8 @@ export interface ResolvedGrokBinary {
 }
 
 const XAI_PACKAGE_MARKER = /@xai-official[\\/]+grok/i
+const XAI_PACKAGE_PATH =
+  /(?:^|[\\/])node_modules[\\/]@xai-official[\\/]grok(?:[\\/]|$)/i
 const NUL_BYTE = String.fromCharCode(0)
 
 export function resolveGrokBinary(
@@ -58,7 +60,7 @@ export async function resolveGrokBinaryAsync(
 ): Promise<ResolvedGrokBinary | null> {
   const explicit = configuredPath?.trim()
   if (explicit && explicit !== "grok") {
-    if (path.isAbsolute(explicit) && await isRegularFileAsync(explicit)) {
+    if (path.isAbsolute(explicit) && (await isRegularFileAsync(explicit))) {
       return { binaryPath: path.normalize(explicit), source: "config" }
     }
     return null
@@ -99,11 +101,8 @@ async function xaiHomeBinaryAsync(): Promise<string | null> {
 
 function verifiedPathShim(): string | null {
   const isWin = process.platform === "win32"
-  const dirs = (process.env.PATH ?? "")
-    .split(isWin ? ";" : ":")
-    .filter(Boolean)
   const names = isWin ? ["grok.cmd", "grok.ps1", "grok"] : ["grok"]
-  for (const dir of dirs) {
+  for (const dir of binarySearchDirectories()) {
     for (const name of names) {
       const candidate = path.resolve(dir, name)
       if (!isRegularFile(candidate)) continue
@@ -119,11 +118,8 @@ function verifiedPathShim(): string | null {
 
 async function verifiedPathShimAsync(): Promise<string | null> {
   const isWin = process.platform === "win32"
-  const dirs = (process.env.PATH ?? "")
-    .split(isWin ? ";" : ":")
-    .filter(Boolean)
   const names = isWin ? ["grok.cmd", "grok.ps1", "grok"] : ["grok"]
-  for (const dir of dirs) {
+  for (const dir of binarySearchDirectories()) {
     for (const name of names) {
       const candidate = path.resolve(dir, name)
       if (!(await isRegularFileAsync(candidate))) continue
@@ -136,12 +132,40 @@ async function verifiedPathShimAsync(): Promise<string | null> {
   return null
 }
 
+function binarySearchDirectories(): string[] {
+  const pathDirs = (process.env.PATH ?? "")
+    .split(path.delimiter)
+    .filter(Boolean)
+  if (process.platform !== "darwin") return pathDirs
+
+  // Finder starts apps with a minimal PATH; include common user and Homebrew
+  // install locations while still verifying the package owner below.
+  const home = os.homedir()
+  return [
+    ...new Set([
+      ...pathDirs,
+      path.join(home, ".local", "bin"),
+      path.join(home, ".npm-global", "bin"),
+      path.join(home, ".bun", "bin"),
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+    ]),
+  ]
+}
+
 /**
- * npm/pnpm/bun shims are small text scripts that reference the target
- * package's entry file by path. Reading them costs no spawn and reveals the
- * owning package unambiguously.
+ * npm on Unix commonly links the package entry file directly. Other package
+ * managers use text shims that name the target package. Both checks are
+ * filesystem-only and leave unrelated executables untrusted.
  */
 function isVerifiedXaiShim(shimPath: string): boolean {
+  try {
+    if (fs.lstatSync(shimPath).isSymbolicLink()) {
+      return XAI_PACKAGE_PATH.test(fs.realpathSync(shimPath))
+    }
+  } catch {
+    return false
+  }
   const text = readHead(shimPath)
   if (text === null) return false
   // Compiled executables (PE/ELF/Mach-O) contain NUL bytes in the first
@@ -152,6 +176,13 @@ function isVerifiedXaiShim(shimPath: string): boolean {
 }
 
 async function isVerifiedXaiShimAsync(shimPath: string): Promise<boolean> {
+  try {
+    if ((await fs.promises.lstat(shimPath)).isSymbolicLink()) {
+      return XAI_PACKAGE_PATH.test(await fs.promises.realpath(shimPath))
+    }
+  } catch {
+    return false
+  }
   const text = await readHeadAsync(shimPath)
   if (text === null || text.includes(NUL_BYTE)) return false
   return XAI_PACKAGE_MARKER.test(text)

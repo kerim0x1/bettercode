@@ -830,6 +830,41 @@ describe("native provider text generation", () => {
     expect(calls[0].cwd).not.toBe(process.cwd())
   })
 
+  it("uses the packaged app's resolved Claude binary for a handoff", async () => {
+    const installedClaude = path.join(os.tmpdir(), "installed-claude")
+    vi.stubEnv("BETTERC0DE_CLAUDE_CODE_PATH", installedClaude)
+    const run = vi.fn<NativeTextGenerationRunner["run"]>().mockResolvedValue({
+      stdout: '{"structured_output":{"summary":"Keep the current goal."}}',
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    })
+
+    await expect(
+      runNativeTextGeneration(
+        {
+          settings: settingsWithInstance({
+            instanceId: "claude-work",
+            driver: "claude",
+            binaryPath: "",
+          }),
+          modelSelection: {
+            instanceId: "claude-work",
+            model: "claude-sonnet-5",
+          },
+          prompt: "Summarize the conversation for the next provider",
+          schemaName: "threadContextSummary",
+        },
+        { run }
+      )
+    ).resolves.toBe('{"summary":"Keep the current goal."}')
+    expect(run).toHaveBeenCalledWith(
+      installedClaude,
+      expect.any(Array),
+      expect.objectContaining({ cwd: expect.any(String) })
+    )
+  })
+
   it("uses the Claude Terminal provider instance as hidden Claude CLI text generation", async () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = []
     const runner: NativeTextGenerationRunner = {

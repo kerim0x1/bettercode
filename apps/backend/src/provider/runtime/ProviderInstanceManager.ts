@@ -193,7 +193,8 @@ export class ProviderInstanceManager {
 
     if (driver === "claude") {
       const binaryPath =
-        readConfigString(config.config, "binaryPath") ?? "claude"
+        readConfigString(config.config, "binaryPath") ??
+        (process.env.BETTERC0DE_CLAUDE_CODE_PATH?.trim() || "claude")
       const continuationKey = claudeContinuationKey(
         readConfigString(config.config, "homePath")
       )
@@ -404,9 +405,9 @@ export function deriveProviderInstanceConfigs(
   return Object.values(merged)
     .filter((config) => config.enabled !== false)
     .sort((a, b) => {
-    const rank = defaultRank(a.instanceId) - defaultRank(b.instanceId)
-    return rank !== 0 ? rank : a.instanceId.localeCompare(b.instanceId)
-  })
+      const rank = defaultRank(a.instanceId) - defaultRank(b.instanceId)
+      return rank !== 0 ? rank : a.instanceId.localeCompare(b.instanceId)
+    })
 }
 
 function defaultProviderInstances(
@@ -526,7 +527,8 @@ function defaultProviderInstances(
               binaryPath:
                 readConfigString(betterC0deProvider, "binaryPath") ||
                 "betterc0de",
-              serverUrl: readConfigString(betterC0deProvider, "serverUrl") ?? "",
+              serverUrl:
+                readConfigString(betterC0deProvider, "serverUrl") ?? "",
               serverUsername:
                 readConfigString(betterC0deProvider, "serverUsername") ?? "",
               serverPassword:

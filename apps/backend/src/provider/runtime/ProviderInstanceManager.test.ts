@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -47,6 +47,7 @@ process.exit(0);
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs()
   process.env.PATH = originalPath
   while (tempRoots.length > 0) {
     fs.rmSync(tempRoots.pop()!, { recursive: true, force: true })
@@ -54,28 +55,63 @@ afterEach(() => {
 })
 
 describe("ProviderInstanceManager", () => {
+  it("passes the shell-resolved Claude binary to a custom SDK adapter", () => {
+    const installedClaude = path.join(
+      makeTempDir("betterc0de-claude-"),
+      "claude"
+    )
+    vi.stubEnv("BETTERC0DE_CLAUDE_CODE_PATH", installedClaude)
+    const manager = new ProviderInstanceManager({
+      clientInfo: { name: "BetterC0de", title: "BetterC0de", version: "test" },
+      getStoredProviderThreadId: () => null,
+      persistProviderThreadId: () => {},
+    })
+    const claude = manager
+      .reconcile(
+        settingsSchema.parse({
+          provider_instances: {
+            "claude-work": { driver: "claude", config: {} },
+          },
+        })
+      )
+      .instances.find((instance) => instance.instanceId === "claude-work")
+
+    expect(
+      (claude?.adapter as unknown as { options?: { binaryPath?: string } })
+        .options?.binaryPath
+    ).toBe(installedClaude)
+  })
+
   it("rebuilds an instance when opaque own __proto__ configuration changes", () => {
     const manager = new ProviderInstanceManager({
       clientInfo: { name: "BetterC0de", title: "BetterC0de", version: "test" },
       getStoredProviderThreadId: () => null,
       persistProviderThreadId: () => {},
     })
-    const settings = (value: number) => settingsSchema.parse({
-      provider_instances: {
-        custom: {
-          driver: "futureProvider",
-          config: { opaque: JSON.parse(`{"__proto__":{"version":${value}}}`) },
+    const settings = (value: number) =>
+      settingsSchema.parse({
+        provider_instances: {
+          custom: {
+            driver: "futureProvider",
+            config: {
+              opaque: JSON.parse(`{"__proto__":{"version":${value}}}`),
+            },
+          },
         },
-      },
-    })
+      })
     const first = manager.reconcile(settings(1))
     expect(manager.reconcile(settings(1)).changed).toBe(false)
     const second = manager.reconcile(settings(2))
     expect(second.changed).toBe(true)
-    expect(second.instances.find((instance) => instance.instanceId === "custom"))
-      .not.toBe(first.instances.find((instance) => instance.instanceId === "custom"))
-    expect(second.instances.find((instance) => instance.instanceId === "custom")?.config)
-      .toEqual({ opaque: JSON.parse('{"__proto__":{"version":2}}') })
+    expect(
+      second.instances.find((instance) => instance.instanceId === "custom")
+    ).not.toBe(
+      first.instances.find((instance) => instance.instanceId === "custom")
+    )
+    expect(
+      second.instances.find((instance) => instance.instanceId === "custom")
+        ?.config
+    ).toEqual({ opaque: JSON.parse('{"__proto__":{"version":2}}') })
   })
 
   it("rejects unsafe environment keys before distributing config to adapters", () => {
@@ -519,7 +555,9 @@ describe("ProviderInstanceManager", () => {
     expect(cursorOptions?.resolveMcpServers).toBe(resolveAcpMcpServers)
     expect(grokOptions?.resolveMcpServers).toBe(resolveAcpMcpServers)
     for (const id of ["claude", "codex"]) {
-      expect(instances.find((instance) => instance.instanceId === id)?.adapter).toMatchObject({
+      expect(
+        instances.find((instance) => instance.instanceId === id)?.adapter
+      ).toMatchObject({
         options: { resolveCodeSearchServer },
       })
     }
