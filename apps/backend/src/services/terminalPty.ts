@@ -20,6 +20,14 @@ export const TERMINAL_PTY_MAX_ACTIVE_SESSIONS = 16
 export const TERMINAL_PTY_MAX_ACTIVE_SESSIONS_PER_OWNER = 4
 export const TERMINAL_PTY_MAX_RETAINED_SESSIONS = 64
 const SESSION_TTL_MS = 60_000
+/**
+ * How long a shutdown waits for a force-ended terminal's exit to be
+ * reported. Windows' ConPTY reports it about a second after the process
+ * ended (1.1 s measured with cmd.exe); a shorter wait counts an ended
+ * terminal as one that did not exit, and the backend then refuses to
+ * release its resources.
+ */
+export const TERMINAL_PTY_KILLED_EXIT_REPORT_MS = 3_000
 
 export interface OpenTerminalPtyInput {
   readonly sessionId?: string
@@ -401,7 +409,10 @@ async function shutdownTerminalPtySessions(
     running.map((session) => queueTerminalPtyTermination(session, "SIGKILL"))
   )
   if (running.length > 0) {
-    await waitForTerminalPtySessions(running, 500)
+    await waitForTerminalPtySessions(
+      running,
+      TERMINAL_PTY_KILLED_EXIT_REPORT_MS
+    )
   }
 
   for (const session of retained) {

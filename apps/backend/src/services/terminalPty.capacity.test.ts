@@ -37,6 +37,7 @@ import {
   readTerminalPtySession,
   shutdownAllTerminalPtySessions,
   shutdownTerminalPtySessionsForOwner,
+  TERMINAL_PTY_KILLED_EXIT_REPORT_MS,
   TERMINAL_PTY_MAX_ACTIVE_SESSIONS,
   TERMINAL_PTY_MAX_ACTIVE_SESSIONS_PER_OWNER,
   writeTerminalPtySession,
@@ -306,7 +307,7 @@ describe("terminal PTY capacity", () => {
         expect(handle.kill).toHaveBeenCalledTimes(2)
       }
 
-      await vi.advanceTimersByTimeAsync(500)
+      await vi.advanceTimersByTimeAsync(TERMINAL_PTY_KILLED_EXIT_REPORT_MS)
       await shutdownExpectation
       for (const handle of spawnedHandles) handle.resolveExit()
       await Promise.resolve()
@@ -329,7 +330,7 @@ describe("terminal PTY capacity", () => {
       const shutdown = shutdownAllTerminalPtySessions(0)
       const shutdownResult = shutdown.catch((error) => error)
 
-      await vi.advanceTimersByTimeAsync(500)
+      await vi.advanceTimersByTimeAsync(TERMINAL_PTY_KILLED_EXIT_REPORT_MS)
       const error = await shutdownResult
       expect(error).toMatchObject({
         code: "TERMINAL_PTY_SHUTDOWN_INCOMPLETE",
