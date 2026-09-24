@@ -47,10 +47,12 @@ tags:
     visible: demo
     timeout: 20000
 # The key row sits above the keyboard (where there is one: CI's emulator
-# shows none), and a key from it reaches the shell.
+# shows none), and its keys reach the shell: Ctrl, held for the next key,
+# makes a typed c Ctrl-C. Ctrl is near the row's start, on screen at any
+# width; the row scrolls sideways for the rest.
 - tapOn:
-    id: terminal-key-dash
-- pressKey: Enter
+    id: terminal-key-ctrl
+- inputText: c
 - extendedWaitUntil:
-    visible: ".*command not found: -.*"
+    visible: '.*\^C.*'
     timeout: 20000
