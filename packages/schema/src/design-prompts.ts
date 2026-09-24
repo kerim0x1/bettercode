@@ -8,7 +8,7 @@ import {
   type DesignFontPreset,
   type DesignStyleTemplate,
   type DesignTarget,
-} from "@betterc0de/schema/design"
+} from "./design"
 
 /**
  * Canvas Mode prompt system — core instructions, per-target and per-color-mode
@@ -48,7 +48,7 @@ export const DESIGN_CORE_INSTRUCTIONS = [
   "   components. Every visual value must come from a token — no ad-hoc hex codes or magic pixels.",
   "4. Add interaction states for every interactive or data-driven element: hover,",
   "   focus-visible, active, disabled, loading, empty, error.",
-  '5. Run the Verification Loop below before declaring the work done.',
+  "5. Run the Verification Loop below before declaring the work done.",
   "",
   "## Typography Craft",
   "- Maximum two font families (display + body) unless the brief says otherwise.",
@@ -146,7 +146,7 @@ export const DESIGN_TARGET_INSTRUCTIONS: Record<DesignTarget, string> = {
     "## Target: Website + Mobile",
     "- Design mobile-first, then scale up: the 360–420px layout is the primary design, not a",
     "  squeezed afterthought. Verify 360px before any desktop width.",
-    "- Full content parity — no \"hidden on mobile\" cop-outs; reflow instead of remove.",
+    '- Full content parity — no "hidden on mobile" cop-outs; reflow instead of remove.',
     "- Nav collapses into a drawer or sheet with the primary CTA kept visible in the bar;",
     "  the open state is designed (not a default hamburger dump).",
     "- Fluid display type via clamp() between breakpoints; spacing scales down proportionally",

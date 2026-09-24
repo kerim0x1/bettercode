@@ -91,6 +91,16 @@
       "types": "./src/chat-attachment.ts",
       "import": "./src/chat-attachment.ts",
       "default": "./dist/chat-attachment.js"
+    },
+    "./system-instruction": {
+      "types": "./src/system-instruction.ts",
+      "import": "./src/system-instruction.ts",
+      "default": "./dist/system-instruction.js"
+    },
+    "./prompt-context": {
+      "types": "./src/prompt-context.ts",
+      "import": "./src/prompt-context.ts",
+      "default": "./dist/prompt-context.js"
     }
   },
   "scripts": {
