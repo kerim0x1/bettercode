@@ -98,12 +98,9 @@ function handle(command: TerminalPageCommand): void {
 /**
  * xterm hides the rows it draws from accessibility services. In screen
  * reader mode it keeps a tree of their text of its own and announces what
- * comes in, but it then reads a phone keyboard's typing by comparing the
- * input field's text after a timer, which dropped characters on a slow
- * Android emulator (whoami arrived as "whmi"). So that mode runs only while
- * VoiceOver or TalkBack does. Otherwise typing takes xterm's regular path,
- * and the rows stay readable: explored with a screen reader, or read by the
- * device tests.
+ * comes in; that mode runs while VoiceOver or TalkBack does. Otherwise the
+ * rows stay readable: explored with a screen reader, or read by the device
+ * tests.
  */
 function readOut(screenReader: boolean): void {
   terminal.options.screenReaderMode = screenReader
@@ -146,6 +143,41 @@ readOut(false)
 fit.fit()
 terminal.onData((data) => send({ type: "input", data }))
 terminal.onResize(({ cols, rows }) => send({ type: "resize", cols, rows }))
+
+// A phone keyboard's keys come as keyCode 229, and their text a moment later
+// in an input event. xterm reads that text by comparing its input field
+// before the key with the field after a timer. On a slow phone the text came
+// after the timer, so xterm sent nothing for it: whoami arrived as "whmi"
+// and "woami" on CI's Android emulator. So xterm leaves these keys alone,
+// and the page sends each one's text from its input event, before xterm
+// sees that event. Other keys (a hardware keyboard, iOS's keys) and
+// compositions stay with xterm.
+let keyboardKey = false
+terminal.attachCustomKeyEventHandler((event) => {
+  if (event.type !== "keydown") return true
+  keyboardKey = event.keyCode === 229
+  return !keyboardKey
+})
+document.addEventListener(
+  "input",
+  (event) => {
+    if (!keyboardKey || event.target !== terminal.textarea) return
+    const input = event as InputEvent
+    if (input.isComposing) return
+    const data =
+      input.inputType === "insertText"
+        ? input.data
+        : input.inputType === "insertLineBreak"
+          ? "\r"
+          : input.inputType === "deleteContentBackward"
+            ? "\u007f"
+            : null
+    if (!data) return
+    event.stopPropagation()
+    send({ type: "input", data })
+  },
+  true
+)
 // The keyboard coming and going changes the page's height.
 new ResizeObserver(() => fit.fit()).observe(parent)
 

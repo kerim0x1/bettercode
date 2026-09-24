@@ -201,9 +201,10 @@ against sample chats and files (see [Demo mode](#demo-mode)).
     next key (`src/terminal/modifiers.ts`).
   - While VoiceOver or TalkBack runs, the page turns on xterm's screen reader
     mode, which reads the output out. Otherwise the mode stays off and the
-    rows stay readable to accessibility services: in that mode, xterm reads
-    a phone keyboard's typing by comparing its input field's text after a
-    timer, which dropped characters on a slow Android emulator.
+    rows stay readable to accessibility services.
+  - A phone keyboard's keys (keyCode 229) are typed by the page itself, from
+    the input field's input events: xterm compares the field's text after a
+    timer for them, and on a slow phone that lost characters.
   - The app remembers a running terminal per folder
     (`src/terminal/terminal-link.ts`), so leaving the screen and coming back
     finds it again.
