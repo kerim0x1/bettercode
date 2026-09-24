@@ -87,6 +87,10 @@ const EXPECTED_STARTUP_CLEANUP_ORDER = [
   "provider hub event subscription",
   "settings change listener",
   "WebSocket hub",
+  // Paired devices' terminals over the hub: unwound before it closes, so no
+  // terminal frame reaches a closing hub. Their processes end with the
+  // terminal service's own shutdown.
+  "remote terminals",
   // Unwound before the hub closes, so no protocol update reaches a closing hub.
   "protocol updates for paired devices",
   "provider runtime ingestion",
