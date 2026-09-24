@@ -1,5 +1,10 @@
 import { useCallback } from "react"
-import { browserElementAttachment, browserElementsPrompt, parseGoalCommand } from "@betterc0de/schema"
+import {
+  ATTACHMENTS_ONLY_MESSAGE,
+  browserElementAttachment,
+  browserElementsPrompt,
+  parseGoalCommand,
+} from "@betterc0de/schema"
 import { maskBrowserMentions } from "@/lib/browser-element-mentions"
 import { useBrowserContextStore } from "@/lib/browser-context-store"
 import { useMessageQueueStore } from "@/lib/message-queue-store"
@@ -31,7 +36,11 @@ import {
 import { resolveProviderTarget } from "@/lib/resolve-provider-target"
 import { coerceThinkingModeForModel } from "@/lib/model-capabilities"
 import { useSettingsStore } from "@/lib/settings-store"
-import { savedOrchestration, useOrchestrationDraft, ORCHESTRATION_OFF } from "@/lib/orchestration-composer-store"
+import {
+  savedOrchestration,
+  useOrchestrationDraft,
+  ORCHESTRATION_OFF,
+} from "@/lib/orchestration-composer-store"
 import {
   isAskSlashCommand,
   isDebugSlashCommand,
@@ -128,7 +137,7 @@ export function useChatSubmit({
     async (msg: ChatSubmitPayload) => {
       const rawText =
         msg.text.trim() ||
-        (msg.files.length > 0 ? "Please review the attached file(s)." : "")
+        (msg.files.length > 0 ? ATTACHMENTS_ONLY_MESSAGE : "")
       const trimmedText = rawText.trim()
       if (!trimmedText) return
       closeSlash()
@@ -140,9 +149,14 @@ export function useChatSubmit({
       const initialChat = useChatStore.getState()
       const originThreadId =
         msg.threadId === undefined ? initialChat.activeThreadId : msg.threadId
-      const browserElements = msg.queuedSubmission?.browserElements ?? (originThreadId
-        ? [...(useBrowserContextStore.getState().byThread[originThreadId] ?? [])]
-        : [])
+      const browserElements =
+        msg.queuedSubmission?.browserElements ??
+        (originThreadId
+          ? [
+              ...(useBrowserContextStore.getState().byThread[originThreadId] ??
+                []),
+            ]
+          : [])
       const activeThread =
         initialChat.threads.find((thread) => thread.id === originThreadId) ??
         null
@@ -150,27 +164,45 @@ export function useChatSubmit({
       const enqueue = () => {
         if (!originThreadId || msg.queuedSubmission) return false
         try {
-          const { threadId: _threadId, queuedSubmission: _queued, ...payload } = msg
-          useMessageQueueStore.getState().enqueue(originThreadId, { ...payload, browserElements })
-          useBrowserContextStore.getState().consume(originThreadId, browserElements)
+          const {
+            threadId: _threadId,
+            queuedSubmission: _queued,
+            ...payload
+          } = msg
+          useMessageQueueStore
+            .getState()
+            .enqueue(originThreadId, { ...payload, browserElements })
+          useBrowserContextStore
+            .getState()
+            .consume(originThreadId, browserElements)
           return true
         } catch (error) {
           handleError(error, { source: "message-queue" })
           return false
         }
       }
-      if (originThreadId && (
-        (preparingThreads.has(originThreadId) && !/^\/goal(?:\s|$)/i.test(trimmedText)) ||
-        (!trimmedText.startsWith("/") &&
-          (initialChat.streamingByThread[originThreadId]?.isStreaming ||
-            (!msg.queuedSubmission && useMessageQueueStore.getState().messages.some(entry => entry.threadId === originThreadId))))
-      )) return enqueue()
+      if (
+        originThreadId &&
+        ((preparingThreads.has(originThreadId) &&
+          !/^\/goal(?:\s|$)/i.test(trimmedText)) ||
+          (!trimmedText.startsWith("/") &&
+            (initialChat.streamingByThread[originThreadId]?.isStreaming ||
+              (!msg.queuedSubmission &&
+                useMessageQueueStore
+                  .getState()
+                  .messages.some(
+                    (entry) => entry.threadId === originThreadId
+                  )))))
+      )
+        return enqueue()
       const prefs = usePreferencesStore.getState()
       const threadSettings = originThreadId
         ? initialChat.settingsByThread[originThreadId]
         : undefined
       const composer = resolveComposerPreferences(prefs, threadSettings)
-      const orchestration = originThreadId ? savedOrchestration(threadSettings?.orchestration) : useOrchestrationDraft.getState().selection
+      const orchestration = originThreadId
+        ? savedOrchestration(threadSettings?.orchestration)
+        : useOrchestrationDraft.getState().selection
       const activities = originThreadId
         ? (initialChat.activitiesByThread[originThreadId] ?? [])
         : []
@@ -204,7 +236,11 @@ export function useChatSubmit({
           const chat = useChatStore.getState()
           const focusedThreadId = chat.activeThreadId
           submissionThreadId = chat.createThread("New Chat", "BetterC0de")
-          chat.setThreadSetting(submissionThreadId, "orchestration", orchestration)
+          chat.setThreadSetting(
+            submissionThreadId,
+            "orchestration",
+            orchestration
+          )
           useOrchestrationDraft.getState().set(ORCHESTRATION_OFF)
           const threadComposer = {
             selectedProviderId,
@@ -250,27 +286,63 @@ export function useChatSubmit({
       const setSelectedModel = (id: string, providerId?: string) =>
         selectComposerModel(ensureThread(), id, providerId)
 
-      const ownsPreparation = originThreadId && !preparingThreads.has(originThreadId)
+      const ownsPreparation =
+        originThreadId && !preparingThreads.has(originThreadId)
       if (ownsPreparation) preparingThreads.add(originThreadId)
       try {
         if (/^\/goal(?:\s|$)/i.test(trimmedText)) {
           const threadId = ensureThread()
           const command = parseGoalCommand(trimmedText)
-          if (command && ["status", "pause", "clear"].includes(command.action)) {
+          if (
+            command &&
+            ["status", "pause", "clear"].includes(command.action)
+          ) {
             await sendGoalControl(threadId, trimmedText, selectedModel)
             return
           }
-          const target = await resolveProviderTarget(selectedProvider, selectedModel)
-          const modelId = target.providerKind !== "openrouter" && selectedModel.includes("/")
-            ? selectedModel.split("/").pop()! : selectedModel
-          const options = getProviderComposerSelection(selectedProvider?.id,
-            prefs.modelSelectionByProvider, threadSettings?.modelSelectionByProvider)?.optionSelections ?? null
-          await sendChatMessage(threadId, trimmedText, modelId, target.providerKind,
-            selectedProvider?.modelsReady === false ? thinkingMode : coerceThinkingModeForModel(selectedProvider, selectedModel, thinkingMode),
-            chatMode, resolveThreadRuntimePath(activeThread), specialMode,
-            permissionLevel, target.openaiTransport, fastMode, target.providerInstanceId,
-            contextWindow, selectedProvider?.models.find(model => model.id === selectedModel)?.capabilities,
-            null, null, appMode, threadSettings?.designBrief ?? null, [], options)
+          const target = await resolveProviderTarget(
+            selectedProvider,
+            selectedModel
+          )
+          const modelId =
+            target.providerKind !== "openrouter" && selectedModel.includes("/")
+              ? selectedModel.split("/").pop()!
+              : selectedModel
+          const options =
+            getProviderComposerSelection(
+              selectedProvider?.id,
+              prefs.modelSelectionByProvider,
+              threadSettings?.modelSelectionByProvider
+            )?.optionSelections ?? null
+          await sendChatMessage(
+            threadId,
+            trimmedText,
+            modelId,
+            target.providerKind,
+            selectedProvider?.modelsReady === false
+              ? thinkingMode
+              : coerceThinkingModeForModel(
+                  selectedProvider,
+                  selectedModel,
+                  thinkingMode
+                ),
+            chatMode,
+            resolveThreadRuntimePath(activeThread),
+            specialMode,
+            permissionLevel,
+            target.openaiTransport,
+            fastMode,
+            target.providerInstanceId,
+            contextWindow,
+            selectedProvider?.models.find((model) => model.id === selectedModel)
+              ?.capabilities,
+            null,
+            null,
+            appMode,
+            threadSettings?.designBrief ?? null,
+            [],
+            options
+          )
           return
         }
         const {
@@ -382,7 +454,10 @@ export function useChatSubmit({
                 activeRuntimePath
               )
         const providerSkillPrompt =
-          explicitModeSlash || betterC0deDefaultCommand || projectCommand || projectSkillCommand
+          explicitModeSlash ||
+          betterC0deDefaultCommand ||
+          projectCommand ||
+          projectSkillCommand
             ? null
             : providerSkillSlashPrompt(trimmedText, selectedProvider)
         const effectiveChatMode =
@@ -409,7 +484,10 @@ export function useChatSubmit({
             : rawText)
         const visibleUserMessage =
           msg.visibleText ??
-          (betterC0deDefaultCommand || projectCommand || projectSkillCommand || providerSkillPrompt
+          (betterC0deDefaultCommand ||
+          projectCommand ||
+          projectSkillCommand ||
+          providerSkillPrompt
             ? rawText
             : userMessage)
 
@@ -426,7 +504,9 @@ export function useChatSubmit({
         if (defaultAgentContext) {
           messageText = `${defaultAgentContext}\n\n${messageText}`
         }
-        const mentions = extractBetterC0deMentions(maskBrowserMentions(messageText, browserElements))
+        const mentions = extractBetterC0deMentions(
+          maskBrowserMentions(messageText, browserElements)
+        )
         if (mentions.length > 0) {
           let installedSkills: RuntimeSkill[] = []
           let installedSubagents: RuntimeSubagent[] = []
@@ -637,7 +717,14 @@ export function useChatSubmit({
         )
           return
         const threadId = ensureThread()
-        if (msg.queuedSubmission && useMessageQueueStore.getState().messages.find(entry => entry.id === msg.queuedSubmission?.id)?.pauseRequested) return false
+        if (
+          msg.queuedSubmission &&
+          useMessageQueueStore
+            .getState()
+            .messages.find((entry) => entry.id === msg.queuedSubmission?.id)
+            ?.pauseRequested
+        )
+          return false
         // Native slash commands reach the provider too. Local commands above
         // remain available while a turn is running.
         if (useChatStore.getState().streamingByThread[threadId]?.isStreaming)
@@ -652,7 +739,10 @@ export function useChatSubmit({
         const attachments = normalizeChatAttachments(msg.files)
         const browserContext = browserElementsPrompt(browserElements)
         if (browserContext) messageText = `${browserContext}\n\n${messageText}`
-        const visibleAttachments = [...attachments, ...browserElements.map(browserElementAttachment)]
+        const visibleAttachments = [
+          ...attachments,
+          ...browserElements.map(browserElementAttachment),
+        ]
         recordPromptHistory(visibleUserMessage, threadId, activeThread)
 
         // Add user message immediately (optimistic)
@@ -660,11 +750,19 @@ export function useChatSubmit({
           id: msg.queuedSubmission?.id ?? crypto.randomUUID(),
           role: "user",
           content: visibleUserMessage,
-          ...(visibleAttachments.length > 0 ? { attachments: visibleAttachments } : {}),
+          ...(visibleAttachments.length > 0
+            ? { attachments: visibleAttachments }
+            : {}),
           modelId: turnModel,
-          createdAt: msg.queuedSubmission?.createdAt ?? new Date().toISOString(),
+          createdAt:
+            msg.queuedSubmission?.createdAt ?? new Date().toISOString(),
         } as const
-        if (!msg.queuedSubmission || !store.threads.find(thread => thread.id === threadId)?.messages.some(message => message.id === dispatchUserMessage.id)) {
+        if (
+          !msg.queuedSubmission ||
+          !store.threads
+            .find((thread) => thread.id === threadId)
+            ?.messages.some((message) => message.id === dispatchUserMessage.id)
+        ) {
           store.addMessage(threadId, dispatchUserMessage, {
             persist: useSettingsStore.getState().autoSaveConversations,
           })
@@ -731,7 +829,8 @@ export function useChatSubmit({
           null,
           orchestration
         )
-        if (!msg.queuedSubmission) useBrowserContextStore.getState().consume(threadId, browserElements)
+        if (!msg.queuedSubmission)
+          useBrowserContextStore.getState().consume(threadId, browserElements)
       } catch (err) {
         if (
           originThreadId &&
@@ -741,12 +840,24 @@ export function useChatSubmit({
         )
           return
         const threadId = ensureThread()
-        const providerStillActive = err instanceof HttpError &&
-          err.status === 409 && (err.code === "turn_active" || err.message.includes("already has active provider work"))
+        const providerStillActive =
+          err instanceof HttpError &&
+          err.status === 409 &&
+          (err.code === "turn_active" ||
+            err.message.includes("already has active provider work"))
         if (streamingStarted && !providerStillActive)
           useChatStore.getState().clearStreaming(threadId)
         if (providerStillActive) return false
-        if (!userMessageRecorded && (!msg.queuedSubmission || !useChatStore.getState().threads.find(thread => thread.id === threadId)?.messages.some(message => message.id === msg.queuedSubmission?.id))) {
+        if (
+          !userMessageRecorded &&
+          (!msg.queuedSubmission ||
+            !useChatStore
+              .getState()
+              .threads.find((thread) => thread.id === threadId)
+              ?.messages.some(
+                (message) => message.id === msg.queuedSubmission?.id
+              ))
+        ) {
           useChatStore.getState().addMessage(
             threadId,
             {
@@ -754,7 +865,8 @@ export function useChatSubmit({
               role: "user",
               content: msg.visibleText ?? rawText,
               modelId: selectedModel,
-              createdAt: msg.queuedSubmission?.createdAt ?? new Date().toISOString(),
+              createdAt:
+                msg.queuedSubmission?.createdAt ?? new Date().toISOString(),
             },
             { persist: useSettingsStore.getState().autoSaveConversations }
           )

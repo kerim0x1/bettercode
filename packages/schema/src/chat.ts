@@ -5,9 +5,19 @@ import { sourceProposedPlanReferenceSchema } from "./proposed-plan"
 import { chatOrchestrationSchema } from "./orchestrator"
 import { designBriefSchema } from "./design"
 import { permissionUpdateSchema } from "./provider-runtime"
-import { CHAT_MESSAGE_MAX_CHARS, chatAttachmentSchema } from "./chat-attachment"
+import {
+  CHAT_ATTACHMENTS_MAX_COUNT,
+  CHAT_MESSAGE_MAX_CHARS,
+  chatAttachmentsSchema,
+} from "./chat-attachment"
 
-export { chatAttachmentSchema, type ChatAttachment } from "./chat-attachment"
+export {
+  ATTACHMENTS_ONLY_MESSAGE,
+  CHAT_ATTACHMENTS_MAX_COUNT,
+  chatAttachmentSchema,
+  chatAttachmentsSchema,
+  type ChatAttachment,
+} from "./chat-attachment"
 
 export const CHAT_HISTORY_MAX_BYTES = 512 * 1024
 const CHAT_HISTORY_MAX_MESSAGES = 320
@@ -17,7 +27,6 @@ const CHAT_SUMMARY_MAX_CHARS = 256 * 1024
 const CHAT_POLICY_INSTRUCTION_MAX_CHARS = 64 * 1024
 const CHAT_PATH_MAX_CHARS = 8 * 1024
 const CHAT_IDENTIFIER_MAX_CHARS = 512
-const CHAT_ATTACHMENTS_MAX_COUNT = 32
 const utf8Encoder = new TextEncoder()
 
 /**
@@ -231,9 +240,7 @@ export const chatSendSchema = z
       history: chatHistorySchema
         .default([])
         .parse(pick<unknown>(raw, "history", "history")),
-      attachments: z
-        .array(chatAttachmentSchema)
-        .max(CHAT_ATTACHMENTS_MAX_COUNT)
+      attachments: chatAttachmentsSchema
         .default([])
         .parse(pick<unknown>(raw, "attachments", "attachment_metadata")),
       system_instruction:
@@ -310,16 +317,14 @@ export const chatSendSchema = z
           .parse(
             pick<unknown>(raw, "sourceProposedPlan", "source_proposed_plan")
           ) ?? null,
-      orchestration: chatOrchestrationSchema.optional().parse(raw.orchestration),
+      orchestration: chatOrchestrationSchema
+        .optional()
+        .parse(raw.orchestration),
       auto_compaction_usage:
         autoCompactionUsageSchema
           .nullish()
           .parse(
-            pick<unknown>(
-              raw,
-              "autoCompactionUsage",
-              "auto_compaction_usage"
-            )
+            pick<unknown>(raw, "autoCompactionUsage", "auto_compaction_usage")
           ) ?? null,
       auto_compaction_model_limits:
         autoCompactionModelLimitsSchema
