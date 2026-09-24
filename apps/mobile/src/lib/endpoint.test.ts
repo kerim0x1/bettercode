@@ -55,7 +55,11 @@ describe("mobile endpoint parsing", () => {
     expect(() =>
       relativePathWithinRoot("C:\\work\\repo", "C:\\work\\other\\secret.txt")
     ).toThrow("outside")
-    expect(() => relativePathWithinRoot("/repo", "/repo/../private/key")).toThrow("outside")
-    expect(() => relativePathWithinRoot("C:\\repo", "C:\\repo\\..\\private\\key")).toThrow("outside")
+    expect(() =>
+      relativePathWithinRoot("/repo", "/repo/../private/key")
+    ).toThrow("outside")
+    expect(() =>
+      relativePathWithinRoot("C:\\repo", "C:\\repo\\..\\private\\key")
+    ).toThrow("outside")
   })
 })
