@@ -5,17 +5,23 @@ import type { RemoteApi, RemoteTransport } from "@/transport/types"
 
 /**
  * A paired desktop for screen tests: a live session whose calls the demo's
- * in-memory desktop answers, except the ones a test replaces. Nothing
- * reaches the network.
+ * in-memory desktop answers, except the ones a test replaces. A replacement
+ * given as a function receives the demo's own calls, to pass some through.
+ * Nothing reaches the network.
  */
 export function pairWithTestDesktop(
-  options: { accessLevel?: RemoteAccessLevel; api?: Partial<RemoteApi> } = {}
+  options: {
+    accessLevel?: RemoteAccessLevel
+    api?: Partial<RemoteApi> | ((demo: RemoteApi) => Partial<RemoteApi>)
+  } = {}
 ): RemoteTransport {
   const accessLevel = options.accessLevel ?? "full"
   const desktop = createDemoTransport({ chunkDelayMs: 0 })
+  const overrides =
+    typeof options.api === "function" ? options.api(desktop.api) : options.api
   const transport: RemoteTransport & { dispose(): void } = {
     kind: "live",
-    api: { ...desktop.api, ...options.api },
+    api: { ...desktop.api, ...overrides },
     createChannel: desktop.createChannel,
     dispose: desktop.dispose,
   }

@@ -11,13 +11,16 @@ import {
 } from "react-native"
 import * as Haptics from "expo-haptics"
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router"
+import type { PermissionLevel } from "@betterc0de/schema/chat-controls"
 import {
   ArrowLeft,
   Eye,
   FolderTree,
   GitCompareArrows,
   GitBranch,
+  Info,
   WifiOff,
+  X,
 } from "lucide-react-native"
 import type { ChatMessage, ModelOption, PendingRequest } from "@/types/remote"
 import { Screen, StateView } from "@/components/layout"
@@ -26,15 +29,29 @@ import { ChatComposer } from "@/components/chat-composer"
 import { MessageItem, StreamingMessage } from "@/components/message-item"
 import { ModelPicker } from "@/components/model-picker"
 import { PendingRequestCard } from "@/components/pending-request-card"
-import { colors, font, spacing, type } from "@/design/theme"
+import { QueuedMessages } from "@/components/queued-messages"
+import { SendFailure } from "@/components/send-failure"
+import { colors, font, radius, spacing, type } from "@/design/theme"
 import { effectiveThreadRoot } from "@/lib/endpoint"
 import { modelOptions, preferredModel } from "@/lib/provider-selection"
 import { remoteErrorMessage } from "@/lib/remote-errors"
-import { useAppStore } from "@/store/app-store"
+import {
+  useAppStore,
+  type PermissionNotice,
+  type SendOutcome,
+} from "@/store/app-store"
+import {
+  DEFAULT_COMPOSER_SETTINGS,
+  useComposerSettings,
+} from "@/store/composer-settings-store"
+import { useQueueStore } from "@/store/queue-store"
 import { useSessionStore } from "@/store/session-store"
+import type { RemoteApi } from "@/transport/types"
 import { useReadOnly, useRemoteApi } from "@/transport/use-transport"
 
 const EMPTY_REQUESTS: PendingRequest[] = []
+/** Goal commands run at once, even while a reply runs; they never queue. */
+const GOAL_COMMAND = /^\/goal(?:\s|$)/i
 
 export default function ChatScreen() {
   const params = useLocalSearchParams<{ id: string | string[] }>()
@@ -78,6 +95,23 @@ export default function ChatScreen() {
     threadId ? state.turnOptionsByThread[threadId] : undefined
   )
   const setTurnOptions = useAppStore((state) => state.setTurnOptions)
+  const outbox = useAppStore((state) => state.outbox)
+  const retrySend = useAppStore((state) => state.retrySend)
+  const sendAgainAsNew = useAppStore((state) => state.sendAgainAsNew)
+  const discardFailed = useAppStore((state) => state.discardFailed)
+  const changePermissionLevel = useAppStore(
+    (state) => state.changePermissionLevel
+  )
+  const composerSettings =
+    useComposerSettings((state) =>
+      threadId ? state.byThread[threadId] : undefined
+    ) ?? DEFAULT_COMPOSER_SETTINGS
+  const hasQueued = useQueueStore((state) =>
+    threadId
+      ? state.messages.some((message) => message.threadId === threadId)
+      : false
+  )
+  const [notice, setNotice] = useState<PermissionNotice | null>(null)
   const [draft, setDraft] = useState("")
   const [options, setOptions] = useState<ModelOption[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -178,19 +212,71 @@ export default function ChatScreen() {
     ])
   }
 
+  const queue = (content: string) => {
+    if (!thread || !currentModel) return false
+    try {
+      useQueueStore.getState().enqueue(thread.id, {
+        text: content,
+        selection: currentModel,
+        thinkingMode: turnOptions?.thinkingMode ?? null,
+        fastMode: turnOptions?.fastMode ?? false,
+      })
+      return true
+    } catch (error) {
+      Alert.alert(
+        "Message not queued",
+        error instanceof Error ? error.message : String(error)
+      )
+      return false
+    }
+  }
+
   const submit = async () => {
     const content = draft.trim()
     if (!api || !content || !thread || !currentModel) return
+    // As on the desktop, a message goes behind the ones already queued.
+    if (hasQueued && !GOAL_COMMAND.test(content)) {
+      if (queue(content)) setDraft("")
+      return
+    }
     setDraft("")
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
       () => undefined
     )
     try {
+      // A message that fails stays in the chat with its reason and Retry.
       await send(api, thread.id, content, currentModel)
     } catch (error) {
       setDraft(content)
       Alert.alert("Message not sent", remoteErrorMessage(error))
     }
+  }
+
+  const queueDraft = () => {
+    const content = draft.trim()
+    if (content && queue(content)) setDraft("")
+  }
+
+  const onFailure =
+    (action: (api: RemoteApi, messageId: string) => Promise<SendOutcome>) =>
+    (messageId: string) => {
+      if (!api) return
+      action(api, messageId).catch((error) =>
+        Alert.alert("Message not sent", remoteErrorMessage(error))
+      )
+    }
+  const retry = onFailure(retrySend)
+  const sendAsNew = onFailure(sendAgainAsNew)
+
+  const choosePermission = (level: PermissionLevel) => {
+    setNotice(null)
+    if (!api) {
+      useComposerSettings
+        .getState()
+        .update(threadId, { permissionLevel: level })
+      return
+    }
+    void changePermissionLevel(api, threadId, level).then(setNotice)
   }
 
   const stop = async () => {
@@ -308,7 +394,23 @@ export default function ChatScreen() {
           ref={listRef}
           data={effectiveMessages}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <MessageItem message={item} />}
+          extraData={outbox}
+          renderItem={({ item }) => {
+            const failure = outbox[item.id]
+            return (
+              <>
+                <MessageItem message={item} />
+                {failure?.error && failure.owner === "chat" ? (
+                  <SendFailure
+                    entry={failure}
+                    onRetry={() => retry(item.id)}
+                    onSendAsNew={() => sendAsNew(item.id)}
+                    onDelete={() => discardFailed(item.id)}
+                  />
+                ) : null}
+              </>
+            )
+          }}
           contentContainerStyle={[
             styles.messages,
             !effectiveMessages.length && !stream && styles.messagesEmpty,
@@ -457,6 +559,21 @@ export default function ChatScreen() {
           ) : null}
         </View>
       ) : null}
+      {notice ? (
+        <View style={styles.notice} testID="permission-notice">
+          <Info size={15} color={colors.textSecondary} />
+          <View style={styles.noticeCopy}>
+            <Text style={styles.noticeTitle}>{notice.title}</Text>
+            <Text style={styles.noticeText}>{notice.description}</Text>
+          </View>
+          <IconButton
+            icon={X}
+            label="Dismiss"
+            onPress={() => setNotice(null)}
+          />
+        </View>
+      ) : null}
+      {readOnly ? null : <QueuedMessages threadId={threadId} />}
       {readOnly ? (
         <View style={styles.readOnly} testID="read-only-banner">
           <Eye size={16} color={colors.textSecondary} />
@@ -471,6 +588,7 @@ export default function ChatScreen() {
           value={draft}
           onChange={setDraft}
           onSend={() => void submit()}
+          onQueue={queueDraft}
           onStop={() => void stop()}
           onChooseModel={() => setPickerOpen(true)}
           model={currentModel}
@@ -483,6 +601,12 @@ export default function ChatScreen() {
           fastMode={turnOptions?.fastMode ?? false}
           onFastModeChange={(fastMode) =>
             setTurnOptions(threadId, { fastMode })
+          }
+          permissionLevel={composerSettings.permissionLevel}
+          onPermissionLevelChange={choosePermission}
+          chatMode={composerSettings.chatMode}
+          onChatModeChange={(chatMode) =>
+            useComposerSettings.getState().update(threadId, { chatMode })
           }
         />
       )}
@@ -610,6 +734,28 @@ const styles = StyleSheet.create({
     fontFamily: font.regular,
     fontSize: type.small,
     lineHeight: 20,
+  },
+  notice: {
+    marginHorizontal: spacing.sm,
+    marginBottom: spacing.xxs,
+    paddingLeft: spacing.sm,
+    paddingVertical: spacing.xxs,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  noticeCopy: { flex: 1, minWidth: 0, paddingVertical: spacing.xxs },
+  noticeTitle: { color: colors.text, fontFamily: font.medium, fontSize: 13 },
+  noticeText: {
+    marginTop: 2,
+    color: colors.textSecondary,
+    fontFamily: font.regular,
+    fontSize: 12,
+    lineHeight: 17,
   },
   messagesEmpty: { flexGrow: 1 },
   footerSpace: { height: spacing.sm },
