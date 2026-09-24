@@ -3,6 +3,11 @@ import {
   type ChatAttachment,
 } from "@betterc0de/schema/chat-attachment"
 import {
+  httpContracts,
+  type HttpContractName,
+  type HttpContractRequest,
+} from "@betterc0de/schema/http-contracts"
+import {
   REMOTE_API_VERSION,
   REMOTE_FEATURES,
   type RemoteProtocol,
@@ -26,9 +31,11 @@ import {
   DEMO_PROVIDER,
   DEMO_PROVIDER_INSTANCES,
   demoDiffs,
+  demoGitSeeds,
   demoMessages,
   demoThreads,
 } from "./fixtures"
+import { DemoGit } from "./git"
 
 /**
  * An in-memory stand-in for a paired desktop. It backs "Try the demo"
@@ -57,6 +64,15 @@ export const DEMO_PROTOCOL: RemoteProtocol = {
     maxRequestBytes: 2 * 1024 * 1024,
     features: [REMOTE_FEATURES.threadsGet, REMOTE_FEATURES.threadsRename],
   },
+}
+
+/** Rejects a body the live client would refuse to send. */
+function checked<K extends HttpContractName>(
+  name: K,
+  body: HttpContractRequest<K>
+): HttpContractRequest<K> {
+  httpContracts[name].request.parse(body)
+  return body
 }
 
 interface RunningTurn {
@@ -95,6 +111,7 @@ export class DemoBackend {
     Array<{ turnCount: number; messageCount: number; activityId: string }>
   >()
   private counter = 0
+  private readonly git: DemoGit
   readonly api: RemoteApi
 
   constructor(options: DemoOptions = {}) {
@@ -103,6 +120,7 @@ export class DemoBackend {
     const now = this.now()
     this.threads = demoThreads(now)
     this.messages = demoMessages(now)
+    this.git = new DemoGit(demoGitSeeds(now), this.now)
     this.session = {
       id: "demo-session",
       label: "Demo",
@@ -200,11 +218,7 @@ export class DemoBackend {
         for (const listener of [...this.listeners]) listener(frame)
         return copy(update)
       },
-      listBranches: async (cwd) => {
-        if (!DEMO_PROJECTS.some((project) => project.path === cwd))
-          throw new RemoteApiError("Not a git repository.", 400)
-        return { branches: ["main", "release/1.4"], current: "main" }
-      },
+      listBranches: async (cwd) => this.git.branches(cwd),
       createWorktree: async (threadId, body) => {
         if (!this.threads.some((thread) => thread.id === threadId))
           throw new RemoteApiError("thread not found", 404, "thread_not_found")
@@ -217,6 +231,11 @@ export class DemoBackend {
           baseBranch: body.baseBranch ?? "main",
           headSha: null,
         }
+        this.git.addWorktree(
+          worktree.worktreePath,
+          body.baseRepoPath,
+          worktree.branch
+        )
         this.updateThread(threadId, (thread) => ({
           ...thread,
           envMode: "worktree",
@@ -271,7 +290,10 @@ export class DemoBackend {
       },
       readFile: async (root, absolutePath) => {
         const relative = absolutePath.slice(root.length + 1)
-        const content = DEMO_FILES[root]?.[relative]
+        // A repository's working tree shows what staging and discarding did.
+        const working = this.git.workingFile(root, relative)
+        const content =
+          working === undefined ? DEMO_FILES[root]?.[relative] : working
         if (typeof content !== "string") throw new Error("File not found.")
         return {
           content,
@@ -280,6 +302,54 @@ export class DemoBackend {
           isUtf8: true,
         }
       },
+
+      gitStatus: async (cwd) =>
+        this.git.status(checked("gitStatus", { cwd }).cwd),
+      gitDiff: async (cwd, staged = false) =>
+        this.git.diff(checked("gitDiff", { cwd }).cwd, staged),
+      gitStage: async (cwd, paths) => {
+        checked("gitStage", { cwd, paths })
+        this.git.stage(cwd, paths)
+      },
+      gitUnstage: async (cwd, paths) => {
+        checked("gitUnstage", { cwd, paths })
+        this.git.unstage(cwd, paths)
+      },
+      gitStageAll: async (cwd) =>
+        this.git.stageAll(checked("gitStageAll", { cwd }).cwd),
+      gitUnstageAll: async (cwd) =>
+        this.git.unstageAll(checked("gitUnstageAll", { cwd }).cwd),
+      gitDiscard: async (cwd, path) => {
+        checked("gitDiscard", { cwd, path })
+        this.git.discard(cwd, path)
+      },
+      gitApplyHunk: async (body) =>
+        copy(this.git.applyHunk(checked("gitHunkApply", body))),
+      gitCommit: async (cwd, message) => {
+        checked("gitCommit", { cwd, message })
+        this.git.commit(cwd, message)
+      },
+      gitPush: async (cwd, options = {}) => {
+        checked("gitPush", { cwd, ...options })
+        this.git.push(cwd, options)
+      },
+      gitPull: async (cwd) => {
+        this.git.pull(checked("gitPull", { cwd }).cwd)
+      },
+      gitFetch: async (cwd) => this.git.fetch(checked("gitFetch", { cwd }).cwd),
+      gitCheckout: async (cwd, branch, create = false) => {
+        checked("gitCheckout", { cwd, branch, create })
+        this.git.checkout(cwd, branch, create)
+      },
+      gitLog: async (cwd, count = 30) => {
+        checked("gitLog", { cwd, count })
+        return copy(this.git.log(cwd, count))
+      },
+      generateCommitMessage: async (request) =>
+        this.git.commitMessage(
+          checked("generateCommitMessage", { ...request })
+            .stagedSummary as string
+        ),
     }
   }
 

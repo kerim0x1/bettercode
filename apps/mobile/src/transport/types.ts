@@ -1,6 +1,8 @@
+import type { CommitMessageRequest } from "@betterc0de/schema/git-commit-message"
 import type {
   ApprovalResponse,
   ChatSendResponse,
+  HttpContractRequest,
   HttpContractResponse,
   ThreadMetadataUpdate,
 } from "@betterc0de/schema/http-contracts"
@@ -42,6 +44,21 @@ export interface FileContent {
 
 /** Chat request bodies are validated by the shared contracts on the way out. */
 export type ChatRequestBody = Record<string, unknown>
+
+/** The branch, its upstream, and the changed files by state. */
+export type GitStatusResult = HttpContractResponse<"gitStatus">
+/** A diff as the desktop shows it: cut on a line boundary when it is large. */
+export type GitDiffResult = HttpContractResponse<"gitDiff">
+export type GitHunkRequest = HttpContractRequest<"gitHunkApply">
+export type GitHunkResult = HttpContractResponse<"gitHunkApply">
+export type GitLogEntry = HttpContractResponse<"gitLog">["commits"][number]
+export type GeneratedCommitMessage =
+  HttpContractResponse<"generateCommitMessage">
+
+/** Lets a caller stop waiting for a slow request. */
+export interface CallOptions {
+  signal?: AbortSignal
+}
 
 /**
  * Everything the app asks the desktop over HTTP. The live implementation
@@ -111,6 +128,43 @@ export interface RemoteApi {
     limit?: number
   ): Promise<FileSearchResult>
   readFile(root: string, absolutePath: string): Promise<FileContent>
+
+  gitStatus(cwd: string, options?: CallOptions): Promise<GitStatusResult>
+  /** The unstaged changes, or with `staged` the staged ones. */
+  gitDiff(
+    cwd: string,
+    staged?: boolean,
+    options?: CallOptions
+  ): Promise<GitDiffResult>
+  gitStage(cwd: string, paths: string[]): Promise<void>
+  gitUnstage(cwd: string, paths: string[]): Promise<void>
+  gitStageAll(cwd: string): Promise<void>
+  gitUnstageAll(cwd: string): Promise<void>
+  /** Restores a changed file from the index; its changes are lost. */
+  gitDiscard(cwd: string, path: string): Promise<void>
+  /** Stages or discards one unstaged hunk, or unstages a staged one. */
+  gitApplyHunk(body: GitHunkRequest): Promise<GitHunkResult>
+  gitCommit(cwd: string, message: string): Promise<void>
+  /** With `setUpstream` and the branch, publishes the branch to origin. */
+  gitPush(
+    cwd: string,
+    options?: { setUpstream?: boolean; branch?: string }
+  ): Promise<void>
+  gitPull(cwd: string): Promise<void>
+  /** Fetches every remote; the status afterwards shows what came in. */
+  gitFetch(cwd: string): Promise<GitStatusResult>
+  /** Switches branch, or with `create` makes a new one from the current. */
+  gitCheckout(cwd: string, branch: string, create?: boolean): Promise<void>
+  /** The latest commits, newest first. */
+  gitLog(cwd: string, count?: number): Promise<GitLogEntry[]>
+  /**
+   * The desktop's commit message generator, given the summary that
+   * @betterc0de/schema/git-commit-message makes of what a commit would take.
+   */
+  generateCommitMessage(
+    request: CommitMessageRequest,
+    options?: CallOptions
+  ): Promise<GeneratedCommitMessage>
 }
 
 export type ChannelState = "connecting" | "live" | "reconnecting" | "error"

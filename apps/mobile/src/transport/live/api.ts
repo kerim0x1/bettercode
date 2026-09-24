@@ -6,6 +6,7 @@ import {
 } from "@betterc0de/schema/http-contracts"
 import type { RemoteClientInfo } from "@betterc0de/schema/remote-protocol"
 import { relativePathWithinRoot } from "@/lib/endpoint"
+import { createId } from "@/lib/ids"
 import {
   parseRemoteBootstrap,
   parseRemotePairResponse,
@@ -32,6 +33,10 @@ import {
 export const SEND_TIMEOUT_MS = 210_000
 /** How long creating a worktree or restoring a checkpoint may take. */
 export const GIT_TIMEOUT_MS = 120_000
+/** How long reading git status, a diff or the history may take (the desktop's default). */
+export const GIT_READ_TIMEOUT_MS = 60_000
+/** Commit message generation: the desktop allows 180 s for its CLIs, then its helpers. */
+export const COMMIT_MESSAGE_TIMEOUT_MS = 250_000
 
 export async function pairMobile(
   baseUrl: string,
@@ -68,14 +73,22 @@ export function createLiveApi(connection: HttpConnection): RemoteApi {
       id?: string
       query?: string
       timeoutMs?: number
+      signal?: AbortSignal
     } = {}
   ) =>
     requestHttpContract(
       name,
       ({ path, method, body }) =>
-        call<unknown>(path, { method, body, timeoutMs: options.timeoutMs }),
+        call<unknown>(path, {
+          method,
+          body,
+          timeoutMs: options.timeoutMs,
+          signal: options.signal,
+        }),
       options
     )
+  const gitRead = { timeoutMs: GIT_READ_TIMEOUT_MS }
+  const gitWrite = { timeoutMs: GIT_TIMEOUT_MS }
 
   return {
     bootstrap: async () =>
@@ -176,6 +189,61 @@ export function createLiveApi(connection: HttpConnection): RemoteApi {
           cwd: root,
           relativePath: relativePathWithinRoot(root, absolutePath),
         },
+      }),
+
+    gitStatus: (cwd, options) =>
+      contract("gitStatus", { body: { cwd }, ...gitRead, ...options }),
+    gitDiff: (cwd, staged = false, options) =>
+      contract(staged ? "gitDiffStaged" : "gitDiff", {
+        body: { cwd },
+        ...gitRead,
+        ...options,
+      }),
+    gitStage: async (cwd, paths) => {
+      await contract("gitStage", { body: { cwd, paths }, ...gitWrite })
+    },
+    gitUnstage: async (cwd, paths) => {
+      await contract("gitUnstage", { body: { cwd, paths }, ...gitWrite })
+    },
+    gitStageAll: async (cwd) => {
+      await contract("gitStageAll", { body: { cwd }, ...gitWrite })
+    },
+    gitUnstageAll: async (cwd) => {
+      await contract("gitUnstageAll", { body: { cwd }, ...gitWrite })
+    },
+    gitDiscard: async (cwd, path) => {
+      await contract("gitDiscard", { body: { cwd, path }, ...gitWrite })
+    },
+    // The operation id lets the desktop recognise the same action again.
+    gitApplyHunk: (body) =>
+      contract("gitHunkApply", {
+        body: { ...body, operationId: body.operationId ?? createId("hunk") },
+        ...gitWrite,
+      }),
+    gitCommit: async (cwd, message) => {
+      await contract("gitCommit", { body: { cwd, message }, ...gitWrite })
+    },
+    gitPush: async (cwd, options = {}) => {
+      await contract("gitPush", { body: { cwd, ...options }, ...gitWrite })
+    },
+    gitPull: async (cwd) => {
+      await contract("gitPull", { body: { cwd }, ...gitWrite })
+    },
+    gitFetch: async (cwd) =>
+      (await contract("gitFetch", { body: { cwd }, ...gitWrite })).status,
+    gitCheckout: async (cwd, branch, create = false) => {
+      await contract("gitCheckout", {
+        body: { cwd, branch, create },
+        ...gitWrite,
+      })
+    },
+    gitLog: async (cwd, count = 30) =>
+      (await contract("gitLog", { body: { cwd, count }, ...gitRead })).commits,
+    generateCommitMessage: (request, options) =>
+      contract("generateCommitMessage", {
+        body: { ...request },
+        timeoutMs: COMMIT_MESSAGE_TIMEOUT_MS,
+        ...options,
       }),
   }
 }

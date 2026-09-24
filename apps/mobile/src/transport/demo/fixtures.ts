@@ -5,6 +5,7 @@ import type {
   ProviderInstance,
   ThreadDiffs,
 } from "@/types/remote"
+import { gitIsoDate, type DemoRepoSeed } from "./git"
 
 /**
  * What the demo shows: two small projects and a few chats, written like a
@@ -43,7 +44,7 @@ export const DEMO_PROVIDER_INSTANCES: ProviderInstance[] = [
 export const DEMO_FILES: Record<string, Record<string, string | null>> = {
   "/Users/demo/code/weather-app": {
     "README.md":
-      "# Weather\n\nA small React Native app that shows the forecast for your saved cities.\n\n## Scripts\n\n- `npm test` runs the unit tests\n- `npm start` starts the dev server\n",
+      "# Weather\n\nA small React Native app that shows the forecast for your saved cities.\n\n## Features\n\n- Five-day forecast for every saved city\n- Light, dark and system themes\n- The last forecast stays readable offline\n\n## Scripts\n\n- `npm test` runs the unit tests\n- `npm start` starts the dev server\n\n## License\n\nMIT, see LICENSE.\n",
     "package.json":
       '{\n  "name": "weather-app",\n  "version": "1.3.0",\n  "scripts": {\n    "start": "expo start",\n    "test": "vitest run"\n  }\n}\n',
     src: null,
@@ -54,6 +55,8 @@ export const DEMO_FILES: Record<string, Record<string, string | null>> = {
     "src/screens": null,
     "src/screens/Forecast.tsx":
       "export function Forecast() {\n  return null // five-day forecast list\n}\n",
+    "src/screens/Radar.tsx":
+      "export function Radar() {\n  return null // rain radar for the selected city\n}\n",
     "src/screens/Settings.tsx":
       'import { useTheme } from "../theme"\n\nexport function Settings() {\n  const { mode, setMode } = useTheme()\n  return null // theme picker: light, dark, system\n}\n',
   },
@@ -65,6 +68,118 @@ export const DEMO_FILES: Record<string, Record<string, string | null>> = {
     "src/auth.test.ts":
       'import { login } from "./auth"\n\ntest("rejects a wrong password", async () => {\n  await expect(login("a@example.com", "wrong")).rejects.toThrow()\n})\n',
   },
+}
+
+const WEATHER_APP = "/Users/demo/code/weather-app"
+const API_SERVER = "/Users/demo/code/api-server"
+
+/** A project's files (not its folders), relative path → contents. */
+function filesOf(root: string): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(DEMO_FILES[root] ?? {}).filter(
+      (entry): entry is [string, string] => entry[1] !== null
+    )
+  )
+}
+
+/**
+ * The demo projects' git state; their working trees are DEMO_FILES.
+ * weather-app has a staged version bump, a README with two separate
+ * changes, a changed theme, a new file and one commit not yet pushed.
+ * api-server is clean and one commit behind its remote.
+ */
+export function demoGitSeeds(now: Date): Record<string, DemoRepoSeed> {
+  const at = (minutes: number) =>
+    gitIsoDate(new Date(now.getTime() - minutes * 60_000))
+  const weather = filesOf(WEATHER_APP)
+  const { "src/screens/Radar.tsx": radar, ...tracked } = weather
+  const readme = tracked["README.md"]!
+  const theme = tracked["src/theme.ts"]!
+  const manifest = tracked["package.json"]!
+  return {
+    [WEATHER_APP]: {
+      branch: "main",
+      branches: {
+        main: { upstream: "origin/main", ahead: 1 },
+        "release/1.4": { upstream: "origin/release/1.4" },
+      },
+      head: {
+        ...tracked,
+        "README.md": readme
+          .replace("for your saved cities.", "for one city.")
+          .replace("MIT, see LICENSE.", "MIT"),
+        "src/theme.ts": theme.replace(
+          'background: "#0a0a0a", text: "#fafafa"',
+          'background: "#000000", text: "#ffffff"'
+        ),
+        "package.json": manifest.replace('"1.3.0"', '"1.2.0"'),
+      },
+      staged: { "package.json": manifest },
+      changed: {
+        "README.md": readme,
+        "src/theme.ts": theme,
+        "src/screens/Radar.tsx": radar!,
+      },
+      log: [
+        {
+          hash: "8f3c2a91d4e5b6a7c8d9e0f1a2b3c4d5e6f7a8b9",
+          message: "Show the humidity on the forecast screen",
+          author: "Demo User",
+          date: at(35),
+        },
+        {
+          hash: "2b7e4d1c9a8f6e5d4c3b2a1f0e9d8c7b6a5f4e3d",
+          message: "Keep the last forecast for offline use",
+          author: "Demo User",
+          date: at(26 * 60),
+        },
+        {
+          hash: "c41d8e2f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d",
+          message: "Add the settings screen",
+          author: "Demo User",
+          date: at(2 * 24 * 60),
+        },
+        {
+          hash: "e9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8",
+          message: "Start the weather app",
+          author: "Demo User",
+          date: at(5 * 24 * 60),
+        },
+      ],
+    },
+    [API_SERVER]: {
+      branch: "main",
+      branches: {
+        main: {
+          upstream: "origin/main",
+          behind: 1,
+          incoming: [
+            {
+              hash: "7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c",
+              message: "Rate-limit the login endpoint",
+              author: "Sam Rivera",
+              date: at(50),
+            },
+          ],
+        },
+      },
+      head: filesOf(API_SERVER),
+      log: [
+        {
+          hash: "5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b",
+          message: "Give each login test its own user",
+          author: "Demo User",
+          date: at(150),
+        },
+        {
+          hash: "0f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6",
+          message: "Start the API server",
+          author: "Demo User",
+          date: at(6 * 24 * 60),
+        },
+      ],
+    },
+  }
 }
 
 function minutesAgo(now: Date, minutes: number): string {
