@@ -179,11 +179,16 @@ export class RemoteTerminalChannel {
 
   /**
    * The desktop took terminals from paired devices away: each device hears
-   * why, and every terminal ends.
+   * why, and its terminals are forgotten here. Their processes end with the
+   * grant's own teardown (bootstrap/providers.ts, for the shell routes'
+   * processes too). Closing them here as well would race that teardown's
+   * kill of the same process tree, which Windows' ConPTY does not reliably
+   * survive: the service then counts the process as not ended.
    */
-  endAll(reason: TerminalClosedReason): void {
+  grantRevoked(): void {
     for (const terminal of [...this.terminals.values()]) {
-      this.end(terminal, reason)
+      this.tell(terminal, "grant_revoked")
+      this.forget(terminal)
     }
   }
 
@@ -258,8 +263,13 @@ export class RemoteTerminalChannel {
         cols: params.cols,
         rows: params.rows,
         onProcessExit: () => lease?.release(),
-        onProcessTreeFailure: (error) =>
-          state.taintBackend?.(error, "remote terminal process tree"),
+        onProcessTreeFailure: (error) => {
+          logger.error(
+            { err: error, sessionId: device.sessionId },
+            "a remote terminal's process tree could not be ended"
+          )
+          state.taintBackend?.(error, "remote terminal process tree")
+        },
       })
     } catch (error) {
       lease?.release()
@@ -539,6 +549,13 @@ export class RemoteTerminalChannel {
   /** Ends a terminal for good: its device hears why, and its process ends. */
   private end(terminal: RemoteTerminal, reason: TerminalClosedReason): void {
     if (this.terminals.get(terminal.id) !== terminal) return
+    this.tell(terminal, reason)
+    this.forget(terminal)
+    closeTerminalPtySession(terminal.id, terminal.ownerId)
+  }
+
+  /** The attached device hears why its terminal is gone; the log, who and why. */
+  private tell(terminal: RemoteTerminal, reason: TerminalClosedReason): void {
     const attachment = terminal.attachment
     if (attachment?.connection.isOpen()) {
       attachment.connection.send({
@@ -546,8 +563,6 @@ export class RemoteTerminalChannel {
         data: { terminalId: terminal.id, reason },
       })
     }
-    this.forget(terminal)
-    closeTerminalPtySession(terminal.id, terminal.ownerId)
     logger.info(
       { terminalId: terminal.id, sessionId: terminal.sessionId, reason },
       "remote terminal closed"

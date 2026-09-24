@@ -524,14 +524,15 @@ describe("the terminal for paired devices", () => {
     })
   })
 
-  it("ends every terminal when the desktop takes the grant away, and says why", async () => {
+  it("tells each device why when the desktop takes the grant away", async () => {
     const terminals = channel()
     const phone = connection()
     const tablet = connection()
     const first = await openOne(terminals, phone)
     const second = await openOne(terminals, tablet, device("tablet-1"))
 
-    terminals.endAll("grant_revoked")
+    granted = false
+    terminals.grantRevoked()
     expect(phone.frames.at(-1)).toEqual({
       channel: "terminal.closed",
       data: { terminalId: first, reason: "grant_revoked" },
@@ -540,8 +541,19 @@ describe("the terminal for paired devices", () => {
       channel: "terminal.closed",
       data: { terminalId: second, reason: "grant_revoked" },
     })
-    expect(pty.sessions.size).toBe(0)
     expect(terminals.count("phone-1")).toBe(0)
+    expect(terminals.count("tablet-1")).toBe(0)
+    await expect(
+      call(terminals, TERMINAL_METHODS.write, {
+        terminalId: first,
+        inputSeq: 1,
+        data: "ls\r",
+      })
+    ).rejects.toMatchObject({ code: "remote_terminal_disabled" })
+    // The grant's own teardown ends the processes (bootstrap/providers.ts):
+    // the channel does not kill them a second time.
+    expect(pty.sessions.get(first)?.closed).toBe(false)
+    expect(pty.sessions.get(second)?.closed).toBe(false)
   })
 
   it("forgets the terminals of a revoked session", async () => {

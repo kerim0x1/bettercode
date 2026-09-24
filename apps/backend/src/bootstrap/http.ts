@@ -87,13 +87,14 @@ export function createTransport(
     },
   })
   // Paired devices learn about a changed terminal grant without reconnecting;
-  // a grant taken away ends their terminals, and each device hears why.
+  // a grant taken away tells each device why its terminals end (the grant's
+  // teardown in bootstrap/providers.ts ends their processes).
   let terminalAllowed = settings.get().remote_access_allow_terminal === true
   const refreshProtocolOnSettingsChange = (next: Settings) => {
     const allowed = next.remote_access_allow_terminal === true
     if (allowed === terminalAllowed) return
     terminalAllowed = allowed
-    if (!allowed) terminals.endAll("grant_revoked")
+    if (!allowed) terminals.grantRevoked()
     hub.refreshProtocol()
   }
   settings.on("change", refreshProtocolOnSettingsChange)
