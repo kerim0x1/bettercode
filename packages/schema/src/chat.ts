@@ -251,6 +251,14 @@ export const chatSendSchema = z
           .parse(
             pick<unknown>(raw, "systemInstruction", "system_instruction")
           ) ?? null,
+      // Set by a client that does not prepare its turns itself (the phone
+      // app): the backend runs the user's "on message send" hooks and
+      // builds the system instruction the desktop would have sent.
+      prepare_turn:
+        z
+          .boolean()
+          .nullish()
+          .parse(pick<unknown>(raw, "prepareTurn", "prepare_turn")) ?? false,
       permission_level:
         z
           .string()

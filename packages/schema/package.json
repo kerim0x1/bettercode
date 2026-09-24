@@ -101,6 +101,11 @@
       "types": "./src/prompt-context.ts",
       "import": "./src/prompt-context.ts",
       "default": "./dist/prompt-context.js"
+    },
+    "./runtime-hooks": {
+      "types": "./src/runtime-hooks.ts",
+      "import": "./src/runtime-hooks.ts",
+      "default": "./dist/runtime-hooks.js"
     }
   },
   "scripts": {
@@ -127,6 +132,15 @@
       ],
       "remote-protocol": [
         "dist/remote-protocol.d.ts"
+      ],
+      "prompt-context": [
+        "dist/prompt-context.d.ts"
+      ],
+      "runtime-hooks": [
+        "dist/runtime-hooks.d.ts"
+      ],
+      "system-instruction": [
+        "dist/system-instruction.d.ts"
       ]
     }
   }

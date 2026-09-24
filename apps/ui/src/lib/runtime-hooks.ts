@@ -1,56 +1,18 @@
 import { useEffect } from "react"
 
 import {
+  blockingHookFailureMessage,
+  buildHookEnv,
+  hookFailureText,
+  resolveHookCwd,
+  type RuntimeHookPayload as HookPayload,
+} from "@betterc0de/schema/runtime-hooks"
+import {
   listRuntimeHooks,
   updateRuntimeHookRun,
   type RuntimeHook,
 } from "@/lib/runtime-config"
 import { runShellCommandDetailed } from "@/services/backend"
-
-type HookPayload = Record<string, unknown>
-
-function truncate(value: unknown, max = 4000): string {
-  if (value == null) return ""
-  const text = typeof value === "string" ? value : JSON.stringify(value)
-  return text.length > max ? `${text.slice(0, max)}...` : text
-}
-
-function resolveHookCwd(payload: HookPayload): string {
-  const candidates = [payload.cwd, payload.projectPath, payload.project_path]
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim()) return candidate
-  }
-  return "."
-}
-
-function buildHookEnv(event: RuntimeHook["event"], payload: HookPayload) {
-  const env: Record<string, string> = {
-    BETTERC0DE_HOOK_EVENT: event,
-    BETTERC0DE_HOOK_PAYLOAD: truncate(payload, 8000),
-  }
-
-  const mappings: Record<string, unknown> = {
-    BETTERC0DE_THREAD_ID: payload.threadId ?? payload.thread_id,
-    BETTERC0DE_PROJECT_PATH: payload.projectPath ?? payload.project_path,
-    BETTERC0DE_CWD: payload.cwd,
-    BETTERC0DE_FILE_PATH:
-      payload.path ?? payload.filePath ?? payload.relativePath,
-    BETTERC0DE_RELATIVE_PATH: payload.relativePath,
-    BETTERC0DE_MESSAGE: payload.message,
-    BETTERC0DE_RESPONSE: payload.response,
-    BETTERC0DE_COMMIT_MESSAGE: payload.commitMessage,
-    BETTERC0DE_TOOL_NAME: payload.toolName,
-    BETTERC0DE_MODEL_ID: payload.modelId,
-    BETTERC0DE_PROVIDER: payload.providerKind,
-  }
-
-  for (const [key, raw] of Object.entries(mappings)) {
-    if (raw == null) continue
-    env[key] = truncate(raw)
-  }
-
-  return env
-}
 
 async function executeSingleHook(
   hook: RuntimeHook,
@@ -75,15 +37,11 @@ async function executeSingleHook(
     return result
   }
 
-  const error = truncate(
-    result.stderr ||
-      result.stdout ||
-      `Hook exited with code ${result.exitCode ?? 1}`
-  )
+  const error = hookFailureText(result)
   await updateRuntimeHookRun(hook.id, "error", result.exitCode ?? 1, error)
 
   if (blocking) {
-    throw new Error(`Hook "${hook.command}" failed: ${error}`)
+    throw new Error(blockingHookFailureMessage(hook.command, error))
   }
 
   return result

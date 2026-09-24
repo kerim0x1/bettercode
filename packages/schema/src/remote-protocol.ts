@@ -44,6 +44,13 @@ export const REMOTE_FEATURES = {
    * hears the new title (`thread.metadata`), so the rename sticks.
    */
   threadsRename: "threads.rename",
+  /**
+   * A `/chat/send` with `prepareTurn` gets the desktop's own preparation:
+   * the user's "on message send" hooks run first (one that fails refuses
+   * the message, `message_hook_failed`), and the turn gets the system
+   * instruction the desktop builds for its own messages.
+   */
+  preparedTurns: "chat.preparedTurns",
 } as const
 export type RemoteFeature =
   (typeof REMOTE_FEATURES)[keyof typeof REMOTE_FEATURES]
