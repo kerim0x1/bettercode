@@ -22,6 +22,7 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 - **Phone app: read-only sessions.** A session that may only watch offered to send and approve, then failed with HTTP 403. It now shows chats and pending approvals without the controls, and says why.
 - **Phone app: errors are shown.** A chat that failed to load read "Ready for first prompt", Projects showed an empty list, and the file viewer spun forever; each now shows the error and a retry. Binary files are no longer shown as text.
 - **Phone app: signing out.** When the desktop could not be reached, signing out forgot the pairing on the phone and left the session active on the desktop. The app now keeps the pairing and offers to forget it on the phone only.
+- **Phone app on Android: the keyboard no longer covers the message box.** The app draws edge to edge on Android, where the window no longer shrinks for the keyboard, and only iOS moved the message box and the pairing form above it: on Android the keyboard covered Send and Connect.
 - **Phone app: smaller fixes.** File search keeps the desktop's ranking. A reply ends when its own turn ends, not by comparing the phone's clock with the desktop's. After a reconnect the app checks the session at once instead of keeping the composer disabled for up to a minute.
 
 ### Added
