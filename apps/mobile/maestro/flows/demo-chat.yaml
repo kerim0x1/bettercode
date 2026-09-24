@@ -46,6 +46,15 @@ tags:
       - hideKeyboard
 - tapOn:
     id: chat-send
+# On iOS the keyboard stays open after sending and covers the approval card,
+# whose buttons Maestro still counts as visible (the keyboard is another
+# window): a tap on the sent message closes the keyboard and does nothing
+# else.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: Draft the release notes
 - scrollUntilVisible:
     element:
       id: request-approve
