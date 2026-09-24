@@ -27,18 +27,22 @@ function withoutComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
 }
 
-// The code editor's page is CodeMirror, built from its packages into one
-// line by scripts/build-mobile-editor.mjs: not the app's text. The editor's
-// own code (editor/) is scanned instead.
-const GENERATED = path.join(APP_ROOT, "src", "editor", "editor-html.ts")
+// The WebView pages are CodeMirror and xterm.js, built from their packages
+// into one line each by scripts/build-mobile-pages.mjs: not the app's text.
+// The pages' own code (editor/, terminal/) is scanned instead.
+const GENERATED = new Set([
+  path.join(APP_ROOT, "src", "editor", "editor-html.ts"),
+  path.join(APP_ROOT, "src", "terminal", "terminal-html.ts"),
+])
 
 describe("interface language", () => {
   it("has no German text in the app", () => {
     const files = [
       ...sourceFiles(path.join(APP_ROOT, "src")).filter(
-        (file) => file !== GENERATED
+        (file) => !GENERATED.has(file)
       ),
       ...sourceFiles(path.join(APP_ROOT, "editor")),
+      ...sourceFiles(path.join(APP_ROOT, "terminal")),
       path.join(APP_ROOT, "app.config.ts"),
     ]
     expect(files.length).toBeGreaterThan(20)

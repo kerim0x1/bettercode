@@ -3,7 +3,7 @@
  * loads anything (the page's CSP is default-src 'none'); the app sends it
  * commands and it answers with events, both as JSON messages
  * (src/editor/protocol.ts). Built into src/editor/editor-html.ts by
- * scripts/build-mobile-editor.mjs.
+ * scripts/build-mobile-pages.mjs.
  */
 import {
   autocompletion,
