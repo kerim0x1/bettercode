@@ -301,3 +301,65 @@ describe("mobile socket version negotiation", () => {
     client.stop()
   })
 })
+
+describe("calls over the socket", () => {
+  const sent = (socket: FakeSocket) =>
+    socket.send.mock.calls.map(
+      ([data]) => JSON.parse(String(data)) as Record<string, unknown>
+    )
+
+  it("are answered with the desktop's result, or its refusal and code", async () => {
+    const { client, socket, onFrame } = setup()
+    socket.authenticate()
+    const listed = client.call("terminal.list", {})
+    const refused = client.call("terminal.open", { cwd: "/elsewhere" })
+    const [list, open] = sent(socket).filter((frame) => "method" in frame)
+    expect(list).toMatchObject({ method: "terminal.list", params: {} })
+
+    socket.frame({
+      id: open!.id,
+      error: { message: "No.", code: "workspace_not_registered" },
+    })
+    socket.frame({ id: list!.id, result: { terminals: [] } })
+    await expect(listed).resolves.toEqual({ terminals: [] })
+    await expect(refused).rejects.toMatchObject({
+      name: "RemoteCallError",
+      message: "No.",
+      code: "workspace_not_registered",
+    })
+    // Answers are not events.
+    expect(onFrame).not.toHaveBeenCalled()
+    client.stop()
+  })
+
+  it("fail with connection_lost without a connection, or when it goes first", async () => {
+    const { client, socket } = setup()
+    await expect(client.call("terminal.list")).rejects.toMatchObject({
+      code: "connection_lost",
+    })
+    socket.authenticate()
+    const pending = client.call("terminal.list")
+    socket.onclose?.({ code: 1006 })
+    await expect(pending).rejects.toMatchObject({ code: "connection_lost" })
+
+    // A new connection starts without the old one's calls.
+    vi.advanceTimersByTime(15_000)
+    const next = FakeSocket.instances.at(-1)!
+    expect(next).not.toBe(socket)
+    next.authenticate()
+    const again = client.call("terminal.list")
+    const frame = sent(next).find((each) => each.method === "terminal.list")
+    next.frame({ id: frame!.id, result: { terminals: [] } })
+    await expect(again).resolves.toEqual({ terminals: [] })
+    client.stop()
+  })
+
+  it("time out when the desktop does not answer", async () => {
+    const { client, socket } = setup()
+    socket.authenticate()
+    const pending = client.call("terminal.list", {}, { timeoutMs: 500 })
+    vi.advanceTimersByTime(500)
+    await expect(pending).rejects.toMatchObject({ code: "timeout" })
+    client.stop()
+  })
+})

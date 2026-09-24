@@ -18,6 +18,29 @@ export const WS_CLOSE_UNAUTHORIZED = 4401
 /** The renderer waits this long for `auth_ok`; a silent socket is dead. */
 const AUTH_HANDSHAKE_TIMEOUT_MS = 10_000
 
+/** How long a call over the socket may take unless it says otherwise. */
+const CALL_TIMEOUT_MS = 20_000
+
+/**
+ * A call over the socket that did not succeed: the desktop's refusal (its
+ * message and code), or `connection_lost` / `timeout` when no answer came.
+ */
+export class RemoteCallError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string
+  ) {
+    super(message)
+    this.name = "RemoteCallError"
+  }
+}
+
+interface PendingCall {
+  resolve(result: unknown): void
+  reject(error: RemoteCallError): void
+  timer: ReturnType<typeof setTimeout>
+}
+
 export interface SocketConnection {
   readonly baseUrl: string
   readonly sessionToken: string
@@ -39,6 +62,10 @@ export class RemoteSocket implements RemoteChannel {
   private halted = false
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null
   private readonly replay = new ProviderReplayCursor()
+  /** The socket once the desktop accepted it, for calls. */
+  private authenticatedSocket: WebSocket | null = null
+  private nextCallId = 0
+  private readonly calls = new Map<string, PendingCall>()
 
   constructor(
     private readonly connection: SocketConnection,
@@ -58,6 +85,7 @@ export class RemoteSocket implements RemoteChannel {
     this.reconnectTimer = null
     const socket = this.socket
     this.socket = null
+    this.failCalls()
     if (socket && socket.readyState < WebSocket.CLOSING)
       socket.close(1000, "app stopped")
   }
@@ -70,8 +98,75 @@ export class RemoteSocket implements RemoteChannel {
     this.reconnectTimer = null
     const current = this.socket
     this.socket = null
+    this.failCalls()
     current?.close()
     this.connect(true)
+  }
+
+  /**
+   * A JSON-RPC call over the connection (the terminal's). Fails with
+   * `connection_lost` when there is no connection or it goes before the
+   * answer; the caller decides whether to call again once it is back.
+   */
+  call(
+    method: string,
+    params: unknown = {},
+    options: { timeoutMs?: number } = {}
+  ): Promise<unknown> {
+    const socket = this.authenticatedSocket
+    if (!socket || socket !== this.socket) {
+      return Promise.reject(
+        new RemoteCallError("Not connected to the desktop.", "connection_lost")
+      )
+    }
+    this.nextCallId += 1
+    const id = `call-${this.nextCallId}`
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.calls.delete(id)
+        reject(
+          new RemoteCallError("The desktop did not answer in time.", "timeout")
+        )
+      }, options.timeoutMs ?? CALL_TIMEOUT_MS)
+      this.calls.set(id, { resolve, reject, timer })
+      socket.send(JSON.stringify({ id, method, params }))
+    })
+  }
+
+  /** Answers a call; false for any other frame. */
+  private settleCall(frame: Record<string, unknown>): boolean {
+    if (typeof frame.id !== "string" || !frame.id.startsWith("call-"))
+      return false
+    if (!("result" in frame) && !("error" in frame)) return false
+    const pending = this.calls.get(frame.id)
+    if (!pending) return true
+    this.calls.delete(frame.id)
+    clearTimeout(pending.timer)
+    if (isRecord(frame.error)) {
+      pending.reject(
+        new RemoteCallError(
+          typeof frame.error.message === "string"
+            ? frame.error.message
+            : "The desktop refused the call.",
+          typeof frame.error.code === "string" ? frame.error.code : undefined
+        )
+      )
+    } else pending.resolve(frame.result)
+    return true
+  }
+
+  private failCalls(): void {
+    this.authenticatedSocket = null
+    for (const pending of this.calls.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(
+        new RemoteCallError(
+          "The connection to the desktop was lost.",
+          "connection_lost"
+        )
+      )
+    }
+    this.calls.clear()
   }
 
   private connect(reconnecting: boolean): void {
@@ -106,6 +201,7 @@ export class RemoteSocket implements RemoteChannel {
       if (!authenticated) {
         if (frame.type !== "auth_ok") return
         authenticated = true
+        this.authenticatedSocket = socket
         this.clearHandshakeTimer()
         this.reconnectAttempt = 0
         this.handlers.onState("live")
@@ -118,6 +214,7 @@ export class RemoteSocket implements RemoteChannel {
         this.handlers.onProtocol?.(parseRemoteProtocol(frame.protocol))
         return
       }
+      if (this.settleCall(frame)) return
 
       this.replay.deliver(frame, this.handlers.onFrame)
     }
@@ -132,6 +229,7 @@ export class RemoteSocket implements RemoteChannel {
       if (wasCurrent) {
         this.socket = null
         this.clearHandshakeTimer()
+        this.failCalls()
       }
       if (this.stopped || !wasCurrent) return
       if (event.code === WS_CLOSE_UNAUTHORIZED) {

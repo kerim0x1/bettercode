@@ -228,6 +228,16 @@ export interface RemoteChannel {
   start(): void
   stop(): void
   reconnectNow(): void
+  /**
+   * A call over the stream (the terminal's, @betterc0de/schema/remote-terminal).
+   * Fails with a `RemoteCallError`: the desktop's code, or `connection_lost`
+   * and `timeout` when no answer came.
+   */
+  call(
+    method: string,
+    params?: unknown,
+    options?: { timeoutMs?: number }
+  ): Promise<unknown>
 }
 
 export interface RemoteTransport {
