@@ -6,44 +6,65 @@ import {
   FileCode2,
   Folder,
   Link2,
+  MoreVertical,
 } from "lucide-react-native"
 import type { DirectoryEntry } from "@/types/remote"
 import { colors, font, radius, spacing, type } from "@/design/theme"
+import { IconButton } from "./icon-button"
 
+/**
+ * A file or folder in the browser. With `onMore`, a button beside it (not
+ * inside it, so screen readers reach both) offers rename and delete.
+ */
 export function FileRow({
   entry,
   onPress,
+  onMore,
 }: {
   entry: DirectoryEntry
   onPress: () => void
+  onMore?: () => void
 }) {
   const Icon = entry.isDir ? Folder : isCodeFile(entry.name) ? FileCode2 : File
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${entry.isDir ? "Folder" : "File"} ${entry.name}`}
-      onPress={onPress}
-      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-    >
-      <View style={[styles.icon, entry.isDir && styles.folderIcon]}>
-        <Icon
-          size={20}
-          color={entry.isDir ? colors.mint : colors.textSecondary}
-        />
-      </View>
-      <View style={styles.copy}>
-        <View style={styles.nameRow}>
-          <Text style={styles.name} numberOfLines={1}>
-            {entry.name}
-          </Text>
-          {entry.isSymlink ? <Link2 size={13} color={colors.warning} /> : null}
+    <View style={styles.row}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${entry.isDir ? "Folder" : "File"} ${entry.name}`}
+        testID={`file-row-${entry.name}`}
+        onPress={onPress}
+        style={({ pressed }) => [styles.open, pressed && styles.pressed]}
+      >
+        <View style={[styles.icon, entry.isDir && styles.folderIcon]}>
+          <Icon
+            size={20}
+            color={entry.isDir ? colors.mint : colors.textSecondary}
+          />
         </View>
-        <Text style={styles.meta}>
-          {entry.isDir ? "Folder" : formatBytes(entry.size) || "File"}
-        </Text>
-      </View>
-      <ChevronRight size={18} color={colors.textMuted} />
-    </Pressable>
+        <View style={styles.copy}>
+          <View style={styles.nameRow}>
+            <Text style={styles.name} numberOfLines={1}>
+              {entry.name}
+            </Text>
+            {entry.isSymlink ? (
+              <Link2 size={13} color={colors.warning} />
+            ) : null}
+          </View>
+          <Text style={styles.meta}>
+            {entry.isDir ? "Folder" : formatBytes(entry.size) || "File"}
+          </Text>
+        </View>
+        <ChevronRight size={18} color={colors.textMuted} />
+      </Pressable>
+      {onMore ? (
+        <IconButton
+          icon={MoreVertical}
+          label={`More for ${entry.name}`}
+          testID={`file-more-${entry.name}`}
+          onPress={onMore}
+        />
+      ) : null}
+    </View>
   )
 }
 
@@ -57,9 +78,16 @@ const styles = StyleSheet.create({
   row: {
     minHeight: 66,
     marginHorizontal: spacing.md,
-    paddingHorizontal: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  open: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 66,
+    paddingHorizontal: spacing.sm,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,

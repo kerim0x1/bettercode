@@ -11,18 +11,33 @@ import {
 } from "react-native"
 import { colors, font, radius, spacing, type } from "@/design/theme"
 
-/** Renaming a chat: its title, edited in place, saved on the desktop. */
+/**
+ * A name edited in place and saved on the desktop: a chat's title by
+ * default, or a file's or folder's name (new or renamed).
+ */
 export function RenameSheet({
   visible,
   title,
   onCancel,
   onSave,
+  heading = "Rename chat",
+  label = "Chat title",
+  actionLabel = "Save",
+  fileName = false,
+  problem,
 }: {
   visible: boolean
   title: string
   onCancel: () => void
-  /** Resolves once the desktop has the new title. */
+  /** Resolves once the desktop has the new name. */
   onSave: (title: string) => Promise<void>
+  heading?: string
+  label?: string
+  actionLabel?: string
+  /** A file or folder name: typed as is, without capitals or corrections. */
+  fileName?: boolean
+  /** Why the name typed so far cannot be used, if it cannot. */
+  problem?: (name: string) => string | null
 }) {
   const [draft, setDraft] = useState(title)
   const [saving, setSaving] = useState(false)
@@ -30,7 +45,9 @@ export function RenameSheet({
     if (visible) setDraft(title)
   }, [title, visible])
   const next = draft.trim()
-  const canSave = next.length > 0 && next !== title.trim() && !saving
+  const invalid = next ? (problem?.(next) ?? null) : null
+  const canSave =
+    next.length > 0 && next !== title.trim() && !invalid && !saving
 
   const save = async () => {
     if (!canSave) return
@@ -60,10 +77,10 @@ export function RenameSheet({
           onPress={onCancel}
         />
         <View style={styles.card}>
-          <Text style={styles.heading}>Rename chat</Text>
+          <Text style={styles.heading}>{heading}</Text>
           <TextInput
             testID="rename-input"
-            accessibilityLabel="Chat title"
+            accessibilityLabel={label}
             value={draft}
             onChangeText={setDraft}
             autoFocus
@@ -73,7 +90,14 @@ export function RenameSheet({
             onSubmitEditing={() => void save()}
             style={styles.input}
             placeholderTextColor={colors.textMuted}
+            autoCapitalize={fileName ? "none" : "sentences"}
+            autoCorrect={!fileName}
           />
+          {invalid ? (
+            <Text style={styles.problem} accessibilityLiveRegion="polite">
+              {invalid}
+            </Text>
+          ) : null}
           <View style={styles.actions}>
             <Pressable
               accessibilityRole="button"
@@ -98,7 +122,9 @@ export function RenameSheet({
                 !canSave && styles.disabled,
               ]}
             >
-              <Text style={[styles.buttonText, styles.primaryText]}>Save</Text>
+              <Text style={[styles.buttonText, styles.primaryText]}>
+                {actionLabel}
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -126,6 +152,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   heading: { color: colors.text, fontFamily: font.semibold, fontSize: 16 },
+  problem: { color: colors.danger, fontFamily: font.regular, fontSize: 13 },
   input: {
     minHeight: 44,
     paddingHorizontal: spacing.sm,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { FlatList, StyleSheet, Text, View } from "react-native"
 import { useLocalSearchParams, useRouter } from "expo-router"
 import { ArrowLeft, WrapText } from "lucide-react-native"
@@ -14,9 +14,14 @@ export default function FileScreen() {
   const params = useLocalSearchParams<{
     id: string | string[]
     path: string | string[]
+    /** From a search: the line to show, counted from 1. */
+    line?: string | string[]
   }>()
   const threadId = Array.isArray(params.id) ? params.id[0] : params.id
   const absolutePath = Array.isArray(params.path) ? params.path[0] : params.path
+  const targetLine =
+    Number(Array.isArray(params.line) ? params.line[0] : params.line) || 0
+  const listRef = useRef<FlatList<string>>(null)
   const router = useRouter()
   const api = useRemoteApi()
   const thread = useAppStore((state) =>
@@ -69,6 +74,20 @@ export default function FileScreen() {
       cancelled = true
     }
   }, [absolutePath, api, root])
+
+  // A search opens the file at its match: scroll there once it is shown.
+  useEffect(() => {
+    if (content === null || binary || targetLine < 1) return
+    if (targetLine > lines.length) return
+    const timer = setTimeout(() => {
+      listRef.current?.scrollToIndex({
+        index: targetLine - 1,
+        viewPosition: 0.3,
+        animated: false,
+      })
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [binary, content, lines.length, targetLine])
 
   const name = fileName(absolutePath ?? "File")
   const relative = root && absolutePath ? safeRelative(root, absolutePath) : ""
@@ -128,12 +147,34 @@ export default function FileScreen() {
         />
       ) : (
         <FlatList
+          ref={listRef}
           data={lines}
           keyExtractor={(_, index) => String(index)}
           initialNumToRender={40}
           windowSize={15}
+          // Lines have no fixed height (they wrap): jump near the line by
+          // the average height, then to the line once it is rendered.
+          onScrollToIndexFailed={(info) => {
+            listRef.current?.scrollToOffset({
+              offset: info.averageItemLength * info.index,
+              animated: false,
+            })
+            setTimeout(() => {
+              listRef.current?.scrollToIndex({
+                index: info.index,
+                viewPosition: 0.3,
+                animated: false,
+              })
+            }, 50)
+          }}
           renderItem={({ item, index }) => (
-            <View style={styles.line}>
+            <View
+              style={[
+                styles.line,
+                index === targetLine - 1 && styles.targetLine,
+              ]}
+              testID={index === targetLine - 1 ? "file-target-line" : undefined}
+            >
               <Text style={styles.number}>{index + 1}</Text>
               <Text
                 selectable
@@ -169,6 +210,7 @@ function safeRelative(root: string, value: string): string {
 }
 
 const styles = StyleSheet.create({
+  targetLine: { backgroundColor: "rgba(251,191,36,0.14)" },
   header: {
     minHeight: 68,
     paddingHorizontal: spacing.sm,
