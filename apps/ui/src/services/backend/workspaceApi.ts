@@ -787,19 +787,33 @@ function dispatchWorkspaceFileChanged(
   )
 }
 
+/**
+ * Writes a file. With `expectedSha256` (from a read) the backend refuses
+ * (409) when the file changed since; with `null`, when it exists at all.
+ */
 export const writeFile = (
   cwd: string,
   relativePath: string,
-  contents: string
-) =>
-  invoke<void>("/workspace/write", {
-    args: { cwd, relativePath, contents },
+  contents: string,
+  options: { expectedSha256?: string | null } = {}
+) => {
+  const body = {
+    cwd,
+    relativePath,
+    contents,
+    ...(options.expectedSha256 === undefined
+      ? {}
+      : { expectedSha256: options.expectedSha256 }),
+  }
+  return invoke<void>("/workspace/write", {
+    args: body,
     method: "POST",
-    body: { cwd, relativePath, contents },
+    body,
   }).then((result) => {
     dispatchWorkspaceFileChanged(cwd, relativePath)
     return result
   })
+}
 
 export const createDirectory = (cwd: string, relativePath: string) =>
   invoke<void>("/workspace/mkdir", {
