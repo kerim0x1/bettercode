@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import http from "node:http"
 import os from "node:os"
@@ -238,6 +239,86 @@ describe("the phone app against a real desktop", () => {
     // Only registered projects are readable.
     const outside = await refusal(api.listDirectory(os.tmpdir()))
     expect(outside.status).toBe(403)
+  })
+
+  it("commits and pushes from the phone, fetches and pulls what came in, and publishes a branch", async () => {
+    const { api } = phone
+    await desktop.saveThread("e2e-git", "2026-09-04T00:00:00.000Z")
+    // Inside the registered project; the remote is a bare repository beside it.
+    const root = path.join(desktop.workspace, "git-review")
+    const remote = path.join(path.dirname(desktop.workspace), "remote.git")
+    const other = path.join(path.dirname(desktop.workspace), "other-clone")
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim()
+    const identify = (cwd: string) => {
+      git(cwd, "config", "user.name", "End-to-end")
+      git(cwd, "config", "user.email", "e2e@example.com")
+      git(cwd, "config", "core.autocrlf", "false")
+      // The desktop refuses local-path remotes unless a repository allows them.
+      git(cwd, "config", "protocol.file.allow", "always")
+    }
+    fs.mkdirSync(root, { recursive: true })
+    git(path.dirname(remote), "init", "--bare", "--initial-branch=main", remote)
+    git(root, "init", "--initial-branch=main")
+    identify(root)
+    fs.writeFileSync(path.join(root, "README.md"), "# Review\n")
+    git(root, "add", "-A")
+    git(root, "commit", "-m", "Start")
+    git(root, "remote", "add", "origin", remote)
+    git(root, "push", "-u", "origin", "main")
+
+    expect(await api.gitStatus(root)).toMatchObject({
+      branch: "main",
+      upstream: "origin/main",
+      ahead: 0,
+      behind: 0,
+      is_clean: true,
+    })
+
+    // Commit on the phone, then push.
+    fs.writeFileSync(
+      path.join(root, "README.md"),
+      "# Review\n\nFrom the phone.\n"
+    )
+    await api.gitStageAll(root)
+    await api.gitCommit(root, "Write from the phone")
+    expect((await api.gitStatus(root)).ahead).toBe(1)
+    await api.gitPush(root)
+    expect((await api.gitStatus(root)).ahead).toBe(0)
+    expect(git(remote, "log", "-1", "--format=%s", "main")).toBe(
+      "Write from the phone"
+    )
+
+    // Someone else pushes; the phone fetches, sees it, and pulls it.
+    git(path.dirname(other), "clone", remote, other)
+    identify(other)
+    fs.writeFileSync(path.join(other, "NOTES.md"), "From another clone.\n")
+    git(other, "add", "-A")
+    git(other, "commit", "-m", "Write from elsewhere")
+    git(other, "push", "origin", "main")
+    const fetched = await api.gitFetch(root)
+    expect(fetched).toMatchObject({ behind: 1, ahead: 0 })
+    await api.gitPull(root)
+    expect((await api.gitStatus(root)).behind).toBe(0)
+    expect(fs.readFileSync(path.join(root, "NOTES.md"), "utf8")).toBe(
+      "From another clone.\n"
+    )
+    expect((await api.gitLog(root, 1))[0]?.message).toBe("Write from elsewhere")
+
+    // A new branch has no upstream until the phone publishes it.
+    await api.gitCheckout(root, "phone-branch", true)
+    expect((await api.gitStatus(root)).upstream).toBeNull()
+    const unpublished = await refusal(api.gitPush(root))
+    expect(unpublished).toMatchObject({
+      status: 400,
+      code: "git_remote_error",
+      message: "Branch has no upstream — use Publish instead.",
+    })
+    await api.gitPush(root, { setUpstream: true, branch: "phone-branch" })
+    expect((await api.gitStatus(root)).upstream).toBe("origin/phone-branch")
+    expect(git(remote, "branch", "--list", "phone-branch")).toContain(
+      "phone-branch"
+    )
   })
 
   it("keeps the live socket's protocol current and stops it when the phone signs out", async () => {

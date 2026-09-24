@@ -1,5 +1,7 @@
+import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
+import { parseGitDiff } from "@betterc0de/schema/git-diff"
 import { httpContracts } from "@betterc0de/schema/http-contracts"
 import {
   REMOTE_API_VERSION,
@@ -9,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { assessCompatibility, hasFeature } from "@/lib/compat"
 import { parseRemoteBootstrap } from "@/lib/remote-session"
 import { createDemoTransport } from "@/transport/demo"
+import { RemoteApiError } from "@/transport/live/http"
 import type { RemoteApi } from "@/transport/types"
 import {
   RELEASE_VERSION,
@@ -23,7 +26,11 @@ import {
 
 interface Fixture {
   readonly api: RemoteApi
-  /** A project folder with a README.md and a src folder. */
+  /**
+   * A project folder with a README.md and a src folder. It is a git
+   * repository with a staged file, a changed file with two separate
+   * changes, a new file and at least one commit.
+   */
   readonly projectRoot: string
   /** A chat in that project with at least two messages. */
   readonly threadId: string
@@ -57,6 +64,7 @@ async function liveFixture(): Promise<Fixture> {
       path.join(root, "src", "app.ts"),
       "export const app = true\n"
     )
+    initialiseRepository(root)
     await desktop.saveThread("contract-thread", "2026-09-01T10:00:00.000Z")
     for (const [index, role] of (["user", "assistant"] as const).entries()) {
       await desktop.asDesktop("POST", "/threads/contract-thread/messages", {
@@ -78,6 +86,37 @@ async function liveFixture(): Promise<Fixture> {
     await desktop.stop()
     throw error
   }
+}
+
+const NOTES = Array.from({ length: 20 }, (_, index) => `Note ${index + 1}`)
+
+/**
+ * The demo's shape of repository: a commit, then a staged package.json, a
+ * notes file changed in two places far apart, and a new file.
+ */
+function initialiseRepository(root: string) {
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: root, stdio: "pipe" })
+  git("init", "--initial-branch=main")
+  git("config", "user.name", "Contract Test")
+  git("config", "user.email", "contract@example.com")
+  git("config", "core.autocrlf", "false")
+  fs.writeFileSync(path.join(root, "notes.md"), `${NOTES.join("\n")}\n`)
+  git("add", "-A")
+  git("commit", "-m", "Start the contract project")
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    '{ "name": "contract-project", "version": "1.1.0" }\n'
+  )
+  git("add", "package.json")
+  const notes = [...NOTES]
+  notes[2] = "Note 3, revised"
+  notes[17] = "Note 18, revised"
+  fs.writeFileSync(path.join(root, "notes.md"), `${notes.join("\n")}\n`)
+  fs.writeFileSync(
+    path.join(root, "src", "extra.ts"),
+    "export const extra = 1\n"
+  )
 }
 
 describe.each([
@@ -211,6 +250,136 @@ describe.each([
         fixture.join(fixture.projectRoot, "missing.txt")
       )
     ).rejects.toThrow()
+  })
+
+  it("reads the repository's status, diffs, branches and history as the contracts describe them", async () => {
+    const root = fixture.projectRoot
+    const status = await fixture.api.gitStatus(root)
+    expect(() => httpContracts.gitStatus.response.parse(status)).not.toThrow()
+    expect(status.branch).toBe("main")
+    expect(status.staged).toContain("package.json")
+    expect(status.modified.length).toBeGreaterThan(0)
+    expect(status.untracked.length).toBeGreaterThan(0)
+    expect(status.is_clean).toBe(false)
+
+    const unstaged = await fixture.api.gitDiff(root)
+    expect(() => httpContracts.gitDiff.response.parse(unstaged)).not.toThrow()
+    expect(unstaged.truncated).toBe(false)
+    expect(parseGitDiff(unstaged.diff).map((file) => file.name)).toEqual(
+      status.modified
+    )
+    const staged = await fixture.api.gitDiff(root, true)
+    expect(parseGitDiff(staged.diff).map((file) => file.name)).toEqual(
+      status.staged
+    )
+
+    const branches = await fixture.api.listBranches(root)
+    expect(branches.current).toBe("main")
+    expect(branches.branches).toContain("main")
+    const log = await fixture.api.gitLog(root, 5)
+    expect(() =>
+      httpContracts.gitLog.response.parse({ commits: log })
+    ).not.toThrow()
+    expect(log.length).toBeGreaterThan(0)
+    expect(log[0]!.hash).toMatch(/^[0-9a-f]{40}$/)
+  })
+
+  it("stages one change of a file with two, and unstages it again", async () => {
+    const root = fixture.projectRoot
+    const file = parseGitDiff((await fixture.api.gitDiff(root)).diff).find(
+      (candidate) => candidate.hunks.length === 2
+    )
+    expect(file).toBeDefined()
+    const [first, second] = file!.hunks
+    const lines = (hunk: typeof first) =>
+      hunk!.lines.map((line) => `${line.type}${line.content}`)
+
+    const staged = await fixture.api.gitApplyHunk({
+      cwd: root,
+      path: file!.name,
+      source: "unstaged",
+      action: "accept",
+      patch: first!.patch,
+    })
+    expect(() =>
+      httpContracts.gitHunkApply.response.parse(staged)
+    ).not.toThrow()
+    expect(staged).toMatchObject({ ok: true, action: "accept", applied: true })
+    const stagedFile = parseGitDiff(
+      (await fixture.api.gitDiff(root, true)).diff
+    ).find((candidate) => candidate.name === file!.name)
+    expect(stagedFile?.hunks.map(lines)).toEqual([lines(first)])
+    const left = parseGitDiff((await fixture.api.gitDiff(root)).diff).find(
+      (candidate) => candidate.name === file!.name
+    )
+    expect(left?.hunks.map(lines)).toEqual([lines(second)])
+
+    // The same change again is gone from the working tree's diff.
+    await expect(
+      fixture.api.gitApplyHunk({
+        cwd: root,
+        path: file!.name,
+        source: "unstaged",
+        action: "accept",
+        patch: first!.patch,
+      })
+    ).rejects.toMatchObject({ status: 409, code: "git_hunk_conflict" })
+
+    await fixture.api.gitApplyHunk({
+      cwd: root,
+      path: file!.name,
+      source: "staged",
+      action: "unstage",
+      patch: stagedFile!.hunks[0]!.patch,
+    })
+    expect(
+      parseGitDiff((await fixture.api.gitDiff(root)).diff).find(
+        (candidate) => candidate.name === file!.name
+      )?.hunks
+    ).toHaveLength(2)
+  })
+
+  it("stages and unstages a new file", async () => {
+    const root = fixture.projectRoot
+    const [untracked] = (await fixture.api.gitStatus(root)).untracked
+    await fixture.api.gitStage(root, [untracked!])
+    expect((await fixture.api.gitStatus(root)).staged).toContain(untracked)
+    await fixture.api.gitUnstage(root, [untracked!])
+    expect((await fixture.api.gitStatus(root)).untracked).toContain(untracked)
+  })
+
+  it("commits what is staged, and refuses to commit nothing in the desktop's words", async () => {
+    const root = fixture.projectRoot
+    await fixture.api.gitCommit(root, "Contract commit\n\nThrough the phone.")
+    const status = await fixture.api.gitStatus(root)
+    expect(status.staged).toEqual([])
+    expect(status.modified.length).toBeGreaterThan(0)
+    expect((await fixture.api.gitLog(root, 1))[0]?.message).toBe(
+      "Contract commit"
+    )
+    const refused = await fixture.api
+      .gitCommit(root, "Nothing")
+      .catch((error: unknown) => error)
+    expect(refused).toBeInstanceOf(RemoteApiError)
+    expect(refused).toMatchObject({
+      status: 400,
+      code: "git_nothing_to_commit",
+      message:
+        "Nothing to commit — stage changes first or modify a tracked file.",
+    })
+  })
+
+  it("creates a branch and switches back", async () => {
+    const root = fixture.projectRoot
+    await fixture.api.gitCheckout(root, "contract-branch", true)
+    expect(await fixture.api.gitStatus(root)).toMatchObject({
+      branch: "contract-branch",
+      upstream: null,
+    })
+    await fixture.api.gitCheckout(root, "main")
+    expect((await fixture.api.listBranches(root)).branches).toEqual(
+      expect.arrayContaining(["main", "contract-branch"])
+    )
   })
 
   // Last: it renames the shared chat and deletes one of its own.
