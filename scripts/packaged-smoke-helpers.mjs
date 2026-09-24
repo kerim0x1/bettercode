@@ -122,3 +122,23 @@ export async function removeDirectoryWithRetries(
     }
   }
 }
+
+/**
+ * What `taskkill /pid <app> /T /F` did to the packaged app's process tree,
+ * by its exit code and whether it is the first pass or the second:
+ *
+ * - `ended`: 0, every process in the tree was ended; or 128 on the second
+ *   pass, when the first pass had already ended the app itself;
+ * - `exited-before`: 128 ("not found") on the first pass, the app had ended
+ *   on its own before the kill;
+ * - `retry`: 255 on the first pass. taskkill could not end every process in
+ *   the tree, which happens when a process exits while taskkill works
+ *   through the tree; a second pass ends what is left;
+ * - `failed`: anything else.
+ */
+export function taskkillOutcome(code, pass) {
+  if (code === 0) return "ended"
+  if (code === 128) return pass === 1 ? "exited-before" : "ended"
+  if (code === 255 && pass === 1) return "retry"
+  return "failed"
+}

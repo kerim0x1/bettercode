@@ -15,7 +15,10 @@ import { ShellCapabilityIssuer } from "../security/shellCapability"
 
 describe("shell command launch resolution", () => {
   it("bounds captured command output", () => {
-    const first = appendBoundedOutput("", Buffer.alloc(MAX_CAPTURED_OUTPUT_BYTES, 65))
+    const first = appendBoundedOutput(
+      "",
+      Buffer.alloc(MAX_CAPTURED_OUTPUT_BYTES, 65)
+    )
     const overflow = appendBoundedOutput(first.text, Buffer.from("overflow"))
 
     expect(Buffer.byteLength(overflow.text, "utf8")).toBe(
@@ -39,7 +42,12 @@ describe("shell command launch resolution", () => {
     expect(second.bytes).toBe(first.bytes + 1)
     expect(second.text).toBe("héllo!")
 
-    const capped = appendBoundedOutput(second.text, "😀😀", second.bytes + 4, second.bytes)
+    const capped = appendBoundedOutput(
+      second.text,
+      "😀😀",
+      second.bytes + 4,
+      second.bytes
+    )
     expect(capped.truncated).toBe(true)
     expect(capped.bytes).toBe(Buffer.byteLength(capped.text, "utf8"))
     expect(capped.bytes).toBeLessThanOrEqual(second.bytes + 4)
@@ -47,12 +55,16 @@ describe("shell command launch resolution", () => {
 
   it("issues one-shot capabilities bound to the requested operation", () => {
     const issuer = new ShellCapabilityIssuer({ ttlMs: 5_000 })
-    const scope = { operation: "run" as const, command: "echo ok", cwd: "/repo" }
+    const scope = {
+      operation: "run" as const,
+      command: "echo ok",
+      cwd: "/repo",
+    }
     const token = issuer.issue(scope)
 
-    expect(
-      issuer.consume(token, { ...scope, command: "echo changed" })
-    ).toBe(false)
+    expect(issuer.consume(token, { ...scope, command: "echo changed" })).toBe(
+      false
+    )
     expect(issuer.consume(token, scope)).toBe(true)
     expect(issuer.consume(token, scope)).toBe(false)
   })
@@ -68,7 +80,10 @@ describe("shell command launch resolution", () => {
   it.runIf(process.platform === "win32")(
     "passes the Windows default shell a verbatim cmd.exe /s /c line",
     () => {
-      const launch = resolveShellCommandLaunch("cmd", 'node x.cjs -m "fix: thing"')
+      const launch = resolveShellCommandLaunch(
+        "cmd",
+        'node x.cjs -m "fix: thing"'
+      )
       expect(launch.shell).toBe("cmd")
       expect(launch.windowsVerbatimArguments).toBe(true)
       expect(launch.args).toEqual([
@@ -131,17 +146,18 @@ describe("shell process-tree termination", () => {
   it("escalates a surviving POSIX group after its root exits", async () => {
     vi.useFakeTimers()
     let alive = true
-    const kill = vi.spyOn(process, "kill").mockImplementation(
-      ((pid: number, signal?: NodeJS.Signals | number) => {
-        expect(pid).toBe(-4444)
-        if (signal === 0) {
-          if (alive) return true
-          throw Object.assign(new Error("gone"), { code: "ESRCH" })
-        }
-        if (signal === "SIGKILL") alive = false
-        return true
-      }) as typeof process.kill
-    )
+    const kill = vi.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number
+    ) => {
+      expect(pid).toBe(-4444)
+      if (signal === 0) {
+        if (alive) return true
+        throw Object.assign(new Error("gone"), { code: "ESRCH" })
+      }
+      if (signal === "SIGKILL") alive = false
+      return true
+    }) as typeof process.kill)
     try {
       const termination = ensurePosixProcessGroupTerminated(4444)
       await vi.advanceTimersByTimeAsync(300)
@@ -180,7 +196,9 @@ describe("shell command argument delivery", () => {
     const archivePath = path.join(path.dirname(script), "existing-output.txt")
     fs.writeFileSync(archivePath, "pre-existing output")
     const result = await runShellCommand({
-      command: `node "${script}"`, cwd: path.dirname(script), archivePath,
+      command: `node "${script}"`,
+      cwd: path.dirname(script),
+      archivePath,
     })
     expect(result.success).toBe(true)
     expect(result.archivePath).toBeUndefined()
@@ -201,6 +219,10 @@ describe("shell command argument delivery", () => {
     expect(JSON.parse(result.stdout)).toEqual(["-m", "fix: thing", "plain"])
   }, 30_000)
 
+  // Windows PowerShell starts slowly on a busy CI runner (6-8 s beside the
+  // rest of the suite). The command's own timeout must end before the
+  // test's, so a slow start fails as a timeout with the shell ended, not as
+  // an abandoned test whose shell still holds the temporary folder.
   it.runIf(process.platform === "win32")(
     "delivers a quoted argument intact through PowerShell",
     async () => {
@@ -209,13 +231,14 @@ describe("shell command argument delivery", () => {
         command: `node "${script}" -m "fix: thing" plain`,
         cwd: path.dirname(script),
         shell: "powershell",
-        timeoutMs: 30_000,
+        timeoutMs: 60_000,
       })
 
+      expect(result.timedOut).toBe(false)
       expect(result.success).toBe(true)
       expect(JSON.parse(result.stdout)).toEqual(["-m", "fix: thing", "plain"])
     },
-    30_000
+    90_000
   )
 
   // A child that reads stdin must see EOF immediately instead of blocking on
