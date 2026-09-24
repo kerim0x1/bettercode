@@ -24,7 +24,9 @@ tags:
     visible:
       id: chats-screen
     timeout: 20000
-- tapOn: Projects
+# By id: iOS reads the tab as "Projects, tab, 2 of 3".
+- tapOn:
+    id: tab-projects
 - tapOn:
     id: project-weather-app
 - scrollUntilVisible:
