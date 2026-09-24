@@ -1,5 +1,10 @@
 import { isClaudeOpusOrSonnet } from "@/lib/anthropic-model"
-import { BROWSER_ELEMENT_ATTACHMENT_TYPE, withBrowserElementContext, parseGoalCommand, orchestrationForMain } from "@betterc0de/schema"
+import {
+  BROWSER_ELEMENT_ATTACHMENT_TYPE,
+  withBrowserElementContext,
+  parseGoalCommand,
+  orchestrationForMain,
+} from "@betterc0de/schema"
 import { activeContextMessages } from "@/lib/chat-context"
 import { useMessageQueueStore } from "@/lib/message-queue-store"
 import type { SourceProposedPlanReference } from "@/lib/plan-modal"
@@ -469,7 +474,11 @@ export interface DispatchUserMessage {
   createdAt: string
 }
 
-type ChatSendContextCheckpoint = NonNullable<import("@betterc0de/schema/http-contracts").ChatSendResponse["automaticCompaction" | "providerHandoff"]>
+type ChatSendContextCheckpoint = NonNullable<
+  import("@betterc0de/schema/http-contracts").ChatSendResponse[
+    | "automaticCompaction"
+    | "providerHandoff"]
+>
 
 function automaticCompactionUsage(
   usage:
@@ -491,15 +500,11 @@ function automaticCompactionUsage(
   const usedTokens = [usage.usedTokens, usage.totalTokens, usage.inputTokens]
     .filter(
       (value): value is number =>
-        typeof value === "number" &&
-        Number.isSafeInteger(value) &&
-        value >= 0
+        typeof value === "number" && Number.isSafeInteger(value) && value >= 0
     )
-    .reduce<number | undefined>(
-      (largest, value) =>
-        largest === undefined ? value : Math.max(largest, value),
-      undefined
-    )
+    .reduce<
+      number | undefined
+    >((largest, value) => (largest === undefined ? value : Math.max(largest, value)), undefined)
   const maxTokens =
     typeof usage.maxTokens === "number" &&
     Number.isSafeInteger(usage.maxTokens) &&
@@ -570,7 +575,9 @@ function projectContextCheckpoint(
         id: compaction.commandMessageId,
         role: "user",
         content: compaction.commandContent,
-        ...(compaction.reason === "provider-switch" ? { internalContext: "provider-handoff" as const } : {}),
+        ...(compaction.reason === "provider-switch"
+          ? { internalContext: "provider-handoff" as const }
+          : {}),
         createdAt: compaction.commandCreatedAt,
       },
       { persist: false }
@@ -584,7 +591,9 @@ function projectContextCheckpoint(
         role: "assistant",
         content: compaction.checkpointContent,
         compactedContext: true,
-        ...(compaction.reason === "provider-switch" ? { internalContext: "provider-handoff" as const } : {}),
+        ...(compaction.reason === "provider-switch"
+          ? { internalContext: "provider-handoff" as const }
+          : {}),
         compactionGeneration: compaction.generation,
         createdAt: compaction.checkpointCreatedAt,
       },
@@ -593,11 +602,22 @@ function projectContextCheckpoint(
   }
 }
 
-export async function sendGoalControl(threadId: string, message: string, modelId: string): Promise<void> {
+export async function sendGoalControl(
+  threadId: string,
+  message: string,
+  modelId: string
+): Promise<void> {
   const { useChatStore } = await import("@/lib/chat-store")
-  const revision = useChatStore.getState().getThreadSettings(threadId).goalRevision
-  const result = await invokeContract("chatGoal", { body: { threadId, message, modelId } })
-  if (useChatStore.getState().getThreadSettings(threadId).goalRevision === revision) {
+  const revision = useChatStore
+    .getState()
+    .getThreadSettings(threadId).goalRevision
+  const result = await invokeContract("chatGoal", {
+    body: { threadId, message, modelId },
+  })
+  if (
+    useChatStore.getState().getThreadSettings(threadId).goalRevision ===
+    revision
+  ) {
     useChatStore.getState().setThreadSetting(threadId, "goal", result.goal)
   }
   if (!result.goal && parseGoalCommand(message)?.action === "status") {
@@ -676,8 +696,14 @@ export const sendChatMessage = async (
           .designBrief ?? null)
   const designDefaults =
     settingsStoreMod.useSettingsStore.getState().designDefaults
-  const orchestration = settingsStoreMod.useSettingsStore.getState().orchestratorEnabled
-    ? orchestrationForMain(orchestrationSelection ?? chatStoreMod.useChatStore.getState().getThreadSettings(threadId).orchestration ?? { enabled: false }, openAiTarget.providerKind)
+  const orchestration = settingsStoreMod.useSettingsStore.getState()
+    .orchestratorEnabled
+    ? orchestrationForMain(
+        orchestrationSelection ??
+          chatStoreMod.useChatStore.getState().getThreadSettings(threadId)
+            .orchestration ?? { enabled: false },
+        openAiTarget.providerKind
+      )
     : { enabled: false as const }
 
   await hookRuntime.runBlockingMessageSendHooks({
@@ -871,16 +897,38 @@ export const sendChatMessage = async (
   if (parseGoalCommand(message)) {
     const { upsertThreadMeta } = await import("./coreApi")
     if (dispatchThread) await upsertThreadMeta(dispatchThread)
-    const goalRevision = chatStoreMod.useChatStore.getState().getThreadSettings(threadId).goalRevision
-    const result = await invokeContract("chatGoal", { body: {
-      threadId, message, modelId, modelSelection, providerKind: openAiTarget.providerKind,
-      providerInstanceId, reasoningEffort, chatMode, projectPath, systemInstruction,
-      permissionLevel, openaiTransport: openAiTarget.openaiTransport, fastMode,
-      collaborationMode: specialMode ?? null, appMode, designContext: resolvedDesignContext,
-      ruleTargetPath: resolvedRuleTargetPath, ...userMessageMetadata,
-    } })
-    if (chatStoreMod.useChatStore.getState().getThreadSettings(threadId).goalRevision === goalRevision) {
-      chatStoreMod.useChatStore.getState().setThreadSetting(threadId, "goal", result.goal)
+    const goalRevision = chatStoreMod.useChatStore
+      .getState()
+      .getThreadSettings(threadId).goalRevision
+    const result = await invokeContract("chatGoal", {
+      body: {
+        threadId,
+        message,
+        modelId,
+        modelSelection,
+        providerKind: openAiTarget.providerKind,
+        providerInstanceId,
+        reasoningEffort,
+        chatMode,
+        projectPath,
+        systemInstruction,
+        permissionLevel,
+        openaiTransport: openAiTarget.openaiTransport,
+        fastMode,
+        collaborationMode: specialMode ?? null,
+        appMode,
+        designContext: resolvedDesignContext,
+        ruleTargetPath: resolvedRuleTargetPath,
+        ...userMessageMetadata,
+      },
+    })
+    if (
+      chatStoreMod.useChatStore.getState().getThreadSettings(threadId)
+        .goalRevision === goalRevision
+    ) {
+      chatStoreMod.useChatStore
+        .getState()
+        .setThreadSetting(threadId, "goal", result.goal)
     }
     if (!result.goal && parseGoalCommand(message)?.action === "status") {
       const { toast } = await import("sonner")
@@ -977,7 +1025,9 @@ export const sendChatMessage = async (
           openaiTransport: openAiTarget.openaiTransport,
           sourceProposedPlan,
           history,
-          attachments: attachments?.filter(attachment => attachment.type !== BROWSER_ELEMENT_ATTACHMENT_TYPE),
+          attachments: attachments?.filter(
+            (attachment) => attachment.type !== BROWSER_ELEMENT_ATTACHMENT_TYPE
+          ),
         })
         return
       }
@@ -1065,11 +1115,7 @@ export const sendChatMessage = async (
       ...userMessageMetadata,
     },
   })
-  projectContextCheckpoint(
-    chatStoreMod,
-    threadId,
-    result.automaticCompaction
-  )
+  projectContextCheckpoint(chatStoreMod, threadId, result.automaticCompaction)
   projectContextCheckpoint(chatStoreMod, threadId, result.providerHandoff)
   return result
 }
@@ -1213,7 +1259,12 @@ export function buildWireHistory(
   for (const m of recentMessages) {
     if (m.role === "user") {
       if (typeof m.content === "string" && m.content.length > 0) {
-        groups.push([{ role: "user", content: clip(withBrowserElementContext(m.content, m.attachments)) }])
+        groups.push([
+          {
+            role: "user",
+            content: clip(withBrowserElementContext(m.content, m.attachments)),
+          },
+        ])
       }
       continue
     }
@@ -1317,7 +1368,11 @@ export const interruptTurn = async (
 ) => {
   // All stop entry points (composer, shortcuts and slash commands) pause
   // follow-ups before their stream can settle and trigger the next send.
-  try { useMessageQueueStore.getState().pause(threadId) } catch { /* Already paused in memory. */ }
+  try {
+    useMessageQueueStore.getState().pause(threadId)
+  } catch {
+    /* Already paused in memory. */
+  }
   if (window.electronAPI?.pluginSend) {
     try {
       const { usePluginStore } = await import("@/lib/plugin-store")
@@ -1528,9 +1583,7 @@ export const respondToApproval = (
       ? { updatedPermissions: options.updatedPermissions }
       : {}),
   }
-  return invokeContract("chatApproval",
-    { args: body, method: "POST", body }
-  )
+  return invokeContract("chatApproval", { args: body, method: "POST", body })
 }
 
 export const respondToPlanApproval = (
@@ -1557,9 +1610,11 @@ export const respondToPlanApproval = (
       : {}),
     ...(options?.message ? { message: options.message } : {}),
   }
-  return invokeContract("chatPlanApproval",
-    { args: body, method: "POST", body }
-  )
+  return invokeContract("chatPlanApproval", {
+    args: body,
+    method: "POST",
+    body,
+  })
 }
 
 export const setChatPermissionMode = (
@@ -1569,7 +1624,11 @@ export const setChatPermissionMode = (
   providerInstanceId?: string | null
 ) => {
   const body = { threadId, providerKind, permissionLevel, providerInstanceId }
-  return invokeContract("chatPermissionMode", { args: body, method: "POST", body })
+  return invokeContract("chatPermissionMode", {
+    args: body,
+    method: "POST",
+    body,
+  })
 }
 
 export interface ClaudePermissionRuleEntry {
@@ -1654,27 +1713,21 @@ export const deleteAgentPermissionGrant = (id: string) =>
   )
 
 export const getAgentWorkspaceTrust = (workspacePath: string) =>
-  invoke<{ trust: WorkspaceTrustRecord }>(
-    "/permissions/workspace-trust/get",
-    {
-      args: { workspacePath },
-      method: "POST",
-      body: { workspacePath },
-    }
-  )
+  invoke<{ trust: WorkspaceTrustRecord }>("/permissions/workspace-trust/get", {
+    args: { workspacePath },
+    method: "POST",
+    body: { workspacePath },
+  })
 
 export const setAgentWorkspaceTrust = (
   workspacePath: string,
   state: WorkspaceTrustState
 ) =>
-  invoke<{ trust: WorkspaceTrustRecord }>(
-    "/permissions/workspace-trust/set",
-    {
-      args: { workspacePath, state },
-      method: "POST",
-      body: { workspacePath, state },
-    }
-  )
+  invoke<{ trust: WorkspaceTrustRecord }>("/permissions/workspace-trust/set", {
+    args: { workspacePath, state },
+    method: "POST",
+    body: { workspacePath, state },
+  })
 
 export const respondToUserInput = (
   threadId: string,
@@ -1683,13 +1736,11 @@ export const respondToUserInput = (
   answers: Record<string, unknown>,
   providerInstanceId?: string | null
 ) =>
-  invokeContract("chatUserInput",
-    {
-      args: { threadId, providerKind, requestId, answers, providerInstanceId },
-      method: "POST",
-      body: { threadId, providerKind, requestId, answers, providerInstanceId },
-    }
-  )
+  invokeContract("chatUserInput", {
+    args: { threadId, providerKind, requestId, answers, providerInstanceId },
+    method: "POST",
+    body: { threadId, providerKind, requestId, answers, providerInstanceId },
+  })
 
 export const rejectUserInput = (
   threadId: string,
@@ -1697,13 +1748,11 @@ export const rejectUserInput = (
   requestId: string,
   providerInstanceId?: string | null
 ) =>
-  invokeContract("chatUserInputReject",
-    {
-      args: { threadId, providerKind, requestId, providerInstanceId },
-      method: "POST",
-      body: { threadId, providerKind, requestId, providerInstanceId },
-    }
-  )
+  invokeContract("chatUserInputReject", {
+    args: { threadId, providerKind, requestId, providerInstanceId },
+    method: "POST",
+    body: { threadId, providerKind, requestId, providerInstanceId },
+  })
 
 export const loadThreadActivities = (threadId: string) =>
   invokeContract("listActivities", { id: threadId })
