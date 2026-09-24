@@ -61,10 +61,12 @@ export async function startTestDesktop(): Promise<TestDesktop> {
       `${path.relative(REPO, BACKEND_ENTRY)} is missing. Build it first: npm run build:backend`
     )
   }
-  // The desktop answers with canonical paths (macOS keeps the temporary
-  // folder behind a symlink, /var → /private/var), as its folder picker
-  // records them; the tests compare against those.
-  const tempRoot = fs.realpathSync(
+  // The desktop answers with canonical paths, as its folder picker records
+  // them, and the tests compare against those. The temporary folder often
+  // is not canonical: macOS keeps it behind a symlink (/var → /private/var),
+  // and Windows runners name it with 8.3 short names (C:\Users\RUNNER~1).
+  // Only the native realpath resolves both.
+  const tempRoot = fs.realpathSync.native(
     fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-mobile-e2e-"))
   )
   const home = path.join(tempRoot, "home")
