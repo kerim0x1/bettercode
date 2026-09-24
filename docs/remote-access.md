@@ -219,6 +219,49 @@ for file access. An **opt-in public plaintext** session cannot do any of this;
 it is monitoring-only. Pair only devices you control, revoke lost devices
 promptly, and do not post pairing links in shared channels.
 
+## Phone app and desktop versions
+
+The phone app and the desktop update separately, so a paired phone can run an
+older or newer release than the desktop. They check that they understand each
+other on every connection:
+
+- `/api/v1/remote/bootstrap`, the pairing response and the WebSocket `auth_ok`
+  frame carry a `protocol` block: the desktop's protocol version
+  (`apiVersion`), the oldest phone app it serves (`minClientVersion`) and, for
+  a paired device, what this desktop offers it (`capabilities`: access level,
+  whether a terminal is allowed, the largest request, and additive
+  `features`). The desktop sends the block again (`protocol_update`) when the
+  terminal switch changes.
+- The phone app names itself on every request with
+  `X-BetterC0de-Client: betterc0de-remote/<version> (<platform>)`, and in the
+  WebSocket `auth` frame. **Paired devices** shows each phone's app and
+  version.
+- An app below the minimum gets `426` with `code: "client_update_required"`
+  (HTTP) or close code `4426` (WebSocket). Its pairing stays valid; the app
+  asks for an update instead of pairing again. Signing out still works.
+
+Every refusal a paired device can receive carries a `code`:
+
+| Status | `code` | Meaning |
+| --- | --- | --- |
+| 401 | `unauthorized` | The session is unknown, expired or revoked; pair again. |
+| 401 | `pairing_code_invalid` | The one-time code was already used or has expired. |
+| 403 | `remote_access_disabled` | Remote access is turned off on the desktop. |
+| 403 | `remote_read_only` | A read-only session tried to change something. |
+| 403 | `desktop_only` | Only the desktop itself may use this endpoint. |
+| 403 | `remote_terminal_disabled` | The terminal is not allowed for paired devices. |
+| 413 | `request_too_large` | The request is larger than `capabilities.maxRequestBytes`. |
+| 426 | `secure_transport_required` | Plain HTTP from a public address. |
+| 426 | `client_update_required` | The phone app is older than `minClientVersion`. |
+| 429 | `rate_limited` | Too many requests; wait for `Retry-After`. |
+
+Developers: `packages/schema/src/remote-protocol.ts` defines the block. Raise
+`REMOTE_API_VERSION` only for a change an installed app cannot handle (a
+removed or renamed field, a new value in a response enum, different auth or
+semantics) and announce additive changes in `capabilities.features`. A
+snapshot test (`apps/backend/src/http/remote-contract-snapshot.test.ts`) fails
+on every change to a response contract the phone app compiles in.
+
 ## Troubleshooting
 
 - **The phone cannot open the LAN link:** Confirm both devices are on the same

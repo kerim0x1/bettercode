@@ -21,6 +21,10 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 - `npm run release:check`: one command from a clean `npm ci` through lint, type-checks, all test suites, the production build, packaging, a launch of the packaged app, the installers, and an install → launch → uninstall test of the installers on a clean machine.
 - `npm run mobile:check`, part of the `release:check` build step: checks the phone app's configuration (identifiers, versions, network policy, Android ABIs), that its native dependencies match the Expo SDK without duplicates, and that the Android, iOS and web bundles build.
 - The phone app has its own icons and splash screen, rendered from the desktop logo (`npm run mobile:icons`).
+- The desktop describes its protocol to paired devices (version, the oldest phone app it serves, and what it offers the device) in the bootstrap, pairing and WebSocket responses, and asks a phone app that is too old to update instead of failing with "Invalid backend response". **Paired devices** shows which app and version each phone runs.
+- Every refusal a paired device can receive names a `code` (see "Phone app and desktop versions" in `docs/remote-access.md`).
+- `GET /api/v1/threads/:id` returns one chat with its session state, also to read-only sessions.
+- `/api/v1/workspace/read` returns the file's SHA-256, size and whether it is valid UTF-8; `/api/v1/workspace/write` accepts `expectedSha256` and refuses to overwrite a file that changed since it was read.
 - CI runs `release:check` on Linux x64, Windows x64, macOS arm64 and macOS x64 for every push and pull request, and the source checks on Node 24.
 - The Linux `.deb` is installed with apt and started with the Chromium sandbox on in CI; the `.rpm` is installed in a clean Fedora container.
 - A pre-push hook runs `release:check` before a release tag is pushed.
