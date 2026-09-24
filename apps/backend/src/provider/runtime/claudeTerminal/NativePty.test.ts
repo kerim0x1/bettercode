@@ -8,6 +8,8 @@ import {
   prepareNativePtyCommand,
   probeNativePtySupport,
   runNativePtyWindowsTaskkill,
+  windowsTreeEndedMeanwhile,
+  windowsTreeTermination,
 } from "./NativePty"
 
 describe("native PTY command preparation", () => {
@@ -163,5 +165,48 @@ describe("native PTY process-tree termination", () => {
       kill.mockRestore()
       vi.useRealTimers()
     }
+  })
+})
+
+describe("overlapping terminations of a Windows PTY tree", () => {
+  it("taskkill the tree until a request reached it, then only escalate while its root runs", () => {
+    const next = (
+      signal: NodeJS.Signals,
+      rootExited: boolean,
+      treeReached: boolean
+    ) => windowsTreeTermination({ signal, rootExited, treeReached })
+
+    // Nothing reached the tree yet: taskkill it while the root runs.
+    expect(next("SIGTERM", false, false)).toBe("run")
+    expect(next("SIGKILL", false, false)).toBe("run")
+    // The root exited first: its descendants cannot be checked.
+    expect(next("SIGTERM", true, false)).toBe("unaddressable")
+    expect(next("SIGKILL", true, false)).toBe("unaddressable")
+    // Reached: a graceful request again adds nothing; the escalation runs
+    // while the root does; after the root exited nothing is addressed
+    // (its PID may belong to another process by then).
+    expect(next("SIGTERM", false, true)).toBe("skip")
+    expect(next("SIGKILL", false, true)).toBe("run")
+    expect(next("SIGTERM", true, true)).toBe("skip")
+    expect(next("SIGKILL", true, true)).toBe("skip")
+  })
+
+  it("take a tree taskkill no longer finds as ended only after a request reached it", () => {
+    const notFound = Object.assign(new Error("not found"), {
+      code: "NATIVE_PTY_TASKKILL_FAILED",
+      exitCode: 128,
+    })
+    const refused = Object.assign(new Error("access denied"), {
+      code: "NATIVE_PTY_TASKKILL_FAILED",
+      exitCode: 1,
+    })
+    const timedOut = Object.assign(new Error("timed out"), {
+      code: "NATIVE_PTY_TASKKILL_TIMEOUT",
+    })
+    expect(windowsTreeEndedMeanwhile(notFound, true)).toBe(true)
+    expect(windowsTreeEndedMeanwhile(notFound, false)).toBe(false)
+    expect(windowsTreeEndedMeanwhile(refused, true)).toBe(false)
+    expect(windowsTreeEndedMeanwhile(timedOut, true)).toBe(false)
+    expect(windowsTreeEndedMeanwhile(null, true)).toBe(false)
   })
 })
