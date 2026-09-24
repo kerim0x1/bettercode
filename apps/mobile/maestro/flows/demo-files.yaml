@@ -51,6 +51,7 @@ tags:
     commands:
       - tapOn:
           id: rename-input
+      - inputText: Map.tsx
 - runFlow:
     when:
       platform: iOS
@@ -61,7 +62,9 @@ tags:
           timeout: 10000
       - waitForAnimationToEnd:
           timeout: 5000
-- inputText: Map.tsx
+      # Simulator typing can drop characters ("Map.tsx" became "Mtsx").
+      - setClipboard: Map.tsx
+      - pasteText
 - tapOn:
     id: rename-save
 - scrollUntilVisible:
