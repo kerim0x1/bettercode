@@ -55,7 +55,15 @@ export interface TerminalPtySnapshot {
   readonly status: "running" | "exited" | "cleanup_failed"
   readonly events: readonly TerminalPtyEvent[]
   readonly nextCursor: number
+  /**
+   * The newest event's `seq`, kept or not: events before the first one in
+   * `events` that are missing were dropped from the buffer.
+   */
+  readonly lastSeq: number
 }
+
+/** Called with each event as the terminal records it. */
+export type TerminalPtyListener = (event: TerminalPtyEvent) => void
 
 interface TerminalPtySession {
   readonly sessionId: string
@@ -80,6 +88,7 @@ interface TerminalPtySession {
   terminationTimer: NodeJS.Timeout | null
   ownerExpiryTimer: NodeJS.Timeout | null
   processExitNotified: boolean
+  readonly listeners: Set<TerminalPtyListener>
   readonly onProcessExit?: () => void
   readonly onProcessTreeFailure?: (error: Error) => void
 }
@@ -195,6 +204,7 @@ export function openTerminalPtySession(
     terminationTimer: null,
     ownerExpiryTimer: null,
     processExitNotified: false,
+    listeners: new Set(),
     onProcessExit: input.onProcessExit,
     onProcessTreeFailure: input.onProcessTreeFailure,
   }
@@ -226,6 +236,25 @@ export function readTerminalPtySession(
   const session = sessions.get(sessionId)
   if (!session || !ownerMatches(session, ownerId)) return null
   return snapshot(session, cursor)
+}
+
+/**
+ * Calls `listener` with each event the terminal records from now on, until
+ * the returned function is called. Null for a terminal that does not exist
+ * or belongs to another owner. A listener only observes: one that throws
+ * stops neither the others nor the terminal.
+ */
+export function subscribeTerminalPtySession(
+  sessionId: string,
+  listener: TerminalPtyListener,
+  ownerId?: string
+): (() => void) | null {
+  const session = sessions.get(sessionId)
+  if (!session || !ownerMatches(session, ownerId)) return null
+  session.listeners.add(listener)
+  return () => {
+    session.listeners.delete(listener)
+  }
 }
 
 export function writeTerminalPtySession(
@@ -460,6 +489,7 @@ function snapshot(
     status: session.status,
     events,
     nextCursor: events.at(-1)?.seq ?? cursor,
+    lastSeq: session.nextSeq,
   }
 }
 
@@ -567,6 +597,13 @@ function pushEvent(
       session.bufferedBytes - terminalEventBytes(removed)
     )
   }
+  for (const listener of session.listeners) {
+    try {
+      listener(stored)
+    } catch {
+      // An observer must not break the terminal's output.
+    }
+  }
 }
 
 export function boundTerminalPtyData(data: string): string {
@@ -637,8 +674,9 @@ function countActiveSessions(ownerId?: string): number {
   return count
 }
 
-export function activeTerminalPtySessionCount(): number {
-  return countActiveSessions()
+/** Running terminals: all of them, or those of one owner. */
+export function activeTerminalPtySessionCount(ownerId?: string): number {
+  return countActiveSessions(ownerId)
 }
 
 function ownerMatches(
