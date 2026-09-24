@@ -6,7 +6,7 @@ name: CI
 # an install → launch → uninstall test of those installers on a clean runner.
 # The phone app is built and tested on an Android emulator and an iOS
 # simulator by jobs of its own. No job here uses secrets: the APK is signed
-# with a throwaway key, and the iOS build is unsigned.
+# with a throwaway key, and the iOS build is signed ad hoc for the simulator.
 
 on:
   push:

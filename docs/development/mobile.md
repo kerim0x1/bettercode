@@ -5,7 +5,7 @@ The phone app, BetterC0de Remote, lives in `apps/mobile` (Expo SDK 56, React Nat
 | What | Where it is built | Command |
 | --- | --- | --- |
 | Android APK | locally (Windows, macOS, Linux) and in CI | `npm run mobile:apk -- build` |
-| iOS app for the simulator, unsigned | macOS and CI | `npm run mobile:ios:sim -- build` |
+| iOS app for the simulator, signed ad hoc to run there | macOS and CI | `npm run mobile:ios:sim -- build` |
 | iOS app for TestFlight | EAS (Expo's build service) | not automated yet; the release workflow will run it |
 
 `npm run release:check` builds and device-tests the app on every platform whose toolchain it finds (`--mobile auto`), and says which it skipped and why. `--mobile android`, `ios` or `all` make a missing toolchain an error; `--mobile none` leaves the app out. CI builds the app in its own jobs (`mobile-android`, `mobile-ios` in `.github/workflows/ci.yml`), so the desktop legs pass `--mobile none`.
@@ -93,7 +93,7 @@ Then pin its certificate in `apps/mobile/signing/android-release.json`: the SHA-
 ## iOS
 
 ```bash
-npm run mobile:ios:sim -- build   # unsigned Release build for the simulator
+npm run mobile:ios:sim -- build   # Release build for the simulator, signed ad hoc
 npm run mobile:ios:sim -- e2e     # boot a simulator, install, run the Maestro flows
 npm run mobile:ios:sim -- all
 ```
