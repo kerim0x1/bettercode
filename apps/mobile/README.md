@@ -78,8 +78,23 @@ against sample chats and files (see [Demo mode](#demo-mode)).
   it against the desktop (see [Session and pairing](#session-and-pairing)).
   Web preview storage is intentionally only a development fallback.
 - `app-store.ts` owns chat and project lists (paged), messages (200 at a time,
-  older ones on request), optimistic sends, streams, pending approvals and
-  answers to the agent's questions.
+  older ones on request), sending, streams, pending approvals and answers to
+  the agent's questions. A message stays in its outbox until the desktop
+  accepts it, with the request exactly as first sent: **Retry** sends it again
+  under the same id, which the desktop recognises (it never runs a message
+  twice), and when the desktop will never take that id, the chat offers
+  **Send as new**.
+- The composer's permission presets, their Bypass warning and the chat modes
+  are the desktop's, from `@betterc0de/schema/chat-controls`.
+  `composer-settings-store.ts` keeps each chat's choice on the phone; every
+  message carries it, and a change during a reply goes to the running turn
+  through `/chat/permission-mode`.
+- `queue-store.ts` and `queue-runner.ts` queue messages written while the agent
+  works, with the desktop's rules from `@betterc0de/schema/message-queue` (30
+  per chat, one at a time, paused after a failure or a restart). The queue and
+  the chat settings are small JSON documents in the app's document folder
+  (`src/lib/local-documents.ts`); the demo keeps them in memory, and signing
+  out deletes them.
 - File navigation always starts from `worktreePath || projectPath`; client-side
   containment checks complement the backend workspace guards.
 - The interface is in English, like the desktop's; dates and sizes follow the

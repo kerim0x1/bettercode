@@ -43,7 +43,11 @@ provides touch-native screens for:
 
 - searching, opening, creating, and continuing desktop-hosted chats;
 - live assistant and reasoning streams with reconnect replay;
-- model selection, stop controls, tool/plan approvals, and provider questions;
+- model selection, the desktop's permission presets and chat modes per chat,
+  stop controls, tool/plan approvals, and provider questions;
+- a queue for messages written while the agent works, and **Retry** for a
+  message that did not arrive, which the desktop recognises, so a retried
+  message never runs twice;
 - project browsing plus chat-scoped files, text previews, diffs, and checkpoints;
 - host health, session identity, expiry, and self-revocation.
 
@@ -215,9 +219,13 @@ those return 403 to a remote session.
 A **full** session (HTTPS, loopback, private network, tailnet) can operate
 the chats and workspaces the host exposes, including reading and changing
 files, and a terminal when the switch above is on. There is no separate switch
-for file access. An **opt-in public plaintext** session cannot do any of this;
-it is monitoring-only. Pair only devices you control, revoke lost devices
-promptly, and do not post pairing links in shared channels.
+for file access. Like the desktop, it can choose any permission preset for a
+chat, including **Bypass Permission**, under which the agent runs commands and
+edits files without asking; the phone app shows the desktop's warning before
+it switches. The preset travels with each message the device sends. An
+**opt-in public plaintext** session cannot do any of this; it is
+monitoring-only. Pair only devices you control, revoke lost devices promptly,
+and do not post pairing links in shared channels.
 
 ## Phone app and desktop versions
 
