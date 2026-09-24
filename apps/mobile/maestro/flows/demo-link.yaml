@@ -22,12 +22,21 @@ tags:
           text: Open
           optional: true
       # The question is iOS's, not the app's, and Maestro does not always
-      # see it (iOS 26). While the pairing screen still shows, Open is tapped
-      # where it sits: right of the middle, below the question.
+      # see it (iOS 26). Once the app has had a moment to take the link, and
+      # only while its chat list has not appeared at all, Open is tapped
+      # where it sits: right of the middle, below the question. A tap while
+      # the pairing screen fades out left the transition half done.
+      - extendedWaitUntil:
+          visible:
+            id: chats-screen
+          timeout: 5000
+          optional: true
       - runFlow:
           when:
             visible:
               id: pair-screen
+            notVisible:
+              id: chats-screen
           commands:
             - tapOn:
                 point: "68%,54%"
