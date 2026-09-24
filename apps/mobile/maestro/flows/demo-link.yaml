@@ -12,8 +12,8 @@ tags:
       id: pair-screen
     timeout: 60000
 - openLink: betterc0de://demo?speed=instant
-# iOS asks before a link opens an app; the answer stays on screen otherwise,
-# over every flow after this one.
+# iOS asks before a link opens an app ("Open in “BetterC0de Remote”?"); the
+# question stays on screen otherwise, over every flow after this one.
 - runFlow:
     when:
       platform: iOS
@@ -21,6 +21,16 @@ tags:
       - tapOn:
           text: Open
           optional: true
+      # The question is iOS's, not the app's, and Maestro does not always
+      # see it (iOS 26). While the pairing screen still shows, Open is tapped
+      # where it sits: right of the middle, below the question.
+      - runFlow:
+          when:
+            visible:
+              id: pair-screen
+          commands:
+            - tapOn:
+                point: "68%,54%"
 - extendedWaitUntil:
     visible:
       id: chats-screen
