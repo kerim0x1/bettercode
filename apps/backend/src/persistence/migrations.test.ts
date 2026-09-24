@@ -1259,35 +1259,44 @@ describe("migration 49 redundant prefix indexes", () => {
     )
   })
 
-  it("drops the prefix indexes on upgrade and refreshes planner statistics", () => {
-    const db = openDatabase(tmpDbPath("drop-prefix-indexes"))
-    runMigrations(
-      db,
-      MIGRATIONS.filter((migration) => migration.version < 49)
-    )
-    const before = indexNames(db)
-    for (const name of droppedIndexes) {
-      expect(before.has(name), `${name} should exist before v49`).toBe(true)
-    }
+  // Both run every migration against a database file: about 50 ms here, but
+  // one CI runner with slow disk writes took more than 30 s for each (#39,
+  // Windows x64), where the rest of the file was 25 times slower too.
+  const MIGRATE_A_FILE_TIMEOUT_MS = 120_000
 
-    runMigrations(db)
-    const after = indexNames(db)
-    for (const name of droppedIndexes) {
-      expect(after.has(name), `${name} should be dropped by v49`).toBe(false)
-    }
-    expect(
-      db
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'"
-        )
-        .get()
-    ).toEqual({ name: "sqlite_stat1" })
-    // The refresh was the bounded sample, not a full walk of every index.
-    expect(db.pragma("analysis_limit", { simple: true })).toBe(
-      POST_MIGRATION_ANALYSIS_LIMIT
-    )
-    db.close()
-  })
+  it(
+    "drops the prefix indexes on upgrade and refreshes planner statistics",
+    () => {
+      const db = openDatabase(tmpDbPath("drop-prefix-indexes"))
+      runMigrations(
+        db,
+        MIGRATIONS.filter((migration) => migration.version < 49)
+      )
+      const before = indexNames(db)
+      for (const name of droppedIndexes) {
+        expect(before.has(name), `${name} should exist before v49`).toBe(true)
+      }
+
+      runMigrations(db)
+      const after = indexNames(db)
+      for (const name of droppedIndexes) {
+        expect(after.has(name), `${name} should be dropped by v49`).toBe(false)
+      }
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'"
+          )
+          .get()
+      ).toEqual({ name: "sqlite_stat1" })
+      // The refresh was the bounded sample, not a full walk of every index.
+      expect(db.pragma("analysis_limit", { simple: true })).toBe(
+        POST_MIGRATION_ANALYSIS_LIMIT
+      )
+      db.close()
+    },
+    MIGRATE_A_FILE_TIMEOUT_MS
+  )
 
   it("recognises every statement shape that changes the index set", () => {
     for (const sql of [
@@ -1320,47 +1329,52 @@ describe("migration 49 redundant prefix indexes", () => {
   // The ThreadService statements that hit these tables (message page,
   // delete-by-thread, thread list) are explained the same way in
   // services/threads/service.test.ts; this layer may not import services.
-  it("keeps every hot per-thread statement the persistence stores prepare on an index after the drops", () => {
-    const db = openDatabase(tmpDbPath("hot-queries-indexed"))
-    runMigrations(db)
-    const activities = new ThreadActivityProjectionQuery(db)
-    const projectThreads = new ThreadProjectionQuery(db)
-    const checkpointDiffs = new CheckpointDiffProjectionQuery(db)
-    const turnSlots = new CheckpointTurnSlotStore(db)
-    const events = new EventStore(db)
-    const cases: Array<[object, string, RegExp, { sorts?: true }?]> = [
-      [activities, "listNewestByThreadStmt", /idx_thread_activities_page/],
-      // `status != 'archived'` is an inequality, so the index bounds the
-      // rows to one project but cannot hand them over in updated_at order.
-      [
-        projectThreads,
-        "listByProjectStmt",
-        /idx_threads_project_status_updated/,
-        { sorts: true },
-      ],
-      [turnSlots, "maxTurnIndexStmt", /sqlite_autoindex_turn_diffs_1/],
-      [
-        checkpointDiffs,
-        "findCheckpointDiffRefByTurnStmt",
-        /idx_checkpoint_thread_turn_latest/,
-      ],
-      [
-        events,
-        "readFromStmt",
-        /orchestration_events USING INTEGER PRIMARY KEY/,
-      ],
-    ]
-    for (const [store, statementName, expected, options] of cases) {
-      const label = `${store.constructor.name}.${statementName}`
-      const plan = explainPlan(db, preparedSql(store, statementName))
-      expect(plan, label).toMatch(expected)
-      expect(plan, label).not.toMatch(
-        /^SCAN (projection_|turn_diffs|checkpoint_diffs|orchestration_events)/m
-      )
-      if (!options?.sorts) expect(plan, label).not.toContain("USE TEMP B-TREE")
-    }
-    db.close()
-  })
+  it(
+    "keeps every hot per-thread statement the persistence stores prepare on an index after the drops",
+    () => {
+      const db = openDatabase(tmpDbPath("hot-queries-indexed"))
+      runMigrations(db)
+      const activities = new ThreadActivityProjectionQuery(db)
+      const projectThreads = new ThreadProjectionQuery(db)
+      const checkpointDiffs = new CheckpointDiffProjectionQuery(db)
+      const turnSlots = new CheckpointTurnSlotStore(db)
+      const events = new EventStore(db)
+      const cases: Array<[object, string, RegExp, { sorts?: true }?]> = [
+        [activities, "listNewestByThreadStmt", /idx_thread_activities_page/],
+        // `status != 'archived'` is an inequality, so the index bounds the
+        // rows to one project but cannot hand them over in updated_at order.
+        [
+          projectThreads,
+          "listByProjectStmt",
+          /idx_threads_project_status_updated/,
+          { sorts: true },
+        ],
+        [turnSlots, "maxTurnIndexStmt", /sqlite_autoindex_turn_diffs_1/],
+        [
+          checkpointDiffs,
+          "findCheckpointDiffRefByTurnStmt",
+          /idx_checkpoint_thread_turn_latest/,
+        ],
+        [
+          events,
+          "readFromStmt",
+          /orchestration_events USING INTEGER PRIMARY KEY/,
+        ],
+      ]
+      for (const [store, statementName, expected, options] of cases) {
+        const label = `${store.constructor.name}.${statementName}`
+        const plan = explainPlan(db, preparedSql(store, statementName))
+        expect(plan, label).toMatch(expected)
+        expect(plan, label).not.toMatch(
+          /^SCAN (projection_|turn_diffs|checkpoint_diffs|orchestration_events)/m
+        )
+        if (!options?.sorts)
+          expect(plan, label).not.toContain("USE TEMP B-TREE")
+      }
+      db.close()
+    },
+    MIGRATE_A_FILE_TIMEOUT_MS
+  )
 })
 
 describe("migration 51 provider runtime journal schema backfill", () => {
