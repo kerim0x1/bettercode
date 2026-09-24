@@ -136,9 +136,9 @@ export function openTerminalPtySession(
     )
   }
   if (
-    input.ownerId
-    && countActiveSessions(input.ownerId)
-      >= TERMINAL_PTY_MAX_ACTIVE_SESSIONS_PER_OWNER
+    input.ownerId &&
+    countActiveSessions(input.ownerId) >=
+      TERMINAL_PTY_MAX_ACTIVE_SESSIONS_PER_OWNER
   ) {
     throw Object.assign(
       new Error(
@@ -235,10 +235,10 @@ export function writeTerminalPtySession(
 ): boolean {
   const session = sessions.get(sessionId)
   if (
-    !session
-    || !ownerMatches(session, ownerId)
-    || session.status !== "running"
-    || session.closeRequested
+    !session ||
+    !ownerMatches(session, ownerId) ||
+    session.status !== "running" ||
+    session.closeRequested
   ) {
     return false
   }
@@ -262,10 +262,10 @@ export function resizeTerminalPtySession(
 ): boolean {
   const session = sessions.get(sessionId)
   if (
-    !session
-    || !ownerMatches(session, ownerId)
-    || session.status !== "running"
-    || session.closeRequested
+    !session ||
+    !ownerMatches(session, ownerId) ||
+    session.status !== "running" ||
+    session.closeRequested
   ) {
     return false
   }
@@ -287,17 +287,11 @@ export function closeTerminalPtySession(
   session.closeRequested = true
   if (session.status !== "exited") {
     if (!session.terminationTimer && session.terminationPendingCount === 0) {
-      queueTerminalPtyTermination(
-        session,
-        "SIGTERM"
-      )
+      queueTerminalPtyTermination(session, "SIGTERM")
       session.terminationTimer = setTimeout(() => {
         session.terminationTimer = null
         if (session.status !== "exited") {
-          queueTerminalPtyTermination(
-            session,
-            "SIGKILL"
-          )
+          queueTerminalPtyTermination(session, "SIGKILL")
         }
       }, 2_000)
       session.terminationTimer.unref?.()
@@ -368,18 +362,14 @@ async function shutdownTerminalPtySessions(
       session.ownerExpiryTimer = null
     }
     if (session.status === "exited") continue
-    gracefulTerminations.push(
-      queueTerminalPtyTermination(session, "SIGTERM")
-    )
+    gracefulTerminations.push(queueTerminalPtyTermination(session, "SIGTERM"))
   }
 
   await Promise.all(gracefulTerminations)
   await waitForTerminalPtySessions(retained, graceMs)
   const running = retained.filter((session) => session.status !== "exited")
   await Promise.all(
-    running.map((session) =>
-      queueTerminalPtyTermination(session, "SIGKILL")
-    )
+    running.map((session) => queueTerminalPtyTermination(session, "SIGKILL"))
   )
   if (running.length > 0) {
     await waitForTerminalPtySessions(running, 500)
@@ -387,8 +377,8 @@ async function shutdownTerminalPtySessions(
 
   for (const session of retained) {
     if (
-      session.status === "exited"
-      && sessions.get(session.sessionId) === session
+      session.status === "exited" &&
+      sessions.get(session.sessionId) === session
     ) {
       sessions.delete(session.sessionId)
     }
@@ -478,10 +468,10 @@ function isSameOrDescendantPath(root: string, candidate: string): boolean {
   const comparableCandidate = comparablePath(candidate)
   const relative = path.relative(comparableRoot, comparableCandidate)
   return (
-    relative === ""
-    || (!relative.startsWith(`..${path.sep}`)
-      && relative !== ".."
-      && !path.isAbsolute(relative))
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative))
   )
 }
 
@@ -591,8 +581,7 @@ export function boundTerminalPtyData(data: string): string {
   let tail = bytes.subarray(bytes.length - tailBytes).toString("utf8")
   while (
     tail.length > 0 &&
-    Buffer.byteLength(prefix + tail, "utf8") >
-      TERMINAL_PTY_MAX_EVENT_DATA_BYTES
+    Buffer.byteLength(prefix + tail, "utf8") > TERMINAL_PTY_MAX_EVENT_DATA_BYTES
   ) {
     tail = tail.slice(1)
   }
@@ -600,7 +589,9 @@ export function boundTerminalPtyData(data: string): string {
 }
 
 function terminalEventBytes(event: TerminalPtyEvent): number {
-  return typeof event.data === "string" ? Buffer.byteLength(event.data, "utf8") : 0
+  return typeof event.data === "string"
+    ? Buffer.byteLength(event.data, "utf8")
+    : 0
 }
 
 function scheduleCleanup(session: TerminalPtySession): void {
@@ -637,8 +628,8 @@ function countActiveSessions(ownerId?: string): number {
   let count = 0
   for (const session of sessions.values()) {
     if (
-      session.status !== "exited"
-      && (ownerId === undefined || session.ownerId === ownerId)
+      session.status !== "exited" &&
+      (ownerId === undefined || session.ownerId === ownerId)
     ) {
       count += 1
     }
