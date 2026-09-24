@@ -15,6 +15,7 @@ export const API_BODY_LIMIT_BYTES = 2 * 1024 * 1024
 const FEATURES: readonly string[] = [
   REMOTE_FEATURES.threadsGet,
   REMOTE_FEATURES.workspaceWriteIfMatch,
+  REMOTE_FEATURES.threadsRename,
 ]
 
 const backendVersion = readBackendVersion()

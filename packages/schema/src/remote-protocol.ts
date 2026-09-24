@@ -39,6 +39,11 @@ export const REMOTE_FEATURES = {
   threadsGet: "threads.get",
   /** `/workspace/read` returns `sha256`; `/workspace/write` honours `expectedSha256`. */
   workspaceWriteIfMatch: "workspace.write.ifMatch",
+  /**
+   * `POST /threads/:id/title` renames a chat, and every connected client
+   * hears the new title (`thread.metadata`), so the rename sticks.
+   */
+  threadsRename: "threads.rename",
 } as const
 export type RemoteFeature =
   (typeof REMOTE_FEATURES)[keyof typeof REMOTE_FEATURES]

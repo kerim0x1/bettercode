@@ -30,6 +30,7 @@ import {
 import { requestIdentity } from "../../remote/http"
 import { contractJson, handleHttpContract } from "../contracts"
 import { HttpError } from "../errors"
+import { broadcastThreadMetadata } from "../../ws/threadActivityBroadcast"
 import { parseAndHandle } from "../routeHelpers"
 import {
   threadCheckpointRecoveryResolveSchema,
@@ -239,6 +240,37 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
         return undefined
       },
       { operation: "thread meta upsert" }
+    )
+  )
+
+  // A rename changes the title and nothing else, and every client hears it:
+  // clients keep their own copy of a chat's metadata and write all of it
+  // back (PATCH above), so a title changed elsewhere would otherwise be
+  // overwritten by the next such write.
+  api.post("/threads/:id/title", (c) =>
+    handleHttpContract(
+      c,
+      "renameThread",
+      async (parsed, ctx) => {
+        const threadId = ctx.req.param("id")!
+        if (!state.threads.hasThread(threadId)) {
+          throw new HttpError(404, "thread not found", "thread_not_found")
+        }
+        const updatedAt = new Date().toISOString()
+        await withCheckpointRecoveryMutation(
+          state,
+          {
+            threadIds: [threadId],
+            workspaces: recoveryWorkspacesForThread(state, threadId),
+          },
+          () =>
+            state.threads.updateThreadTitle(threadId, parsed.title, updatedAt)
+        )
+        const update = { threadId, title: parsed.title, updatedAt }
+        broadcastThreadMetadata(update)
+        return update
+      },
+      { operation: "thread rename" }
     )
   )
 

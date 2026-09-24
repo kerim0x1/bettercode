@@ -24,6 +24,7 @@ import { settingsPatchSchema } from "./settings"
 import {
   threadMessageSchema,
   threadMetaSchema,
+  threadRenameSchema,
   threadSaveSchema,
 } from "./threads"
 
@@ -207,6 +208,19 @@ const contextCheckpointResponseFields = {
   generation: count,
 }
 
+/**
+ * A chat's new title, as POST /threads/:id/title answers it and as every
+ * connected client hears it (the `thread.metadata` WebSocket frame).
+ */
+export const threadMetadataUpdateSchema = z
+  .object({
+    threadId: text.min(1),
+    title: text.min(1),
+    updatedAt: text.min(1),
+  })
+  .passthrough()
+export type ThreadMetadataUpdate = z.infer<typeof threadMetadataUpdateSchema>
+
 export const chatSendResponseSchema = z
   .object({
     status: z.enum(["streaming", "completed"]),
@@ -364,6 +378,13 @@ export const httpContracts = {
   ),
   saveThread: endpoint("POST", "/threads", threadSaveSchema, z.void()),
   updateThread: endpoint("PATCH", "/threads/:id", threadMetaSchema, z.void()),
+  renameThread: endpoint(
+    "POST",
+    "/threads/:id/title",
+    threadRenameSchema,
+    threadMetadataUpdateSchema
+  ),
+  deleteThread: endpoint("DELETE", "/threads/:id", noBody, z.void()),
   saveMessage: endpoint(
     "POST",
     "/threads/:id/messages",

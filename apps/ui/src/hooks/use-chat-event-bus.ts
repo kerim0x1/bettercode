@@ -1,5 +1,8 @@
 import { useRef, useState } from "react"
-import { PROVIDER_HANDOFF_ACTIVITY, providerHandoffProgressSchema } from "@betterc0de/schema"
+import {
+  PROVIDER_HANDOFF_ACTIVITY,
+  providerHandoffProgressSchema,
+} from "@betterc0de/schema"
 import { handleProviderEvent } from "@/lib/provider-events"
 import { useChatStore, type ThreadActivity } from "@/lib/chat-store"
 import { useWsConnection } from "@/hooks/use-ws-connection"
@@ -9,6 +12,7 @@ import { mergeCanonicalRuntimeEventFields } from "@/lib/provider-runtime-event-f
 import type { UiProvider } from "@/lib/provider-types"
 import type { SetPlanModalContent } from "@/lib/plan-modal"
 import { loadMessages } from "@/services/backend/coreApi"
+import { remoteTitleChange } from "@/lib/thread-metadata-sync"
 
 /**
  * Wires up every "inbound event from a provider" subscription the app
@@ -65,6 +69,14 @@ export function useChatEventBus({
         return
       }
 
+      // A chat renamed on a paired phone; see thread-metadata-sync.ts.
+      if (event.channel === "thread.metadata") {
+        const store = useChatStore.getState()
+        const change = remoteTitleChange(store.threads, event.data)
+        if (change) store.updateThreadTitle(change.threadId, change.title)
+        return
+      }
+
       if (event.channel === "thread.activity") {
         const activity = event.data as ThreadActivity
         if (activity?.threadId && activity?.id) {
@@ -72,25 +84,45 @@ export function useChatEventBus({
             .getState()
             .upsertThreadActivity(activity.threadId, activity)
           if (activity.kind === PROVIDER_HANDOFF_ACTIVITY) {
-            const progress = providerHandoffProgressSchema.safeParse(activity.payload)
+            const progress = providerHandoffProgressSchema.safeParse(
+              activity.payload
+            )
             if (progress.success && progress.data.status === "completed") {
               // The checkpoint is committed before this notification. Fetch it
               // even if starting the next provider subsequently fails.
-              void loadMessages(activity.threadId).then(messages => {
-                const checkpoint = messages.find(message => message.id === progress.data.checkpointMessageId)
-                const store = useChatStore.getState()
-                const thread = store.threads.find(thread => thread.id === activity.threadId)
-                const activityStillPresent = store.activitiesByThread[activity.threadId]?.some(current => current.id === activity.id)
-                if (checkpoint && thread && activityStillPresent && store.messagesLoadedByThread[activity.threadId] &&
-                    !thread.messages.some(message => message.id === checkpoint.id)) {
-                  // Merge just this checkpoint. Replacing the whole transcript
-                  // could erase an answer that streamed while the read ran.
-                  store.addMessage(activity.threadId, checkpoint, { persist: false })
-                }
-              }).catch(() => {
-                // sendChatMessage also projects the checkpoint from its response;
-                // reconnect hydration retries the durable read if HTTP failed.
-              })
+              void loadMessages(activity.threadId)
+                .then((messages) => {
+                  const checkpoint = messages.find(
+                    (message) =>
+                      message.id === progress.data.checkpointMessageId
+                  )
+                  const store = useChatStore.getState()
+                  const thread = store.threads.find(
+                    (thread) => thread.id === activity.threadId
+                  )
+                  const activityStillPresent = store.activitiesByThread[
+                    activity.threadId
+                  ]?.some((current) => current.id === activity.id)
+                  if (
+                    checkpoint &&
+                    thread &&
+                    activityStillPresent &&
+                    store.messagesLoadedByThread[activity.threadId] &&
+                    !thread.messages.some(
+                      (message) => message.id === checkpoint.id
+                    )
+                  ) {
+                    // Merge just this checkpoint. Replacing the whole transcript
+                    // could erase an answer that streamed while the read ran.
+                    store.addMessage(activity.threadId, checkpoint, {
+                      persist: false,
+                    })
+                  }
+                })
+                .catch(() => {
+                  // sendChatMessage also projects the checkpoint from its response;
+                  // reconnect hydration retries the durable read if HTTP failed.
+                })
             }
           }
         }

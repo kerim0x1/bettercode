@@ -159,6 +159,7 @@ describe("protocol block", () => {
         features: [
           REMOTE_FEATURES.threadsGet,
           REMOTE_FEATURES.workspaceWriteIfMatch,
+          REMOTE_FEATURES.threadsRename,
         ],
       },
     })

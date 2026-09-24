@@ -1,6 +1,6 @@
-import { logger } from "../observability/logger";
-import type { ThreadActivityProjection } from "../persistence/projections";
-import { threadActivityToWire } from "../provider/runtime";
+import { logger } from "../observability/logger"
+import type { ThreadActivityProjection } from "../persistence/projections"
+import { threadActivityToWire } from "../provider/runtime"
 
 /**
  * Route-emitted thread activities — the approval / plan / user-input
@@ -16,32 +16,60 @@ import { threadActivityToWire } from "../provider/runtime";
  * ingestion path gets the hub injected at construction for the same reason.
  */
 export interface ThreadActivityBroadcaster {
-  broadcast(frame: unknown): void;
+  broadcast(frame: unknown): void
 }
 
-const broadcasters = new Set<ThreadActivityBroadcaster>();
+const broadcasters = new Set<ThreadActivityBroadcaster>()
 
 export function registerThreadActivityBroadcaster(
-  broadcaster: ThreadActivityBroadcaster,
+  broadcaster: ThreadActivityBroadcaster
 ): () => void {
-  broadcasters.add(broadcaster);
+  broadcasters.add(broadcaster)
   return () => {
-    broadcasters.delete(broadcaster);
-  };
+    broadcasters.delete(broadcaster)
+  }
+}
+
+/**
+ * A chat's new title, to every connected client (`thread.metadata`). Only an
+ * explicit rename sends it: echoing every metadata write would bounce each
+ * client's older copy back and forth. Best effort, like activities.
+ */
+export function broadcastThreadMetadata(update: {
+  readonly threadId: string
+  readonly title: string
+  readonly updatedAt: string
+}): void {
+  const frame = { channel: "thread.metadata", data: { ...update } }
+  for (const broadcaster of broadcasters) {
+    try {
+      broadcaster.broadcast(frame)
+    } catch (err) {
+      logger.warn(
+        { err, thread: update.threadId },
+        "failed to broadcast thread metadata"
+      )
+    }
+  }
 }
 
 /** Best effort: the activity is already durable; a failed broadcast is logged, never thrown. */
-export function broadcastThreadActivity(activity: ThreadActivityProjection): void {
-  if (broadcasters.size === 0) return;
-  const frame = { channel: "thread.activity", data: threadActivityToWire(activity) };
+export function broadcastThreadActivity(
+  activity: ThreadActivityProjection
+): void {
+  if (broadcasters.size === 0) return
+  const frame = {
+    channel: "thread.activity",
+    data: threadActivityToWire(activity),
+  }
   for (const broadcaster of broadcasters) {
     try {
-      broadcaster.broadcast(frame);
+      broadcaster.broadcast(frame)
     } catch (err) {
       logger.warn(
         { err, thread: activity.thread_id, kind: activity.kind },
-        "failed to broadcast route thread activity",
-      );
+        "failed to broadcast route thread activity"
+      )
     }
   }
 }

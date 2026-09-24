@@ -2506,6 +2506,41 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema"
       }
     },
+    "renameThread": {
+      "method": "POST",
+      "path": "/threads/:id/title",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "threadId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "updatedAt": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "threadId",
+          "title",
+          "updatedAt"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "deleteThread": {
+      "method": "DELETE",
+      "path": "/threads/:id",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
     "saveMessage": {
       "method": "POST",
       "path": "/threads/:id/messages",
