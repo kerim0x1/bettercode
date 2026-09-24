@@ -330,6 +330,62 @@ export function maestroTestArgs(device, flowsDir, outputDir) {
   ]
 }
 
+/**
+ * What adb says when it loses the device in the middle of a command: the
+ * emulator's adbd dropped the connection ("connection terminated: write
+ * failed") and took a moment to take a new one.
+ */
+const LOST_DEVICE = /device offline|device server died/i
+
+function decodeXml(text) {
+  return text
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&")
+}
+
+/** The error of the command a flow failed on, from its debug output. */
+function failedCommandError(flowDebugDir) {
+  let commands
+  try {
+    commands = JSON.parse(fs.readFileSync(path.join(flowDebugDir, "commands.json"), "utf8"))
+  } catch (error) {
+    if (error?.code === "ENOENT") return null
+    throw error
+  }
+  const failed = commands.find((entry) => entry?.metadata?.status === "FAILED")
+  const error = failed?.metadata?.error
+  return typeof error === "string" ? error : typeof error?.message === "string" ? error.message : null
+}
+
+/**
+ * The flows a Maestro run (maestroTestArgs) failed, from its JUnit report,
+ * each with the error of the command it failed on and whether that was the
+ * device dropping out rather than anything the flow checks.
+ */
+export function maestroFailures(outputDir) {
+  const report = fs.readFileSync(path.join(outputDir, "maestro-junit.xml"), "utf8")
+  const failures = []
+  for (const match of report.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
+    const attributes = Object.fromEntries(
+      [...match[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(([, key, value]) => [key, decodeXml(value)])
+    )
+    if (attributes.status === "SUCCESS") continue
+    const junitMessage = decodeXml(/<failure[^>]*>([\s\S]*?)<\/failure>/.exec(match[2] ?? "")?.[1] ?? "").trim()
+    const reason =
+      failedCommandError(path.join(outputDir, "maestro", attributes.name ?? "")) ?? (junitMessage || "unknown")
+    failures.push({
+      name: attributes.name ?? "",
+      file: attributes.file ?? "",
+      reason,
+      lostDevice: LOST_DEVICE.test(reason),
+    })
+  }
+  return failures
+}
+
 export function maestroExecutable(installDir, platform = process.platform) {
   return path.join(installDir, "maestro", "bin", platform === "win32" ? "maestro.bat" : "maestro")
 }
