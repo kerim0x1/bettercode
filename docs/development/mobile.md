@@ -130,6 +130,7 @@ The flows in `apps/mobile/maestro/flows` run against the demo mode, so they need
 - `demo-link.yaml`: `betterc0de://demo` opens the demo. This checks the scheme the native project registers.
 - `demo-git.yaml`: source control from a project: a file and one of a README's two changes staged, a generated message, a commit and a push.
 - `demo-files.yaml`: a new file in a chat's files, then a search of the files' text that opens a match at its line.
+- `demo-editor.yaml`: a file in the code editor, an edit and a save. It is the only check that the WebView and the editor's page (`npm run mobile:editor`) work on a device; the screen tests use a stand-in for the page.
 
 They find elements by `testID`, which Maestro sees as the element's id on both platforms. Renaming or removing one breaks a flow, and CI with it.
 

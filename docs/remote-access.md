@@ -77,6 +77,11 @@ provides touch-native screens for:
   file by file), and checkpoints; new files and folders, renaming and
   deleting (a new file is never written over an existing one), and a search
   of the files' text with the desktop's options;
+- editing files up to 1 MB in a code editor. A save names the version it was
+  made on (`expectedSha256`), so the desktop refuses it when the file changed
+  meanwhile, and the phone offers to compare, take the desktop's version or
+  overwrite it. The editor runs in a WebView that loads nothing from the
+  network;
 - host health, session identity, expiry, and self-revocation.
 
 The desktop prepares a message from the phone as it prepares its own (the

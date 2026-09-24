@@ -27,6 +27,7 @@ Useful commands:
 npm run mobile:check       # app config, native dependencies, JS bundles
 npm run mobile:prebuild    # regenerate apps/mobile/android and ios
 npm run mobile:icons       # re-render the icons from apps/ui/public/favicon.svg
+npm run mobile:editor      # rebuild the code editor's page from apps/mobile/editor
 npm run typecheck:mobile
 npm run test:mobile        # logic and screen tests
 npm run test:e2e:remote    # the app's network client against a real desktop backend
@@ -163,6 +164,18 @@ against sample chats and files (see [Demo mode](#demo-mode)).
   desktop's options (`src/components/content-search.tsx`); a match opens the
   file at its line. The demo keeps these files in its repositories' working
   trees (`src/transport/demo/files.ts`), so source control sees the changes.
+- **Edit** opens a file in the code editor: CodeMirror 6 in a WebView
+  (`src/components/code-editor.tsx`). Its page is `editor/editor.ts`, bundled
+  with its languages into `src/editor/editor-html.ts` by
+  `npm run mobile:editor` (committed; a test fails when it no longer matches
+  its source). The WebView shows only that page: its CSP is
+  `default-src 'none'`, and it may not navigate, read files, keep storage or
+  open windows. App and page exchange JSON messages
+  (`src/editor/protocol.ts`), and every message from the page is checked.
+  **Save** writes with the SHA-256 the file was read with; when the desktop
+  answers that the file changed (409 `WORKSPACE_PATH_CHANGED`), the editor
+  offers Compare, Take desktop's and Overwrite. Unsaved edits are kept as a
+  draft (`src/lib/editor-drafts.ts`), which the pairing's end forgets.
 - File navigation always starts from `worktreePath || projectPath`; client-side
   containment checks complement the backend workspace guards.
 - The interface is in English, like the desktop's; dates and sizes follow the
