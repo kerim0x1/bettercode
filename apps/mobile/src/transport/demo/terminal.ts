@@ -46,6 +46,8 @@ const KEPT_FRAMES = 500
  */
 export class DemoTerminals {
   private readonly terminals = new Map<string, DemoTerminal>()
+  /** Frames for the next timer to send. */
+  private readonly outbox: unknown[] = []
   private opened = 0
 
   constructor(
@@ -269,9 +271,18 @@ export class DemoTerminals {
     this.later(frame)
   }
 
-  /** After the call's answer, as from the desktop. */
+  /**
+   * After the call's answer, as from the desktop, and in order: one timer
+   * sends everything that waits. A timer for each frame would not do, since
+   * React Native on Android runs timers due in the same millisecond in no set
+   * order, and the phone drops output numbered below what it showed.
+   */
   private later(frame: unknown): void {
-    setTimeout(() => this.emit(frame), 0)
+    this.outbox.push(frame)
+    if (this.outbox.length > 1) return
+    setTimeout(() => {
+      for (const next of this.outbox.splice(0)) this.emit(next)
+    }, 0)
   }
 }
 

@@ -137,6 +137,43 @@ describe("the demo's terminal", () => {
       terminals.handle("terminal.resize", { terminalId, cols: 80, rows: 24 })
     ).toThrow(expect.objectContaining({ code: "terminal_not_found" }))
   })
+
+  it("sends its output in order where timers due together run in any order", () => {
+    // React Native on Android runs timers due in the same millisecond in no
+    // set order (JavaTimerManager's queue sorts by due time only), and the
+    // phone drops output numbered below what it showed. This stand-in runs
+    // them last first.
+    vi.useRealTimers()
+    const due: Array<() => void> = []
+    vi.stubGlobal("setTimeout", (callback: () => void) => {
+      due.push(callback)
+      return due.length
+    })
+    const runDue = () => {
+      while (due.length > 0) due.pop()!()
+    }
+    try {
+      const { terminals, frames, shown } = shell()
+      const { terminalId } = terminals.handle("terminal.open", {
+        cwd: ROOT,
+        cols: 80,
+        rows: 24,
+      }) as { terminalId: string }
+      runDue()
+      terminals.handle("terminal.write", {
+        terminalId,
+        inputSeq: 1,
+        data: "whoami\r",
+      })
+      runDue()
+
+      const numbers = frames.map((frame) => Number(frame.data.seq))
+      expect(numbers).toEqual([...numbers].sort((a, b) => a - b))
+      expect(shown()).toContain("whoami\r\ndemo\r\n")
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 })
 
 describe("arithmetic in the demo's echo", () => {
