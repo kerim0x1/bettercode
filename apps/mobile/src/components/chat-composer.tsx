@@ -158,9 +158,9 @@ export function ChatComposer({
   }
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    // Padding on Android too: the app is edge to edge, so the window no
+    // longer shrinks for the keyboard, which would cover the composer.
+    <KeyboardAvoidingView behavior="padding">
       <View style={styles.shell}>
         <View style={styles.card}>
           {photos.length > 0 ? (
