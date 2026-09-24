@@ -167,6 +167,18 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
     )
   })
 
+  // After `/threads/stats`, so that path is never read as a thread id.
+  api.get("/threads/:id", (c) => {
+    const thread = state.threads.getThreadSummary(c.req.param("id"))
+    if (!thread) {
+      return c.json(
+        { error: "thread not found", code: "thread_not_found" },
+        404
+      )
+    }
+    return contractJson(c, "getThread", thread)
+  })
+
   api.post("/threads", (c) =>
     handleHttpContract(
       c,

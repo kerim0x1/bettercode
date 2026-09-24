@@ -241,8 +241,10 @@ export const approvalResponseSchema = z.discriminatedUnion("status", [
 export type ChatSendResponse = z.infer<typeof chatSendResponseSchema>
 export type ApprovalResponse = z.infer<typeof approvalResponseSchema>
 
+type HttpContractMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
+
 function endpoint<I extends z.ZodType, O extends z.ZodType>(
-  method: "GET" | "POST" | "PATCH",
+  method: HttpContractMethod,
   path: string,
   request: I,
   response: O
@@ -347,6 +349,7 @@ export const httpContracts = {
     noBody,
     z.array(chatThreadResponseSchema)
   ),
+  getThread: endpoint("GET", "/threads/:id", noBody, chatThreadResponseSchema),
   listMessages: endpoint(
     "GET",
     "/threads/:id/messages",
@@ -385,7 +388,7 @@ export type HttpContractRequest<K extends HttpContractName> = z.input<
 
 export interface ContractTransportInput {
   path: string
-  method: "GET" | "POST" | "PATCH"
+  method: HttpContractMethod
   body?: unknown
 }
 

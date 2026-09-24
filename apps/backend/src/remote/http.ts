@@ -326,6 +326,7 @@ const READ_ONLY_REMOTE_GET_PATHS = [
   /^\/api\/v1\/providers\/instances\/[^/]+\/models$/,
   /^\/api\/v1\/threads$/,
   /^\/api\/v1\/threads\/stats$/,
+  /^\/api\/v1\/threads\/[^/]+$/,
   /^\/api\/v1\/threads\/[^/]+\/(?:messages|activities|diffs|checkpoint-recovery)$/,
 ] as const
 

@@ -112,6 +112,39 @@ export interface ThreadStats {
   medianTokensPerSession: number
 }
 
+/** One row of the thread summary queries (see `threadPageSql`). */
+interface ThreadSummaryRow {
+  thread_id: string
+  project_id: string
+  title: string | null
+  created_at: string
+  updated_at: string
+  project_path: string | null
+  env_mode: string | null
+  branch: string | null
+  worktree_path: string | null
+  base_branch: string | null
+  worktree_state: string | null
+  parent_thread_id: string | null
+  codex_thread_id: string | null
+  provider_goal_json: string | null
+  message_count: number | null
+  last_model_id: string | null
+  turn_count: number | null
+  provider_kind: string | null
+  provider_instance_id: string | null
+  provider_thread_id: string | null
+  resume_cursor_json: string | null
+  continuation_key: string | null
+  session_status: string | null
+  active_turn_id: string | null
+  last_error: string | null
+  runtime_mode: string | null
+  session_cwd: string | null
+  model_selection_json: string | null
+  session_updated_at: string | null
+}
+
 export class ThreadService {
   private readonly statsCache = new Map<
     string,
@@ -1222,40 +1255,30 @@ export class ThreadService {
             limit + 1
           )
         : this.stmts.listThreadsStmt.all(limit + 1)
-    ) as Array<{
-      thread_id: string
-      project_id: string
-      title: string | null
-      created_at: string
-      updated_at: string
-      project_path: string | null
-      env_mode: string | null
-      branch: string | null
-      worktree_path: string | null
-      base_branch: string | null
-      worktree_state: string | null
-      parent_thread_id: string | null
-      codex_thread_id: string | null
-      provider_goal_json: string | null
-      message_count: number | null
-      last_model_id: string | null
-      turn_count: number | null
-      provider_kind: string | null
-      provider_instance_id: string | null
-      provider_thread_id: string | null
-      resume_cursor_json: string | null
-      continuation_key: string | null
-      session_status: string | null
-      active_turn_id: string | null
-      last_error: string | null
-      runtime_mode: string | null
-      session_cwd: string | null
-      model_selection_json: string | null
-      session_updated_at: string | null
-    }>
+    ) as Array<ThreadSummaryRow>
 
     const pageRows = rows.slice(0, limit)
-    const items = pageRows.map((row) => ({
+    const items = pageRows.map((row) => this.threadSummaryFromRow(row))
+    const last = pageRows.at(-1)
+    return {
+      items,
+      next:
+        rows.length > limit && last
+          ? { updatedAt: last.updated_at, threadId: last.thread_id }
+          : null,
+    }
+  }
+
+  /** One thread as `listThreadsPage` returns it; `null` when it does not exist or is archived. */
+  getThreadSummary(threadId: string): unknown | null {
+    const row = this.stmts.getThreadSummaryStmt.get(threadId, 1) as
+      | ThreadSummaryRow
+      | undefined
+    return row ? this.threadSummaryFromRow(row) : null
+  }
+
+  private threadSummaryFromRow(row: ThreadSummaryRow) {
+    return {
       id: row.thread_id,
       projectName: row.project_id,
       title: row.title ?? "New Chat",
@@ -1281,14 +1304,6 @@ export class ThreadService {
       turnCount: row.turn_count ?? 0,
       session: this.threadSessionFromRow(row),
       messages: [],
-    }))
-    const last = pageRows.at(-1)
-    return {
-      items,
-      next:
-        rows.length > limit && last
-          ? { updatedAt: last.updated_at, threadId: last.thread_id }
-          : null,
     }
   }
 

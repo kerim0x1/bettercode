@@ -651,4 +651,40 @@ describe("ThreadService thread list query plan", () => {
     expect(ids(second.items)).toEqual(["thread-b", "thread-d"])
     expect(second.next).toBeNull()
   })
+
+  it("returns one thread exactly as the list does, and nothing for unknown or archived ids", () => {
+    for (const [threadId, updatedAt] of [
+      ["thread-a", "2026-01-01T00:00:02.000Z"],
+      ["thread-b", "2026-01-01T00:00:01.000Z"],
+    ] as const) {
+      svc.upsertThreadMeta({
+        ...saveRequest([]),
+        thread_id: threadId,
+        created_at: CREATED_AT,
+        updated_at: updatedAt,
+      })
+    }
+    db.prepare(
+      `INSERT INTO provider_session_bindings
+         (thread_id, provider_instance_id, provider_kind, created_at, updated_at, status)
+       VALUES ('thread-b', 'instance', 'codex', ?, ?, 'ready')`
+    ).run(CREATED_AT, CREATED_AT)
+
+    const listed = svc.listThreadsPage({ limit: 10 }).items as Array<{
+      id: string
+    }>
+    for (const threadId of ["thread-a", "thread-b"]) {
+      expect(svc.getThreadSummary(threadId)).toEqual(
+        listed.find((item) => item.id === threadId)
+      )
+    }
+    expect(svc.getThreadSummary("thread-b")).toMatchObject({
+      session: { providerKind: "codex" },
+    })
+    expect(svc.getThreadSummary("missing")).toBeNull()
+    db.prepare(
+      "UPDATE projection_threads SET status = 'archived' WHERE thread_id = ?"
+    ).run("thread-a")
+    expect(svc.getThreadSummary("thread-a")).toBeNull()
+  })
 })
