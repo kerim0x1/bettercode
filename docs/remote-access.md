@@ -48,6 +48,9 @@ provides touch-native screens for:
 - a queue for messages written while the agent works, and **Retry** for a
   message that did not arrive, which the desktop recognises, so a retried
   message never runs twice;
+- which chats wait for an answer (in the chat list, on the **Chats** tab and
+  in every other chat), kept current as approvals are answered on the
+  desktop, and the agent's tool steps while it works;
 - project browsing plus chat-scoped files, text previews, diffs, and checkpoints;
 - host health, session identity, expiry, and self-revocation.
 
@@ -222,7 +225,11 @@ files, and a terminal when the switch above is on. There is no separate switch
 for file access. Like the desktop, it can choose any permission preset for a
 chat, including **Bypass Permission**, under which the agent runs commands and
 edits files without asking; the phone app shows the desktop's warning before
-it switches. The preset travels with each message the device sends. An
+it switches. The preset travels with each message the device sends. It can
+also answer a tool approval with **Always allow** for this session, this
+project or all projects, as the desktop can; the app shows the exact rule
+before it is stored. Such a rule is stored on the desktop: it stays after the
+device is signed out or revoked, until it is removed on the desktop. An
 **opt-in public plaintext** session cannot do any of this; it is
 monitoring-only. Pair only devices you control, revoke lost devices promptly,
 and do not post pairing links in shared channels.

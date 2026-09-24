@@ -42,6 +42,9 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 - The phone app sets each chat's permission preset (Ask first, Auto-edit, Auto Mode, Read-only, Bypass Permission) and mode (Agent, Plan, Ask / Read-only) like the desktop's composer, with the desktop's warning before Bypass. Every message carries the chat's choice; a change during a reply switches the running turn where the provider can, and otherwise says that it applies to the next message.
 - The phone app queues messages written while the agent works and sends them in order when the reply ends, by the desktop's rules: up to 30 per chat, paused after a failure or a restart, with Resume and a remove button per message. The queue stays on the phone until it is sent, and signing out deletes it.
 - A message the phone app could not send stays in the chat with the reason and **Retry**, or **Send as new** when the desktop will not take that message again, and **Delete**.
+- The phone app shows which chats wait for an answer: in the chat list ("Waiting for you · 1 approval"), as a badge on the **Chats** tab, and as a line in every other chat that opens the waiting one. An approval answered on the desktop disappears from the phone at once, and after a reconnect the app catches up on what it missed.
+- The phone app offers **Always allow** on tool approvals, for this session, this project or all projects, like the desktop, and shows the exact rule before the desktop stores it. It is not offered when no narrow rule exists (a chained command, for example) or while the chat's preset is Read-only.
+- The phone app shows the agent's tool steps while it works, and a provider handoff as the desktop does ("Context Compacted", with the summary), instead of the internal handoff messages.
 - `/api/v1/workspace/read` returns the file's SHA-256, size and whether it is valid UTF-8; `/api/v1/workspace/write` accepts `expectedSha256` and refuses to overwrite a file that changed since it was read.
 - CI runs `release:check` on Linux x64, Windows x64, macOS arm64 and macOS x64 for every push and pull request, and the source checks on Node 24.
 - The Linux `.deb` is installed with apt and started with the Chromium sandbox on in CI; the `.rpm` is installed in a clean Fedora container.
@@ -60,6 +63,7 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 - A local `npm run build:mac` builds only for the architecture of the Mac it runs on, like the CI jobs. It used to also emit the other architecture's file names from the same app.
 - The phone app's interface is in English throughout; it mixed in German labels and German date formats. Dates and file sizes follow the device's locale.
 - The desktop's permission presets, Bypass warning, chat modes and message queue come from `@betterc0de/schema`, which the phone app uses too; the desktop behaves as before.
+- So do the desktop's "Always allow" rules, its tool steps built from activities, its provider-handoff presentation and its provider names; again the desktop behaves as before. The "Always allow" rules gained tests of their own: which commands and paths may be remembered, and that a provider's unscoped suggestion is never stored.
 - The Android app asks only for the camera (to scan the pairing QR code), network access and vibration. The storage, "display over other apps" and biometric permissions that the React Native template and a library declared are removed; the app uses none of them.
 
 ## [0.1.0-beta.2] - 2026-09-22

@@ -89,6 +89,16 @@ against sample chats and files (see [Demo mode](#demo-mode)).
   `composer-settings-store.ts` keeps each chat's choice on the phone; every
   message carries it, and a change during a reply goes to the running turn
   through `/chat/permission-mode`.
+- Requests (approvals, questions, plan reviews) are tracked for every chat from
+  the desktop's live `thread.activity` frames, so one answered on the desktop
+  disappears on the phone too. Those frames are not replayed after a
+  reconnect, so the app then reloads the activities of the chats that run a
+  turn or had an open request (`refreshAttention`). The chat list, the
+  **Chats** tab and every other chat show which chats wait.
+- "Always allow", tool steps from activities, the provider-handoff notice and
+  provider names come from `@betterc0de/schema` (`always-allow`,
+  `activity-tools`, `provider-handoff`, `provider-label`), the desktop's own
+  code, so both apps store the same rules and show the same steps.
 - `queue-store.ts` and `queue-runner.ts` queue messages written while the agent
   works, with the desktop's rules from `@betterc0de/schema/message-queue` (30
   per chat, one at a time, paused after a failure or a restart). The queue and
