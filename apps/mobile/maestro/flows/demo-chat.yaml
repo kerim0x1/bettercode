@@ -37,7 +37,13 @@ tags:
 - tapOn:
     id: chat-input
 - inputText: Draft the release notes
-- hideKeyboard
+# iOS offers no key that hides the keyboard of this multiline input, and the
+# send button sits above it anyway.
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - hideKeyboard
 - tapOn:
     id: chat-send
 - scrollUntilVisible:
