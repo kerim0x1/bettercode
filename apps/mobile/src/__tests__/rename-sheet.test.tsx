@@ -23,7 +23,7 @@ describe("RenameSheet", () => {
     // handler from the render where the field contained only "M".
     await act(async () => {
       input.props.onChangeText("Map.tsx")
-      save.props.onPress()
+      await fireEvent.press(save)
     })
 
     expect(onSave).toHaveBeenCalledWith("Map.tsx")
@@ -48,7 +48,7 @@ describe("RenameSheet", () => {
 
     await act(async () => {
       input.props.onChangeText("README.md")
-      save.props.onPress()
+      await fireEvent.press(save)
     })
 
     expect(onSave).not.toHaveBeenCalled()
