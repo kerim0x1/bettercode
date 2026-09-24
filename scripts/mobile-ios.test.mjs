@@ -32,6 +32,16 @@ test("accepts the Info.plist of a correct build", () => {
   assert.deepEqual(checkInfoPlist(plist(), version), [])
 })
 
+test("accepts the network policy with its keys in the order plutil prints them", () => {
+  // plutil sorts dictionary keys; the policy is the same whatever their order.
+  const sorted = {
+    NSAllowsLocalNetworking: true,
+    NSExceptionDomains: { "ts.net": { NSExceptionAllowsInsecureHTTPLoads: true, NSIncludesSubdomains: true } },
+  }
+  assert.notEqual(JSON.stringify(sorted), JSON.stringify(EXPECTED_ATS))
+  assert.deepEqual(checkInfoPlist(plist({ NSAppTransportSecurity: sorted }), version), [])
+})
+
 test("names every Info.plist setting a build got wrong", () => {
   const problems = checkInfoPlist(
     plist({

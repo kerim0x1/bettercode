@@ -27,7 +27,7 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { EXPECTED_ATS } from "./mobile-checks.mjs"
+import { EXPECTED_ATS, sameJson } from "./mobile-checks.mjs"
 import { prebuild } from "./mobile-prebuild.mjs"
 import { capture, npm, releaseVersion, root, run, sleep } from "./mobile-run.mjs"
 import { MAESTRO_ENV, ensureMaestro, findJdk, maestroTestArgs, resolveIos } from "./mobile-toolchain.mjs"
@@ -57,7 +57,7 @@ export function parseArgs(argv) {
 export function checkInfoPlist(plist, version) {
   const problems = []
   const expect = (label, actual, expected) => {
-    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    if (!sameJson(actual, expected)) {
       problems.push(`${label} is ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`)
     }
   }
@@ -132,6 +132,8 @@ export function build({ env = process.env } = {}) {
   run(
     "xcodebuild",
     [
+      // Warnings and errors only: the full log runs to some 50,000 lines.
+      "-quiet",
       "-workspace",
       path.join(iosRoot, `${name}.xcworkspace`),
       "-scheme",

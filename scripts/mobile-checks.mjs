@@ -38,7 +38,8 @@ export const EXPECTED_ATS = {
 }
 export const EXPORT_PLATFORMS = ["android", "ios", "web"]
 
-function sameJson(left, right) {
+/** Equal as JSON, whatever order the objects' keys are in (plutil sorts them, config plugins do not). */
+export function sameJson(left, right) {
   const sort = (value) =>
     value && typeof value === "object" && !Array.isArray(value)
       ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, sort(value[key])]))
