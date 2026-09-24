@@ -2650,6 +2650,452 @@
         "additionalProperties": {}
       }
     },
+    "gitStatus": {
+      "method": "POST",
+      "path": "/git/status",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "is_clean": {
+            "type": "boolean"
+          },
+          "staged": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "modified": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "untracked": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ahead": {
+            "type": "number",
+            "minimum": 0
+          },
+          "behind": {
+            "type": "number",
+            "minimum": 0
+          },
+          "upstream": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "branch",
+          "is_clean",
+          "staged",
+          "modified",
+          "untracked",
+          "ahead",
+          "behind",
+          "upstream"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "gitDiff": {
+      "method": "POST",
+      "path": "/git/diff",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "diff": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "totalBytes": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "diff",
+          "truncated",
+          "totalBytes"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "gitDiffStaged": {
+      "method": "POST",
+      "path": "/git/diff-staged",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "diff": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "totalBytes": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "diff",
+          "truncated",
+          "totalBytes"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "gitStage": {
+      "method": "POST",
+      "path": "/git/stage",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "gitUnstage": {
+      "method": "POST",
+      "path": "/git/unstage",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "gitStageAll": {
+      "method": "POST",
+      "path": "/git/stage-all",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "gitUnstageAll": {
+      "method": "POST",
+      "path": "/git/unstage-all",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "gitDiscard": {
+      "method": "POST",
+      "path": "/git/discard",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "gitHunkApply": {
+      "method": "POST",
+      "path": "/git/hunks/apply",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "accept",
+              "reject",
+              "unstage"
+            ]
+          },
+          "patchId": {
+            "type": "string"
+          },
+          "applied": {
+            "type": "boolean"
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "action",
+          "patchId",
+          "applied"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "gitCommit": {
+      "method": "POST",
+      "path": "/git/commit",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "output": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "output"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "gitPush": {
+      "method": "POST",
+      "path": "/git/push",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "output": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "output"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "gitPull": {
+      "method": "POST",
+      "path": "/git/pull",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "output": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "output"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "gitFetch": {
+      "method": "POST",
+      "path": "/git/fetch",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "object",
+            "properties": {
+              "branch": {
+                "type": "string"
+              },
+              "is_clean": {
+                "type": "boolean"
+              },
+              "staged": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "modified": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "untracked": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "ahead": {
+                "type": "number",
+                "minimum": 0
+              },
+              "behind": {
+                "type": "number",
+                "minimum": 0
+              },
+              "upstream": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "branch",
+              "is_clean",
+              "staged",
+              "modified",
+              "untracked",
+              "ahead",
+              "behind",
+              "upstream"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "gitCheckout": {
+      "method": "POST",
+      "path": "/git/checkout",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "gitLog": {
+      "method": "POST",
+      "path": "/git/log",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "commits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "hash": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "author": {
+                  "type": "string"
+                },
+                "date": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "hash"
+              ],
+              "additionalProperties": {}
+            }
+          }
+        },
+        "required": [
+          "commits"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "generateCommitMessage": {
+      "method": "POST",
+      "path": "/chat/text-generation/commit-message",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "body"
+        ],
+        "additionalProperties": {}
+      }
+    },
     "saveMessage": {
       "method": "POST",
       "path": "/threads/:id/messages",

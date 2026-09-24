@@ -11,6 +11,7 @@ import { threadGoalSchema } from "./thread-goal"
 import {
   chatApprovalSchema,
   chatAttachmentSchema,
+  chatGenerateCommitMessageSchema,
   chatInterruptSchema,
   chatPermissionModeSchema,
   chatPlanApprovalSchema,
@@ -28,7 +29,16 @@ export {
   threadMetadataUpdateSchema,
   type ThreadMetadataUpdate,
 } from "./thread-metadata"
-import { gitCwdSchema } from "./git"
+import {
+  gitCheckoutSchema,
+  gitCommitSchema,
+  gitCwdSchema,
+  gitDiscardSchema,
+  gitHunkActionSchema,
+  gitLogSchema,
+  gitPathsSchema,
+  gitPushSchema,
+} from "./git"
 import {
   threadCheckpointRevertSchema,
   threadMessageSchema,
@@ -221,6 +231,67 @@ const contextCheckpointResponseFields = {
 /** The repository's local branches, and the checked-out one ("" when detached). */
 export const gitBranchesResponseSchema = z
   .object({ branches: z.array(text), current: text })
+  .passthrough()
+
+/** The checked-out branch, its upstream, and the changed files by state. */
+export const gitStatusResponseSchema = z
+  .object({
+    branch: text,
+    is_clean: z.boolean(),
+    staged: z.array(text),
+    modified: z.array(text),
+    untracked: z.array(text),
+    ahead: count,
+    behind: count,
+    upstream: text.nullable(),
+  })
+  .passthrough()
+
+/** A diff to show, cut on a line boundary when it is larger than the desktop sends. */
+export const gitDisplayDiffResponseSchema = z
+  .object({ diff: text, truncated: z.boolean(), totalBytes: count })
+  .passthrough()
+
+export const gitOkResponseSchema = z
+  .object({ ok: z.literal(true) })
+  .passthrough()
+
+/** What git printed (commit, push, pull). */
+export const gitOutputResponseSchema = z.object({ output: text }).passthrough()
+
+export const gitFetchResponseSchema = z
+  .object({ status: gitStatusResponseSchema })
+  .passthrough()
+
+/** The latest commits, newest first. */
+export const gitLogResponseSchema = z
+  .object({
+    commits: z.array(
+      z
+        .object({
+          hash: text,
+          message: text.optional(),
+          author: text.optional(),
+          date: text.optional(),
+        })
+        .passthrough()
+    ),
+  })
+  .passthrough()
+
+/** A hunk staged, discarded or unstaged; `replayed` when it was already done. */
+export const gitHunkActionResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    action: z.enum(["accept", "reject", "unstage"]),
+    patchId: text,
+    applied: z.boolean(),
+    replayed: z.boolean().optional(),
+  })
+  .passthrough()
+
+export const commitMessageResponseSchema = z
+  .object({ subject: text, body: text, branch: text.optional() })
   .passthrough()
 
 /** A chat's own git worktree, on a new branch from `baseBranch`. */
@@ -427,6 +498,87 @@ export const httpContracts = {
     "/git/branches",
     gitCwdSchema,
     gitBranchesResponseSchema
+  ),
+  gitStatus: endpoint(
+    "POST",
+    "/git/status",
+    gitCwdSchema,
+    gitStatusResponseSchema
+  ),
+  gitDiff: endpoint(
+    "POST",
+    "/git/diff",
+    gitCwdSchema,
+    gitDisplayDiffResponseSchema
+  ),
+  gitDiffStaged: endpoint(
+    "POST",
+    "/git/diff-staged",
+    gitCwdSchema,
+    gitDisplayDiffResponseSchema
+  ),
+  gitStage: endpoint("POST", "/git/stage", gitPathsSchema, gitOkResponseSchema),
+  gitUnstage: endpoint(
+    "POST",
+    "/git/unstage",
+    gitPathsSchema,
+    gitOkResponseSchema
+  ),
+  gitStageAll: endpoint(
+    "POST",
+    "/git/stage-all",
+    gitCwdSchema,
+    gitOkResponseSchema
+  ),
+  gitUnstageAll: endpoint(
+    "POST",
+    "/git/unstage-all",
+    gitCwdSchema,
+    gitOkResponseSchema
+  ),
+  gitDiscard: endpoint(
+    "POST",
+    "/git/discard",
+    gitDiscardSchema,
+    gitOkResponseSchema
+  ),
+  gitHunkApply: endpoint(
+    "POST",
+    "/git/hunks/apply",
+    gitHunkActionSchema,
+    gitHunkActionResponseSchema
+  ),
+  gitCommit: endpoint(
+    "POST",
+    "/git/commit",
+    gitCommitSchema,
+    gitOutputResponseSchema
+  ),
+  gitPush: endpoint(
+    "POST",
+    "/git/push",
+    gitPushSchema,
+    gitOutputResponseSchema
+  ),
+  gitPull: endpoint("POST", "/git/pull", gitCwdSchema, gitOutputResponseSchema),
+  gitFetch: endpoint(
+    "POST",
+    "/git/fetch",
+    gitCwdSchema,
+    gitFetchResponseSchema
+  ),
+  gitCheckout: endpoint(
+    "POST",
+    "/git/checkout",
+    gitCheckoutSchema,
+    gitOkResponseSchema
+  ),
+  gitLog: endpoint("POST", "/git/log", gitLogSchema, gitLogResponseSchema),
+  generateCommitMessage: endpoint(
+    "POST",
+    "/chat/text-generation/commit-message",
+    chatGenerateCommitMessageSchema,
+    commitMessageResponseSchema
   ),
   saveMessage: endpoint(
     "POST",
