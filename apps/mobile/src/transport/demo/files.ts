@@ -3,6 +3,7 @@ import type {
   DirectoryResult,
   FileSearchResult,
 } from "@/types/remote"
+import { sha256Hex } from "@/lib/sha256"
 import { RemoteApiError } from "../live/http"
 import type {
   ContentSearchOptions,
@@ -10,7 +11,6 @@ import type {
   FileContent,
 } from "../types"
 import type { DemoGit } from "./git"
-import { sha256Hex } from "./sha256"
 
 /**
  * The demo projects' files: each project's git working tree (DemoGit) and

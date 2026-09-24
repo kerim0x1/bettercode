@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { describe, expect, it } from "vitest"
 import { sha256Hex } from "./sha256"
 
-describe("the demo's SHA-256", () => {
+describe("SHA-256", () => {
   it("is Node's SHA-256 for empty, short, block-sized, long and non-ASCII text", () => {
     for (const text of [
       "",

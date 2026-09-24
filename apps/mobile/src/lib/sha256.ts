@@ -1,7 +1,9 @@
 /**
  * SHA-256 of a string's UTF-8 bytes, as lowercase hex: what the desktop
- * returns for a file (`sha256`), so the demo can refuse a stale save the
- * same way. Plain JavaScript: the demo runs where Node's crypto does not.
+ * returns for a file (`sha256`). The demo refuses a stale save with it, as
+ * the desktop does, and the editor knows the hash of a text it saved
+ * without reading the file again. Plain JavaScript: the app runs where
+ * Node's crypto does not.
  */
 
 const K = new Uint32Array([

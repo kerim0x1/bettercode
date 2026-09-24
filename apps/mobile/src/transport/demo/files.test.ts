@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest"
+import { sha256Hex } from "@/lib/sha256"
 import { DEMO_FILES, demoGitSeeds } from "./fixtures"
 import { DemoFiles } from "./files"
 import { DemoGit } from "./git"
-import { sha256Hex } from "./sha256"
 
 const NOW = new Date("2026-09-24T10:00:00.000Z")
 const ROOT = "/Users/demo/code/weather-app"
