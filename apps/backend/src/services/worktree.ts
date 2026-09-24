@@ -1,10 +1,13 @@
-import { randomUUID, createHash } from "node:crypto";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import type { Db } from "../persistence/db";
-import type { EventStore } from "../persistence/eventStore";
-import type { WorktreeRegistryQuery, WorktreeRegistryEntry } from "../persistence/projections";
+import { randomUUID, createHash } from "node:crypto"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import type { Db } from "../persistence/db"
+import type { EventStore } from "../persistence/eventStore"
+import type {
+  WorktreeRegistryQuery,
+  WorktreeRegistryEntry,
+} from "../persistence/projections"
 import {
   createWorktree as gitCreateWorktree,
   removeWorktree as gitRemoveWorktree,
@@ -13,8 +16,8 @@ import {
   listWorktrees as gitListWorktrees,
   headSha as gitHeadSha,
   deleteBranch as gitDeleteBranch,
-} from "./git";
-import { logger } from "../observability/logger";
+} from "./git"
+import { logger } from "../observability/logger"
 
 /**
  * Per-thread worktree lifecycle state. Persisted both in the
@@ -39,63 +42,71 @@ export type WorktreeState =
   | "pushed"
   | "pr_open"
   | "merged"
-  | "abandoned";
+  | "abandoned"
 
 export interface WorktreeCreateOptions {
-  threadId: string;
+  threadId: string
   /** Absolute path to the main-repo working copy. Must be a git repo. */
-  baseRepoPath: string;
+  baseRepoPath: string
   /** Branch name to fork from. Must already exist in `baseRepoPath`. */
-  baseBranch: string;
+  baseBranch: string
   /** Any free-form human-ish string — used to slugify the branch name. */
-  firstMessage?: string | null;
+  firstMessage?: string | null
 }
 
 export interface WorktreeCreateResult {
-  worktreeId: string;
-  threadId: string;
-  worktreePath: string;
-  branch: string;
-  baseBranch: string;
-  headSha: string | null;
+  worktreeId: string
+  threadId: string
+  worktreePath: string
+  branch: string
+  baseBranch: string
+  headSha: string | null
 }
 
-export type WorktreeResetResult = WorktreeCreateResult;
+export type WorktreeResetResult = WorktreeCreateResult
 
 /** Matches the branch-name convention from the plan's Objective 1:
  *  `agent/<thread-id>/<short-description>`. Slugs are lower-kebab,
  *  alphanumeric + dash, max 30 chars, deduplicated from the thread id so
  *  two threads with identical first-messages still produce distinct branches.
  */
-export function buildBranchName(threadId: string, firstMessage: string | undefined | null): string {
-  const slug = slugifyMessage(firstMessage ?? "");
-  const shortId = shortThreadId(threadId);
-  return slug ? `agent/${shortId}/${slug}` : `agent/${shortId}/turn`;
+export function buildBranchName(
+  threadId: string,
+  firstMessage: string | undefined | null
+): string {
+  const slug = slugifyMessage(firstMessage ?? "")
+  const shortId = shortThreadId(threadId)
+  return slug ? `agent/${shortId}/${slug}` : `agent/${shortId}/turn`
 }
 
 export function slugifyMessage(raw: string): string {
-  return raw
-    .toLowerCase()
-    .normalize("NFKD")
-    // Strip Unicode combining diacritical marks so "café" → "cafe"
-    // and "über" → "uber" instead of the ugly "u-ber" we'd get if the
-    // combining diaeresis were replaced by a dash.
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 30)
-    .replace(/-+$/g, "");
+  return (
+    raw
+      .toLowerCase()
+      .normalize("NFKD")
+      // Strip Unicode combining diacritical marks so "café" → "cafe"
+      // and "über" → "uber" instead of the ugly "u-ber" we'd get if the
+      // combining diaeresis were replaced by a dash.
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 30)
+      .replace(/-+$/g, "")
+  )
 }
 
 export function shortThreadId(threadId: string): string {
   // Preserve existing UUID paths while keeping arbitrary API identifiers out
   // of filesystem and Git path syntax. Registry/disk checks reject collisions.
-  const compact = threadId.replace(/-/g, "");
-  const short = compact.slice(0, 8);
-  if (/^[a-zA-Z0-9]+$/.test(compact) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(short)) {
-    return short;
+  const compact = threadId.replace(/-/g, "")
+  const short = compact.slice(0, 8)
+  if (
+    /^[a-zA-Z0-9]+$/.test(compact) &&
+    !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(short)
+  ) {
+    return short
   }
-  return createHash("sha256").update(threadId).digest("hex").slice(0, 8);
+  return createHash("sha256").update(threadId).digest("hex").slice(0, 8)
 }
 
 /**
@@ -104,22 +115,31 @@ export function shortThreadId(threadId: string): string {
  * and to keep `.gitignore` clean. Grouped by a short hash of the base repo
  * so multiple projects can coexist under `~/.betterc0de/worktrees/`.
  */
-export function computeWorktreePath(baseRepoPath: string, threadId: string): string {
-  const home = os.homedir();
+export function computeWorktreePath(
+  baseRepoPath: string,
+  threadId: string
+): string {
+  const home = os.homedir()
   const projectHash = createHash("sha256")
     .update(path.resolve(baseRepoPath))
     .digest("hex")
-    .slice(0, 8);
-  return path.join(home, ".betterc0de", "worktrees", projectHash, shortThreadId(threadId));
+    .slice(0, 8)
+  return path.join(
+    home,
+    ".betterc0de",
+    "worktrees",
+    projectHash,
+    shortThreadId(threadId)
+  )
 }
 
-const WORKTREE_EVENT_STREAM_KIND = "worktree";
+const WORKTREE_EVENT_STREAM_KIND = "worktree"
 
 export class WorktreeManager {
   constructor(
     private readonly db: Db,
     private readonly eventStore: EventStore,
-    private readonly registry: WorktreeRegistryQuery,
+    private readonly registry: WorktreeRegistryQuery
   ) {}
 
   /**
@@ -138,46 +158,50 @@ export class WorktreeManager {
    *    worktree_state` reflect the new worktree.
    *  - A `WorktreeCreated` event is appended to `orchestration_events`.
    */
-  async createForThread(opts: WorktreeCreateOptions): Promise<WorktreeCreateResult> {
-    const { threadId, baseRepoPath, baseBranch, firstMessage } = opts;
+  async createForThread(
+    opts: WorktreeCreateOptions
+  ): Promise<WorktreeCreateResult> {
+    const { threadId, baseRepoPath, baseBranch, firstMessage } = opts
     if (!threadId || !baseRepoPath || !baseBranch) {
-      throw new Error("createForThread: threadId, baseRepoPath, baseBranch are required");
+      throw new Error(
+        "createForThread: threadId, baseRepoPath, baseBranch are required"
+      )
     }
 
-    const existing = this.registry.findByThread(threadId);
+    const existing = this.registry.findByThread(threadId)
     if (existing) {
       if (existing.state === "removing") {
         throw Object.assign(
           new Error(
-            `Worktree for thread '${threadId}' is still being removed; retry removal first.`,
+            `Worktree for thread '${threadId}' is still being removed; retry removal first.`
           ),
-          { statusCode: 409, code: "worktree_removal_pending" },
-        );
+          { statusCode: 409, code: "worktree_removal_pending" }
+        )
       }
-      const recovered = await this.recoverExistingCreation(existing);
-      if (recovered) return recovered;
+      const recovered = await this.recoverExistingCreation(existing)
+      if (recovered) return recovered
     }
 
-    const branch = await this.allocateUniqueBranch(threadId, firstMessage);
-    const worktreePath = computeWorktreePath(baseRepoPath, threadId);
+    const branch = await this.allocateUniqueBranch(threadId, firstMessage)
+    const worktreePath = computeWorktreePath(baseRepoPath, threadId)
 
     if (this.registry.findByPath(worktreePath)) {
-      throw new Error(`worktree path already registered: ${worktreePath}`);
+      throw new Error(`worktree path already registered: ${worktreePath}`)
     }
     if (fs.existsSync(worktreePath)) {
       // A stale on-disk directory not in the registry (e.g. a previous crash
       // before the row was written). Refuse rather than clobber.
       throw new Error(
         `worktree path already exists on disk but is not registered: ${worktreePath}. ` +
-          `Remove it manually or run prune.`,
-      );
+          `Remove it manually or run prune.`
+      )
     }
 
     // Ensure the parent dir exists — git itself won't mkdir -p for us.
-    fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
+    fs.mkdirSync(path.dirname(worktreePath), { recursive: true })
 
-    const worktreeId = randomUUID();
-    const now = new Date().toISOString();
+    const worktreeId = randomUUID()
+    const now = new Date().toISOString()
 
     // Insert registry row FIRST in `creating` state. If the shell-out fails,
     // we delete the row in the catch; if it succeeds, we transition to
@@ -194,16 +218,16 @@ export class WorktreeManager {
       delete_branch_on_remove: 0,
       created_at: now,
       updated_at: now,
-    });
+    })
 
     try {
-      await gitCreateWorktree(baseRepoPath, worktreePath, branch, baseBranch);
+      await gitCreateWorktree(baseRepoPath, worktreePath, branch, baseBranch)
     } catch (err) {
-      let materializationVerifiedAbsent = false;
+      let materializationVerifiedAbsent = false
       try {
         materializationVerifiedAbsent =
           !(await this.isRegisteredWithGit(baseRepoPath, worktreePath)) &&
-          !fs.existsSync(worktreePath);
+          !fs.existsSync(worktreePath)
       } catch (verificationError) {
         logger.warn(
           {
@@ -213,31 +237,39 @@ export class WorktreeManager {
                 ? verificationError.message
                 : String(verificationError),
           },
-          "worktree create failure could not be reconciled; retaining reservation",
-        );
+          "worktree create failure could not be reconciled; retaining reservation"
+        )
       }
       if (materializationVerifiedAbsent) {
-        this.registry.delete(worktreeId);
+        this.registry.delete(worktreeId)
       }
-      const message = err instanceof Error ? err.message : String(err);
+      const message = err instanceof Error ? err.message : String(err)
       logger.error(
-        { threadId, baseRepoPath, baseBranch, branch, worktreePath, err: message },
-        "worktree create failed",
-      );
-      throw new Error(`git worktree add failed: ${message}`);
+        {
+          threadId,
+          baseRepoPath,
+          baseBranch,
+          branch,
+          worktreePath,
+          err: message,
+        },
+        "worktree create failed"
+      )
+      throw new Error(`git worktree add failed: ${message}`)
     }
 
-    const headSha = await gitHeadSha(worktreePath);
+    const headSha = await gitHeadSha(worktreePath)
 
     // Transition registry → ready, update thread projection, append event.
     this.db.transaction(() => {
-      this.registry.updateState(worktreeId, "ready", new Date().toISOString());
+      this.registry.updateState(worktreeId, "ready", new Date().toISOString())
       this.writeThreadMetadata(threadId, {
+        envMode: "worktree",
         worktreePath,
         branch,
         baseBranch,
         worktreeState: "ready",
-      });
+      })
       this.appendEvent(threadId, "WorktreeCreated", {
         thread_id: threadId,
         worktree_id: worktreeId,
@@ -246,13 +278,13 @@ export class WorktreeManager {
         base_branch: baseBranch,
         base_repo_path: path.resolve(baseRepoPath),
         head_sha: headSha,
-      });
-    })();
+      })
+    })()
 
     logger.info(
       { threadId, branch, worktreePath, baseBranch },
-      "worktree created",
-    );
+      "worktree created"
+    )
 
     return {
       worktreeId,
@@ -261,7 +293,7 @@ export class WorktreeManager {
       branch,
       baseBranch,
       headSha,
-    };
+    }
   }
 
   /**
@@ -273,90 +305,91 @@ export class WorktreeManager {
    */
   async removeForThread(
     threadId: string,
-    opts: { deleteBranch?: boolean; force?: boolean } = {},
+    opts: { deleteBranch?: boolean; force?: boolean } = {}
   ): Promise<void> {
-    const entry = this.registry.findByThread(threadId);
-    if (!entry) return;
+    const entry = this.registry.findByThread(threadId)
+    if (!entry) return
 
     const deleteBranch =
-      entry.delete_branch_on_remove === 1 || opts.deleteBranch === true;
+      entry.delete_branch_on_remove === 1 || opts.deleteBranch === true
     this.registry.markRemoving(
       entry.worktree_id,
       deleteBranch,
-      new Date().toISOString(),
-    );
+      new Date().toISOString()
+    )
 
-    let physicallyRemoved = false;
+    let physicallyRemoved = false
     try {
       await gitRemoveWorktree(entry.base_repo_path, entry.worktree_path, {
         force: opts.force ?? true,
-      });
-      physicallyRemoved = true;
+      })
+      physicallyRemoved = true
     } catch (err) {
       // The worktree might already be gone (user `rm -rf`'d it, crash
       // cleanup, etc.). Prune so the git admin state stays consistent.
       logger.warn(
         { threadId, err: err instanceof Error ? err.message : String(err) },
-        "worktree remove failed; attempting prune",
-      );
+        "worktree remove failed; attempting prune"
+      )
       try {
-        await gitPruneWorktrees(entry.base_repo_path);
+        await gitPruneWorktrees(entry.base_repo_path)
       } catch {
         /* best-effort */
       }
       physicallyRemoved =
         !(await this.isRegisteredWithGit(
           entry.base_repo_path,
-          entry.worktree_path,
-        )) && !fs.existsSync(entry.worktree_path);
+          entry.worktree_path
+        )) && !fs.existsSync(entry.worktree_path)
       if (!physicallyRemoved) {
         throw Object.assign(
           new Error(
             `Worktree removal failed and the worktree is still present: ${
               err instanceof Error ? err.message : String(err)
-            }`,
+            }`
           ),
-          { statusCode: 409, code: "worktree_removal_incomplete" },
-        );
+          { statusCode: 409, code: "worktree_removal_incomplete" }
+        )
       }
     }
 
     if (deleteBranch) {
       try {
-        await gitDeleteBranch(entry.base_repo_path, entry.branch, true);
+        await gitDeleteBranch(entry.base_repo_path, entry.branch, true)
       } catch (err) {
         throw Object.assign(
           new Error(
             `Worktree was removed, but branch '${entry.branch}' could not be deleted: ${
               err instanceof Error ? err.message : String(err)
-            }`,
+            }`
           ),
           {
             statusCode: 409,
             code: "worktree_branch_cleanup_incomplete",
             physicallyRemoved,
-          },
-        );
+          }
+        )
       }
     }
 
     this.db.transaction(() => {
       this.writeThreadMetadata(threadId, {
+        envMode: "local",
         worktreePath: null,
         branch: null,
         baseBranch: null,
         worktreeState: "abandoned",
-      });
+      })
       this.appendEvent(threadId, "WorktreeRemoved", {
         thread_id: threadId,
         worktree_id: entry.worktree_id,
         branch: entry.branch,
         deleted_branch: deleteBranch,
-      });
-      this.registry.delete(entry.worktree_id);
-    })();
+      })
+      this.registry.delete(entry.worktree_id)
+    })()
 
-    logger.info({ threadId, branch: entry.branch }, "worktree removed");
+    logger.info({ threadId, branch: entry.branch }, "worktree removed")
   }
 
   /**
@@ -366,43 +399,43 @@ export class WorktreeManager {
    */
   async resetForThread(
     threadId: string,
-    opts: { clean?: boolean; updateSubmodules?: boolean } = {},
+    opts: { clean?: boolean; updateSubmodules?: boolean } = {}
   ): Promise<WorktreeResetResult> {
-    const entry = this.registry.findByThread(threadId);
+    const entry = this.registry.findByThread(threadId)
     if (!entry) {
       throw Object.assign(
         new Error("No isolated worktree is registered for this thread"),
-        { statusCode: 404 },
-      );
+        { statusCode: 404 }
+      )
     }
 
-    const baseRepoPath = path.resolve(entry.base_repo_path);
-    const worktreePath = path.resolve(entry.worktree_path);
+    const baseRepoPath = path.resolve(entry.base_repo_path)
+    const worktreePath = path.resolve(entry.worktree_path)
     if (canonicalPath(baseRepoPath) === canonicalPath(worktreePath)) {
-      throw Object.assign(
-        new Error("Cannot reset the primary workspace"),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error("Cannot reset the primary workspace"), {
+        statusCode: 400,
+      })
     }
 
     await gitResetWorktree(baseRepoPath, worktreePath, entry.base_branch, {
       clean: opts.clean ?? true,
       updateSubmodules: opts.updateSubmodules ?? true,
-    });
+    })
 
-    const headSha = await gitHeadSha(worktreePath);
+    const headSha = await gitHeadSha(worktreePath)
     this.db.transaction(() => {
       this.registry.updateState(
         entry.worktree_id,
         "ready",
-        new Date().toISOString(),
-      );
+        new Date().toISOString()
+      )
       this.writeThreadMetadata(threadId, {
+        envMode: "worktree",
         worktreePath: entry.worktree_path,
         branch: entry.branch,
         baseBranch: entry.base_branch,
         worktreeState: "ready",
-      });
+      })
       this.appendEvent(threadId, "WorktreeReset", {
         thread_id: threadId,
         worktree_id: entry.worktree_id,
@@ -412,13 +445,13 @@ export class WorktreeManager {
         head_sha: headSha,
         clean: opts.clean ?? true,
         update_submodules: opts.updateSubmodules ?? true,
-      });
-    })();
+      })
+    })()
 
     logger.info(
       { threadId, branch: entry.branch, worktreePath: entry.worktree_path },
-      "worktree reset",
-    );
+      "worktree reset"
+    )
 
     return {
       worktreeId: entry.worktree_id,
@@ -427,43 +460,46 @@ export class WorktreeManager {
       branch: entry.branch,
       baseBranch: entry.base_branch,
       headSha,
-    };
+    }
   }
 
   /** All currently-registered worktrees across all threads. */
   listActive(): WorktreeRegistryEntry[] {
-    return this.registry.listAll();
+    return this.registry.listAll()
   }
 
   /** Lookup for a specific thread, or null if the thread has no worktree. */
   findForThread(threadId: string): WorktreeRegistryEntry | null {
-    return this.registry.findByThread(threadId);
+    return this.registry.findByThread(threadId)
   }
 
   /** True when `branch` is NOT checked out in any registered worktree. */
   isBranchAvailable(branch: string): boolean {
-    return this.registry.findByBranch(branch) === null;
+    return this.registry.findByBranch(branch) === null
   }
 
   /**
    * Transition a worktree's lifecycle state. No-ops silently if no worktree
    * is registered for the thread — callers don't need to guard.
    */
-  async transitionState(threadId: string, newState: WorktreeState): Promise<void> {
-    const entry = this.registry.findByThread(threadId);
-    if (!entry || entry.state === newState) return;
+  async transitionState(
+    threadId: string,
+    newState: WorktreeState
+  ): Promise<void> {
+    const entry = this.registry.findByThread(threadId)
+    if (!entry || entry.state === newState) return
 
-    const now = new Date().toISOString();
+    const now = new Date().toISOString()
     this.db.transaction(() => {
-      this.registry.updateState(entry.worktree_id, newState, now);
-      this.writeThreadMetadata(threadId, { worktreeState: newState });
+      this.registry.updateState(entry.worktree_id, newState, now)
+      this.writeThreadMetadata(threadId, { worktreeState: newState })
       this.appendEvent(threadId, "WorktreeStateChanged", {
         thread_id: threadId,
         worktree_id: entry.worktree_id,
         from: entry.state,
         to: newState,
-      });
-    })();
+      })
+    })()
   }
 
   /**
@@ -472,55 +508,56 @@ export class WorktreeManager {
    * so stale state doesn't block re-creation.
    */
   async reconcile(baseRepoPath: string): Promise<{ removed: number }> {
-    let removed = 0;
-    const resolvedBaseRepoPath = path.resolve(baseRepoPath);
-    let worktrees: Awaited<ReturnType<typeof gitListWorktrees>>;
+    let removed = 0
+    const resolvedBaseRepoPath = path.resolve(baseRepoPath)
+    let worktrees: Awaited<ReturnType<typeof gitListWorktrees>>
     try {
-      worktrees = await gitListWorktrees(resolvedBaseRepoPath);
+      worktrees = await gitListWorktrees(resolvedBaseRepoPath)
     } catch (err) {
       logger.warn(
         {
           baseRepoPath: resolvedBaseRepoPath,
           err: err instanceof Error ? err.message : String(err),
         },
-        "worktree reconcile could not list repository worktrees",
-      );
-      return { removed };
+        "worktree reconcile could not list repository worktrees"
+      )
+      return { removed }
     }
 
-    const livePaths = new Set(worktrees.map((w) => path.resolve(w.path)));
+    const livePaths = new Set(worktrees.map((w) => path.resolve(w.path)))
     for (const entry of this.registry.listAll()) {
-      if (entry.base_repo_path !== resolvedBaseRepoPath) continue;
+      if (entry.base_repo_path !== resolvedBaseRepoPath) continue
       try {
-        const isLive = livePaths.has(path.resolve(entry.worktree_path));
+        const isLive = livePaths.has(path.resolve(entry.worktree_path))
         if (entry.state === "removing") {
           // removeForThread reads the durable branch-deletion intent. This
           // also completes the phase where Git already removed the worktree
           // but the process exited before deleting the branch or registry row.
-          await this.removeForThread(entry.thread_id, { force: true });
-          removed += 1;
-          continue;
+          await this.removeForThread(entry.thread_id, { force: true })
+          removed += 1
+          continue
         }
         if (isLive && entry.state === "creating") {
-          await this.recoverExistingCreation(entry);
-          continue;
+          await this.recoverExistingCreation(entry)
+          continue
         }
         if (!isLive && !fs.existsSync(entry.worktree_path)) {
           this.db.transaction(() => {
             this.writeThreadMetadata(entry.thread_id, {
+              envMode: "local",
               worktreePath: null,
               branch: null,
               baseBranch: null,
               worktreeState: "abandoned",
-            });
+            })
             this.appendEvent(entry.thread_id, "WorktreeReconciledMissing", {
               thread_id: entry.thread_id,
               worktree_id: entry.worktree_id,
               prior_state: entry.state,
-            });
-            this.registry.delete(entry.worktree_id);
-          })();
-          removed += 1;
+            })
+            this.registry.delete(entry.worktree_id)
+          })()
+          removed += 1
         }
       } catch (err) {
         logger.warn(
@@ -530,60 +567,69 @@ export class WorktreeManager {
             worktreeId: entry.worktree_id,
             err: err instanceof Error ? err.message : String(err),
           },
-          "worktree reconcile entry failed; continuing with remaining entries",
-        );
+          "worktree reconcile entry failed; continuing with remaining entries"
+        )
       }
     }
-    return { removed };
+    return { removed }
   }
 
   // ─── Internals ──────────────────────────────────────────────────────────
 
   private async allocateUniqueBranch(
     threadId: string,
-    firstMessage: string | undefined | null,
+    firstMessage: string | undefined | null
   ): Promise<string> {
-    const candidate = buildBranchName(threadId, firstMessage);
-    if (this.isBranchAvailable(candidate)) return candidate;
+    const candidate = buildBranchName(threadId, firstMessage)
+    if (this.isBranchAvailable(candidate)) return candidate
 
     // A registered collision. Append a short random suffix. We don't
     // iterate-and-retry more than once because the short-thread-id prefix
     // normally distinguishes UUIDs; registry constraints reject collisions.
-    const suffix = randomUUID().replace(/-/g, "").slice(0, 4);
-    return `${candidate}-${suffix}`;
+    const suffix = randomUUID().replace(/-/g, "").slice(0, 4)
+    return `${candidate}-${suffix}`
   }
 
+  // The chat's env mode follows its worktree here, where the worktree is
+  // made and removed, instead of relying on the client that asked to also
+  // write it back: a paired phone creates worktrees without writing the
+  // chat's whole metadata.
   private writeThreadMetadata(
     threadId: string,
     patch: {
-      worktreePath?: string | null;
-      branch?: string | null;
-      baseBranch?: string | null;
-      worktreeState?: WorktreeState;
-    },
+      envMode?: "local" | "worktree"
+      worktreePath?: string | null
+      branch?: string | null
+      baseBranch?: string | null
+      worktreeState?: WorktreeState
+    }
   ): void {
-    const fields: string[] = [];
-    const values: Array<string | null> = [];
+    const fields: string[] = []
+    const values: Array<string | null> = []
+    if (patch.envMode !== undefined) {
+      fields.push("env_mode = ?")
+      values.push(patch.envMode)
+    }
     if (patch.worktreePath !== undefined) {
-      fields.push("worktree_path = ?");
-      values.push(patch.worktreePath);
+      fields.push("worktree_path = ?")
+      values.push(patch.worktreePath)
     }
     if (patch.branch !== undefined) {
-      fields.push("branch = ?");
-      values.push(patch.branch);
+      fields.push("branch = ?")
+      values.push(patch.branch)
     }
     if (patch.baseBranch !== undefined) {
-      fields.push("base_branch = ?");
-      values.push(patch.baseBranch);
+      fields.push("base_branch = ?")
+      values.push(patch.baseBranch)
     }
     if (patch.worktreeState !== undefined) {
-      fields.push("worktree_state = ?");
-      values.push(patch.worktreeState);
+      fields.push("worktree_state = ?")
+      values.push(patch.worktreeState)
     }
-    if (fields.length === 0) return;
-    fields.push("updated_at = ?");
-    values.push(new Date().toISOString());
-    values.push(threadId);
+    if (fields.length === 0) return
+    fields.push("updated_at = ?")
+    values.push(new Date().toISOString())
+    values.push(threadId)
 
     // Prepared on the fly on purpose: this runs once per worktree lifecycle
     // change, not per turn, so re-planning one of the 16 field combinations
@@ -591,15 +637,15 @@ export class WorktreeManager {
     // hot path must hold its Statement in a field instead.)
     this.db
       .prepare(
-        `UPDATE projection_threads SET ${fields.join(", ")} WHERE thread_id = ?`,
+        `UPDATE projection_threads SET ${fields.join(", ")} WHERE thread_id = ?`
       )
-      .run(...values);
+      .run(...values)
   }
 
   private appendEvent(
     threadId: string,
     eventType: string,
-    payload: Record<string, unknown>,
+    payload: Record<string, unknown>
   ): void {
     try {
       // EventStore.append is synchronous. This method participates in the
@@ -613,7 +659,7 @@ export class WorktreeManager {
           stream_version:
             this.eventStore.latestStreamVersion(
               WORKTREE_EVENT_STREAM_KIND,
-              threadId,
+              threadId
             ) + 1,
           event_type: eventType,
           occurred_at: new Date().toISOString(),
@@ -624,53 +670,57 @@ export class WorktreeManager {
           payload_json: JSON.stringify(payload),
           metadata_json: "{}",
         },
-      ]);
+      ])
     } catch (err) {
       // Log with context, then rethrow: the append shares the caller's
       // transaction, so the registry/projection mutation rolls back with it
       // rather than leaving a worktree row without its lifecycle event.
       logger.error(
-        { threadId, eventType, err: err instanceof Error ? err.message : String(err) },
-        "worktree event append failed",
-      );
-      throw err;
+        {
+          threadId,
+          eventType,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "worktree event append failed"
+      )
+      throw err
     }
   }
 
   private async recoverExistingCreation(
-    existing: WorktreeRegistryEntry,
+    existing: WorktreeRegistryEntry
   ): Promise<WorktreeCreateResult | null> {
     const materialized = await this.isRegisteredWithGit(
       existing.base_repo_path,
-      existing.worktree_path,
-    );
+      existing.worktree_path
+    )
     if (!materialized) {
       if (fs.existsSync(existing.worktree_path)) {
         throw Object.assign(
           new Error(
-            `Worktree '${existing.worktree_path}' exists but Git does not recognize it; manual recovery is required.`,
+            `Worktree '${existing.worktree_path}' exists but Git does not recognize it; manual recovery is required.`
           ),
-          { statusCode: 409, code: "worktree_recovery_required" },
-        );
+          { statusCode: 409, code: "worktree_recovery_required" }
+        )
       }
-      this.registry.delete(existing.worktree_id);
-      return null;
+      this.registry.delete(existing.worktree_id)
+      return null
     }
 
-    const headSha = await gitHeadSha(existing.worktree_path);
+    const headSha = await gitHeadSha(existing.worktree_path)
     if (existing.state === "creating") {
       this.db.transaction(() => {
         this.registry.updateState(
           existing.worktree_id,
           "ready",
-          new Date().toISOString(),
-        );
+          new Date().toISOString()
+        )
         this.writeThreadMetadata(existing.thread_id, {
           worktreePath: existing.worktree_path,
           branch: existing.branch,
           baseBranch: existing.base_branch,
           worktreeState: "ready",
-        });
+        })
         this.appendEvent(existing.thread_id, "WorktreeCreationRecovered", {
           thread_id: existing.thread_id,
           worktree_id: existing.worktree_id,
@@ -678,8 +728,8 @@ export class WorktreeManager {
           branch: existing.branch,
           base_branch: existing.base_branch,
           head_sha: headSha,
-        });
-      })();
+        })
+      })()
     }
     return {
       worktreeId: existing.worktree_id,
@@ -688,24 +738,24 @@ export class WorktreeManager {
       branch: existing.branch,
       baseBranch: existing.base_branch,
       headSha,
-    };
+    }
   }
 
   private async isRegisteredWithGit(
     baseRepoPath: string,
-    worktreePath: string,
+    worktreePath: string
   ): Promise<boolean> {
-    const expected = canonicalPath(worktreePath);
+    const expected = canonicalPath(worktreePath)
     return (await gitListWorktrees(baseRepoPath)).some(
-      (worktree) => canonicalPath(worktree.path) === expected,
-    );
+      (worktree) => canonicalPath(worktree.path) === expected
+    )
   }
 }
 
 function canonicalPath(input: string): string {
   try {
-    return fs.realpathSync.native(input);
+    return fs.realpathSync.native(input)
   } catch {
-    return path.resolve(input);
+    return path.resolve(input)
   }
 }
