@@ -30,6 +30,32 @@ jest.mock("expo-secure-store", () => {
   }
 })
 
+// The app's document folder: in-memory files per test file, with the parts
+// of the File API that lib/file-documents.ts uses.
+jest.mock("expo-file-system", () => {
+  const files = new Map()
+  class File {
+    constructor(...parts) {
+      this.uri = parts.map((part) => (typeof part === "string" ? part : part.uri)).join("/")
+    }
+    get exists() {
+      return files.has(this.uri)
+    }
+    create() {
+      if (files.has(this.uri)) throw new Error(`${this.uri} already exists`)
+      files.set(this.uri, "")
+    }
+    write(text) {
+      files.set(this.uri, String(text))
+    }
+    textSync() {
+      if (!files.has(this.uri)) throw new Error(`${this.uri} does not exist`)
+      return files.get(this.uri)
+    }
+  }
+  return { File, Paths: { document: { uri: "file:///documents" } } }
+})
+
 // Any real network access from a component test is a bug.
 global.fetch = jest.fn(() => Promise.reject(new Error("Component tests must not use the network.")))
 global.WebSocket = jest.fn(() => {

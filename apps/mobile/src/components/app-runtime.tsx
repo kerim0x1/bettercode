@@ -1,5 +1,13 @@
+import { fileDocumentStorage } from "@/lib/file-documents"
+import {
+  memoryDocumentStorage,
+  setDocumentStorage,
+} from "@/lib/local-documents"
 import { isReplayGapFrame } from "@/lib/runtime-events"
 import { useAppStore } from "@/store/app-store"
+import { useComposerSettings } from "@/store/composer-settings-store"
+import { startQueueRunner } from "@/store/queue-runner"
+import { useQueueStore } from "@/store/queue-store"
 import { useSessionStore } from "@/store/session-store"
 import type { RemoteApi, RemoteChannel } from "@/transport/types"
 import { useEffect, useRef } from "react"
@@ -8,11 +16,13 @@ import { AppState } from "react-native"
 /**
  * Keeps the app connected: restores the pairing at start, opens the live
  * event stream of the current transport (paired desktop or demo), feeds its
- * events into the app store, and re-checks the session when the app comes
- * back to the foreground and once a minute.
+ * events into the app store, sends queued messages, and re-checks the
+ * session when the app comes back to the foreground and once a minute.
  */
 export function AppRuntime() {
   const transport = useSessionStore((state) => state.transport)
+  const mode = useSessionStore((state) => state.mode)
+  const sessionState = useSessionStore((state) => state.state)
   const hydrate = useSessionStore((state) => state.hydrate)
   const check = useSessionStore((state) => state.check)
   const setSocketState = useSessionStore((state) => state.setSocketState)
@@ -25,6 +35,24 @@ export function AppRuntime() {
   useEffect(() => {
     void hydrate()
   }, [hydrate])
+
+  // Chat settings and queued messages belong to the connection they were
+  // made for: a paired desktop's are kept in the app's documents across
+  // restarts, the demo's only in memory, and ending a pairing ends them.
+  useEffect(() => {
+    if (!mode) return
+    setDocumentStorage(
+      mode === "live" ? fileDocumentStorage : memoryDocumentStorage()
+    )
+    useComposerSettings.getState().hydrate()
+    useQueueStore.getState().hydrate()
+  }, [mode])
+
+  useEffect(() => {
+    if (sessionState !== "unpaired") return
+    useQueueStore.getState().discardAll()
+    useComposerSettings.getState().forgetAll()
+  }, [sessionState])
 
   useEffect(() => {
     if (!transport) {
@@ -86,6 +114,7 @@ export function AppRuntime() {
     })
     channelRef.current = channel
     channel.start()
+    const stopQueue = startQueueRunner(api)
 
     const subscription = AppState.addEventListener("change", (nextState) => {
       if (nextState !== "active") return
@@ -97,6 +126,7 @@ export function AppRuntime() {
     }, 60_000)
 
     return () => {
+      stopQueue()
       for (const timer of pendingRefreshes) clearTimeout(timer)
       clearInterval(healthTimer)
       subscription.remove()
