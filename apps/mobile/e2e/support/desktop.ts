@@ -61,8 +61,11 @@ export async function startTestDesktop(): Promise<TestDesktop> {
       `${path.relative(REPO, BACKEND_ENTRY)} is missing. Build it first: npm run build:backend`
     )
   }
-  const tempRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "betterc0de-mobile-e2e-")
+  // The desktop answers with canonical paths (macOS keeps the temporary
+  // folder behind a symlink, /var → /private/var), as its folder picker
+  // records them; the tests compare against those.
+  const tempRoot = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-mobile-e2e-"))
   )
   const home = path.join(tempRoot, "home")
   const workspace = path.join(tempRoot, "workspace")
