@@ -128,6 +128,7 @@ The flows in `apps/mobile/maestro/flows` run against the demo mode, so they need
 - `pairing-input.yaml`: a bare pairing code is refused before anything is sent.
 - `demo-chat.yaml`: the demo from the pairing screen through a streamed, approved reply to **Exit demo**.
 - `demo-link.yaml`: `betterc0de://demo` opens the demo. This checks the scheme the native project registers.
+- `demo-git.yaml`: source control from a project: a file and one of a README's two changes staged, a generated message, a commit and a push.
 
 They find elements by `testID`, which Maestro sees as the element's id on both platforms. Renaming or removing one breaks a flow, and CI with it.
 

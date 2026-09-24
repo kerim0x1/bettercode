@@ -115,6 +115,27 @@ against sample chats and files (see [Demo mode](#demo-mode)).
   (`checkpoint.captured`, ready), **Restore checkpoint** returns the chat and
   the project folder to it, after the desktop's warning
   (`@betterc0de/schema/chat-controls`), and loads the chat again.
+- **Source control** (a chat's header, or a project) is the desktop's git panel
+  for that folder (`src/app/git/`):
+  - the branch and its remote, with Fetch, Pull and Push, or Publish for a
+    branch without upstream;
+  - a commit box: **Generate** sends the desktop's generator the summary
+    `@betterc0de/schema/git-commit-message` makes of what Commit will take
+    (Cancel stops waiting), and Commit stages everything first when nothing
+    is staged, as on the desktop;
+  - the staged, changed and untracked files, and each file's diff
+    (`src/components/diff-view.tsx`, virtualized, parsed by
+    `@betterc0de/schema/git-diff`), where a single change is staged,
+    discarded or unstaged;
+  - branches to switch to or create, and the latest commits.
+
+  Confirmations use the desktop's words (`src/lib/git-review.ts`); only
+  discarding a single change asks on the phone and not on the desktop. The
+  desktop refuses git requests from a read-only session, so such a phone gets
+  no source control. In the demo, each project is an in-memory repository
+  (`src/transport/demo/git.ts`) whose diffs have git's own format.
+- A chat's **Changes** list each turn's and checkpoint's files; a file opens in
+  full in the same diff view.
 - `queue-store.ts` and `queue-runner.ts` queue messages written while the agent
   works, with the desktop's rules from `@betterc0de/schema/message-queue` (30
   per chat, one at a time, paused after a failure or a restart). The queue and

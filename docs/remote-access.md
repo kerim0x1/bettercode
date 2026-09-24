@@ -67,7 +67,14 @@ provides touch-native screens for:
   included, and keeps a message within the desktop's request limit (2 MB).
   Whether the agent sees them depends on the provider, as on the desktop:
   Claude Code gets only their names, for now;
-- project browsing plus chat-scoped files, text previews, diffs, and checkpoints;
+- source control for a chat's folder or a project, like the desktop's git
+  panel: status, staging and unstaging files or single changes, discarding,
+  commits with a message the desktop generates, fetch, pull, push and
+  publishing a branch, switching and creating branches, and the latest
+  commits. A read-only session gets none: the desktop refuses every git
+  request from it;
+- project browsing plus chat-scoped files, text previews, diffs (in full,
+  file by file), and checkpoints;
 - host health, session identity, expiry, and self-revocation.
 
 The desktop prepares a message from the phone as it prepares its own (the
@@ -299,6 +306,14 @@ Every refusal a paired device can receive carries a `code`:
 | 426 | `secure_transport_required` | Plain HTTP from a public address. |
 | 426 | `client_update_required` | The phone app is older than `minClientVersion`. |
 | 429 | `rate_limited` | Too many requests; wait for `Retry-After`. |
+
+Source control answers with the desktop's own words and these codes:
+`git_nothing_to_commit` (400, nothing staged and nothing to stage),
+`git_hunk_conflict` (409, the change is no longer in the diff),
+`git_remote_error` (400 to 409, push, pull or fetch refused: no remote, no
+upstream, authentication, the remote is ahead, local changes in the way) and
+`commit_generation_unavailable` (422, no Codex or Claude CLI could write the
+message).
 
 Developers: `packages/schema/src/remote-protocol.ts` defines the block. Raise
 `REMOTE_API_VERSION` only for a change an installed app cannot handle (a
