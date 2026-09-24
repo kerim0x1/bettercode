@@ -49,9 +49,33 @@ function reserveRemoteProviderTurn(
   })
 }
 
+/**
+ * Text generation runs a provider CLI in the caller's folder. A paired
+ * device may only name a registered workspace, as for every other route
+ * that works in a folder; the desktop's own requests keep their folder.
+ */
+async function textGenerationCwd(
+  state: AppState,
+  c: Context,
+  cwd: string | null | undefined
+): Promise<string | null> {
+  if (!cwd || requestIdentity(c, state.config, state)?.kind !== "remote")
+    return cwd ?? null
+  return resolveApprovedWorkspaceRoot(state, cwd)
+}
+
 export function registerChatRoutes(api: Hono, state: AppState): void {
-  api.post("/chat/goal", c => handleHttpContract(c, "chatGoal", async body =>
-    controlThreadGoal(state, body, () => reserveRemoteProviderTurn(state, c)), { operation: "chat goal" }))
+  api.post("/chat/goal", (c) =>
+    handleHttpContract(
+      c,
+      "chatGoal",
+      async (body) =>
+        controlThreadGoal(state, body, () =>
+          reserveRemoteProviderTurn(state, c)
+        ),
+      { operation: "chat goal" }
+    )
+  )
   api.post("/chat/persist-user", (c) =>
     handleHttpContract(
       c,
@@ -76,8 +100,14 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
       c,
       "chatSend",
       async (parsedBody) => {
-        if (parsedBody.orchestration?.enabled && requestIdentity(c, state.config, state)?.kind !== "local")
-          throw new HttpError(403, "Only the desktop host can configure orchestration.")
+        if (
+          parsedBody.orchestration?.enabled &&
+          requestIdentity(c, state.config, state)?.kind !== "local"
+        )
+          throw new HttpError(
+            403,
+            "Only the desktop host can configure orchestration."
+          )
         return dispatchChatTurn(state, parsedBody, () =>
           reserveRemoteProviderTurn(state, c)
         )
@@ -104,9 +134,10 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
           body.cwd ??
           state.threads.getThreadProjectPath?.(body.threadId) ??
           null
-        const approvedCwd = cwd && requestIdentity(c, state.config, state)?.kind === "remote"
-          ? await resolveApprovedWorkspaceRoot(state, cwd)
-          : cwd
+        const approvedCwd =
+          cwd && requestIdentity(c, state.config, state)?.kind === "remote"
+            ? await resolveApprovedWorkspaceRoot(state, cwd)
+            : cwd
         const resolved = await resolveAutoCompactionDecisionForThread(state, {
           threadId: body.threadId,
           cwd: approvedCwd,
@@ -155,7 +186,11 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
     parseAndHandle(
       c,
       chatGenerateCommitMessageSchema,
-      async (body) => state.chatHelpers.generateCommitMessage(body),
+      async (body) =>
+        state.chatHelpers.generateCommitMessage({
+          ...body,
+          cwd: await textGenerationCwd(state, c, body.cwd),
+        }),
       { operation: "chat text-generation commit-message" }
     )
   )
@@ -164,7 +199,11 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
     parseAndHandle(
       c,
       chatGeneratePrContentSchema,
-      async (body) => state.chatHelpers.generatePrContent(body),
+      async (body) =>
+        state.chatHelpers.generatePrContent({
+          ...body,
+          cwd: await textGenerationCwd(state, c, body.cwd),
+        }),
       { operation: "chat text-generation pr-content" }
     )
   )
@@ -173,7 +212,11 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
     parseAndHandle(
       c,
       chatGenerateBranchNameSchema,
-      async (body) => state.chatHelpers.generateBranchName(body),
+      async (body) =>
+        state.chatHelpers.generateBranchName({
+          ...body,
+          cwd: await textGenerationCwd(state, c, body.cwd),
+        }),
       { operation: "chat text-generation branch-name" }
     )
   )
@@ -182,7 +225,11 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
     parseAndHandle(
       c,
       chatGenerateThreadContextSummarySchema,
-      async (body) => state.chatHelpers.generateThreadContextSummary(body),
+      async (body) =>
+        state.chatHelpers.generateThreadContextSummary({
+          ...body,
+          cwd: await textGenerationCwd(state, c, body.cwd),
+        }),
       { operation: "chat text-generation thread-context-summary" }
     )
   )
@@ -191,7 +238,11 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
     parseAndHandle(
       c,
       chatGenerateSkillContentSchema,
-      async (body) => state.chatHelpers.generateSkillContent(body),
+      async (body) =>
+        state.chatHelpers.generateSkillContent({
+          ...body,
+          cwd: await textGenerationCwd(state, c, body.cwd),
+        }),
       { operation: "chat text-generation skill-content" }
     )
   )

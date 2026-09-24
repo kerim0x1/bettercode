@@ -9,6 +9,7 @@ import {
   parseDevToolsWebSocketUrl,
   removeDirectoryWithRetries,
   selectRendererTarget,
+  taskkillOutcome,
   validateRendererSnapshot,
 } from "./packaged-smoke-helpers.mjs"
 
@@ -602,20 +603,31 @@ async function stopChildTree(processHandle) {
     throw new Error("Packaged application has no process ID for cleanup")
   }
   if (process.platform === "win32") {
-    try {
-      await terminateWindowsChildTree(processHandle.pid)
-    } catch (error) {
-      // taskkill exits 128 ("not found") when the app ended on its own between
-      // the last liveness check and the kill. Its tree is gone then; only a
-      // root that does not report its exit is a failure. A stale backend
-      // would still be caught by the next launch's port check.
-      if (error?.taskkillCode !== 128) throw error
+    // taskkill exits 128 ("not found") when the app ended on its own between
+    // the last liveness check and the kill, and 255 when it could not end
+    // every process of the tree (CI saw it once); a second pass ends what is
+    // left. Only a root that does not report its exit is a failure then. A
+    // process that outlived both passes would still hold the profile, whose
+    // removal below fails, or the port the next launch checks.
+    for (let pass = 1; ; pass += 1) {
+      let failure = null
+      try {
+        await terminateWindowsChildTree(processHandle.pid)
+      } catch (error) {
+        failure = error
+      }
+      const outcome = taskkillOutcome(failure ? failure.taskkillCode : 0, pass)
+      if (outcome === "failed") throw failure
+      if (outcome === "retry") {
+        process.stdout.write(
+          `WARNING: taskkill could not end every process of the app (code ${failure.taskkillCode}); running it once more.\n`
+        )
+        continue
+      }
       await waitForChildExit(processHandle, childExitTimeoutMs)
-      appExitedOnItsOwn = true
+      if (outcome === "exited-before") appExitedOnItsOwn = true
       return
     }
-    await waitForChildExit(processHandle, childExitTimeoutMs)
-    return
   }
 
   try {
