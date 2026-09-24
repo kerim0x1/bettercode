@@ -1,5 +1,5 @@
 import { TERMINAL_METHODS } from "@betterc0de/schema/remote-terminal"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest"
 import { TerminalClient } from "@/terminal/terminal-client"
 import { RemoteSocket } from "@/transport/live/socket"
 import { CLIENT, startTestDesktop, type TestDesktop } from "./support/desktop"
@@ -14,6 +14,26 @@ beforeAll(async () => {
   // A chat in the workspace makes it one the desktop knows.
   await desktop.saveThread("terminal-chat", new Date().toISOString())
   await desktop.setSettings({ remote_access_allow_terminal: true })
+})
+
+// The phones a test paired: their terminals end, and the test waits for
+// their shells to exit, before the next test. Closing one from the phone
+// does not wait, and on Windows a shell takes seconds to end (a graceful
+// end it ignores, a forced one, then ConPTY's report); several left to the
+// desktop's own shutdown can outlast its bound on a slow CI runner.
+const pairedPhones: string[] = []
+async function pairPhone() {
+  const pairing = await desktop.pairPhone()
+  pairedPhones.push(pairing.paired.session.id)
+  return pairing
+}
+afterEach(async () => {
+  for (const sessionId of pairedPhones.splice(0)) {
+    await desktop.asDesktop(
+      "DELETE",
+      `/remote/sessions/${encodeURIComponent(sessionId)}/terminals`
+    )
+  }
 })
 
 afterAll(async () => {
@@ -131,7 +151,7 @@ const hasLine = (output: string, line: string) =>
 
 describe("a terminal on the desktop, from the phone", () => {
   it("runs a command in the workspace, and takes the terminal up again after a lost connection", async () => {
-    const { paired } = await desktop.pairPhone()
+    const { paired } = await pairPhone()
     const first = await phone(paired.sessionToken)
     try {
       const opened = await first.terminal.open(desktop.workspace, 100, 30)
@@ -169,8 +189,8 @@ describe("a terminal on the desktop, from the phone", () => {
   })
 
   it("keeps a phone's terminal to that phone", async () => {
-    const owner = await phone((await desktop.pairPhone()).paired.sessionToken)
-    const other = await phone((await desktop.pairPhone()).paired.sessionToken)
+    const owner = await phone((await pairPhone()).paired.sessionToken)
+    const other = await phone((await pairPhone()).paired.sessionToken)
     try {
       const { terminalId } = await owner.terminal.open(
         desktop.workspace,
@@ -201,7 +221,7 @@ describe("a terminal on the desktop, from the phone", () => {
   })
 
   it("ends when the desktop takes terminals away, and says why", async () => {
-    const { paired } = await desktop.pairPhone()
+    const { paired } = await pairPhone()
     const device = await phone(paired.sessionToken)
     try {
       await device.terminal.open(desktop.workspace, 80, 24)

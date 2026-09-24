@@ -169,5 +169,11 @@ export async function startTestDesktop(): Promise<TestDesktop> {
 function cleanUp(tempRoot: string) {
   vi.unstubAllEnvs()
   vi.restoreAllMocks()
-  fs.rmSync(tempRoot, { recursive: true, force: true })
+  // Retries: on Windows a shell that just ended can hold its folder a moment.
+  fs.rmSync(tempRoot, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 200,
+  })
 }
