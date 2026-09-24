@@ -15,6 +15,7 @@ import {
   dispatchChatTurn,
   prepareChatSendBody,
 } from "./dispatch"
+import { runMessageSendHooks } from "./turn-preparation"
 
 export function initializeThreadGoals(state: AppState): () => void {
   const goals = new ThreadGoals<GoalContext>({
@@ -159,6 +160,10 @@ export async function controlThreadGoal(
   if (!goals)
     throw new HttpError(503, "Goal service is unavailable.", "goal_unavailable")
   try {
+    // The desktop runs its message hooks before any /goal command, as
+    // before any message; a prepared command (the phone app's) gets them
+    // here, once, not with each of the goal's turns.
+    if (body.prepare_turn) await runMessageSendHooks(state, body)
     const command = parseGoalCommand(body.message)
     if (!command)
       throw new Error("Expected /goal followed by an objective or command.")

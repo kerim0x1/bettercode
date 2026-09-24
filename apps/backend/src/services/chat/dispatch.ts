@@ -40,6 +40,10 @@ import {
 } from "./dispatch-lifecycle"
 import { providerHistoryForDispatch } from "./history"
 import { prepareProviderHandoff } from "./provider-handoff"
+import {
+  buildPreparedTurnInstruction,
+  runMessageSendHooks,
+} from "./turn-preparation"
 import { threadGoals } from "./goal-registry"
 import type { GoalTurn } from "./goals"
 
@@ -415,12 +419,23 @@ export async function dispatchChatTurn(
         if (admission && admissionKey) admissions.set(admissionKey, admission)
       }
       const admit = async (): Promise<ChatSendResponse> => {
+        // A client that does not prepare its turns (the phone app) gets the
+        // desktop's preparation: its hooks run first, and one that fails
+        // refuses the message before anything is recorded. A goal's turns
+        // were prepared with the /goal command (controlThreadGoal), as on
+        // the desktop; each still gets the instruction.
+        const prepared = body.prepare_turn === true
+        if (prepared && !goalHooks) await runMessageSendHooks(state, body)
+        const baseSystemInstruction =
+          prepared && !body.system_instruction?.trim()
+            ? await buildPreparedTurnInstruction(state, body)
+            : body.system_instruction
         const effectiveSystemInstruction = await resolveTurnSystemInstruction(
           state,
           {
             workspaceRoot: body.project_path,
             targetPath: body.rule_target_path,
-            systemInstruction: body.system_instruction,
+            systemInstruction: baseSystemInstruction,
           }
         )
         let sharedToken: symbol | undefined

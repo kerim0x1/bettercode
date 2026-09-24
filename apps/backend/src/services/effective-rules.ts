@@ -12,6 +12,7 @@ import {
 import type { AppState } from "../appState"
 import { logger } from "../observability/logger"
 import { compileBoundedGlob } from "./bounded-glob"
+import { desktopRuntimeHome } from "./desktop-runtime-home"
 import {
   listProjectInstructions,
   type ProjectInstructionTemplate,
@@ -375,14 +376,8 @@ export function mergeEffectiveRulesIntoSystemInstruction(
 }
 
 export function runtimeRulesFileForDataDir(dataDir: string): string | null {
-  const configuredHome = process.env.BETTERC0DE_HOME?.trim()
-  if (configuredHome && path.isAbsolute(configuredHome)) {
-    return path.join(path.resolve(configuredHome), "rules.md")
-  }
-  const resolved = path.resolve(dataDir)
-  return path.basename(resolved).toLowerCase() === "userdata"
-    ? path.join(path.dirname(resolved), "rules.md")
-    : null
+  const home = desktopRuntimeHome(dataDir)
+  return home ? path.join(home, "rules.md") : null
 }
 
 function addCandidate(
