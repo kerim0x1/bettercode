@@ -12,52 +12,66 @@ tags:
       id: pair-screen
     timeout: 60000
 - openLink: betterc0de://demo?speed=instant
-# iOS asks before a link opens an app ("Open in “BetterC0de Remote”?"); the
-# question stays on screen otherwise, over every flow after this one.
+# iOS asks before a link opens an app ("Open in “BetterC0de Remote”?"), and
+# a question left open covers every flow after this one. Maestro sees it
+# while it shows. On a busy CI simulator it did not show until the app was
+# started again (by the next flow), 50 s later. So on iOS:
+# - Open is tapped whenever the question shows, for up to 30 s;
+# - if neither the question nor the chat list came, the app is started
+#   again, its state kept, which brings the question up, and Open is tapped.
+# Open's point is tapped only while the question still shows after a tap on
+# its text, never blind.
 - runFlow:
     when:
       platform: iOS
     commands:
-      - tapOn:
-          text: Open
-          optional: true
-      # The question is iOS's, not the app's, and Maestro does not always
-      # see it (iOS 26). Once the app has had time to take the link (a busy
-      # CI simulator took more than 5 s), and only while its chat list has
-      # not appeared at all, Open is tapped where it sits: right of the
-      # middle, below the question. A tap while the pairing screen fades out
-      # left the transition half done.
-      - extendedWaitUntil:
-          visible:
-            id: chats-screen
-          timeout: 15000
-          optional: true
-      - runFlow:
-          when:
-            visible:
-              id: pair-screen
+      - repeat:
+          times: 6
+          while:
             notVisible:
               id: chats-screen
           commands:
-            - tapOn:
-                point: "68%,54%"
-            # The link can still arrive just then, and the tap open a chat
-            # of the list instead: back to the list.
+            - runFlow:
+                when:
+                  visible: "Open in .*"
+                commands:
+                  - tapOn: Open
+            - runFlow:
+                when:
+                  visible: "Open in .*"
+                commands:
+                  - tapOn:
+                      point: "68%,54%"
             - extendedWaitUntil:
                 visible:
-                  id: chat-input
-                timeout: 3000
+                  id: chats-screen
+                timeout: 5000
+                optional: true
+      - runFlow:
+          when:
+            notVisible:
+              id: chats-screen
+          commands:
+            - launchApp
+            - extendedWaitUntil:
+                visible: "Open in .*"
+                timeout: 30000
                 optional: true
             - runFlow:
                 when:
-                  visible:
-                    id: chat-input
+                  visible: "Open in .*"
                 commands:
-                  - tapOn: Back
+                  - tapOn: Open
+            - runFlow:
+                when:
+                  visible: "Open in .*"
+                commands:
+                  - tapOn:
+                      point: "68%,54%"
 - extendedWaitUntil:
     visible:
       id: chats-screen
-    timeout: 20000
+    timeout: 30000
 - assertVisible:
     id: connection-demo
 - assertVisible:
