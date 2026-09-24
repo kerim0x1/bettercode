@@ -1,0 +1,11 @@
+// app.config.ts runs in Node (Expo CLI and EAS), not in the app bundle, so it
+// is type-checked on its own, with Node's types instead of React Native's.
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "types": ["node"]
+  },
+  "include": ["app.config.ts", "config/*.d.cts"]
+}

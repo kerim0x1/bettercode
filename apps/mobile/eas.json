@@ -1,13 +1,18 @@
 {
   "cli": {
-    "version": ">= 16.0.0",
-    "appVersionSource": "local"
+    "version": ">= 24.3.0",
+    "appVersionSource": "remote",
+    "requireCommit": true
   },
   "build": {
     "base": {
-      "node": "22.15.0",
+      "node": "22.23.2",
+      "prebuildCommand": "prebuild --template expo-template-bare-minimum@56.0.36",
       "env": {
-        "BETTERC0DE_SKIP_POSTINSTALL": "1"
+        "BETTERC0DE_SKIP_POSTINSTALL": "1",
+        "ELECTRON_SKIP_BINARY_DOWNLOAD": "1",
+        "EXPO_NO_TELEMETRY": "1",
+        "HUSKY": "0"
       }
     },
     "development": {

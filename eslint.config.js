@@ -63,6 +63,10 @@ export default defineConfig([
     'apps/backend/node_modules/**',
     'apps/*/node_modules/**',
     'apps/*/.expo/**',
+    // Generated native projects and build output of the mobile app.
+    'apps/mobile/android/**',
+    'apps/mobile/ios/**',
+    'apps/mobile/build/**',
     'packages/*/dist/**',
     'packages/*/node_modules/**',
     'Example/**',
