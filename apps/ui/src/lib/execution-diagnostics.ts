@@ -1,24 +1,7 @@
-function record(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : {}
-}
+// Shared with the phone app's live tool steps.
+export { toolFailureText } from "@betterc0de/schema/activity-tools"
 
 /** Read the provider's documented error fields, never stringify an entire payload. */
-export function toolFailureText(value: unknown, depth = 0): string | undefined {
-  if (typeof value === "string") return value.trim() || undefined
-  if (depth > 3) return undefined
-  const data = record(value)
-  for (const key of ["message", "error", "stderr", "errorMessage", "detail"]) {
-    const text = toolFailureText(data[key], depth + 1)
-    if (text) return text
-  }
-  const exitCode = data.exit_code ?? data.exitCode
-  return typeof exitCode === "number" && exitCode !== 0
-    ? `Command exited with code ${exitCode}.`
-    : undefined
-}
-
 /** Runtime payloads deliberately omit raw diagnostics, which can contain credentials. */
 export function runtimeFailurePresentation(payload: Record<string, unknown>): {
   label: string

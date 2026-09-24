@@ -1,14 +1,22 @@
 import { asRecord } from "@betterc0de/schema"
 import { cn } from "@/lib/utils"
 import { providerHandoffMessageIds } from "@/lib/chat-context"
-import { deriveProviderHandoffs, type ProviderHandoffEntry } from "@/lib/provider-handoff"
+import {
+  deriveProviderHandoffs,
+  type ProviderHandoffEntry,
+} from "@/lib/provider-handoff"
 import { ProviderHandoffStatus } from "@/components/chat/provider-handoff-status"
 import { OrchestratorTeamStatus } from "@/components/chat/orchestrator-team-status"
-import { runtimeFailurePresentation, toolFailureText } from "@/lib/execution-diagnostics"
+import { runtimeFailurePresentation } from "@/lib/execution-diagnostics"
 import {
-  extractToolOutputText,
-  isGenericToolName,
-} from "@betterc0de/schema/tool-activity"
+  activityCorrelationFields,
+  buildActivityTools,
+  compareActivities,
+  groupToolActivitiesByTurn,
+  providerInstanceIdFromActivityPayload,
+  providerKindFromActivityPayload,
+  type ActivityTool,
+} from "@betterc0de/schema/activity-tools"
 import { useEffect, useMemo, useState, useId } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { CubeIcon } from "@hugeicons/core-free-icons"
@@ -177,7 +185,13 @@ export function ChatTranscript({
     (state) => state.showGenericToolOutput
   )
   const concealCodeBlocks = useSettingsStore((state) => state.concealCodeBlocks)
-  const hasProviderOutput = Boolean(streamingText || streamingPlanText || reasoningText || reasoningSegments?.length || streamingTools.length)
+  const hasProviderOutput = Boolean(
+    streamingText ||
+    streamingPlanText ||
+    reasoningText ||
+    reasoningSegments?.length ||
+    streamingTools.length
+  )
   const timeline = useMemo(
     () =>
       deriveTranscriptTimeline(messages, activities, {
@@ -185,9 +199,17 @@ export function ChatTranscript({
         isStreaming,
         hasProviderOutput,
       }),
-    [messages, activities, showSessionProgressBar, isStreaming, hasProviderOutput]
+    [
+      messages,
+      activities,
+      showSessionProgressBar,
+      isStreaming,
+      hasProviderOutput,
+    ]
   )
-  const isCompactingPreviousContext = timeline.some(entry => entry.kind === "context-handoff" && entry.status === "compacting")
+  const isCompactingPreviousContext = timeline.some(
+    (entry) => entry.kind === "context-handoff" && entry.status === "compacting"
+  )
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(activities),
     [activities]
@@ -204,8 +226,13 @@ export function ChatTranscript({
   const transcriptId = useId()
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ target?: string; threadId?: string | null }>).detail
-      const owner = detail?.threadId === undefined ? useChatStore.getState().activeThreadId : detail.threadId
+      const detail = (
+        event as CustomEvent<{ target?: string; threadId?: string | null }>
+      ).detail
+      const owner =
+        detail?.threadId === undefined
+          ? useChatStore.getState().activeThreadId
+          : detail.threadId
       if (owner !== activeThreadId) return
       const scope = document.getElementById(transcriptId)
       if (scope) scrollChatMessageTarget(scope, detail?.target)
@@ -234,7 +261,9 @@ export function ChatTranscript({
       )}
     >
       <ConversationContent
-        scrollClassName={isEmptyThread ? "flex flex-col [scrollbar-gutter:auto]!" : undefined}
+        scrollClassName={
+          isEmptyThread ? "flex flex-col [scrollbar-gutter:auto]!" : undefined
+        }
         data-betterc0de-chat-transcript-content="true"
         className={cn(
           "chat-prose mx-auto",
@@ -249,7 +278,12 @@ export function ChatTranscript({
           isEmptyThread && "min-h-full w-full flex-1"
         )}
       >
-        {activeThreadId && <OrchestratorTeamStatus key={activeThreadId} threadId={activeThreadId} />}
+        {activeThreadId && (
+          <OrchestratorTeamStatus
+            key={activeThreadId}
+            threadId={activeThreadId}
+          />
+        )}
         {isEmptyThread ? (
           <EmptyStateHero variant={appMode} threadId={activeThreadId} />
         ) : (
@@ -265,47 +299,51 @@ export function ChatTranscript({
             ) : null}
             {windowedTimeline.visible.map((entry) =>
               entry.kind === "message" ? (
-                  <div
-                    key={entry.id}
-                    data-betterc0de-chat-message="true"
-                    data-chat-message-role={entry.msg.role}
-                    data-chat-message-index={entry.idx}
-                  >
-                    <ErrorBoundary label={`Message ${entry.msg.id}`}>
-                      <ChatMessageItem
-                        msg={entry.msg}
-                        idx={entry.idx}
-                        messages={messages}
-                        activeThreadId={activeThreadId}
-                        providerSkills={selectedProvider?.skills}
-                        providerInstanceId={
-                          activeThreadSession?.providerInstanceId ??
-                          selectedProvider?.providerInstanceId ??
-                          null
-                        }
-                        workspaceRoot={activeProjectPath}
-                        activityTools={entry.tools}
-                        activityWork={entry.work}
-                        hidePlanCard={entry.hidePlanCard}
-                        compact={editorCompact}
-                        showTimestamp={showMessageTimestamps}
-                        showThinking={showThinkingBlocks}
-                        showReasoningSummaries={showReasoningSummaries}
-                        showToolDetails={showToolDetails}
-                        shellToolPartsExpanded={shellToolPartsExpanded}
-                        editToolPartsExpanded={editToolPartsExpanded}
-                        showGenericToolOutput={showGenericToolOutput}
-                        concealCodeBlocks={concealCodeBlocks}
-                        onRetry={(content) =>
-                          handleSubmit({ text: content, files: [] })
-                        }
-                        onOpenConfirm={setConfirmAction}
-                        onOpenPlanModal={setPlanModalContent}
-                      />
-                    </ErrorBoundary>
-                  </div>
+                <div
+                  key={entry.id}
+                  data-betterc0de-chat-message="true"
+                  data-chat-message-role={entry.msg.role}
+                  data-chat-message-index={entry.idx}
+                >
+                  <ErrorBoundary label={`Message ${entry.msg.id}`}>
+                    <ChatMessageItem
+                      msg={entry.msg}
+                      idx={entry.idx}
+                      messages={messages}
+                      activeThreadId={activeThreadId}
+                      providerSkills={selectedProvider?.skills}
+                      providerInstanceId={
+                        activeThreadSession?.providerInstanceId ??
+                        selectedProvider?.providerInstanceId ??
+                        null
+                      }
+                      workspaceRoot={activeProjectPath}
+                      activityTools={entry.tools}
+                      activityWork={entry.work}
+                      hidePlanCard={entry.hidePlanCard}
+                      compact={editorCompact}
+                      showTimestamp={showMessageTimestamps}
+                      showThinking={showThinkingBlocks}
+                      showReasoningSummaries={showReasoningSummaries}
+                      showToolDetails={showToolDetails}
+                      shellToolPartsExpanded={shellToolPartsExpanded}
+                      editToolPartsExpanded={editToolPartsExpanded}
+                      showGenericToolOutput={showGenericToolOutput}
+                      concealCodeBlocks={concealCodeBlocks}
+                      onRetry={(content) =>
+                        handleSubmit({ text: content, files: [] })
+                      }
+                      onOpenConfirm={setConfirmAction}
+                      onOpenPlanModal={setPlanModalContent}
+                    />
+                  </ErrorBoundary>
+                </div>
               ) : entry.kind === "context-handoff" ? (
-                <ProviderHandoffStatus key={entry.id} entry={entry} workspaceRoot={activeProjectPath} />
+                <ProviderHandoffStatus
+                  key={entry.id}
+                  entry={entry}
+                  workspaceRoot={activeProjectPath}
+                />
               ) : entry.kind === "model-switch" ? (
                 <ModelSwitchNotice
                   key={entry.id}
@@ -403,36 +441,10 @@ export function ChatTranscript({
   )
 }
 
-type ActivityTool = {
-  id: string
-  name: string
-  /** Latest provider title; ACP providers change it per event. */
-  title?: string
-  /** The provider's own classification of the call (ACP `kind`). */
-  kind?: string
-  input: unknown
-  output?: unknown
-  state?: string
-  providerKind?: string
-  providerInstanceId?: string
-  startedAt?: string
-  completedAt?: string
-  durationMs?: number
-  error?: string
-  outputPreview?: string
-  outputTruncated?: boolean
-  outputBytes?: number
-  outputLineCount?: number
-  turnId?: string
-  sessionId?: string
-  taskId?: string
-  parentTaskId?: string
-  agentId?: string
-  parentAgentId?: string
-  parentToolId?: string
-}
-
-function scrollChatMessageTarget(scope: HTMLElement, target: string | undefined): void {
+function scrollChatMessageTarget(
+  scope: HTMLElement,
+  target: string | undefined
+): void {
   if (isChatTranscriptStepScrollTarget(target)) {
     scrollChatTranscriptBy(scope, target)
     return
@@ -492,7 +504,10 @@ function isChatTranscriptStepScrollTarget(
   )
 }
 
-function scrollChatTranscriptBy(scope: HTMLElement, target: ChatTranscriptStepScrollTarget): void {
+function scrollChatTranscriptBy(
+  scope: HTMLElement,
+  target: ChatTranscriptStepScrollTarget
+): void {
   const container = findChatTranscriptScrollContainer(scope)
   const direction = target.endsWith("up") ? -1 : 1
   const viewportHeight =
@@ -509,7 +524,9 @@ function scrollChatTranscriptBy(scope: HTMLElement, target: ChatTranscriptStepSc
   }
 }
 
-function findChatTranscriptScrollContainer(scope: HTMLElement): HTMLElement | null {
+function findChatTranscriptScrollContainer(
+  scope: HTMLElement
+): HTMLElement | null {
   const content = scope.querySelector<HTMLElement>(
     "[data-betterc0de-chat-transcript-content]"
   )
@@ -598,7 +615,11 @@ type TranscriptTimelineEntry =
 export function deriveTranscriptTimeline(
   messages: ChatMessage[],
   activities: ThreadActivity[],
-  options: { showSessionProgressBar?: boolean; isStreaming?: boolean; hasProviderOutput?: boolean } = {}
+  options: {
+    showSessionProgressBar?: boolean
+    isStreaming?: boolean
+    hasProviderOutput?: boolean
+  } = {}
 ) {
   const toolsByTurn = new Map<string, ActivityTool[]>()
   for (const [turnId, turnActivities] of groupToolActivitiesByTurn(
@@ -715,7 +736,9 @@ export function deriveTranscriptTimeline(
           : [],
     }
   })
-  const visibleMessageEntries = messageEntries.filter(entry => !hiddenMessageIds.has(entry.id))
+  const visibleMessageEntries = messageEntries.filter(
+    (entry) => !hiddenMessageIds.has(entry.id)
+  )
   const modelSwitchEntries: TranscriptTimelineEntry[] = activities.flatMap(
     (activity) => {
       if (activity.kind !== "session.model.switched") return []
@@ -739,25 +762,45 @@ export function deriveTranscriptTimeline(
 
   const timeline = [
     ...visibleMessageEntries,
-    ...deriveProviderHandoffs(messages, activities, options.isStreaming === true, options.hasProviderOutput === true),
+    ...deriveProviderHandoffs(
+      messages,
+      activities,
+      options.isStreaming === true,
+      options.hasProviderOutput === true
+    ),
     ...proposedPlanEntries,
     ...modelSwitchEntries,
   ].sort((a, b) => {
     const created = a.createdAt.localeCompare(b.createdAt)
     if (created !== 0) return created
     if (a.kind === "message" && b.kind === "message") return a.idx - b.idx
-    const kindOrder = { "model-switch": 0, message: 1, "context-handoff": 2, "proposed-plan": 3 }
+    const kindOrder = {
+      "model-switch": 0,
+      message: 1,
+      "context-handoff": 2,
+      "proposed-plan": 3,
+    }
     if (a.kind !== b.kind) return kindOrder[a.kind] - kindOrder[b.kind]
     return a.id.localeCompare(b.id)
   })
-  return placeModelSwitchesAtTurnBoundaries(timeline, options.isStreaming === true)
+  return placeModelSwitchesAtTurnBoundaries(
+    timeline,
+    options.isStreaming === true
+  )
 }
 
 /** A switch belongs before the user's turn, never between its status and answer. */
-function placeModelSwitchesAtTurnBoundaries(timeline: TranscriptTimelineEntry[], isStreaming: boolean): TranscriptTimelineEntry[] {
+function placeModelSwitchesAtTurnBoundaries(
+  timeline: TranscriptTimelineEntry[],
+  isStreaming: boolean
+): TranscriptTimelineEntry[] {
   type SwitchEntry = Extract<TranscriptTimelineEntry, { kind: "model-switch" }>
   type MessageEntry = Extract<TranscriptTimelineEntry, { kind: "message" }>
-  const turns: { user: MessageEntry; firstAnswer?: MessageEntry; modelId?: string }[] = []
+  const turns: {
+    user: MessageEntry
+    firstAnswer?: MessageEntry
+    modelId?: string
+  }[] = []
   for (const entry of timeline) {
     if (entry.kind !== "message" || entry.msg.compactedContext) continue
     if (entry.msg.role === "user") {
@@ -777,23 +820,31 @@ function placeModelSwitchesAtTurnBoundaries(timeline: TranscriptTimelineEntry[],
     if (entry.kind !== "model-switch") continue
     // A delayed event can arrive after the optimistic user message. Only
     // attach it backwards when the message already names its target model.
-    const current = turns.findLast(turn => turn.user.createdAt <= entry.createdAt)
-    const target = current?.modelId === entry.to &&
+    const current = turns.findLast(
+      (turn) => turn.user.createdAt <= entry.createdAt
+    )
+    const target =
+      current?.modelId === entry.to &&
       (!current.firstAnswer || entry.createdAt <= current.firstAnswer.createdAt)
-      ? current
-      : turns.find(turn => turn.user.createdAt > entry.createdAt)
+        ? current
+        : turns.find((turn) => turn.user.createdAt > entry.createdAt)
     if (!target) {
       trailing.push(entry)
       continue
     }
     const switches = beforeTurn.get(target.user.id) ?? []
-    if (!switches.some(switchEntry => switchEntry.from === entry.from && switchEntry.to === entry.to)) {
+    if (
+      !switches.some(
+        (switchEntry) =>
+          switchEntry.from === entry.from && switchEntry.to === entry.to
+      )
+    ) {
       switches.push(entry)
     }
     beforeTurn.set(target.user.id, switches)
   }
 
-  const turnsById = new Map(turns.map(turn => [turn.user.id, turn]))
+  const turnsById = new Map(turns.map((turn) => [turn.user.id, turn]))
   const result: TranscriptTimelineEntry[] = []
   let lastModelId: string | undefined
   for (const entry of timeline) {
@@ -803,8 +854,19 @@ function placeModelSwitchesAtTurnBoundaries(timeline: TranscriptTimelineEntry[],
         const switches = beforeTurn.get(entry.id) ?? []
         result.push(...switches)
         const modelId = turnsById.get(entry.id)?.modelId
-        if (lastModelId && modelId && modelId !== lastModelId && !switches.some(notice => notice.to === modelId)) {
-          result.push({ kind: "model-switch", id: `model-switch:${entry.id}`, createdAt: entry.createdAt, from: lastModelId, to: modelId })
+        if (
+          lastModelId &&
+          modelId &&
+          modelId !== lastModelId &&
+          !switches.some((notice) => notice.to === modelId)
+        ) {
+          result.push({
+            kind: "model-switch",
+            id: `model-switch:${entry.id}`,
+            createdAt: entry.createdAt,
+            from: lastModelId,
+            to: modelId,
+          })
         }
         lastModelId = modelId ?? switches.at(-1)?.to ?? lastModelId
       } else if (entry.msg.role === "assistant") {
@@ -846,34 +908,6 @@ function sourceProposedPlanFromPayload(
   const threadId = stringFrom(source.threadId) ?? stringFrom(source.thread_id)
   const planId = stringFrom(source.planId) ?? stringFrom(source.plan_id)
   return threadId && planId ? { threadId, planId } : null
-}
-
-function groupToolActivitiesByTurn(activities: ThreadActivity[]) {
-  const groups = new Map<string, ThreadActivity[]>()
-  for (const activity of activities) {
-    if (!activity.turnId) continue
-    if (!activity.kind.startsWith("tool.")) continue
-    if (isPlanBoundaryToolActivity(activity)) continue
-    const existing = groups.get(activity.turnId) ?? []
-    existing.push(activity)
-    groups.set(activity.turnId, existing)
-  }
-  return groups
-}
-
-function isPlanBoundaryToolActivity(activity: ThreadActivity): boolean {
-  const payload = asRecord(activity.payload)
-  const toolName =
-    stringFrom(payload.toolName) ??
-    stringFrom(payload.tool_name) ??
-    stringFrom(payload.tool) ??
-    stringFrom(payload.name)
-  if ((toolName ?? "").toLowerCase() === "exitplanmode") return true
-  const detail =
-    stringFrom(payload.detail) ??
-    stringFrom(payload.output_delta) ??
-    stringFrom(payload.delta)
-  return Boolean(detail?.startsWith("ExitPlanMode:"))
 }
 
 function groupWorkActivitiesByTurn(
@@ -968,7 +1002,9 @@ export function deriveActivityWorkEntry(
       id: activity.id,
       label,
       detail: detail && detail !== label ? detail : undefined,
-      ...(activity.kind === "runtime.error" ? runtimeFailurePresentation(payload) : {}),
+      ...(activity.kind === "runtime.error"
+        ? runtimeFailurePresentation(payload)
+        : {}),
       ...providerFields,
       ...correlationFields,
       kind: activity.kind,
@@ -977,175 +1013,6 @@ export function deriveActivityWorkEntry(
     }
   }
   return null
-}
-
-function buildActivityTools(activities: ThreadActivity[]): ActivityTool[] {
-  const byId = new Map<string, ActivityTool>()
-  const activeFallbackIds = new Map<string, string>()
-  for (const activity of [...activities].sort(compareActivities)) {
-    const payload = asRecord(activity.payload)
-    const explicitToolId =
-      stringFrom(payload.toolId) ??
-      stringFrom(payload.tool_id) ??
-      stringFrom(payload.id) ??
-      undefined
-    const fallbackKey = explicitToolId
-      ? undefined
-      : fallbackToolLifecycleKey(activity, payload)
-    const fallbackToolId = fallbackKey
-      ? (activeFallbackIds.get(fallbackKey) ?? activity.id)
-      : activity.id
-    const toolId = explicitToolId ?? fallbackToolId
-    if (
-      fallbackKey &&
-      activity.kind !== "tool.completed" &&
-      activity.kind !== "tool.failed"
-    ) {
-      activeFallbackIds.set(fallbackKey, toolId)
-    }
-    const toolName =
-      stringFrom(payload.toolName) ??
-      stringFrom(payload.tool_name) ??
-      stringFrom(payload.tool) ??
-      stringFrom(payload.title) ??
-      "tool"
-    const title = stringFrom(payload.title)
-    const kind =
-      stringFrom(payload.kind) ?? stringFrom(objectFrom(payload.data)?.kind)
-    const titled = {
-      ...(title ? { title } : {}),
-      ...(kind ? { kind } : {}),
-    }
-    const current =
-      byId.get(toolId) ??
-      ({
-        id: toolId,
-        name: toolName,
-        ...titled,
-        input: payload.input ?? {},
-        providerKind: providerKindFromActivityPayload(payload),
-        providerInstanceId: providerInstanceIdFromActivityPayload(
-          activity,
-          payload
-        ),
-        turnId: activity.turnId ?? undefined,
-        ...activityCorrelationFields(payload),
-        startedAt: activity.createdAt,
-        state: "input-available",
-      } satisfies ActivityTool)
-
-    // The first real name sticks. Later events carry the provider's title,
-    // which for an ACP search is the pattern itself — no basis for a name.
-    const name = isGenericToolName(current.name) ? toolName : current.name
-
-    if (activity.kind === "tool.started") {
-      byId.set(toolId, {
-        ...current,
-        ...titled,
-        name,
-        input: payload.input ?? current.input,
-        providerKind:
-          providerKindFromActivityPayload(payload) ?? current.providerKind,
-        providerInstanceId:
-          providerInstanceIdFromActivityPayload(activity, payload) ??
-          current.providerInstanceId,
-        ...activityCorrelationFields(payload),
-        startedAt: current.startedAt ?? activity.createdAt,
-      })
-      continue
-    }
-
-    if (activity.kind === "tool.updated") {
-      const delta =
-        stringFrom(payload.output_delta) ?? stringFrom(payload.delta)
-      const nextInput = toolInputFromActivityPayload(payload) ?? current.input
-      const nextOutput = delta
-        ? `${stringPreview(current.output)}${delta}`
-        : current.output
-      byId.set(toolId, {
-        ...current,
-        ...titled,
-        name,
-        input: nextInput,
-        providerKind:
-          providerKindFromActivityPayload(payload) ?? current.providerKind,
-        providerInstanceId:
-          providerInstanceIdFromActivityPayload(activity, payload) ??
-          current.providerInstanceId,
-        ...activityCorrelationFields(payload),
-        output: nextOutput,
-        ...summarizeOutput(nextOutput),
-      })
-      continue
-    }
-
-    if (activity.kind === "tool.completed" || activity.kind === "tool.failed") {
-      const output = payload.output ?? current.output
-      const completedAt = activity.createdAt
-      byId.set(toolId, {
-        ...current,
-        ...titled,
-        name,
-        providerKind:
-          providerKindFromActivityPayload(payload) ?? current.providerKind,
-        providerInstanceId:
-          providerInstanceIdFromActivityPayload(activity, payload) ??
-          current.providerInstanceId,
-        ...activityCorrelationFields(payload),
-        output,
-        completedAt,
-        error:
-          activity.kind === "tool.failed"
-            ? (toolFailureText(payload.error) ?? toolFailureText(output) ?? "Tool failed")
-            : undefined,
-        durationMs: toolDurationMs(current.startedAt, completedAt),
-        state:
-          activity.kind === "tool.failed" ? "output-error" : "output-available",
-        ...summarizeOutput(output),
-      })
-      if (fallbackKey) activeFallbackIds.delete(fallbackKey)
-    }
-  }
-  return [...byId.values()]
-}
-
-function activityCorrelationFields(payload: Record<string, unknown>) {
-  return {
-    sessionId: stringFrom(payload.sessionId) ?? stringFrom(payload.session_id),
-    taskId: stringFrom(payload.taskId) ?? stringFrom(payload.task_id),
-    parentTaskId:
-      stringFrom(payload.parentTaskId) ?? stringFrom(payload.parent_task_id),
-    agentId: stringFrom(payload.agentId) ?? stringFrom(payload.agent_id),
-    parentAgentId:
-      stringFrom(payload.parentAgentId) ?? stringFrom(payload.parent_agent_id),
-    parentToolId:
-      stringFrom(payload.parentToolId) ?? stringFrom(payload.parent_tool_id),
-  }
-}
-
-function fallbackToolLifecycleKey(
-  activity: ThreadActivity,
-  payload: Record<string, unknown>
-): string | undefined {
-  if (
-    activity.kind !== "tool.updated" &&
-    activity.kind !== "tool.completed" &&
-    activity.kind !== "tool.failed"
-  ) {
-    return undefined
-  }
-  const parts = [
-    stringFrom(payload.itemType) ?? stringFrom(payload.item_type),
-    stringFrom(payload.title),
-    stringFrom(payload.toolName) ??
-      stringFrom(payload.tool_name) ??
-      stringFrom(payload.tool),
-    stringFrom(payload.detail),
-    stringFrom(payload.summary) ?? activity.summary,
-  ]
-    .map((part) => normalizeLifecycleKeyPart(part))
-    .filter((part): part is string => Boolean(part))
-  return parts.length > 0 ? parts.join("\u0000") : undefined
 }
 
 function PendingApprovalRow({
@@ -1280,44 +1147,6 @@ function PendingApprovalRow({
   )
 }
 
-function objectFrom(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-function toolInputFromActivityPayload(
-  payload: Record<string, unknown>
-): unknown | undefined {
-  if (payload.input !== undefined) return payload.input
-  const item = objectFrom(payload.item)
-  if (item?.input !== undefined) return item.input
-  const data = objectFrom(payload.data) ?? objectFrom(item?.data)
-  if (data?.input !== undefined) return data.input
-  return undefined
-}
-
-function providerKindFromActivityPayload(
-  payload: Record<string, unknown>
-): string | undefined {
-  return normalizeProviderKind(
-    stringFrom(payload.providerKind) ??
-      stringFrom(payload.provider_kind) ??
-      stringFrom(payload.provider)
-  )
-}
-
-function providerInstanceIdFromActivityPayload(
-  activity: ThreadActivity,
-  payload: Record<string, unknown>
-): string | undefined {
-  return (
-    stringFrom(payload.providerInstanceId) ??
-    stringFrom(payload.provider_instance_id) ??
-    stringFrom(activity.providerInstanceId)
-  )
-}
-
 function workEntryProviderFields(
   activity: ThreadActivity,
   payload: Record<string, unknown>
@@ -1343,68 +1172,6 @@ function workEntryProviderFields(
 
 function stringFrom(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined
-}
-
-function normalizeLifecycleKeyPart(
-  value: string | undefined
-): string | undefined {
-  const normalized = value?.trim().toLowerCase().replace(/\s+/g, " ")
-  return normalized && normalized.length > 0 ? normalized : undefined
-}
-
-function normalizeProviderKind(value: string | undefined): string | undefined {
-  const key = (value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "")
-  if (!key) return undefined
-  if (key === "codex" || key === "codexcli") return "codex"
-  if (key === "claude" || key === "claudeagent" || key === "claudecli") {
-    return "claude"
-  }
-  if (key === "anthropiccli") return "anthropic_cli"
-  return value
-}
-
-function stringPreview(value: unknown): string {
-  if (typeof value === "string") return value
-  if (value === null || value === undefined) return ""
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
-}
-
-function summarizeOutput(output: unknown) {
-  // Show the result's text (file lines, stdout, matches), not the envelope
-  // the provider wrapped it in. Only a result without any text falls back
-  // to its JSON.
-  const text = extractToolOutputText(output) ?? stringPreview(output)
-  const truncated = text.length > 16_000
-  const outputPreview = truncated ? text.slice(0, 16_000) : text
-  return {
-    outputPreview,
-    outputTruncated: truncated,
-    outputBytes: text.length,
-    outputLineCount: text ? text.split(/\r?\n/).length : 0,
-  }
-}
-
-function toolDurationMs(startedAt: string | undefined, completedAt: string) {
-  if (!startedAt) return undefined
-  const start = Date.parse(startedAt)
-  const end = Date.parse(completedAt)
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return undefined
-  return Math.max(0, end - start)
-}
-
-function compareActivities(a: ThreadActivity, b: ThreadActivity) {
-  const aSeq =
-    typeof a.sequence === "number" ? a.sequence : Number.NEGATIVE_INFINITY
-  const bSeq =
-    typeof b.sequence === "number" ? b.sequence : Number.NEGATIVE_INFINITY
-  if (aSeq !== bSeq) return aSeq - bSeq
-  const created = a.createdAt.localeCompare(b.createdAt)
-  if (created !== 0) return created
-  return a.id.localeCompare(b.id)
 }
 
 /**

@@ -57,6 +57,21 @@
       "import": "./src/remote-protocol.ts",
       "default": "./dist/remote-protocol.js"
     },
+    "./activity-tools": {
+      "types": "./src/activity-tools.ts",
+      "import": "./src/activity-tools.ts",
+      "default": "./dist/activity-tools.js"
+    },
+    "./provider-label": {
+      "types": "./src/provider-label.ts",
+      "import": "./src/provider-label.ts",
+      "default": "./dist/provider-label.js"
+    },
+    "./always-allow": {
+      "types": "./src/always-allow.ts",
+      "import": "./src/always-allow.ts",
+      "default": "./dist/always-allow.js"
+    },
     "./chat-controls": {
       "types": "./src/chat-controls.ts",
       "import": "./src/chat-controls.ts",
