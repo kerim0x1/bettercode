@@ -37,13 +37,8 @@ tags:
 - tapOn:
     id: chat-input
 - inputText: Draft the release notes
-# iOS offers no key that hides the keyboard of this multiline input, and the
-# send button sits above it anyway.
-- runFlow:
-    when:
-      platform: Android
-    commands:
-      - hideKeyboard
+# Sent with the keyboard open, as a user sends: the send button sits above
+# the keyboard (where there is one: CI's Android emulator shows none).
 - tapOn:
     id: chat-send
 # On iOS the keyboard stays open after sending and covers the approval card,
