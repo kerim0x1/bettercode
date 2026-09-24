@@ -210,8 +210,8 @@ async function terminateNativePtyProcessTree(
   const signalled = signalNativePtyPosixProcessGroup(pid, signal)
   if (!signalled && !rootExited) proc.kill(signal)
   if (
-    signal === "SIGKILL"
-    && !(await waitForNativePtyPosixProcessGroupExit(pid, 500))
+    signal === "SIGKILL" &&
+    !(await waitForNativePtyPosixProcessGroupExit(pid, 500))
   ) {
     throw Object.assign(
       new Error(`PTY process group ${pid} survived SIGKILL.`),
@@ -294,8 +294,7 @@ export async function runNativePtyWindowsTaskkill(
     readonly timeoutMs?: number
   } = {}
 ): Promise<void> {
-  const spawnProcess =
-    options.spawnProcess ?? (spawn as NativePtyTaskkillSpawn)
+  const spawnProcess = options.spawnProcess ?? (spawn as NativePtyTaskkillSpawn)
   const timeoutMs = options.timeoutMs ?? 5_000
   const killer = spawnProcess(
     "taskkill.exe",
@@ -320,22 +319,25 @@ export async function runNativePtyWindowsTaskkill(
       if (error) reject(error)
       else resolve()
     }
-    const timeout = setTimeout(() => {
-      timeoutError = Object.assign(
-        new Error(`taskkill for PTY process tree ${pid} timed out.`),
-        { code: "NATIVE_PTY_TASKKILL_TIMEOUT", pid }
-      )
-      try {
-        killer.kill("SIGKILL")
-      } catch {
-        // The helper may already be closing.
-      }
-      forcedCloseTimer = setTimeout(
-        () => finish(spawnError ?? timeoutError ?? undefined),
-        1_000
-      )
-      forcedCloseTimer.unref?.()
-    }, Math.max(1, timeoutMs))
+    const timeout = setTimeout(
+      () => {
+        timeoutError = Object.assign(
+          new Error(`taskkill for PTY process tree ${pid} timed out.`),
+          { code: "NATIVE_PTY_TASKKILL_TIMEOUT", pid }
+        )
+        try {
+          killer.kill("SIGKILL")
+        } catch {
+          // The helper may already be closing.
+        }
+        forcedCloseTimer = setTimeout(
+          () => finish(spawnError ?? timeoutError ?? undefined),
+          1_000
+        )
+        forcedCloseTimer.unref?.()
+      },
+      Math.max(1, timeoutMs)
+    )
     timeout.unref?.()
 
     killer.once("error", (error) => {
@@ -428,7 +430,9 @@ function resolveExecutablePath(
   if (command.includes(path.sep) || path.isAbsolute(command)) {
     return command
   }
-  for (const entry of (pathValue ?? process.env.PATH ?? "").split(path.delimiter)) {
+  for (const entry of (pathValue ?? process.env.PATH ?? "").split(
+    path.delimiter
+  )) {
     if (!entry) continue
     const candidate = path.join(entry, command)
     try {
@@ -448,7 +452,9 @@ async function resolveExecutablePathAsync(
   if (command.includes(path.sep) || path.isAbsolute(command)) {
     return command
   }
-  for (const entry of (pathValue ?? process.env.PATH ?? "").split(path.delimiter)) {
+  for (const entry of (pathValue ?? process.env.PATH ?? "").split(
+    path.delimiter
+  )) {
     if (!entry) continue
     const candidate = path.join(entry, command)
     try {
@@ -516,9 +522,7 @@ function loadNodePty(): NodePtyModule {
     return cachedNodePty
   } catch (error) {
     cachedNodePtyError =
-      error instanceof Error
-        ? error.message
-        : "node-pty could not be loaded"
+      error instanceof Error ? error.message : "node-pty could not be loaded"
     throw new Error(cachedNodePtyError)
   }
 }
@@ -531,9 +535,7 @@ function loadResolvedNodePty(modulePath: string): NodePtyModule {
     return cachedNodePty
   } catch (error) {
     cachedNodePtyError =
-      error instanceof Error
-        ? error.message
-        : "node-pty could not be loaded"
+      error instanceof Error ? error.message : "node-pty could not be loaded"
     throw new Error(cachedNodePtyError)
   }
 }
@@ -604,7 +606,9 @@ function ensureNodePtySpawnHelpersExecutable(): void {
   if (process.platform !== "darwin" && process.platform !== "linux") return
   let packageDir: string
   try {
-    packageDir = path.dirname(requireNodeModule.resolve("node-pty/package.json"))
+    packageDir = path.dirname(
+      requireNodeModule.resolve("node-pty/package.json")
+    )
   } catch {
     return
   }

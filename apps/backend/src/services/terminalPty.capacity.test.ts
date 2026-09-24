@@ -58,7 +58,9 @@ describe("terminal PTY capacity", () => {
   it("coalesces repeated close requests while native termination is pending", async () => {
     vi.useFakeTimers()
     let release!: () => void
-    const pending = new Promise<void>(resolve => { release = resolve })
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
     const opened = openTerminalPtySession({
       sessionId: "coalesced-close",
       cwd: process.cwd(),
@@ -76,7 +78,10 @@ describe("terminal PTY capacity", () => {
       }
       release()
       await vi.advanceTimersByTimeAsync(0)
-      expect(handle.kill.mock.calls.map(([signal]) => signal)).toEqual(["SIGTERM", "SIGKILL"])
+      expect(handle.kill.mock.calls.map(([signal]) => signal)).toEqual([
+        "SIGTERM",
+        "SIGKILL",
+      ])
     } finally {
       release()
       handle.resolveExit()
@@ -158,10 +163,7 @@ describe("terminal PTY capacity", () => {
     })
     openedSessionIds.push(ownerA.sessionId, ownerB.sessionId)
 
-    const cleanup = shutdownTerminalPtySessionsForOwner(
-      "remote:owner-a",
-      1_000
-    )
+    const cleanup = shutdownTerminalPtySessionsForOwner("remote:owner-a", 1_000)
     expect(spawnedHandles[0]!.kill).toHaveBeenCalledWith("SIGTERM")
     expect(spawnedHandles[1]!.kill).not.toHaveBeenCalled()
     spawnedHandles[0]!.resolveExit()

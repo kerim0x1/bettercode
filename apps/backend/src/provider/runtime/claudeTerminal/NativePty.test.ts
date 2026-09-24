@@ -18,7 +18,9 @@ describe("native PTY command preparation", () => {
   })
 
   it("resolves PATH and shebangs without synchronous filesystem calls", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-pty-command-"))
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), "betterc0de-pty-command-")
+    )
     const executable = path.join(root, "claude-async-test")
     fs.writeFileSync(
       executable,
@@ -40,11 +42,9 @@ describe("native PTY command preparation", () => {
 
     try {
       await expect(
-        prepareNativePtyCommand(
-          "claude-async-test",
-          ["--version"],
-          { PATH: root }
-        )
+        prepareNativePtyCommand("claude-async-test", ["--version"], {
+          PATH: root,
+        })
       ).resolves.toEqual({
         command: "/usr/bin/env",
         args: ["node", "--no-warnings", executable, "--version"],
@@ -119,20 +119,20 @@ describe("native PTY process-tree termination", () => {
   it("terminates descendants that remain after the PTY root exits", async () => {
     vi.useFakeTimers()
     let alive = true
-    const kill = vi.spyOn(process, "kill").mockImplementation(
-      ((pid: number, signal?: NodeJS.Signals | number) => {
-        expect(pid).toBe(-5353)
-        if (signal === 0) {
-          if (alive) return true
-          throw Object.assign(new Error("gone"), { code: "ESRCH" })
-        }
-        if (signal === "SIGKILL") alive = false
-        return true
-      }) as typeof process.kill
-    )
+    const kill = vi.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number
+    ) => {
+      expect(pid).toBe(-5353)
+      if (signal === 0) {
+        if (alive) return true
+        throw Object.assign(new Error("gone"), { code: "ESRCH" })
+      }
+      if (signal === "SIGKILL") alive = false
+      return true
+    }) as typeof process.kill)
     try {
-      const termination =
-        ensureNativePtyPosixProcessGroupTerminated(5353)
+      const termination = ensureNativePtyPosixProcessGroupTerminated(5353)
       await vi.advanceTimersByTimeAsync(300)
       await expect(termination).resolves.toBeUndefined()
       expect(kill).toHaveBeenCalledWith(-5353, "SIGTERM")
@@ -145,15 +145,14 @@ describe("native PTY process-tree termination", () => {
 
   it("reports a PTY process group that survives SIGKILL", async () => {
     vi.useFakeTimers()
-    const kill = vi.spyOn(process, "kill").mockImplementation(
-      ((pid: number) => {
-        expect(pid).toBe(-5454)
-        return true
-      }) as typeof process.kill
-    )
+    const kill = vi.spyOn(process, "kill").mockImplementation(((
+      pid: number
+    ) => {
+      expect(pid).toBe(-5454)
+      return true
+    }) as typeof process.kill)
     try {
-      const termination =
-        ensureNativePtyPosixProcessGroupTerminated(5454)
+      const termination = ensureNativePtyPosixProcessGroupTerminated(5454)
       const expectation = expect(termination).rejects.toMatchObject({
         code: "NATIVE_PTY_GROUP_SURVIVED_ROOT_EXIT",
         pid: 5454,
