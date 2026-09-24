@@ -29,6 +29,9 @@ const terminal = new Terminal({
   fontFamily: "Menlo, 'SF Mono', 'Roboto Mono', monospace",
   fontSize: 13,
   scrollback: 5_000,
+  // The rows xterm draws are hidden from VoiceOver and TalkBack; this mode
+  // gives them the text, and reads out what comes in.
+  screenReaderMode: true,
   theme: {
     background: "#0A0A0A",
     foreground: "#FAFAFA",
