@@ -60,6 +60,13 @@ provides touch-native screens for:
   phone lists, and restoring a checkpoint: the chat and the whole project
   folder return to the end of an earlier turn, after the desktop's warning
   of what that discards;
+- photos in a message, from the photo library or the camera. Like the
+  desktop's attachments they travel inside the message, to the paired desktop
+  only. The phone encodes each photo again as a JPEG of at most 1568 pixels
+  on its long edge, which leaves out the camera's metadata, location
+  included, and keeps a message within the desktop's request limit (2 MB).
+  Whether the agent sees them depends on the provider, as on the desktop:
+  Claude Code gets only their names, for now;
 - project browsing plus chat-scoped files, text previews, diffs, and checkpoints;
 - host health, session identity, expiry, and self-revocation.
 

@@ -115,7 +115,20 @@ against sample chats and files (see [Demo mode](#demo-mode)).
   per chat, one at a time, paused after a failure or a restart). The queue and
   the chat settings are small JSON documents in the app's document folder
   (`src/lib/local-documents.ts`); the demo keeps them in memory, and signing
-  out deletes them.
+  out deletes them. A queued message keeps its photos in that document, as
+  the desktop keeps a queued message's files.
+- Photos come from the system's photo picker or the camera
+  (`src/lib/photo-picker.ts`, `expo-image-picker`). Each is decoded and
+  encoded again as a JPEG (`expo-image-manipulator`): at most 1568 pixels on
+  the long edge and 700 KB, smaller when the message has less room, and
+  without the camera's metadata. They travel inside the message as data URLs,
+  like the desktop's attachments, and share one request with the text and
+  history: the desktop states how large a request may be
+  (`capabilities.maxRequestBytes`), photos leave 256 KB of it free, and the
+  oldest history gives way when the rest does not fit (`src/lib/photos.ts`,
+  `src/lib/request-size.ts`). A message the desktop would refuse as too large
+  is not sent at all. Photos alone go with the desktop's words for that
+  (`ATTACHMENTS_ONLY_MESSAGE`).
 - File navigation always starts from `worktreePath || projectPath`; client-side
   containment checks complement the backend workspace guards.
 - The interface is in English, like the desktop's; dates and sizes follow the

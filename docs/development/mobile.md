@@ -129,7 +129,16 @@ The flows in `apps/mobile/maestro/flows` run against the demo mode, so they need
 - `demo-chat.yaml`: the demo from the pairing screen through a streamed, approved reply to **Exit demo**.
 - `demo-link.yaml`: `betterc0de://demo` opens the demo. This checks the scheme the native project registers.
 
-They find elements by `testID`, which Maestro sees as the element's id on both platforms. Renaming or removing one breaks a flow, and CI with it. To run one flow against an attached device, call the cached Maestro directly (`npm run mobile:toolchain -- --maestro` prints where it is), with JDK 17 as `JAVA_HOME`:
+They find elements by `testID`, which Maestro sees as the element's id on both platforms. Renaming or removing one breaks a flow, and CI with it.
+
+Two things in the flows are the device's rather than the app's:
+
+- **iOS asks before a link opens an app** ("Open in “BetterC0de Remote”?"). Maestro does not always see that question, since iOS shows it and not the app. The link flow taps **Open** by its text, and where it sits on the screen when the pairing screen still shows afterwards.
+- **The Android emulator can drop adb for a moment.** In CI its adbd sometimes closes the connection just after Maestro clears the app's data, and the next command fails with "device offline". `e2e` runs a flow that failed that way once more, and says so in the log. A flow that failed on anything else fails the run. Maestro's JUnit report calls that failure "Unknown error"; the cause is in the flow's `commands.json`.
+
+Choosing photos needs the system's photo picker or camera, which the flows do not drive. The screen tests (`src/__tests__/chat-photos.test.tsx`) cover photos with the picker replaced, and the helpers that size and encode them have their own tests.
+
+To run one flow against an attached device, call the cached Maestro directly (`npm run mobile:toolchain -- --maestro` prints where it is), with JDK 17 as `JAVA_HOME`:
 
 ```bash
 <maestro> test apps/mobile/maestro/flows/demo-chat.yaml
