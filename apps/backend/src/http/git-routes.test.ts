@@ -42,7 +42,8 @@ function makeState(
     providerRegistry: { all: () => [] },
     db: { prepare: () => ({ get: () => ({ ok: 1 }) }) },
     projectProjections: {
-      listAll: () => approvedRoots.map((projectPath) => ({ path: projectPath })),
+      listAll: () =>
+        approvedRoots.map((projectPath) => ({ path: projectPath })),
     },
     threads: { listProjects: () => [] },
     worktreeRegistry: { listAll: () => [] },
@@ -104,11 +105,14 @@ describe("git checkpoint routes", () => {
     fs.writeFileSync(path.join(cwd, "README.md"), "v2\n", "utf8")
     await captureCheckpoint({ cwd, checkpointRef: toRef })
     const baselineCommit = runGit(cwd, ["rev-parse", fromRef])
-    const captureResponse = await app.request("/api/v1/git/checkpoints/capture", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ cwd, checkpointRef: fromRef }),
-    })
+    const captureResponse = await app.request(
+      "/api/v1/git/checkpoints/capture",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ cwd, checkpointRef: fromRef }),
+      }
+    )
     expect(captureResponse.status).toBe(410)
     expect(await captureResponse.json()).toMatchObject({
       code: "checkpoint_capture_requires_turn_lifecycle",
@@ -239,7 +243,10 @@ describe("git branch and worktree routes", () => {
     )
     tempDirs.push(worktreeParent)
     const worktreePath = path.join(worktreeParent, "feature")
-    const app = buildApp(makeConfig(), makeState(undefined, [cwd, worktreeParent]))
+    const app = buildApp(
+      makeConfig(),
+      makeState(undefined, [cwd, worktreeParent])
+    )
     const headers = {
       Authorization: "Bearer secret",
       "Content-Type": "application/json",
