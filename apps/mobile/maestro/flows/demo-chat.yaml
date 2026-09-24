@@ -38,15 +38,17 @@ tags:
     id: chat-input
 - inputText: Draft the release notes
 # Sent with the keyboard open, as a user sends: the send button sits above
-# the keyboard (where there is one: CI's Android emulator shows none).
+# the keyboard (CI's Android emulator keeps its keyboard 0 px tall).
 - tapOn:
     id: chat-send
 # The keyboard stays open after sending, and while it is up the chat's first
 # tap only closes it (React Native's default for a list). So it is closed
 # first, as a user would:
-# - on Android with the back key (hideKeyboard does nothing where no
-#   keyboard shows, as on CI's emulator). On a small screen the sent message
-#   has scrolled away by then, so it cannot be tapped instead;
+# - on Android with the back key: hideKeyboard sends it, and the keyboard,
+#   0 px tall on CI's emulator too, takes it. The message box keeps its
+#   focus after Send, so the back key never leaves the chat. On a small
+#   screen the sent message has scrolled away by then, so it cannot be
+#   tapped instead;
 # - on iOS, which offers no key that hides this multiline input's keyboard,
 #   by a tap on the sent message, which does nothing else. The keyboard also
 #   covers the approval card there, whose buttons Maestro still counts as

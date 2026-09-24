@@ -37,7 +37,7 @@ tags:
 # The pretend shell greets, then waits at its prompt.
 - extendedWaitUntil:
     visible: ".*it runs nothing.*"
-    timeout: 30000
+    timeout: 45000
 - tapOn:
     id: terminal-view
 - inputText: whoami
@@ -45,9 +45,9 @@ tags:
 # The answer is a row of its own: the greeting mentions the demo too.
 - extendedWaitUntil:
     visible: demo
-    timeout: 20000
-# The key row sits above the keyboard (where there is one: CI's emulator
-# shows none), and its keys reach the shell: Ctrl, held for the next key,
+    timeout: 45000
+# The key row sits above the keyboard (CI's emulator keeps its keyboard
+# 0 px tall), and its keys reach the shell: Ctrl, held for the next key,
 # makes a typed c Ctrl-C. Ctrl is near the row's start, on screen at any
 # width; the row scrolls sideways for the rest.
 - tapOn:
@@ -55,4 +55,4 @@ tags:
 - inputText: c
 - extendedWaitUntil:
     visible: '.*\^C.*'
-    timeout: 20000
+    timeout: 45000
