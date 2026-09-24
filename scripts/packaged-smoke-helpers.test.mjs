@@ -5,6 +5,7 @@ import {
   parseDevToolsWebSocketUrl,
   removeDirectoryWithRetries,
   selectRendererTarget,
+  taskkillOutcome,
   validateRendererSnapshot,
 } from "./packaged-smoke-helpers.mjs"
 
@@ -183,4 +184,18 @@ test("preserves terminal directory removal failures", async () => {
     permissionFailure
   )
   assert.equal(attempts, 1)
+})
+
+test("taskkill's exit code says whether the app's process tree is gone", () => {
+  assert.equal(taskkillOutcome(0, 1), "ended")
+  // The app had ended on its own; the smoke reports that.
+  assert.equal(taskkillOutcome(128, 1), "exited-before")
+  // Part of the tree could not be ended: taskkill runs once more.
+  assert.equal(taskkillOutcome(255, 1), "retry")
+  assert.equal(taskkillOutcome(0, 2), "ended")
+  // The first pass had ended the app itself.
+  assert.equal(taskkillOutcome(128, 2), "ended")
+  assert.equal(taskkillOutcome(255, 2), "failed")
+  assert.equal(taskkillOutcome(1, 1), "failed")
+  assert.equal(taskkillOutcome(null, 1), "failed")
 })

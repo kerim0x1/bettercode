@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { beforeAll, describe, expect, it } from "vitest"
 import { diffChangedRanges, diffLanguage, highlightDiff } from "./diff-syntax"
 import { parseGitDiff } from "./git-diff"
 
@@ -8,7 +8,26 @@ function patch(name: string, lines: string) {
   )[0]!
 }
 
+const PALETTE_CASES = [
+  ["next-env.d.ts", 'import "./.next/dev/types/routes.d.ts";'],
+  ["main.js", "const count = 42;"],
+  ["data.json", '{ "enabled": true, "count": 42 }'],
+  ["index.html", '<main class="page">Hello</main>'],
+] as const
+
 describe("diff syntax", () => {
+  // Shiki stops colouring a line after 500 ms (`tokenizeTimeLimit`), and the
+  // first line in a grammar also pays for compiling that grammar's rules. On
+  // a loaded CI runner that can take longer than the limit, and the line
+  // comes back in one colour. The app accepts that on a slow first diff; the
+  // colour checks below are about the colours, so each grammar is compiled
+  // here first.
+  beforeAll(async () => {
+    for (const [name, code] of PALETTE_CASES) {
+      await highlightDiff(patch(name, `-${code}\n+${code}`))
+    }
+  })
+
   it.each([
     ["C:\\project\\App.TSX", "tsx"],
     ["src/test.mjs", "javascript"],
@@ -23,12 +42,7 @@ describe("diff syntax", () => {
     }
   )
 
-  it.each([
-    ["next-env.d.ts", 'import "./.next/dev/types/routes.d.ts";'],
-    ["main.js", "const count = 42;"],
-    ["data.json", '{ "enabled": true, "count": 42 }'],
-    ["index.html", '<main class="page">Hello</main>'],
-  ])(
+  it.each(PALETTE_CASES)(
     "preserves %s source and supplies both theme palettes",
     async (name, code) => {
       const file = patch(name, `-${code}\n+${code}`)
