@@ -5,6 +5,7 @@ import {
   isRecord,
   type PermissionUpdate,
 } from "@betterc0de/schema"
+import type { ChatAttachment } from "@betterc0de/schema/chat-attachment"
 import {
   PERMISSION_MODE_FAILED,
   PERMISSION_MODE_QUEUED,
@@ -20,6 +21,8 @@ import type {
 } from "@/types/remote"
 import { createId } from "@/lib/ids"
 import { describeRemoteError, remoteErrorMessage } from "@/lib/remote-errors"
+import { maxRequestBytesNow } from "@/lib/request-limit"
+import { historyThatFits, requestBytes } from "@/lib/request-size"
 import { RemoteApiError } from "@/transport/live/http"
 import type { ThreadMetadataUpdate } from "@betterc0de/schema/http-contracts"
 import type { ChatRequestBody, RemoteApi } from "@/transport/types"
@@ -64,6 +67,10 @@ export const MESSAGE_PAGE_SIZE = 200
 
 /** At most this many chats have their activities loaded to catch up on requests. */
 export const ATTENTION_REFRESH_LIMIT = 8
+
+/** Why a message is not sent: it is larger than one request to the desktop may be. */
+export const MESSAGE_TOO_LARGE =
+  "This message is larger than the desktop accepts in one request. Remove a photo or shorten the text."
 
 export interface RuntimeOutcome {
   threadId: string
@@ -191,20 +198,24 @@ interface AppStore {
   /**
    * Sends a message, or runs a /goal command. A message that fails stays in
    * the chat, marked, with its request in the outbox; a queued message's
-   * failure is the queue's to show, so it leaves the chat.
+   * failure is the queue's to show, so it leaves the chat. A message larger
+   * than the desktop accepts is refused before anything is recorded
+   * (`MESSAGE_TOO_LARGE`).
    */
   send: (
     api: RemoteApi,
     threadId: string,
     content: string,
     selection: ModelOption,
-    delivery?: SendDelivery
+    delivery?: SendDelivery,
+    /** Photos and files the message carries, as the desktop sends them. */
+    attachments?: readonly ChatAttachment[]
   ) => Promise<SendOutcome>
   /** Sends a failed message again, unchanged and under the same id. */
   retrySend: (api: RemoteApi, messageId: string) => Promise<SendOutcome>
   /** Removes a failed message from the chat. */
   discardFailed: (messageId: string) => void
-  /** Sends a failed message's text again as a new message. */
+  /** Sends a failed message's text and attachments again as a new message. */
   sendAgainAsNew: (api: RemoteApi, messageId: string) => Promise<SendOutcome>
   /** Drops the saved requests of queued messages the queue no longer holds. */
   pruneQueueOutbox: (queuedIds: ReadonlySet<string>) => void
@@ -573,7 +584,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     useComposerSettings.getState().forget(threadId)
   },
 
-  send: async (api, threadId, content, selection, delivery) => {
+  send: async (api, threadId, content, selection, delivery, attachments) => {
     const owner = generation
     const thread = get().threads.find((candidate) => candidate.id === threadId)
     if (!thread) throw new Error("Chat not found.")
@@ -605,7 +616,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const messageId = delivery?.messageId ?? createId("mobile-message")
     const createdAt = delivery?.createdAt ?? new Date().toISOString()
     // A message sent before keeps the request it was first sent with.
-    const entry: OutboxEntry = get().outbox[messageId] ?? {
+    const sentBefore = get().outbox[messageId]
+    const entry: OutboxEntry = sentBefore ?? {
       threadId,
       owner: delivery?.owner ?? "chat",
       selection,
@@ -619,8 +631,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
         selection,
         turnOptions:
           delivery?.turnOptions ?? get().turnOptionsByThread[threadId],
+        attachments: attachments ?? [],
       }),
     }
+    // The history is left out here: it is trimmed to fit when it is added.
+    if (!sentBefore && requestBytes(entry.body) > maxRequestBytesNow())
+      throw new Error(MESSAGE_TOO_LARGE)
+    const sentAttachments = attachmentsOf(entry.body)
     const now = new Date().toISOString()
     set((state) => ({
       outbox: { ...state.outbox, [messageId]: { ...entry, error: null } },
@@ -636,6 +653,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
             content,
             createdAt,
             dispatchStatus: "pending",
+            ...(sentAttachments.length > 0
+              ? { attachments: sentAttachments }
+              : {}),
           },
         ],
       },
@@ -701,7 +721,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
       api,
       entry.threadId,
       String(entry.body.userMessageContent ?? ""),
-      entry.selection
+      entry.selection,
+      undefined,
+      attachmentsOf(entry.body)
     )
   },
 
@@ -1001,6 +1023,7 @@ function sendBody({
   createdAt,
   selection,
   turnOptions,
+  attachments,
 }: {
   thread: ChatThread
   messageId: string
@@ -1008,6 +1031,7 @@ function sendBody({
   createdAt: string
   selection: ModelOption
   turnOptions: TurnOptions | undefined
+  attachments: readonly ChatAttachment[]
 }): ChatRequestBody {
   const settings = useComposerSettings.getState().settingsFor(thread.id)
   return {
@@ -1023,7 +1047,7 @@ function sendBody({
     message: content,
     modelId: selection.modelId,
     projectPath: thread.worktreePath || thread.projectPath,
-    attachments: [],
+    attachments: [...attachments],
     appMode: "agent",
     chatMode: settings.chatMode,
     permissionLevel: settings.permissionLevel,
@@ -1032,11 +1056,20 @@ function sendBody({
   }
 }
 
+/** The attachments a request carries. */
+function attachmentsOf(body: ChatRequestBody): ChatAttachment[] {
+  return Array.isArray(body.attachments)
+    ? (body.attachments as ChatAttachment[])
+    : []
+}
+
 /**
  * One attempt at delivering a message from the outbox. Everything but the
  * history goes out exactly as the first time: the desktop leaves the
  * history out when it recognises a retry, and a fresh one includes the
- * replies that arrived since.
+ * replies that arrived since. The history gives way first when the request
+ * would be larger than the desktop accepts (with photos, say): its oldest
+ * entries are left out.
  */
 async function dispatchOutboxMessage(
   api: RemoteApi,
@@ -1046,10 +1079,14 @@ async function dispatchOutboxMessage(
   const entry = useAppStore.getState().outbox[messageId]
   if (!entry) throw new Error("The message is no longer waiting to be sent.")
   const { threadId } = entry
-  const history = providerHistory(
-    (useAppStore.getState().messagesByThread[threadId] ?? []).filter(
-      (message) => message.id !== messageId
-    )
+  const history = historyThatFits(
+    entry.body,
+    providerHistory(
+      (useAppStore.getState().messagesByThread[threadId] ?? []).filter(
+        (message) => message.id !== messageId
+      )
+    ),
+    maxRequestBytesNow()
   )
   try {
     const result = await api.sendMessage({ ...entry.body, history })

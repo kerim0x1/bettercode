@@ -1,6 +1,8 @@
 import { useMemo, useRef, useState } from "react"
 import {
+  ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -14,16 +16,19 @@ import {
   ArrowUp,
   Bot,
   Brain,
+  Camera,
   ChevronDown,
   CircleHelp,
   ClipboardList,
   Eye,
+  ImagePlus,
   ListPlus,
   MessageCircleQuestion,
   Pencil,
   ShieldOff,
   SlidersHorizontal,
   Square,
+  X,
   Zap,
   ZapOff,
   type LucideIcon,
@@ -46,6 +51,8 @@ import {
   thinkingLabelFor,
   thinkingOptionsFor,
 } from "@/lib/model-capabilities"
+import type { PhotoSource } from "@/lib/photo-picker"
+import type { PreparedPhoto } from "@/lib/photos"
 import { DropdownRow, DropdownSheet } from "./dropdown-sheet"
 import { ProviderLogo } from "./provider-logo"
 
@@ -57,7 +64,8 @@ import { ProviderLogo } from "./provider-logo"
  * button (ArrowUp) on the right. While a reply runs, Stop ends it and Queue
  * sends the message after it, as on the desktop. The permission presets,
  * their Bypass warning and the modes come from @betterc0de/schema, so both
- * apps say the same.
+ * apps say the same. Photos from the library or the camera sit above the
+ * text until the message goes; a message may be photos alone.
  */
 export function ChatComposer({
   value,
@@ -77,6 +85,11 @@ export function ChatComposer({
   onPermissionLevelChange,
   chatMode,
   onChatModeChange,
+  photos,
+  preparingPhotos,
+  photoProblem,
+  onAddPhotos,
+  onRemovePhoto,
 }: {
   value: string
   onChange: (value: string) => void
@@ -95,6 +108,13 @@ export function ChatComposer({
   onPermissionLevelChange: (level: PermissionLevel) => void
   chatMode: KnownChatMode
   onChatModeChange: (mode: KnownChatMode) => void
+  photos: readonly PreparedPhoto[]
+  /** Photos are being chosen or prepared. */
+  preparingPhotos: boolean
+  /** Why a chosen photo was not added. */
+  photoProblem: string | null
+  onAddPhotos: (source: PhotoSource) => void
+  onRemovePhoto: (id: string) => void
 }) {
   const inputRef = useRef<TextInput>(null)
   const [thinkingOpen, setThinkingOpen] = useState(false)
@@ -103,9 +123,14 @@ export function ChatComposer({
   const [modeOpen, setModeOpen] = useState(false)
   const goalCommand = /^\/goal(?:\s|$)/i.test(value.trim())
   const showStop = running && !goalCommand
-  const hasText = value.trim().length > 0 && !disabled && Boolean(model)
-  const canSend = hasText && (!running || goalCommand)
-  const canQueue = hasText && showStop
+  const hasContent =
+    (value.trim().length > 0 || photos.length > 0) &&
+    !disabled &&
+    !preparingPhotos &&
+    Boolean(model)
+  const canSend = hasContent && (!running || goalCommand)
+  const canQueue = hasContent && showStop
+  const canAttach = !disabled && !preparingPhotos
   const thinkingOptions = useMemo(() => thinkingOptionsFor(model), [model])
   const thinkingLabel = thinkingLabelFor(thinkingOptions, thinkingMode)
   const showThinking = thinkingOptions.length > 0
@@ -138,6 +163,44 @@ export function ChatComposer({
     >
       <View style={styles.shell}>
         <View style={styles.card}>
+          {photos.length > 0 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.photos}
+              accessibilityLabel="Photos in this message"
+              testID="composer-photos"
+            >
+              {photos.map((photo, index) => (
+                <View key={photo.id} style={styles.photo}>
+                  <Image
+                    source={{ uri: `data:image/jpeg;base64,${photo.base64}` }}
+                    style={styles.photoImage}
+                    accessibilityLabel={`Photo ${index + 1}`}
+                  />
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove photo ${index + 1}`}
+                    testID={`composer-photo-remove-${index}`}
+                    hitSlop={10}
+                    onPress={() => onRemovePhoto(photo.id)}
+                    style={({ pressed }) => [
+                      styles.photoRemove,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <X size={12} color={colors.text} />
+                  </Pressable>
+                </View>
+              ))}
+            </ScrollView>
+          ) : null}
+          {photoProblem ? (
+            <Text style={styles.photoProblem} testID="composer-photo-problem">
+              {photoProblem}
+            </Text>
+          ) : null}
           <TextInput
             ref={inputRef}
             accessibilityLabel="Message"
@@ -155,6 +218,48 @@ export function ChatComposer({
             textAlignVertical="top"
           />
           <View style={styles.footer}>
+            {preparingPhotos ? (
+              <View
+                style={styles.attach}
+                accessibilityLabel="Preparing photos"
+                testID="composer-photos-preparing"
+              >
+                <ActivityIndicator size="small" color={colors.textSecondary} />
+              </View>
+            ) : (
+              <>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Attach photos"
+                  testID="composer-attach"
+                  accessibilityState={{ disabled: !canAttach }}
+                  disabled={!canAttach}
+                  onPress={() => onAddPhotos("library")}
+                  style={({ pressed }) => [
+                    styles.attach,
+                    pressed && styles.pressed,
+                    !canAttach && styles.disabled,
+                  ]}
+                >
+                  <ImagePlus size={17} color={colors.textSecondary} />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Take a photo"
+                  testID="composer-camera"
+                  accessibilityState={{ disabled: !canAttach }}
+                  disabled={!canAttach}
+                  onPress={() => onAddPhotos("camera")}
+                  style={({ pressed }) => [
+                    styles.attach,
+                    pressed && styles.pressed,
+                    !canAttach && styles.disabled,
+                  ]}
+                >
+                  <Camera size={17} color={colors.textSecondary} />
+                </Pressable>
+              </>
+            )}
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -503,6 +608,43 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xs,
+  },
+  photos: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    paddingTop: spacing.xs,
+    paddingHorizontal: spacing.xxs,
+  },
+  photo: { width: 56, height: 56 },
+  photoImage: {
+    width: 56,
+    height: 56,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceActive,
+  },
+  photoRemove: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    width: 20,
+    height: 20,
+    borderRadius: radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.overlay,
+  },
+  photoProblem: {
+    paddingHorizontal: spacing.xxs,
+    paddingTop: spacing.xxs,
+    color: colors.warning,
+    fontFamily: font.regular,
+    fontSize: 12,
+  },
+  attach: {
+    width: 30,
+    height: 34,
+    alignItems: "center",
+    justifyContent: "center",
   },
   pillsScroll: { flex: 1, minWidth: 0 },
   pills: {

@@ -63,3 +63,11 @@ export function hasFeature(
 ): boolean {
   return protocol?.capabilities?.features.includes(feature) === true
 }
+
+/** The body limit of a desktop that does not state one: every desktop so far. */
+export const DEFAULT_MAX_REQUEST_BYTES = 2 * 1024 * 1024
+
+/** The largest request the desktop accepts, in bytes. */
+export function maxRequestBytes(protocol: RemoteProtocol | null): number {
+  return protocol?.capabilities?.maxRequestBytes ?? DEFAULT_MAX_REQUEST_BYTES
+}

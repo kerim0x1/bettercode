@@ -1,17 +1,21 @@
 import fs from "node:fs"
+import http from "node:http"
 import os from "node:os"
 import path from "node:path"
 import {
   REMOTE_API_VERSION,
+  REMOTE_CLIENT_HEADER,
   REMOTE_FEATURES,
   REMOTE_MIN_CLIENT_VERSION,
+  formatRemoteClientHeader,
   type RemoteClientInfo,
   type RemoteProtocol,
 } from "@betterc0de/schema/remote-protocol"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
-import { assessCompatibility } from "@/lib/compat"
+import { DEFAULT_MAX_REQUEST_BYTES, assessCompatibility } from "@/lib/compat"
+import { requestBytes } from "@/lib/request-size"
 import { createLiveApi, pairMobile } from "@/transport/live/api"
-import { RemoteApiError } from "@/transport/live/http"
+import { RemoteApiError, httpJson } from "@/transport/live/http"
 import { RemoteSocket } from "@/transport/live/socket"
 import type { ChannelState, RemoteApi } from "@/transport/types"
 import { CLIENT, startTestDesktop, type TestDesktop } from "./support/desktop"
@@ -42,6 +46,49 @@ async function refusal(promise: Promise<unknown>): Promise<RemoteApiError> {
   )
   expect(error).toBeInstanceOf(RemoteApiError)
   return error as RemoteApiError
+}
+
+/**
+ * The desktop's answer to a POST that declares `contentLength` bytes, sent
+ * without its body and outside fetch's connection pool. The desktop judges
+ * the size by that header before it reads a byte. A body it will not read
+ * would otherwise be cut off with a reset, which on Windows can also discard
+ * the answer that had already arrived.
+ */
+function answerToDeclaredSize(
+  route: string,
+  contentLength: number,
+  sessionToken: string
+): Promise<{ status: number | undefined; code: unknown }> {
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      `${desktop.baseUrl}/api/v1${route}`,
+      {
+        method: "POST",
+        agent: false,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": contentLength,
+          Authorization: `Bearer ${sessionToken}`,
+          [REMOTE_CLIENT_HEADER]: formatRemoteClientHeader(CLIENT),
+        },
+      },
+      (response) => {
+        let text = ""
+        response.setEncoding("utf8")
+        response.on("data", (chunk: string) => (text += chunk))
+        response.on("end", () => {
+          request.destroy()
+          resolve({
+            status: response.statusCode,
+            code: (JSON.parse(text) as { code?: unknown }).code,
+          })
+        })
+      }
+    )
+    request.on("error", reject)
+    request.flushHeaders()
+  })
 }
 
 /** The live socket with its callbacks recorded. */
@@ -267,6 +314,40 @@ describe("the phone app against a real desktop", () => {
   })
 
   // Turning Remote Access off ends every session, so this runs last.
+  it("counts a request's size as the phone does, and refuses one past its limit", async () => {
+    // The phone fits photos and history into what the desktop says it takes.
+    const limit = phone.paired.protocol?.capabilities?.maxRequestBytes
+    expect(limit).toBe(DEFAULT_MAX_REQUEST_BYTES)
+    const connection = {
+      baseUrl: desktop.baseUrl,
+      token: phone.paired.sessionToken,
+      client: CLIENT,
+    }
+    /** A body of exactly `bytes` bytes, as the phone counts them. */
+    const bodyOf = (bytes: number) => ({
+      padding: "x".repeat(bytes - requestBytes({ padding: "" })),
+    })
+    expect(requestBytes(bodyOf(limit!))).toBe(limit)
+
+    // At the limit the desktop reads the request, and refuses it only for
+    // what it says (it is no chat message).
+    const at = await refusal(
+      httpJson(connection, "/chat/send", {
+        method: "POST",
+        body: bodyOf(limit!),
+      })
+    )
+    expect(at.status).toBe(400)
+    // One byte more is refused before it is read.
+    expect(
+      await answerToDeclaredSize(
+        "/chat/send",
+        requestBytes(bodyOf(limit! + 1)),
+        phone.paired.sessionToken
+      )
+    ).toEqual({ status: 413, code: "request_too_large" })
+  })
+
   it("reports Remote Access as off, and the pairing as ended once it is back on", async () => {
     const { api } = phone
     await desktop.setSettings({ remote_access_enabled: false })

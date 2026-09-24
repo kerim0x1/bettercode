@@ -1,9 +1,14 @@
 import type { RemoteProtocol } from "@betterc0de/schema/remote-protocol"
 import { create } from "zustand"
 import { APP_VERSION, CLIENT_INFO, defaultDeviceLabel } from "@/lib/app-info"
-import { assessCompatibility, type Compatibility } from "@/lib/compat"
+import {
+  assessCompatibility,
+  maxRequestBytes,
+  type Compatibility,
+} from "@/lib/compat"
 import { parsePairingInput } from "@/lib/endpoint"
 import { remoteErrorMessage } from "@/lib/remote-errors"
+import { setMaxRequestBytes } from "@/lib/request-limit"
 import {
   clearStoredProfile,
   readStoredProfile,
@@ -439,6 +444,13 @@ export const useSessionStore = create<SessionStore>((set, get) => {
         },
       })),
   }
+})
+
+// The stores that send messages read the desktop's request limit from
+// request-limit.ts; it follows the protocol of whichever desktop is paired.
+useSessionStore.subscribe((state, previous) => {
+  if (state.protocol !== previous.protocol)
+    setMaxRequestBytes(maxRequestBytes(state.protocol))
 })
 
 /** The session's effective access: the desktop's view first (it knows the transport). */

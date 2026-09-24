@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native"
-import { ListOrdered, Play, X } from "lucide-react-native"
+import { Image as ImageIcon, ListOrdered, Play, X } from "lucide-react-native"
 import { colors, font, radius, spacing } from "@/design/theme"
 import { useQueueStore } from "@/store/queue-store"
 
@@ -52,6 +52,14 @@ export function QueuedMessages({ threadId }: { threadId: string }) {
               <Text style={styles.text} numberOfLines={2}>
                 {message.payload.text}
               </Text>
+              {message.payload.attachments?.length ? (
+                <View style={styles.photos}>
+                  <ImageIcon size={12} color={colors.textMuted} />
+                  <Text style={styles.photosText}>
+                    {photoCount(message.payload.attachments.length)}
+                  </Text>
+                </View>
+              ) : null}
               {message.error ? (
                 <Text style={styles.error}>{message.error}</Text>
               ) : null}
@@ -76,6 +84,10 @@ export function QueuedMessages({ threadId }: { threadId: string }) {
       </ScrollView>
     </View>
   )
+}
+
+function photoCount(count: number): string {
+  return count === 1 ? "1 photo" : `${count} photos`
 }
 
 const styles = StyleSheet.create({
@@ -126,6 +138,17 @@ const styles = StyleSheet.create({
   },
   copy: { flex: 1, minWidth: 0 },
   text: { color: colors.text, fontFamily: font.regular, fontSize: 13 },
+  photos: {
+    marginTop: 2,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  photosText: {
+    color: colors.textMuted,
+    fontFamily: font.regular,
+    fontSize: 12,
+  },
   error: {
     marginTop: 2,
     color: colors.textMuted,

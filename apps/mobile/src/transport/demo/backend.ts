@@ -1,4 +1,8 @@
 import {
+  chatAttachmentsSchema,
+  type ChatAttachment,
+} from "@betterc0de/schema/chat-attachment"
+import {
   REMOTE_API_VERSION,
   REMOTE_FEATURES,
   type RemoteProtocol,
@@ -11,6 +15,8 @@ import type {
   RemoteSessionSummary,
   ThreadActivity,
 } from "@/types/remote"
+import { maxRequestBytes } from "@/lib/compat"
+import { requestBytes } from "@/lib/request-size"
 import { RemoteApiError } from "../live/http"
 import type { ChatRequestBody, RemoteApi } from "../types"
 import {
@@ -74,10 +80,13 @@ export class DemoBackend {
     { threadId: string; resolve: (approved: boolean) => void }
   >()
   private readonly turns = new Map<string, RunningTurn>()
-  /** Message id → the turn it started, as the desktop records each dispatch. */
+  /**
+   * Message id → the turn it started, and the request it came with (text
+   * and attachments), as the desktop records each dispatch.
+   */
   private readonly dispatches = new Map<
     string,
-    { threadId: string; turnId: string; content: string }
+    { threadId: string; turnId: string; request: string }
   >()
   private readonly approvalAsked = new Set<string>()
   /** Per chat, a checkpoint after each finished turn, as the desktop keeps them. */
@@ -319,10 +328,28 @@ export class DemoBackend {
   // -------------------------------------------------------------------------
 
   private async send(body: ChatRequestBody) {
+    // The desktop's body limit, which it states to the phone.
+    if (requestBytes(body) > maxRequestBytes(DEMO_PROTOCOL)) {
+      throw new RemoteApiError(
+        "request body too large",
+        413,
+        "request_too_large"
+      )
+    }
     const threadId = String(body.threadId ?? "")
     const thread = this.threads.find((item) => item.id === threadId)
     if (!thread) throw new Error("Chat not found.")
     const text = String(body.message ?? body.userMessageContent ?? "").trim()
+    // The desktop's own rule for attachments (@betterc0de/schema).
+    const parsed = chatAttachmentsSchema.safeParse(body.attachments ?? [])
+    if (!parsed.success) {
+      throw new RemoteApiError(
+        `Invalid attachments: ${parsed.error.issues[0]?.message ?? "rejected"}`,
+        400
+      )
+    }
+    const attachments = parsed.data
+    const request = JSON.stringify({ text, attachments })
     const createdAt =
       typeof body.userMessageCreatedAt === "string"
         ? body.userMessageCreatedAt
@@ -335,7 +362,7 @@ export class DemoBackend {
     // the turn it started, not run twice.
     const earlier = this.dispatches.get(messageId)
     if (earlier) {
-      if (earlier.threadId !== threadId || earlier.content !== text) {
+      if (earlier.threadId !== threadId || earlier.request !== request) {
         throw new RemoteApiError(
           `Dispatch id '${messageId}' is already bound to a different request.`,
           409,
@@ -368,10 +395,11 @@ export class DemoBackend {
         content: text,
         createdAt,
         dispatchStatus: "accepted",
+        ...(attachments.length > 0 ? { attachments } : {}),
       },
     ]
     const turnId = this.id("demo-turn")
-    this.dispatches.set(messageId, { threadId, turnId, content: text })
+    this.dispatches.set(messageId, { threadId, turnId, request })
     this.updateThread(threadId, (item) => ({
       ...item,
       title: item.title === "New Chat" ? titleFrom(text) : item.title,
@@ -383,14 +411,15 @@ export class DemoBackend {
         activeTurnId: turnId,
       },
     }))
-    void this.runTurn(threadId, turnId, text)
+    void this.runTurn(threadId, turnId, text, attachments)
     return { status: "streaming" as const, turnId }
   }
 
   private async runTurn(
     threadId: string,
     turnId: string,
-    request: string
+    request: string,
+    attachments: readonly ChatAttachment[]
   ): Promise<void> {
     const turn: RunningTurn = {
       turnId,
@@ -414,7 +443,12 @@ export class DemoBackend {
     }
     if (ranTests && !turn.cancelled) await this.runTests(turn, threadId)
     if (turn.cancelled) return
-    await this.stream(turn, threadId, "content", replyFor(request, ranTests))
+    await this.stream(
+      turn,
+      threadId,
+      "content",
+      replyFor(request, ranTests, attachments)
+    )
     if (turn.cancelled) return
     this.finishTurn(threadId, turn, "turn_completed", ranTests)
   }
@@ -723,6 +757,12 @@ export class DemoBackend {
   }
 }
 
+/** The size of what an attachment's data URL carries, as a reply states it. */
+function attachmentKilobytes(attachment: ChatAttachment): number {
+  const base64 = attachment.url.slice(attachment.url.indexOf(",") + 1)
+  return Math.max(1, Math.round((base64.length * 3) / 4 / 1024))
+}
+
 function titleFrom(text: string): string {
   const oneLine = text.replace(/\s+/g, " ").trim()
   return oneLine.length > 48
@@ -730,10 +770,27 @@ function titleFrom(text: string): string {
     : oneLine || "New Chat"
 }
 
-function replyFor(request: string, ranTests: boolean): string {
+function replyFor(
+  request: string,
+  ranTests: boolean,
+  attachments: readonly ChatAttachment[]
+): string {
   const topic =
     request.replace(/\s+/g, " ").trim().slice(0, 120) || "your request"
+  const received =
+    attachments.length === 0
+      ? []
+      : [
+          `I received ${attachments.length === 1 ? "1 attachment" : `${attachments.length} attachments`}: ${attachments
+            .map(
+              (attachment) =>
+                `${attachment.filename ?? "attachment"} (${attachmentKilobytes(attachment)} KB)`
+            )
+            .join(", ")}.`,
+          "",
+        ]
   return [
+    ...received,
     `Here is how I would handle **${topic}**:`,
     "",
     "1. Read the files involved and check how they are used.",

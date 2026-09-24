@@ -1,14 +1,18 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import type { ChatAttachment } from "@betterc0de/schema/chat-attachment"
 import {
   PERMISSION_MODE_FAILED,
   PERMISSION_MODE_QUEUED,
 } from "@betterc0de/schema/chat-controls"
 import { httpContracts } from "@betterc0de/schema/http-contracts"
+import { DEFAULT_MAX_REQUEST_BYTES } from "@/lib/compat"
+import { setMaxRequestBytes } from "@/lib/request-limit"
+import { requestBytes } from "@/lib/request-size"
 import { createLiveApi } from "@/transport/live/api"
 import { RemoteApiError } from "@/transport/live/http"
 import type { ChatRequestBody, RemoteApi } from "@/transport/types"
 import type { ChatThread, ModelOption } from "@/types/remote"
-import { useAppStore } from "./app-store"
+import { MESSAGE_TOO_LARGE, useAppStore } from "./app-store"
 import { useComposerSettings } from "./composer-settings-store"
 
 const selection: ModelOption = {
@@ -416,5 +420,126 @@ describe("changing the permission preset", () => {
     expect(setPermissionMode).toHaveBeenCalledWith(
       expect.objectContaining({ providerKind: "claude" })
     )
+  })
+})
+
+describe("sending photos", () => {
+  /** A JPEG attachment whose data URL carries `base64Chars` characters. */
+  const photo = (base64Chars: number, index = 0): ChatAttachment => ({
+    type: "file",
+    filename: `photo-${index + 1}.jpg`,
+    mediaType: "image/jpeg",
+    url: `data:image/jpeg;base64,${"A".repeat(base64Chars)}`,
+  })
+
+  beforeEach(() => {
+    store().reset()
+    useComposerSettings.setState({ byThread: {} })
+    useAppStore.setState({ threads: [chat()] })
+  })
+
+  afterEach(() => setMaxRequestBytes(DEFAULT_MAX_REQUEST_BYTES))
+
+  it("sends the photos with the message, shows them in the chat, and resends them unchanged", async () => {
+    const photos = [photo(4_000), photo(8_000, 1)]
+    const { api, bodies } = desktop(timeout(), { turnId: "turn-1" })
+    await store().send(
+      api,
+      "thread-1",
+      "What is wrong here?",
+      selection,
+      undefined,
+      photos
+    )
+    expect(bodies[0]!.attachments).toEqual(photos)
+    const [failed] = messages()
+    expect(failed).toMatchObject({ dispatchFailed: true, attachments: photos })
+
+    await store().retrySend(api, failed!.id)
+    expect(bodies[1]!.userMessageId).toBe(failed!.id)
+    expect(bodies[1]!.attachments).toEqual(photos)
+    expect(messages()[0]).toMatchObject({
+      dispatchStatus: "accepted",
+      attachments: photos,
+    })
+  })
+
+  it("sends a request with photos that the desktop's chat contract accepts", async () => {
+    const fetch = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(JSON.stringify({ status: "streaming", turnId: "t1" }), {
+          status: 200,
+        })
+    )
+    const api = createLiveApi({
+      baseUrl: "http://desktop.local:4321",
+      token: "session",
+      client: null,
+      fetch: fetch as unknown as typeof globalThis.fetch,
+    })
+    await store().send(api, "thread-1", "Look", selection, undefined, [
+      photo(1_000),
+    ])
+    const body: unknown = JSON.parse(String(fetch.mock.calls[0]![1]?.body))
+    expect(httpContracts.chatSend.request.parse(body)).toMatchObject({
+      attachments: [expect.objectContaining({ mediaType: "image/jpeg" })],
+    })
+  })
+
+  it("keeps the photos when a message is sent again as new", async () => {
+    const photos = [photo(2_000)]
+    const { api, bodies } = desktop(refusal("dispatch_failed"), {
+      turnId: "turn-2",
+    })
+    await store().send(api, "thread-1", "Look", selection, undefined, photos)
+    const [failed] = messages()
+    await store().sendAgainAsNew(api, failed!.id)
+    expect(bodies[1]!.userMessageId).not.toBe(failed!.id)
+    expect(bodies[1]!.attachments).toEqual(photos)
+  })
+
+  it("refuses a message larger than the desktop accepts before anything is recorded", async () => {
+    setMaxRequestBytes(50_000)
+    const { api, sendMessage } = desktop({ turnId: "turn-1" })
+    await expect(
+      store().send(api, "thread-1", "Look", selection, undefined, [
+        photo(60_000),
+      ])
+    ).rejects.toThrow(MESSAGE_TOO_LARGE)
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(messages()).toEqual([])
+    expect(store().outbox).toEqual({})
+    expect(store().streamsByThread["thread-1"]).toBeUndefined()
+  })
+
+  it("leaves out the oldest history rather than send more than the desktop accepts", async () => {
+    useAppStore.setState({
+      messagesByThread: {
+        "thread-1": [
+          {
+            id: "u1",
+            role: "user",
+            content: "x".repeat(30_000),
+            createdAt: "2026-09-24T08:01:00.000Z",
+          },
+          {
+            id: "a1",
+            role: "assistant",
+            content: "y".repeat(30_000),
+            createdAt: "2026-09-24T08:02:00.000Z",
+          },
+        ],
+      },
+    })
+    // Room for the message and its photo, and for one of the two replies.
+    setMaxRequestBytes(100_000 + 45_000)
+    const { api, bodies } = desktop({ turnId: "turn-1" })
+    await store().send(api, "thread-1", "Look", selection, undefined, [
+      photo(100_000),
+    ])
+    expect(bodies[0]!.history).toEqual([
+      { role: "assistant", content: "y".repeat(30_000) },
+    ])
+    expect(requestBytes(bodies[0])).toBeLessThanOrEqual(145_000)
   })
 })

@@ -36,23 +36,22 @@ export function startQueueRunner(api: RemoteApi): () => void {
     queue: useQueueStore,
     isReady: chatReadyForQueue,
     send: async (message) => {
-      const outcome = await useAppStore
-        .getState()
-        .send(
-          api,
-          message.threadId,
-          message.payload.text,
-          message.payload.selection,
-          {
-            messageId: message.id,
-            createdAt: message.createdAt,
-            owner: "queue",
-            turnOptions: {
-              thinkingMode: message.payload.thinkingMode,
-              fastMode: message.payload.fastMode,
-            },
-          }
-        )
+      const outcome = await useAppStore.getState().send(
+        api,
+        message.threadId,
+        message.payload.text,
+        message.payload.selection,
+        {
+          messageId: message.id,
+          createdAt: message.createdAt,
+          owner: "queue",
+          turnOptions: {
+            thinkingMode: message.payload.thinkingMode,
+            fastMode: message.payload.fastMode,
+          },
+        },
+        message.payload.attachments
+      )
       if (outcome.status === "busy") return false
       if (outcome.status === "failed") throw new Error(outcome.error)
       return true

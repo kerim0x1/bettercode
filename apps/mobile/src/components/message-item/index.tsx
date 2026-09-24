@@ -23,6 +23,7 @@ import { colors, font, radius, spacing, type } from "@/design/theme"
 import { MarkdownText } from "../markdown-text"
 import { ProviderLogo, providerKindFromModelId } from "../provider-logo"
 import { FileChanges } from "./file-changes"
+import { MessagePhotos, shownPhotos } from "./message-photos"
 import { ToolCallGroup } from "./tool-calls"
 
 /**
@@ -49,6 +50,7 @@ export const MessageItem = memo(function MessageItem({
     return (
       <View style={styles.userWrap}>
         <View style={styles.userBubble}>
+          <MessagePhotos attachments={message.attachments} />
           {message.content ? (
             <Text selectable style={styles.userText}>
               {message.content}
@@ -91,6 +93,7 @@ export const MessageItem = memo(function MessageItem({
       ) : null}
       {message.content ? <MarkdownText content={message.content} /> : null}
       {message.diffs?.length ? <FileChanges diffs={message.diffs} /> : null}
+      <MessagePhotos attachments={message.attachments} />
       <MetaBadges message={message} />
     </View>
   )
@@ -217,7 +220,12 @@ function MetaBadges({ message }: { message: ChatMessage }) {
     })
     return element ? [element] : []
   })
-  const fileCount = message.attachments.length - elements.length
+  // Photos show as thumbnails (MessagePhotos); the rest count as files.
+  const fileCount =
+    message.attachments.length -
+    elements.length -
+    shownPhotos(message.attachments).length
+  if (elements.length === 0 && fileCount === 0) return null
   return (
     <View style={styles.metaBadges}>
       {elements.map((element, index) => (

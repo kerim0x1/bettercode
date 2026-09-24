@@ -12,6 +12,7 @@ import {
   resumeThread,
   type QueuedMessage,
 } from "@betterc0de/schema/message-queue"
+import type { ChatAttachment } from "@betterc0de/schema/chat-attachment"
 import { createId } from "@/lib/ids"
 import { documents } from "@/lib/local-documents"
 import type { ModelOption } from "@/types/remote"
@@ -19,18 +20,30 @@ import type { ModelOption } from "@/types/remote"
 /**
  * What a queued message is sent with. The model is fixed when the message
  * is queued: the chat may not be open when its turn comes, and the phone
- * learns a chat's models only while it is.
+ * learns a chat's models only while it is. Its photos are kept with it, in
+ * the queue's document, as the desktop keeps a queued message's files.
  */
 export interface QueuedPayload {
   text: string
   selection: ModelOption
   thinkingMode: string | null
   fastMode: boolean
+  attachments?: ChatAttachment[]
 }
 
 export type PhoneQueuedMessage = QueuedMessage<QueuedPayload>
 
 const DOCUMENT = "message-queue.json"
+
+function isAttachment(value: unknown): value is ChatAttachment {
+  const attachment = value as Partial<ChatAttachment> | null
+  return Boolean(
+    attachment &&
+    typeof attachment.url === "string" &&
+    (attachment.filename == null || typeof attachment.filename === "string") &&
+    (attachment.mediaType == null || typeof attachment.mediaType === "string")
+  )
+}
 
 function isQueuedPayload(payload: unknown): payload is QueuedPayload {
   const value = payload as Partial<QueuedPayload> | null
@@ -39,7 +52,10 @@ function isQueuedPayload(payload: unknown): payload is QueuedPayload {
     typeof value.text === "string" &&
     value.selection &&
     typeof value.selection.modelId === "string" &&
-    typeof value.selection.providerKind === "string"
+    typeof value.selection.providerKind === "string" &&
+    (value.attachments === undefined ||
+      (Array.isArray(value.attachments) &&
+        value.attachments.every(isAttachment)))
   )
 }
 

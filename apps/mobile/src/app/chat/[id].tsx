@@ -16,6 +16,10 @@ import {
   groupToolActivitiesByTurn,
 } from "@betterc0de/schema/activity-tools"
 import {
+  ATTACHMENTS_ONLY_MESSAGE,
+  type ChatAttachment,
+} from "@betterc0de/schema/chat-attachment"
+import {
   CHECKPOINT_RESTORE_BODY,
   CHECKPOINT_RESTORE_TITLE,
   type PermissionLevel,
@@ -51,7 +55,14 @@ import { SendFailure } from "@/components/send-failure"
 import { colors, font, radius, spacing, type } from "@/design/theme"
 import { chatTimeline, type TimelineEntry } from "@/lib/chat-timeline"
 import { restorableTurns, restorePoints } from "@/lib/checkpoints"
+import { maxRequestBytes } from "@/lib/compat"
 import { effectiveThreadRoot } from "@/lib/endpoint"
+import { pickPhotos, type PhotoSource } from "@/lib/photo-picker"
+import {
+  nextPhotoMaxBytes,
+  photoAttachment,
+  type PreparedPhoto,
+} from "@/lib/photos"
 import { modelOptions, preferredModel } from "@/lib/provider-selection"
 import { remoteErrorMessage } from "@/lib/remote-errors"
 import {
@@ -155,6 +166,12 @@ export default function ChatScreen() {
   const deleteThread = useAppStore((state) => state.deleteThread)
   const canRename = useFeature(REMOTE_FEATURES.threadsRename)
   const [draft, setDraft] = useState("")
+  const [photos, setPhotos] = useState<PreparedPhoto[]>([])
+  const [preparingPhotos, setPreparingPhotos] = useState(false)
+  const [photoProblem, setPhotoProblem] = useState<string | null>(null)
+  const requestLimit = useSessionStore((state) =>
+    maxRequestBytes(state.protocol)
+  )
   const [options, setOptions] = useState<ModelOption[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
   const [modelError, setModelError] = useState<string | null>(null)
@@ -271,7 +288,7 @@ export default function ChatScreen() {
     ])
   }
 
-  const queue = (content: string) => {
+  const queue = (content: string, attachments: ChatAttachment[]) => {
     if (!thread || !currentModel) return false
     try {
       useQueueStore.getState().enqueue(thread.id, {
@@ -279,6 +296,7 @@ export default function ChatScreen() {
         selection: currentModel,
         thinkingMode: turnOptions?.thinkingMode ?? null,
         fastMode: turnOptions?.fastMode ?? false,
+        ...(attachments.length > 0 ? { attachments } : {}),
       })
       return true
     } catch (error) {
@@ -290,30 +308,81 @@ export default function ChatScreen() {
     }
   }
 
+  /**
+   * The composer's message: its text, or the desktop's words for photos
+   * alone, and the photos as attachments.
+   */
+  const composed = () => {
+    const text = draft.trim()
+    const attachments = photos.map(photoAttachment)
+    const content =
+      text || (attachments.length > 0 ? ATTACHMENTS_ONLY_MESSAGE : "")
+    return { text, content, attachments }
+  }
+
+  const clearComposer = () => {
+    setDraft("")
+    setPhotos([])
+    setPhotoProblem(null)
+  }
+
   const submit = async () => {
-    const content = draft.trim()
+    const { text, content, attachments } = composed()
     if (!api || !content || !thread || !currentModel) return
+    const goal = GOAL_COMMAND.test(content)
     // As on the desktop, a message goes behind the ones already queued.
-    if (hasQueued && !GOAL_COMMAND.test(content)) {
-      if (queue(content)) setDraft("")
+    if (hasQueued && !goal) {
+      if (queue(content, attachments)) clearComposer()
       return
     }
-    setDraft("")
+    // A /goal command carries no photos; they stay for the next message.
+    const sentPhotos = photos
+    if (goal) setDraft("")
+    else clearComposer()
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
       () => undefined
     )
     try {
       // A message that fails stays in the chat with its reason and Retry.
-      await send(api, thread.id, content, currentModel)
+      await send(
+        api,
+        thread.id,
+        content,
+        currentModel,
+        undefined,
+        goal ? undefined : attachments
+      )
     } catch (error) {
-      setDraft(content)
+      setDraft(text)
+      if (!goal) setPhotos(sentPhotos)
       Alert.alert("Message not sent", remoteErrorMessage(error))
     }
   }
 
   const queueDraft = () => {
-    const content = draft.trim()
-    if (content && queue(content)) setDraft("")
+    const { content, attachments } = composed()
+    if (content && queue(content, attachments)) clearComposer()
+  }
+
+  const addPhotos = async (source: PhotoSource) => {
+    setPreparingPhotos(true)
+    setPhotoProblem(null)
+    try {
+      const picked = await pickPhotos(source, photos, (current) =>
+        nextPhotoMaxBytes(current, requestLimit)
+      )
+      setPhotos((current) => [...current, ...picked.photos])
+      setPhotoProblem(picked.problem)
+    } catch (error) {
+      setPhotoProblem(error instanceof Error ? error.message : String(error))
+    } finally {
+      setPreparingPhotos(false)
+    }
+  }
+
+  const removePhoto = (id: string) => {
+    setPhotos((current) => current.filter((photo) => photo.id !== id))
+    setPhotoProblem(null)
   }
 
   const onFailure =
@@ -750,6 +819,11 @@ export default function ChatScreen() {
           onChatModeChange={(chatMode) =>
             useComposerSettings.getState().update(threadId, { chatMode })
           }
+          photos={photos}
+          preparingPhotos={preparingPhotos}
+          photoProblem={photoProblem}
+          onAddPhotos={(source) => void addPhotos(source)}
+          onRemovePhoto={removePhoto}
         />
       )}
       <DropdownSheet

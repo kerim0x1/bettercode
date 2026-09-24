@@ -219,6 +219,77 @@ describe("demo desktop", () => {
     ).toHaveLength(1)
   })
 
+  it("keeps a message's photos and names them in the reply", async () => {
+    const { transport, events } = demo()
+    const threadId = "demo-flaky-login"
+    const photo = {
+      type: "file",
+      filename: "photo-1.jpg",
+      mediaType: "image/jpeg",
+      url: `data:image/jpeg;base64,${"A".repeat(4_096)}`,
+    }
+    await transport.api.sendMessage({
+      threadId,
+      userMessageId: "u1",
+      message: "What is wrong here?",
+      attachments: [photo],
+    })
+    await vi.advanceTimersByTimeAsync(1_000)
+    const approval = events()
+      .map((event) => pendingRequestFromEvent(event))
+      .find((request) => request !== null)
+    await transport.api.respondApproval({
+      threadId,
+      requestId: approval!.id,
+      decision: "approve",
+    })
+    await vi.runAllTimersAsync()
+    const messages = await transport.api.listMessages(threadId)
+    const sent = messages.find((message) => message.id === "u1")
+    expect(sent?.attachments).toEqual([photo])
+    expect(messages.at(-1)?.content).toContain(
+      "I received 1 attachment: photo-1.jpg (3 KB)."
+    )
+    // Sent again under its id with other photos, it is another request.
+    await expect(
+      transport.api.sendMessage({
+        threadId,
+        userMessageId: "u1",
+        message: "What is wrong here?",
+        attachments: [{ ...photo, url: "data:image/jpeg;base64,BBBB" }],
+      })
+    ).rejects.toMatchObject({ status: 409, code: "dispatch_id_conflict" })
+  })
+
+  it("refuses what the desktop would refuse: a request over its limit, an attachment too long", async () => {
+    const { transport } = demo()
+    const threadId = "demo-flaky-login"
+    const photo = (chars: number) => ({
+      type: "file",
+      mediaType: "image/jpeg",
+      url: `data:image/jpeg;base64,${"A".repeat(chars)}`,
+    })
+    // Two photos that each fit, but not together.
+    await expect(
+      transport.api.sendMessage({
+        threadId,
+        message: "Look",
+        attachments: [photo(1_000_000), photo(1_100_000)],
+      })
+    ).rejects.toMatchObject({ status: 413, code: "request_too_large" })
+    // One data URL longer than a message may be.
+    await expect(
+      transport.api.sendMessage({
+        threadId,
+        message: "Look",
+        attachments: [photo(1_048_576)],
+      })
+    ).rejects.toMatchObject({ status: 400 })
+    expect(await transport.api.listMessages(threadId)).not.toContainEqual(
+      expect.objectContaining({ content: "Look" })
+    )
+  })
+
   it("records what the agent does as activities and sends them live, as the desktop does", async () => {
     const { transport, frames, events } = demo()
     const threadId = "demo-release-notes"
