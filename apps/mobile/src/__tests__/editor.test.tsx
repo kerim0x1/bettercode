@@ -48,10 +48,10 @@ const mockEditor = {
     } else if (command.type === "requestText") {
       this.emit({ type: "text", requestId: command.requestId, text: this.text })
     } else if (command.type === "markSaved") {
-      this.loaded = this.text
+      this.loaded = String(command.text)
       this.emit({
         type: "changed",
-        dirty: false,
+        dirty: this.text !== this.loaded,
         canUndo: true,
         canRedo: false,
       })
@@ -127,11 +127,15 @@ describe("the editor", () => {
       })
       expect(screen.getByTestId("editor-save")).toBeDisabled()
 
-      await act(async () => mockEditor.type(`// Edited\n${mockEditor.loaded}`))
+      const edited = `// Edited\n${mockEditor.loaded}`
+      await act(async () => mockEditor.type(edited))
       expect(await screen.findByText(/UNSAVED/)).toBeTruthy()
       await fireEvent.press(screen.getByTestId("editor-save"))
       await waitFor(() => expect(screen.queryByText(/UNSAVED/)).toBeNull())
-      expect(mockEditor.commands.at(-1)).toEqual({ type: "markSaved" })
+      expect(mockEditor.commands.at(-1)).toEqual({
+        type: "markSaved",
+        text: edited,
+      })
 
       const saved = await demoApi().readFile(ROOT, `${ROOT}/src/theme.ts`)
       expect(saved.content.startsWith("// Edited\n")).toBe(true)
@@ -175,6 +179,78 @@ describe("the editor", () => {
       expect(
         (await demoApi().readFile(ROOT, `${ROOT}/src/theme.ts`)).content
       ).toBe("theirs again\n")
+    },
+    FLOW_TIMEOUT_MS
+  )
+
+  it(
+    "keeps what was typed while a save was on its way unsaved",
+    async () => {
+      await openTheme()
+      await act(async () => mockEditor.type("first\n"))
+      const api = demoApi()
+      const write = api.writeFile.bind(api)
+      jest.spyOn(api, "writeFile").mockImplementationOnce(async (...args) => {
+        // Typed after the save took the text, before the desktop answered.
+        mockEditor.type("first\nsecond\n")
+        return write(...args)
+      })
+
+      await fireEvent.press(screen.getByTestId("editor-save"))
+      await waitFor(() =>
+        expect(mockEditor.commands.at(-1)).toEqual({
+          type: "markSaved",
+          text: "first\n",
+        })
+      )
+      expect(screen.getByText(/UNSAVED/)).toBeTruthy()
+      expect(screen.getByTestId("editor-save")).toBeEnabled()
+      expect((await api.readFile(ROOT, `${ROOT}/src/theme.ts`)).content).toBe(
+        "first\n"
+      )
+    },
+    FLOW_TIMEOUT_MS
+  )
+
+  it(
+    "does not overwrite a change made on the desktop right after a save",
+    async () => {
+      await openTheme()
+      await act(async () => mockEditor.type("mine\n"))
+      const api = demoApi()
+      const write = api.writeFile.bind(api)
+      jest.spyOn(api, "writeFile").mockImplementationOnce(async (...args) => {
+        await write(...args)
+        // The desktop changes the file the moment the phone's save is in.
+        await write(ROOT, "src/theme.ts", "desktop\n")
+      })
+      await fireEvent.press(screen.getByTestId("editor-save"))
+      await waitFor(() => expect(screen.queryByText(/UNSAVED/)).toBeNull())
+
+      await act(async () => mockEditor.type("mine, again\n"))
+      await fireEvent.press(screen.getByTestId("editor-save"))
+      expect(await screen.findByTestId("editor-conflict")).toBeTruthy()
+      expect((await api.readFile(ROOT, `${ROOT}/src/theme.ts`)).content).toBe(
+        "desktop\n"
+      )
+    },
+    FLOW_TIMEOUT_MS
+  )
+
+  it(
+    "saves without asking when the desktop's file changed to the same text",
+    async () => {
+      await openTheme()
+      await act(async () => mockEditor.type("same\n"))
+      await demoApi().writeFile(ROOT, "src/theme.ts", "same\n")
+
+      await fireEvent.press(screen.getByTestId("editor-save"))
+      await waitFor(() => expect(screen.queryByText(/UNSAVED/)).toBeNull())
+      expect(screen.queryByTestId("editor-conflict")).toBeNull()
+      expect(mockEditor.commands.at(-1)).toEqual({
+        type: "markSaved",
+        text: "same\n",
+      })
     },
     FLOW_TIMEOUT_MS
   )

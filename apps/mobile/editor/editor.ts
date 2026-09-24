@@ -168,7 +168,10 @@ const wrapping = new Compartment()
 let view: EditorView | null = null
 /** The file's line break, which the text's lines are joined with. */
 let lineBreak: LineBreak = "\n"
-/** The text as loaded, to tell the app whether there are changes. */
+/**
+ * The desktop's text as the editor knows it, loaded or last saved: the app
+ * hears whether the editor's text differs from it.
+ */
 let loaded = ""
 let changeTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -292,7 +295,8 @@ function handle(command: EditorCommand): void {
       })
       return
     case "markSaved":
-      if (view) loaded = currentText(view)
+      // What was typed while the save was on its way is still unsaved.
+      loaded = command.text
       reportChange()
       return
     case "undo":

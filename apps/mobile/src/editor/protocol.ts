@@ -69,8 +69,11 @@ export type EditorCommand =
   | { type: "setWrap"; wrap: boolean }
   | { type: "setReadOnly"; readOnly: boolean }
   | { type: "requestText"; requestId: string }
-  /** The text now is what the desktop has; changes count from here. */
-  | { type: "markSaved" }
+  /**
+   * The desktop has `text` now; changes count from it. It is the text that
+   * was saved, which may be older than what the editor holds by then.
+   */
+  | { type: "markSaved"; text: string }
   | { type: "undo" }
   | { type: "redo" }
 

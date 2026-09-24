@@ -21,6 +21,7 @@ import { effectiveThreadRoot, relativePathWithinRoot } from "@/lib/endpoint"
 import { formatShortDateTime } from "@/lib/format"
 import { unifiedFileDiff } from "@/lib/line-diff"
 import { describeRemoteError, remoteErrorMessage } from "@/lib/remote-errors"
+import { sha256Hex } from "@/lib/sha256"
 import { useAppStore } from "@/store/app-store"
 import { RemoteApiError } from "@/transport/live/http"
 import {
@@ -259,23 +260,32 @@ export default function EditScreen() {
     [writeDraft]
   )
 
-  /** Saved: the desktop's file is now the phone's, and the draft is done. */
-  const saved = async () => {
-    const fresh = await api!.readFile(root, absolutePath)
-    baseSha256.current = fresh.sha256 ?? baseSha256.current
+  /**
+   * Saved: the desktop has `text` now, and the draft is done. The next save
+   * is made over the text's own hash, not over the file read again: that
+   * could be a change made on the desktop since, which the next save would
+   * then overwrite.
+   */
+  const saved = (text: string, sha256 = sha256Hex(text)) => {
+    baseSha256.current = sha256
+    setConflict(null)
     setRestored(false)
-    editor.current?.send({ type: "markSaved" })
+    editor.current?.send({ type: "markSaved", text })
     clearDraft(root, relative)
   }
 
   const write = async (text: string, expectedSha256: string) => {
     try {
       await api!.writeFile(root, relative, text, expectedSha256)
-      setConflict(null)
-      await saved()
+      saved(text)
     } catch (caught) {
       if (!isConflict(caught)) throw caught
       const theirs = await api!.readFile(root, absolutePath)
+      // The desktop's file changed to this very text: nothing to choose.
+      if (theirs.content === text && theirs.sha256) {
+        saved(text, theirs.sha256)
+        return
+      }
       setConflict({
         theirs: theirs.content,
         theirsSha256: theirs.sha256 ?? "",
