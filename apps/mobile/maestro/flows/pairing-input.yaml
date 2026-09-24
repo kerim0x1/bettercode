@@ -16,13 +16,18 @@ tags:
 - tapOn:
     id: pair-input
 - inputText: ABCD-EFGH-JKLM
-# Maestro cannot hide the iOS keyboard, which covers Connect; Return ends
-# editing in this single-line field instead.
+# On Android the form moves above the keyboard, and Connect is reached with
+# the keyboard open (Maestro counts what the keyboard covers as not visible
+# there). Maestro cannot hide the iOS keyboard, which covers Connect; Return
+# ends editing in this single-line field instead.
 - runFlow:
     when:
       platform: Android
     commands:
-      - hideKeyboard
+      - scrollUntilVisible:
+          element:
+            id: pair-connect
+          direction: DOWN
 - runFlow:
     when:
       platform: iOS
