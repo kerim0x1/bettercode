@@ -382,6 +382,94 @@ describe.each([
     )
   })
 
+  it("creates, saves, renames and deletes files as the desktop allows", async () => {
+    const root = fixture.projectRoot
+    const names = async (...parts: string[]) =>
+      (
+        await fixture.api.listDirectory(fixture.join(root, ...parts))
+      ).entries.map((entry) => entry.name)
+
+    // A new file only where none exists; its folder comes with it.
+    await fixture.api.writeFile(root, "notes/new.md", "# New\n", null)
+    const created = await fixture.api.readFile(
+      root,
+      fixture.join(root, "notes", "new.md")
+    )
+    expect(created.content).toBe("# New\n")
+    expect(created.sha256).toMatch(/^[0-9a-f]{64}$/)
+    await expect(
+      fixture.api.writeFile(root, "notes/new.md", "Again\n", null)
+    ).rejects.toMatchObject({ status: 409, code: "WORKSPACE_PATH_CHANGED" })
+
+    // A save only over the bytes that were read.
+    await fixture.api.writeFile(
+      root,
+      "notes/new.md",
+      "# Newer\n",
+      created.sha256
+    )
+    await expect(
+      fixture.api.writeFile(root, "notes/new.md", "# Stale\n", created.sha256)
+    ).rejects.toMatchObject({ status: 409, code: "WORKSPACE_PATH_CHANGED" })
+
+    await fixture.api.createFolder(root, "notes/empty")
+    expect(await names("notes")).toEqual(["empty", "new.md"])
+
+    // A rename, never onto something that exists.
+    await fixture.api.movePath(root, "notes/new.md", "notes/renamed.md")
+    expect(await names("notes")).toEqual(["empty", "renamed.md"])
+    await expect(
+      fixture.api.movePath(root, "notes/renamed.md", "README.md")
+    ).rejects.toMatchObject({ status: 409, code: "EEXIST" })
+
+    // A folder goes with everything in it.
+    await fixture.api.deletePath(root, "notes", true)
+    expect(await names()).not.toContain("notes")
+  })
+
+  it("searches the text of files with the desktop's options", async () => {
+    const root = fixture.projectRoot
+    await fixture.api.writeFile(
+      root,
+      "search/sample.ts",
+      "const Needle = 1\nconst needle = 2\nconst needles = 3\n",
+      null
+    )
+    const lines = async (query: string, options = {}) =>
+      (
+        await fixture.api.searchContent(root, query, {
+          include: "search/**",
+          ...options,
+        })
+      ).results.flatMap((file) => file.matches.map((match) => match.line))
+
+    const found = await fixture.api.searchContent(root, "needle", {
+      include: "search/**",
+    })
+    expect(() =>
+      httpContracts.workspaceSearchContent.response.parse(found)
+    ).not.toThrow()
+    expect(found.truncated).toBe(false)
+    expect(found.results.map((file) => [file.path, file.name])).toEqual([
+      ["search/sample.ts", "sample.ts"],
+    ])
+    expect(found.results[0]!.matches[0]).toMatchObject({
+      line: 1,
+      column: 7,
+      length: 6,
+      preview: "const Needle = 1",
+      previewColumn: 7,
+      previewLength: 6,
+    })
+    expect(await lines("needle")).toEqual([1, 2, 3])
+    expect(await lines("needle", { caseSensitive: true })).toEqual([2, 3])
+    expect(await lines("needle", { wholeWord: true })).toEqual([1, 2])
+    expect(await lines("need+les", { regex: true })).toEqual([3])
+    expect(await lines("needle", { include: "*.md" })).toEqual([])
+
+    await fixture.api.deletePath(root, "search", true)
+  })
+
   // Last: it renames the shared chat and deletes one of its own.
   it("renames a chat, and deletes one", async () => {
     const bootstrap = parseRemoteBootstrap(await fixture.api.bootstrap())
