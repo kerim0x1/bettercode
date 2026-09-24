@@ -69,6 +69,7 @@ import {
   MAESTRO_ENV,
   androidEnv,
   ensureMaestro,
+  maestroFailures,
   maestroTestArgs,
   resolveAndroid,
 } from "./mobile-toolchain.mjs"
@@ -533,10 +534,36 @@ export async function e2e({ apk, android, env = process.env }) {
 
     const maestro = await ensureMaestro({ log: (line) => process.stdout.write(`${line}\n`) })
     fs.mkdirSync(E2E_OUTPUT_DIR, { recursive: true })
-    run(maestro, maestroTestArgs(serial, FLOWS_DIR, E2E_OUTPUT_DIR), {
-      env: { ...toolEnv, ...MAESTRO_ENV },
-      label: "maestro",
-    })
+    // Maestro renames a flow's debug folder that exists already ("-2"), and
+    // a run that ends early leaves the last run's report in place; both
+    // would be read below as this run's. Only Maestro's output goes: the
+    // emulator is still writing its log here.
+    for (const entry of fs.readdirSync(E2E_OUTPUT_DIR)) {
+      if (entry === "maestro" || entry === "maestro-junit.xml" || entry.startsWith("rerun-")) {
+        fs.rmSync(path.join(E2E_OUTPUT_DIR, entry), { recursive: true, force: true })
+      }
+    }
+    const maestroEnv = { ...toolEnv, ...MAESTRO_ENV }
+    try {
+      run(maestro, maestroTestArgs(serial, FLOWS_DIR, E2E_OUTPUT_DIR), { env: maestroEnv, label: "maestro" })
+    } catch (error) {
+      // The emulator's adbd sometimes drops the connection for a moment
+      // ("connection terminated: write failed"), and the command that lands
+      // in that gap fails with "device offline". A flow that failed that way
+      // tested nothing, so it runs once more; any other failure stands.
+      const failures = maestroFailures(E2E_OUTPUT_DIR)
+      if (failures.length === 0 || failures.some((failure) => !failure.lostDevice)) throw error
+      for (const [index, failure] of failures.entries()) {
+        process.stdout.write(
+          `The emulator dropped its connection during "${failure.name}" (${failure.reason}). Running that flow once more.\n`
+        )
+        run(
+          maestro,
+          maestroTestArgs(serial, path.resolve(root, failure.file), path.join(E2E_OUTPUT_DIR, `rerun-${index + 1}`)),
+          { env: maestroEnv, label: "maestro" }
+        )
+      }
+    }
   } catch (error) {
     saveDiagnostics(android, serial, toolEnv)
     throw error
