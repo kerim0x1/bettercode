@@ -3,7 +3,12 @@ import net from "node:net"
 import { Duplex } from "node:stream"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import WebSocket from "ws"
-import { rejectUpgrade, WsHub, type WsHubOptions } from "./server"
+import {
+  rejectUpgrade,
+  WsHub,
+  type WsConnection,
+  type WsHubOptions,
+} from "./server"
 
 const cleanups: Array<() => Promise<void>> = []
 
@@ -399,6 +404,47 @@ describe("WsHub upgrade boundary", () => {
     resolveFirst("done")
     await expect(completed).resolves.toEqual({ id: "first", result: "done" })
     ws.close()
+  })
+
+  it("hands an RPC the connection it came in on, which hears when it closes", async () => {
+    const { hub, url } = await startHub()
+    let kept: WsConnection | undefined
+    hub.setRpcHandler((_method, _params, _principal, connection) => {
+      kept = connection
+      return "kept"
+    })
+    const headers = {
+      Authorization: "Bearer secret",
+      Origin: "http://localhost:5173",
+    }
+    const first = new WebSocket(url, { headers })
+    const second = new WebSocket(url, { headers })
+    await Promise.all([nextJson(first), nextJson(second)])
+    let secondHeard = false
+    second.on("message", (raw) => {
+      if (String(raw).includes("test.frame")) secondHeard = true
+    })
+
+    const answered = nextJson(first)
+    first.send(JSON.stringify({ id: "keep", method: "test.keep" }))
+    await expect(answered).resolves.toEqual({ id: "keep", result: "kept" })
+    const toFirst = nextJson(first)
+    kept!.send({ channel: "test.frame", data: { n: 1 } })
+    await expect(toFirst).resolves.toEqual({
+      channel: "test.frame",
+      data: { n: 1 },
+    })
+    expect(kept!.isOpen()).toBe(true)
+    expect(kept!.bufferedAmount()).toBeGreaterThanOrEqual(0)
+
+    const closed = new Promise<void>((resolve) => kept!.onClose(resolve))
+    first.close()
+    await closed
+    expect(kept!.isOpen()).toBe(false)
+    // Asked after the close: answered at once.
+    await new Promise<void>((resolve) => kept!.onClose(resolve))
+    expect(secondHeard).toBe(false)
+    second.close()
   })
 
   it("does not expose unexpected RPC error details", async () => {

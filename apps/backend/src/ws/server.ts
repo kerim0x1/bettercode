@@ -53,8 +53,26 @@ export interface WsRemotePrincipal {
 
 export type WsPrincipal = WsLocalPrincipal | WsRemotePrincipal
 
+/**
+ * The connection an RPC call came in on, for a method that goes on talking
+ * to it after its answer (the terminal's output).
+ */
+export interface WsConnection {
+  /** Sends a frame to this connection alone (the broadcasts' backpressure policy). */
+  send(frame: unknown): void
+  /** Bytes the socket has queued and not sent yet. */
+  bufferedAmount(): number
+  isOpen(): boolean
+  /**
+   * Calls `listener` once the connection closes (at once when it already
+   * has); the returned function takes it back.
+   */
+  onClose(listener: () => void): () => void
+}
+
 interface ReplayClient extends AuthenticatedClient {
   readonly principal: WsPrincipal
+  readonly connection: WsConnection
   providerEventsReady: boolean
   lastDeliveredProviderSequence: number
   readonly authenticatedAtSequence: number
@@ -151,7 +169,9 @@ const LIVENESS_MISS_LIMIT = 2
 export type RpcHandler = (
   method: string,
   params: unknown,
-  principal: WsPrincipal
+  principal: WsPrincipal,
+  /** The socket the call came in on (the hub always passes it). */
+  connection?: WsConnection
 ) => Promise<unknown> | unknown
 
 /**
@@ -744,7 +764,8 @@ export class WsHub {
           const result = await this.rpcHandler(
             rpc.method,
             rpc.params,
-            client.principal
+            client.principal,
+            client.connection
           )
           client.send({ id: rpc.id, result })
         } catch (err) {
@@ -843,9 +864,27 @@ export class WsHub {
     clientInfo: RemoteClientInfo | null = null
   ): ReplayClient {
     this.toolSnapshots.flush()
+    const closeListeners = new Set<() => void>()
+    let closed = false
+    const connection: WsConnection = {
+      send: (frame) => client.send(frame),
+      bufferedAmount: () => socket.bufferedAmount,
+      isOpen: () => !closed && socket.readyState === WebSocket.OPEN,
+      onClose: (listener) => {
+        if (closed) {
+          queueMicrotask(listener)
+          return () => undefined
+        }
+        closeListeners.add(listener)
+        return () => {
+          closeListeners.delete(listener)
+        }
+      },
+    }
     const client: ReplayClient = {
       socket,
       principal,
+      connection,
       providerEventsReady: false,
       lastDeliveredProviderSequence: 0,
       authenticatedAtSequence: this.providerSequence,
@@ -891,6 +930,15 @@ export class WsHub {
           this.remoteClientsBySession.delete(client.principal.sessionId)
         }
       }
+      closed = true
+      for (const listener of [...closeListeners]) {
+        try {
+          listener()
+        } catch (error) {
+          logger.warn({ err: error }, "a WebSocket close listener failed")
+        }
+      }
+      closeListeners.clear()
     })
 
     socket.send(
