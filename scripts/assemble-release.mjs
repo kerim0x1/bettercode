@@ -4,7 +4,7 @@
 // directory that can be uploaded to a GitHub release as-is, and refuses when
 // the set is incomplete or inconsistent.
 //
-//   node scripts/assemble-release.mjs <artifacts-dir> <output-dir>
+//   node scripts/assemble-release.mjs <artifacts-dir> <output-dir> [--android]
 //
 // <artifacts-dir> holds one sub-directory per build job (the layout
 // actions/download-artifact produces). The script:
@@ -18,6 +18,11 @@
 //   - checks every file listed in latest*.yml exists with the recorded
 //     sha512 and size, so the update feed cannot point at a different binary.
 //   - requires the installers users download for every supported target.
+//   - takes the phone app only as BetterC0de-Remote-<version>.apk whose
+//     signers present the pinned release certificate
+//     (apps/mobile/signing/android-release.json). A test-key build, or one
+//     of another version, is refused by name. `--android` makes the APK
+//     required.
 //   - writes a single SHA256SUMS.txt computed from the final files.
 
 import { createHash } from "node:crypto"
@@ -26,6 +31,9 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import YAML from "yaml"
+
+import { apkSigners } from "./android-apk.mjs"
+import { apkFileName, readReleaseCertificate } from "./mobile-android.mjs"
 
 export const REQUIRED_ASSETS = [
   { description: "Windows x64 installer", pattern: /^BetterC0de-Setup-.+\.exe$/ },
@@ -45,7 +53,7 @@ export const REQUIRED_ASSETS = [
 const MERGED_METADATA = new Set(["latest-mac.yml"])
 // Per-job checksum files are replaced by one computed from the final set.
 const PER_JOB_CHECKSUMS = /^SHA256SUMS(?:-.+)?\.txt$/
-const CHECKSUMMED = /\.(?:exe|dmg|zip|AppImage|deb|rpm|gz)$/i
+const CHECKSUMMED = /\.(?:exe|dmg|zip|AppImage|deb|rpm|gz|apk)$/i
 
 /** Groups files by name across job directories: name → [absolute paths]. */
 export function collectArtifacts(artifactsDir) {
@@ -140,7 +148,48 @@ export function verifyUpdateInfo(metadataName, document, outputDir) {
   return problems
 }
 
-export function assembleRelease(artifactsDir, outputDir) {
+/**
+ * What keeps the phone app's APK out of a release. The name decides which
+ * build it is (only the release-signed one has no suffix); the certificates
+ * in its APK Signing Block must be the pinned release certificate. Whether
+ * the signatures are valid was checked with apksigner when it was built.
+ */
+export function androidApkProblems(outputDir, names, { version, required, releaseCertificate }) {
+  const expected = apkFileName(version, "release")
+  const problems = []
+  for (const name of names.filter((candidate) => /\.apk$/i.test(candidate))) {
+    if (name !== expected) {
+      problems.push(`${name} cannot be published: a release carries only ${expected}, signed with the release key`)
+      continue
+    }
+    const signers = apkSigners(fs.readFileSync(path.join(outputDir, name)))
+    if (signers.length === 0) {
+      problems.push(`${name} has no APK Signature Scheme v2 or v3 signature`)
+    } else if (!releaseCertificate) {
+      problems.push(`${name}: no release certificate is pinned in apps/mobile/signing/android-release.json`)
+    } else {
+      for (const { scheme, certificates } of signers) {
+        if (certificates[0] !== releaseCertificate.sha256) {
+          problems.push(
+            `${name}: its ${scheme} signer presents ${certificates[0] ?? "no certificate"}, not the release certificate ${releaseCertificate.sha256}`
+          )
+        }
+      }
+    }
+  }
+  if (required && !names.includes(expected)) problems.push(`missing: Android app (${expected})`)
+  return problems
+}
+
+function packageVersion() {
+  return JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "package.json"), "utf8")).version
+}
+
+export function assembleRelease(
+  artifactsDir,
+  outputDir,
+  { android = { required: false, version: packageVersion(), releaseCertificate: readReleaseCertificate() } } = {}
+) {
   const byName = collectArtifacts(artifactsDir)
   const collisions = findCollisions(byName)
   if (collisions.length > 0) {
@@ -164,6 +213,7 @@ export function assembleRelease(artifactsDir, outputDir) {
 
   const names = fs.readdirSync(outputDir).sort()
   const problems = requiredAssetGaps(names).map((description) => `missing: ${description}`)
+  problems.push(...androidApkProblems(outputDir, names, android))
   for (const name of names.filter((candidate) => /^latest.*\.yml$/.test(candidate))) {
     const document = YAML.parse(fs.readFileSync(path.join(outputDir, name), "utf8"))
     problems.push(...verifyUpdateInfo(name, document, outputDir))
@@ -187,13 +237,20 @@ function isEntryPoint() {
 }
 
 if (isEntryPoint()) {
-  const [artifactsDir, outputDir] = process.argv.slice(2)
-  if (!artifactsDir || !outputDir) {
-    process.stderr.write("Usage: node scripts/assemble-release.mjs <artifacts-dir> <output-dir>\n")
+  const args = process.argv.slice(2)
+  const [artifactsDir, outputDir] = args.filter((arg) => !arg.startsWith("--"))
+  const unknown = args.filter((arg) => arg.startsWith("--") && arg !== "--android")
+  if (!artifactsDir || !outputDir || unknown.length > 0) {
+    process.stderr.write("Usage: node scripts/assemble-release.mjs <artifacts-dir> <output-dir> [--android]\n")
     process.exit(2)
   }
   try {
-    const files = assembleRelease(path.resolve(artifactsDir), path.resolve(outputDir))
+    const android = {
+      required: args.includes("--android"),
+      version: packageVersion(),
+      releaseCertificate: readReleaseCertificate(),
+    }
+    const files = assembleRelease(path.resolve(artifactsDir), path.resolve(outputDir), { android })
     process.stdout.write(`Release assembled (${files.length} files):\n${files.map((file) => `  ${file}`).join("\n")}\n`)
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)

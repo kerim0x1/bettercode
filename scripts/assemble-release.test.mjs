@@ -8,6 +8,7 @@ import test from "node:test"
 import YAML from "yaml"
 
 import { assembleRelease, mergeUpdateInfo, requiredAssetGaps } from "./assemble-release.mjs"
+import { signedApk } from "./fixtures/mobile/apk.mjs"
 
 const VERSION = "0.1.0-beta.3"
 
@@ -158,4 +159,56 @@ test("required asset patterns keep x64 and arm64 Mac downloads apart", () => {
   const gaps = requiredAssetGaps([`BetterC0de-${VERSION}-arm64.dmg`])
   assert.ok(gaps.includes("macOS x64 disk image"))
   assert.equal(gaps.includes("macOS arm64 disk image"), false)
+})
+
+const RELEASE_CERTIFICATE = Buffer.from("BetterC0de Remote release certificate (DER)")
+const PINNED = { sha256: createHash("sha256").update(RELEASE_CERTIFICATE).digest("hex") }
+const APK = `BetterC0de-Remote-${VERSION}.apk`
+const android = (overrides = {}) => ({ required: true, version: VERSION, releaseCertificate: PINNED, ...overrides })
+
+test("the phone app joins a release as the APK signed with the release key, with a checksum", () => {
+  withTempDirs((artifacts, out) => {
+    completeRelease(artifacts)
+    writeJob(artifacts, "installers-android", { [APK]: signedApk(RELEASE_CERTIFICATE) })
+    const files = assembleRelease(artifacts, out, { android: android() })
+    assert.ok(files.includes(APK))
+    assert.match(fs.readFileSync(path.join(out, "SHA256SUMS.txt"), "utf8"), new RegExp(`^[0-9a-f]{64}  ${APK.replaceAll(".", "\\.")}$`, "m"))
+  })
+})
+
+test("a test-key APK, or one of another version, never joins a release", () => {
+  for (const name of [`BetterC0de-Remote-${VERSION}-test-key.apk`, "BetterC0de-Remote-0.0.9.apk"]) {
+    withTempDirs((artifacts, out) => {
+      completeRelease(artifacts)
+      writeJob(artifacts, "installers-android", { [APK]: signedApk(RELEASE_CERTIFICATE), [name]: signedApk(RELEASE_CERTIFICATE) })
+      assert.throws(
+        () => assembleRelease(artifacts, out, { android: android() }),
+        new RegExp(`${name.replaceAll(".", "\\.")} cannot be published: a release carries only ${APK.replaceAll(".", "\\.")}`)
+      )
+    })
+  }
+})
+
+test("an APK signed with another key, or before the release key is pinned, blocks the release", () => {
+  withTempDirs((artifacts, out) => {
+    completeRelease(artifacts)
+    writeJob(artifacts, "installers-android", { [APK]: signedApk(Buffer.from("someone else's certificate")) })
+    assert.throws(() => assembleRelease(artifacts, out, { android: android() }), /v2 signer presents [0-9a-f]{64}, not the release certificate/)
+  })
+  withTempDirs((artifacts, out) => {
+    completeRelease(artifacts)
+    writeJob(artifacts, "installers-android", { [APK]: signedApk(RELEASE_CERTIFICATE) })
+    assert.throws(
+      () => assembleRelease(artifacts, out, { android: android({ releaseCertificate: null }) }),
+      /no release certificate is pinned/
+    )
+  })
+})
+
+test("--android makes the APK required; a desktop-only release needs none", () => {
+  withTempDirs((artifacts, out) => {
+    completeRelease(artifacts)
+    assert.throws(() => assembleRelease(artifacts, out, { android: android() }), new RegExp(`missing: Android app \\(${APK.replaceAll(".", "\\.")}\\)`))
+    assert.ok(assembleRelease(artifacts, out, { android: android({ required: false }) }).includes("SHA256SUMS.txt"))
+  })
 })

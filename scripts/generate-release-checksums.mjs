@@ -9,7 +9,7 @@ const checksumFile = (process.env.CHECKSUM_FILE ?? "SHA256SUMS.txt").replace(
   /[^A-Za-z0-9._-]/g,
   "-",
 )
-const supportedExtensions = [".appimage", ".deb", ".dmg", ".exe", ".rpm", ".zip", ".gz"]
+const supportedExtensions = [".apk", ".appimage", ".deb", ".dmg", ".exe", ".rpm", ".zip", ".gz"]
 const files = fs.existsSync(releaseDir)
   ? fs
       .readdirSync(releaseDir, { withFileTypes: true })
