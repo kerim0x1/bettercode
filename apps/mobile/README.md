@@ -30,7 +30,12 @@ npm run mobile:icons       # re-render the icons from apps/ui/public/favicon.svg
 npm run typecheck:mobile
 npm run test:mobile        # logic and screen tests
 npm run test:e2e:remote    # the app's network client against a real desktop backend
+npm run mobile:toolchain   # what the native builds need, and what is missing
+npm run mobile:apk -- all  # build the APK, check it, run the device tests on an emulator
 ```
+
+Native builds, signing and the device tests are described in
+[`docs/development/mobile.md`](../../docs/development/mobile.md).
 
 No desktop at hand? **Try the demo** on the pairing screen runs the whole app
 against sample chats and files (see [Demo mode](#demo-mode)).

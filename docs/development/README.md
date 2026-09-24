@@ -61,14 +61,16 @@ The source gate checks workspace versions, builds the backend and shared schema,
 | install | `npm ci` from the lockfile |
 | versions, format, lint | `check:versions`, `format:check`, `lint` |
 | typecheck | schema/backend build, then UI, backend, shell, mobile and demo type-checks |
-| test | packaging (`node:test`), UI, backend and mobile suites |
+| test | packaging (`node:test`), UI, backend and mobile suites, and the phone app's network client against a real backend (`test:e2e:remote`) |
 | build | production build with bundle budgets, backend start-up/memory budgets (`perf:backend`), mobile app config, native-dependency and bundle checks (`mobile:check`) |
+| mobile-android | the phone app's APK (throwaway key), its checks, and the device tests on an emulator; skipped without JDK 17 and the Android SDK |
+| mobile-ios | the phone app for the iOS simulator, its checks, and the device tests; macOS with Xcode only |
 | package | Electron native rebuild, unpacked package, package size budgets |
 | smoke | launches the packaged app: backend health, renderer mounted, no fatal diagnostics |
 | installers | installers built from that exact app, plus checksums |
 | installer-smoke | install → launch → uninstall on the host (CI only by default) |
 
-`--list`, `--until <step>`, `--from <step>`, `--skip-install` and `--installer-smoke` control a run; see `npm run release:check -- --help`. The scripts live in `scripts/release-check.mjs`, `scripts/packaged-startup-smoke.mjs` and `scripts/installer-smoke.mjs`.
+`--list`, `--until <step>`, `--from <step>`, `--mobile <auto|android|ios|all|none>`, `--skip-install` and `--installer-smoke` control a run; see `npm run release:check -- --help`. The scripts live in `scripts/release-check.mjs`, `scripts/packaged-startup-smoke.mjs` and `scripts/installer-smoke.mjs`; the phone app's in `scripts/mobile-android.mjs` and `scripts/mobile-ios.mjs` ([mobile.md](mobile.md)).
 
 For a focused edit, use the relevant scripts: `npm test`, `npm run test:backend`, `npm run test:mobile`, `npm run test:e2e:remote` (the phone app's network client against a real backend), or `npm run test:packaging`. The optional local video compositions have a separate `npm run typecheck:remotion` check; it skips cleanly when the ignored `remotion/` directory is absent.
 

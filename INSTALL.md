@@ -138,6 +138,7 @@ npm run build
 
 ```text
 preflight → npm ci → versions → format → lint → typecheck → test → build →
+phone app on Android → phone app on iOS →
 package → smoke (launch the packaged app) → installers → installer-smoke
 ```
 
@@ -148,7 +149,10 @@ npm run release:check -- --list             # show the steps
 npm run release:check -- --until build      # stop before packaging
 npm run release:check -- --skip-install     # reuse node_modules while iterating
 npm run release:check -- --installer-smoke  # include the install/uninstall test here
+npm run release:check -- --mobile none      # leave out the phone app's builds
 ```
+
+The phone app steps build the app and run its device tests on an emulator or simulator. They run where their toolchain is installed (JDK 17 and the Android SDK; macOS with Xcode) and are skipped otherwise, with the reason in the summary. See [the phone app's build guide](docs/development/mobile.md).
 
 A run with skipped steps says so in its summary. CI covers Ubuntu, Windows and both Mac architectures; a local run covers only your own platform.
 

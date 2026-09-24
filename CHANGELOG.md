@@ -36,6 +36,7 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 - The phone app shows **Update BetterC0de Remote** when the desktop needs a newer app, or asks to update the desktop when it is too old for the app, and keeps the pairing for after the update. Its connection badge distinguishes live, connecting, reconnecting, offline, Remote Access off, watch-only and demo.
 - **Paired devices** on the desktop shows the phone's model (for example "Pixel 9"), instead of "iPhone" or "Android" for every device.
 - Screen tests for the phone app (Jest with Expo's preset and React Native Testing Library), and `npm run test:e2e:remote`, which runs the app's network client against a real desktop backend and checks that the demo answers like a real desktop. Both are part of `release:check`.
+- The phone app is built and tested as users get it. `npm run mobile:apk` builds the Android APK and checks it: the signer, version, SDK levels and permissions, native libraries that load on 16 KB page devices, and the size. It then runs device tests on an emulator: the pairing screen and the demo from start to exit, driven by Maestro. `npm run mobile:ios:sim` builds the iOS app for the simulator on a Mac and runs the same tests. `release:check` runs both where their toolchain is installed (`--mobile`), and CI runs both on every push. See `docs/development/mobile.md`.
 - `/api/v1/workspace/read` returns the file's SHA-256, size and whether it is valid UTF-8; `/api/v1/workspace/write` accepts `expectedSha256` and refuses to overwrite a file that changed since it was read.
 - CI runs `release:check` on Linux x64, Windows x64, macOS arm64 and macOS x64 for every push and pull request, and the source checks on Node 24.
 - The Linux `.deb` is installed with apt and started with the Chromium sandbox on in CI; the `.rpm` is installed in a clean Fedora container.
@@ -53,6 +54,7 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 - The iOS app's network policy names what it needs, local networking and Tailscale `ts.net` host names, instead of allowing arbitrary plain-HTTP loads, a setting iOS ignores when local networking is also allowed. Its permission prompts are in English.
 - A local `npm run build:mac` builds only for the architecture of the Mac it runs on, like the CI jobs. It used to also emit the other architecture's file names from the same app.
 - The phone app's interface is in English throughout; it mixed in German labels and German date formats. Dates and file sizes follow the device's locale.
+- The Android app asks only for the camera (to scan the pairing QR code), network access and vibration. The storage, "display over other apps" and biometric permissions that the React Native template and a library declared are removed; the app uses none of them.
 
 ## [0.1.0-beta.2] - 2026-09-22
 

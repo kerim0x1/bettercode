@@ -142,7 +142,7 @@ No `.env` file or account is needed to build, test or start the app. Optional en
 | `npm run format:check` / `npm run format:changed` | Check or apply Prettier on the TS/TSX files you changed. |
 | `npm run build` | Production build of the backend and renderer, with bundle budgets. |
 | `npm run build:win` / `build:mac` / `build:linux` | Installers for the current OS in `release/`. |
-| `npm run release:check` | **The release gate.** Clean install → versions → format → lint → type-check → tests → production build → package → launch the packaged app → installers → install/launch/uninstall test. Exits non-zero on the first failure. |
+| `npm run release:check` | **The release gate.** Clean install → versions → format → lint → type-check → tests → production build → phone app builds and device tests → package → launch the packaged app → installers → install/launch/uninstall test. Exits non-zero on the first failure. |
 
 `npm run release:check -- --list` shows the steps. Locally, the install/uninstall test is skipped because it would change your machine (and replace an installed BetterC0de); CI runs it on clean runners. Pass `--installer-smoke` to run it anyway.
 

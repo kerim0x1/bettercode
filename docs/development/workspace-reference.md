@@ -530,6 +530,8 @@ The renderer's backend access layer:
 - `npm run mobile:start` — start Metro for an already installed development build
 - `npm run mobile:check` — check the app config, native dependencies and the Android/iOS/web bundles
 - `npm run mobile:prebuild` / `npm run mobile:icons` — regenerate the native projects or the icons
+- `npm run mobile:toolchain` — show what the native builds need and what is missing
+- `npm run mobile:apk -- <build|verify|e2e|all>` / `npm run mobile:ios:sim -- <build|e2e|all>` — build, check and device-test the Android APK or the iOS simulator app (see [mobile.md](mobile.md))
 - `npm run typecheck:mobile` / `npm run test:mobile` — verify the React Native workspace
 - `npm run test:e2e:remote` — build the backend, then run the phone app's network client against it in-process
 
