@@ -73,12 +73,49 @@ test("CI and release run release:check on Linux, Windows and both Mac architectu
   }
 })
 
-test("publishing waits for every platform and the Node compatibility leg", () => {
+test("publishing waits for every platform, the Node compatibility leg and the phone app", () => {
   const release = YAML.parse(fs.readFileSync(path.join(root, ".github", "workflows", "release.yml"), "utf8"))
-  assert.deepEqual(release.jobs.publish.needs.sort(), ["node-compat", "release-check", "tag"])
+  assert.deepEqual(release.jobs.publish.needs.sort(), [
+    "mobile-android",
+    "mobile-ios",
+    "node-compat",
+    "release-check",
+    "tag",
+  ])
+  // A phone app job that is switched off is skipped and must not block the
+  // desktop release; a failed one must.
+  assert.match(release.jobs.publish.if, /!failure\(\)/)
+  assert.match(release.jobs.publish.if, /!cancelled\(\)/)
   assert.equal(release.jobs["release-check"].strategy["fail-fast"], false)
   assert.deepEqual(release.permissions, { contents: "read" })
   assert.deepEqual(release.jobs.publish.permissions, { contents: "write" })
+})
+
+test("the phone app joins releases only when switched on, and only tags reach its secrets", () => {
+  const source = fs.readFileSync(path.join(root, ".github", "workflows", "release.yml"), "utf8")
+  const release = YAML.parse(source)
+  for (const name of ["mobile-android", "mobile-ios", "testflight"]) {
+    assert.match(release.jobs[name].if, /vars\.BETTERC0DE_MOBILE_RELEASE == 'true'/, name)
+  }
+  const signing = Object.entries(release.jobs)
+    .filter(([, job]) => job.environment === "release")
+    .map(([name]) => name)
+    .sort()
+  assert.deepEqual(signing, ["mobile-android", "testflight"])
+  for (const name of signing) assert.match(release.jobs[name].if, /startsWith\(github\.ref, 'refs\/tags\/v'\)/, name)
+  // Secrets appear only in the jobs of the release environment.
+  for (const [name, job] of Object.entries(release.jobs)) {
+    if (job.environment === "release") continue
+    assert.doesNotMatch(JSON.stringify(job), /secrets\./, `${name} reads a secret outside the release environment`)
+  }
+  assert.equal(release.jobs.testflight.needs, "publish")
+  assert.deepEqual(runs(release.jobs["mobile-android"]).filter((run) => run.includes("mobile-android.mjs")), [
+    "node scripts/mobile-android.mjs build --signing release",
+    "node scripts/mobile-android.mjs e2e",
+  ])
+  const assemble = release.jobs.publish.steps.find((step) => step.name === "Assemble and verify the release")
+  assert.match(assemble.env.ANDROID, /BETTERC0DE_MOBILE_RELEASE == 'true' && '--android'/)
+  assert.match(assemble.run, /release:assemble -- artifacts dist-release \$ANDROID/)
 })
 
 test("the desktop legs leave the phone app to its own jobs", () => {

@@ -6,16 +6,26 @@
 #      builds, launches, installs and uninstalls its installers and keeps them
 #      as artifacts
 #   2. runs the Node compatibility leg
-#   3. only when every job passed: assembles one release from the artifacts
+#   3. builds the phone app: the APK signed with the release key, device
+#      tests on that exact APK, and the iOS app on a simulator
+#   4. only when every job passed: assembles one release from the artifacts
 #      (merged macOS update metadata, sha512 cross-check of every update
-#      entry, one SHA256SUMS.txt), uploads it to a draft, confirms every file
-#      arrived, and publishes the draft
+#      entry, the APK's certificate against the pinned one, one
+#      SHA256SUMS.txt), uploads it to a draft, confirms every file arrived,
+#      and publishes the draft
+#   5. starts the iOS build for TestFlight on EAS, which submits it itself
 # Nothing reaches the release page unless all platforms passed. Manual runs
 # (workflow_dispatch) stop after step 2 and keep the installers as workflow
 # artifacts.
 #
-# Releases are unsigned by decision (docs/development/code-signing.md), so the
-# workflow uses no secrets beyond the automatic GITHUB_TOKEN.
+# The phone app joins releases once its keys and accounts are set up and
+# the repository variable BETTERC0DE_MOBILE_RELEASE is "true"
+# (docs/release-checklist.md); until then steps 3 and 5 are skipped.
+#
+# The desktop app is unsigned by decision (docs/development/code-signing.md).
+# The phone app has to be signed: Android and iOS install nothing else. Its
+# secrets live only in the `release` environment, which admits `v*` tags,
+# and only the jobs that sign or submit use it.
 
 name: Release
 
@@ -134,10 +144,101 @@ jobs:
       - name: release:check up to the production build
         run: npm run release:check -- --until build
 
+  mobile-android:
+    name: Phone app for Android (release key)
+    if: vars.BETTERC0DE_MOBILE_RELEASE == 'true' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    environment: release
+    env:
+      BETTERC0DE_SKIP_POSTINSTALL: "1"
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Prepare
+        uses: ./.github/actions/prepare
+        with:
+          desktop: "false"
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Prepare Android
+        uses: ./.github/actions/prepare-android
+
+      - name: Build and check the APK with the release key
+        env:
+          BETTERC0DE_ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          BETTERC0DE_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          BETTERC0DE_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          BETTERC0DE_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: node scripts/mobile-android.mjs build --signing release
+
+      - name: Device tests on this APK
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          avd-name: BetterC0de_Test
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: node scripts/mobile-android.mjs e2e
+
+      - name: Keep the verified APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: installers-android
+          path: apps/mobile/build/android/BetterC0de-Remote-*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Keep the device-test evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mobile-android-e2e
+          path: apps/mobile/build/e2e/android
+          if-no-files-found: ignore
+
+  mobile-ios:
+    name: Phone app on iOS (simulator)
+    if: vars.BETTERC0DE_MOBILE_RELEASE == 'true'
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      BETTERC0DE_SKIP_POSTINSTALL: "1"
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Prepare
+        uses: ./.github/actions/prepare
+        with:
+          desktop: "false"
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Set up JDK 17 for Maestro
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Build, check and device-test the app
+        run: node scripts/mobile-ios.mjs all
+
   publish:
     name: Publish the release
-    needs: [tag, release-check, node-compat]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [tag, release-check, node-compat, mobile-android, mobile-ios]
+    # The phone app's jobs are skipped until it joins releases; a skipped
+    # job does not hold the desktop release back, a failed one does.
+    if: startsWith(github.ref, 'refs/tags/v') && !cancelled() && !failure()
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -165,8 +266,10 @@ jobs:
       - name: Assemble and verify the release
         env:
           TAG: ${{ github.ref_name }}
+          # With the phone app in the release, its APK is required.
+          ANDROID: ${{ vars.BETTERC0DE_MOBILE_RELEASE == 'true' && '--android' || '' }}
         run: |
-          npm run release:assemble -- artifacts dist-release
+          npm run release:assemble -- artifacts dist-release $ANDROID
           node scripts/release-notes.mjs "$TAG" release-notes.md
 
       - name: Upload to a draft, confirm every file arrived, then publish
@@ -199,3 +302,33 @@ jobs:
             exit 1
           fi
           gh release edit "$TAG" --draft=false "${prerelease[@]}"
+
+  testflight:
+    name: iOS build for TestFlight (EAS)
+    needs: publish
+    if: vars.BETTERC0DE_MOBILE_RELEASE == 'true' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    env:
+      BETTERC0DE_SKIP_POSTINSTALL: "1"
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Prepare
+        uses: ./.github/actions/prepare
+        with:
+          desktop: "false"
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Start the TestFlight build
+        # EAS builds and submits on its own schedule; the free plan's queue
+        # can take hours, so this job does not wait for it.
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: node scripts/eas-ios-release.mjs "$TAG"
