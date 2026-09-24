@@ -91,6 +91,19 @@ export function checkIntrospectedConfig(config, { releaseVersion }) {
     typeof infoPlist.NSLocalNetworkUsageDescription === "string" && infoPlist.NSLocalNetworkUsageDescription.length > 0,
     "iOS NSLocalNetworkUsageDescription is missing; iOS shows it before the first local-network connection"
   )
+  // iOS shows these when the app first asks; the plugins' defaults are
+  // placeholders ("Allow $(PRODUCT_NAME) to access your photos").
+  for (const key of ["NSCameraUsageDescription", "NSPhotoLibraryUsageDescription"]) {
+    const text = infoPlist[key]
+    expect(
+      typeof text === "string" && text.length > 0 && !text.includes("$(PRODUCT_NAME)"),
+      `iOS ${key} is ${JSON.stringify(text)}; it needs the app's own words`
+    )
+  }
+  expect(
+    !("NSMicrophoneUsageDescription" in infoPlist),
+    "iOS NSMicrophoneUsageDescription is set, but the app never records audio"
+  )
   expect(
     application["android:usesCleartextTraffic"] === "true",
     `Android usesCleartextTraffic is ${application["android:usesCleartextTraffic"]}, expected "true" (desktops are reached by LAN/Tailscale IP)`

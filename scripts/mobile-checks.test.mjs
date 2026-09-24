@@ -29,6 +29,8 @@ function introspected(overrides = {}) {
             NSAppTransportSecurity: structuredClone(EXPECTED_ATS),
             ITSAppUsesNonExemptEncryption: false,
             NSLocalNetworkUsageDescription: "BetterC0de Remote connects to the desktop app.",
+            NSCameraUsageDescription: "BetterC0de Remote scans the pairing QR code and takes photos for messages.",
+            NSPhotoLibraryUsageDescription: "BetterC0de Remote attaches the photos you choose to a message.",
           },
         },
         android: {
@@ -63,6 +65,17 @@ test("each deviation from the intended config is reported", () => {
     ],
     [(config) => delete config._internal.modResults.ios.infoPlist.ITSAppUsesNonExemptEncryption, /ITSAppUsesNonExemptEncryption/],
     [(config) => delete config._internal.modResults.ios.infoPlist.NSLocalNetworkUsageDescription, /NSLocalNetworkUsageDescription/],
+    [(config) => delete config._internal.modResults.ios.infoPlist.NSCameraUsageDescription, /NSCameraUsageDescription/],
+    [
+      // expo-image-picker's own default, which would show if the app's text were lost.
+      (config) =>
+        (config._internal.modResults.ios.infoPlist.NSPhotoLibraryUsageDescription = "Allow $(PRODUCT_NAME) to access your photos"),
+      /NSPhotoLibraryUsageDescription/,
+    ],
+    [
+      (config) => (config._internal.modResults.ios.infoPlist.NSMicrophoneUsageDescription = "Allow $(PRODUCT_NAME) to access your microphone"),
+      /NSMicrophoneUsageDescription/,
+    ],
     [
       (config) =>
         (config._internal.modResults.android.manifest.manifest.application[0].$["android:usesCleartextTraffic"] = "false"),

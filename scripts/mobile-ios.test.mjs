@@ -14,7 +14,9 @@ function plist(overrides = {}) {
     CFBundleExecutable: "BetterC0deRemote",
     NSAppTransportSecurity: structuredClone(EXPECTED_ATS),
     ITSAppUsesNonExemptEncryption: false,
-    NSCameraUsageDescription: "BetterC0de Remote uses the camera only to scan the pairing QR code.",
+    NSCameraUsageDescription:
+      "BetterC0de Remote uses the camera to scan the pairing QR code, and to take photos you attach to a message.",
+    NSPhotoLibraryUsageDescription: "BetterC0de Remote attaches the photos you choose to a message.",
     CFBundleURLTypes: [{ CFBundleURLSchemes: ["betterc0de", "com.betterc0de.remote"] }],
     ...overrides,
   }
@@ -50,6 +52,7 @@ test("names every Info.plist setting a build got wrong", () => {
       NSAppTransportSecurity: { NSAllowsArbitraryLoads: true },
       ITSAppUsesNonExemptEncryption: undefined,
       NSCameraUsageDescription: "",
+      NSPhotoLibraryUsageDescription: undefined,
       NSMicrophoneUsageDescription: "Record audio",
       CFBundleURLTypes: [],
     }),
@@ -63,6 +66,7 @@ test("names every Info.plist setting a build got wrong", () => {
       "NSAppTransportSecurity",
       "ITSAppUsesNonExemptEncryption",
       "NSCameraUsageDescription",
+      "NSPhotoLibraryUsageDescription",
       "NSMicrophoneUsageDescription",
       "the",
     ]

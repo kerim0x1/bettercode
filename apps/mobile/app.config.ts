@@ -17,6 +17,13 @@ const PUBLISHED_EXPO_OWNER: string | null = null
 const CANVAS = "#0A0A0A"
 
 /**
+ * One text for the camera, which both the QR scanner (expo-camera) and the
+ * photo picker (expo-image-picker) declare; the last plugin's would win.
+ */
+const CAMERA_USAGE =
+  "BetterC0de Remote uses the camera to scan the pairing QR code shown by the desktop app, and to take photos you attach to a message."
+
+/**
  * The app ships with every desktop release and carries its version (see
  * config/version.cjs for how that maps onto the stores' formats).
  */
@@ -62,11 +69,21 @@ export default function appConfig({ config }: ConfigContext): ExpoConfig {
       [
         "expo-camera",
         {
-          cameraPermission:
-            "BetterC0de Remote uses the camera only to scan the pairing QR code shown by the desktop app.",
+          cameraPermission: CAMERA_USAGE,
           microphonePermission: false,
           recordAudioAndroid: false,
           barcodeScannerEnabled: true,
+        },
+      ],
+      [
+        // Photos for a message. The library opens the system's photo picker,
+        // which needs no storage permission (those stay blocked below).
+        "expo-image-picker",
+        {
+          photosPermission:
+            "BetterC0de Remote attaches the photos you choose to a message for the agent on your desktop.",
+          cameraPermission: CAMERA_USAGE,
+          microphonePermission: false,
         },
       ],
       [
@@ -131,9 +148,10 @@ export default function appConfig({ config }: ConfigContext): ExpoConfig {
         backgroundColor: CANVAS,
       },
       permissions: ["android.permission.CAMERA"],
-      // Declared by the React Native template and expo-secure-store (for
-      // biometric unlock), none of which the app uses. Each would show in
-      // the install dialog; scripts/mobile-android.mjs lists what remains.
+      // Declared by the React Native template, expo-image-picker (storage,
+      // for Android 12 and older) and expo-secure-store (for biometric
+      // unlock), none of which the app uses. Each would show in the install
+      // dialog; scripts/mobile-android.mjs lists what remains.
       blockedPermissions: [
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",

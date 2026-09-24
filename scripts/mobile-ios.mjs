@@ -68,7 +68,12 @@ export function checkInfoPlist(plist, version) {
   expect("NSAppTransportSecurity", plist.NSAppTransportSecurity, EXPECTED_ATS)
   expect("ITSAppUsesNonExemptEncryption", plist.ITSAppUsesNonExemptEncryption, false)
   if (typeof plist.NSCameraUsageDescription !== "string" || !plist.NSCameraUsageDescription.trim()) {
-    problems.push("NSCameraUsageDescription is missing: iOS would refuse the camera for the pairing QR code")
+    problems.push("NSCameraUsageDescription is missing: iOS would refuse the camera for the pairing QR code and for photos")
+  }
+  // The photo picker links the photo library's API; App Store Connect refuses
+  // a build that does without saying why.
+  if (typeof plist.NSPhotoLibraryUsageDescription !== "string" || !plist.NSPhotoLibraryUsageDescription.trim()) {
+    problems.push("NSPhotoLibraryUsageDescription is missing: App Store Connect refuses the build without it")
   }
   if ("NSMicrophoneUsageDescription" in plist) {
     problems.push("NSMicrophoneUsageDescription is set, but the app never records audio")

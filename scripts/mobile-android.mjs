@@ -99,7 +99,8 @@ export const SIGNING_ENV = [
  * declare that the app does not use are blocked in app.config.ts.
  */
 export const EXPECTED_PERMISSIONS = [
-  // Scanning the pairing QR code (asked for when the scanner opens).
+  // Scanning the pairing QR code, and taking a photo for a message (asked
+  // for when the scanner or the camera first opens).
   "android.permission.CAMERA",
   // Reaching the desktop.
   "android.permission.INTERNET",
