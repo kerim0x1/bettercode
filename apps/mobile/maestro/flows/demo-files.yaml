@@ -41,8 +41,26 @@ tags:
 - tapOn:
     id: files-new
 - tapOn: New file
-- tapOn:
-    id: rename-input
+# The field focuses itself. On iOS the keyboard moves the card up as it
+# comes, and a tap on the field where it was lands on the backdrop, which
+# closes the sheet (both iOS runs that had this flow failed there): iOS
+# waits for the card to settle and types into the focused field.
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn:
+          id: rename-input
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - extendedWaitUntil:
+          visible:
+            id: rename-input
+          timeout: 10000
+      - waitForAnimationToEnd:
+          timeout: 5000
 - inputText: Map.tsx
 - tapOn:
     id: rename-save
