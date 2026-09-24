@@ -10,6 +10,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { assessCompatibility, hasFeature } from "@/lib/compat"
 import { parseRemoteBootstrap } from "@/lib/remote-session"
+import { sha256Hex } from "@/lib/sha256"
 import { createDemoTransport } from "@/transport/demo"
 import { RemoteApiError } from "@/transport/live/http"
 import type { RemoteApi } from "@/transport/types"
@@ -425,6 +426,35 @@ describe.each([
     // A folder goes with everything in it.
     await fixture.api.deletePath(root, "notes", true)
     expect(await names()).not.toContain("notes")
+  })
+
+  it("reads a saved text back with the SHA-256 the phone computes for it", async () => {
+    // The editor saves over the hash of the text it saved, without reading
+    // the file again: the desktop must hash exactly those bytes.
+    const root = fixture.projectRoot
+    for (const text of [
+      "plain\n",
+      "﻿windows\r\nlines\r\n",
+      "mixed\r\nbreaks\nand a lone\rcarriage return",
+      "tab\t, Grüße, 世界, \u{1F600}\n",
+      "",
+    ]) {
+      await fixture.api.writeFile(root, "notes/hash.txt", text)
+      const read = await fixture.api.readFile(
+        root,
+        fixture.join(root, "notes", "hash.txt")
+      )
+      expect(read.content, JSON.stringify(text)).toBe(text)
+      expect(read.sha256, JSON.stringify(text)).toBe(sha256Hex(text))
+      // So the next save, made over that hash, goes through.
+      await fixture.api.writeFile(
+        root,
+        "notes/hash.txt",
+        `${text}more\n`,
+        sha256Hex(text)
+      )
+    }
+    await fixture.api.deletePath(root, "notes", true)
   })
 
   it("searches the text of files with the desktop's options", async () => {
