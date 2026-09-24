@@ -246,15 +246,17 @@ describe("git checkpoint refs", () => {
     await expect(
       undoCheckpointRestore({ cwd, safetyRef: restoreResult.safetyRef! })
     ).resolves.toBe(true)
-    expect(fs.readFileSync(path.join(cwd, "README.md"), "utf8")).toBe("changed\n")
+    expect(fs.readFileSync(path.join(cwd, "README.md"), "utf8")).toBe(
+      "changed\n"
+    )
     expect(fs.readFileSync(path.join(cwd, "scratch.txt"), "utf8")).toBe(
       "remove me\n"
     )
 
     // Put the checkpoint state back for the ref-deletion assertions below.
-    expect((await restoreCheckpoint({ cwd, checkpointRef: ref })).restored).toBe(
-      true
-    )
+    expect(
+      (await restoreCheckpoint({ cwd, checkpointRef: ref })).restored
+    ).toBe(true)
 
     await deleteCheckpointRefs({
       cwd,
@@ -334,13 +336,20 @@ describe("git checkpoint refs", () => {
     fs.writeFileSync(path.join(cwd, "scratch.txt"), "keep me\n", "utf8")
 
     const gitDir = path.join(cwd, ".git")
-    const preRestorePath = path.join(gitDir, "refs", "betterc0de", "pre-restore")
+    const preRestorePath = path.join(
+      gitDir,
+      "refs",
+      "betterc0de",
+      "pre-restore"
+    )
     fs.writeFileSync(preRestorePath, "not-a-directory\n", "utf8")
 
     const restoreResult = await restoreCheckpoint({ cwd, checkpointRef: ref })
     expect(restoreResult.restored).toBe(false)
     expect(restoreResult.safetyRef).toBeNull()
-    expect(fs.readFileSync(path.join(cwd, "README.md"), "utf8")).toBe("changed\n")
+    expect(fs.readFileSync(path.join(cwd, "README.md"), "utf8")).toBe(
+      "changed\n"
+    )
     expect(fs.readFileSync(path.join(cwd, "scratch.txt"), "utf8")).toBe(
       "keep me\n"
     )
@@ -715,7 +724,11 @@ describe("git status paths from a real repository", () => {
     expect(result.staged).toEqual(["renamed with space.txt"])
     expect(result.modified).toEqual(["ü ä.txt"])
     expect(result.untracked).toEqual(["nëw file.txt"])
-    for (const entry of [...result.staged, ...result.modified, ...result.untracked]) {
+    for (const entry of [
+      ...result.staged,
+      ...result.modified,
+      ...result.untracked,
+    ]) {
       expect(entry).not.toContain('"')
       expect(entry).not.toContain("\\")
       expect(entry).not.toContain("\t")
@@ -735,10 +748,14 @@ describe("git status against a real upstream", () => {
   })
 
   it("reports upstream and ahead count from a single status call", async () => {
-    const remote = fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-git-remote-"))
+    const remote = fs.mkdtempSync(
+      path.join(os.tmpdir(), "betterc0de-git-remote-")
+    )
     tempDirs.push(remote)
     runGit(remote, ["init", "--bare", "--initial-branch=main"])
-    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-git-upstream-"))
+    const cwd = fs.mkdtempSync(
+      path.join(os.tmpdir(), "betterc0de-git-upstream-")
+    )
     tempDirs.push(cwd)
     runGit(cwd, ["init", "--initial-branch=main"])
     runGit(cwd, ["config", "user.email", "test@example.com"])
@@ -793,7 +810,10 @@ describe("checkpoint snapshot performance paths", () => {
     runGit(cwd, ["update-index", "--split-index"])
     const gitDir = path.join(cwd, ".git")
     const sharedIndexFiles = () =>
-      fs.readdirSync(gitDir).filter((name) => name.startsWith("sharedindex.")).sort()
+      fs
+        .readdirSync(gitDir)
+        .filter((name) => name.startsWith("sharedindex."))
+        .sort()
     const before = sharedIndexFiles()
     expect(before.length).toBeGreaterThan(0)
 
@@ -808,7 +828,9 @@ describe("checkpoint snapshot performance paths", () => {
     // The user's own index is untouched and still split.
     expect(runGit(cwd, ["status", "--porcelain"])).toBe("?? new.txt\n")
     expect(
-      fs.readdirSync(gitDir).filter((name) => /^betterc0de-checkpoint-index-/.test(name))
+      fs
+        .readdirSync(gitDir)
+        .filter((name) => /^betterc0de-checkpoint-index-/.test(name))
     ).toEqual([])
   }, 30_000)
 
@@ -816,7 +838,11 @@ describe("checkpoint snapshot performance paths", () => {
     const cwd = createRepo()
     fs.writeFileSync(path.join(cwd, "staged.txt"), "staged\n", "utf8")
     runGit(cwd, ["add", "staged.txt"])
-    fs.writeFileSync(path.join(cwd, "staged.txt"), "staged then edited\n", "utf8")
+    fs.writeFileSync(
+      path.join(cwd, "staged.txt"),
+      "staged then edited\n",
+      "utf8"
+    )
     fs.writeFileSync(path.join(cwd, "README.md"), "v1 edited\n", "utf8")
     fs.writeFileSync(path.join(cwd, "untracked.txt"), "untracked\n", "utf8")
     runGit(cwd, ["rm", "--cached", "-q", "README.md"])
@@ -831,12 +857,18 @@ describe("checkpoint snapshot performance paths", () => {
       "staged.txt",
       "untracked.txt",
     ])
-    expect(runGit(cwd, ["show", `${ref}:staged.txt`])).toBe("staged then edited\n")
+    expect(runGit(cwd, ["show", `${ref}:staged.txt`])).toBe(
+      "staged then edited\n"
+    )
     expect(runGit(cwd, ["show", `${ref}:README.md`])).toBe("v1 edited\n")
     // The user's real index is untouched and no temporary index is left.
-    expect(fs.readFileSync(path.join(cwd, ".git", "index")).equals(indexBefore)).toBe(true)
     expect(
-      fs.readdirSync(path.join(cwd, ".git")).filter((name) => name.startsWith("betterc0de-"))
+      fs.readFileSync(path.join(cwd, ".git", "index")).equals(indexBefore)
+    ).toBe(true)
+    expect(
+      fs
+        .readdirSync(path.join(cwd, ".git"))
+        .filter((name) => name.startsWith("betterc0de-"))
     ).toEqual([])
   }, 30_000)
 
@@ -856,7 +888,9 @@ describe("checkpoint snapshot performance paths", () => {
     })
     expect(result.truncated).toBe(true)
     expect(result.totalBytes).toBeGreaterThan(2 * 1024 * 1024)
-    expect(Buffer.byteLength(result.diff, "utf8")).toBeLessThanOrEqual(2 * 1024 * 1024)
+    expect(Buffer.byteLength(result.diff, "utf8")).toBeLessThanOrEqual(
+      2 * 1024 * 1024
+    )
     expect(result.diff.endsWith("\n")).toBe(true)
   }, 60_000)
 
@@ -868,7 +902,11 @@ describe("checkpoint snapshot performance paths", () => {
     const restored = await restoreCheckpoint({ cwd, checkpointRef: ref })
     expect(restored.safetyRef).toBeTruthy()
     const listSafetyRefs = () =>
-      runGit(cwd, ["for-each-ref", "--format=%(refname)", `${RESTORE_SAFETY_REFS_PREFIX}/`])
+      runGit(cwd, [
+        "for-each-ref",
+        "--format=%(refname)",
+        `${RESTORE_SAFETY_REFS_PREFIX}/`,
+      ])
         .split("\n")
         .filter(Boolean)
     expect(listSafetyRefs()).toEqual([restored.safetyRef])
@@ -877,7 +915,9 @@ describe("checkpoint snapshot performance paths", () => {
     expect(listSafetyRefs()).toEqual([restored.safetyRef])
 
     const eightDaysLater = Date.now() + 8 * 24 * 60 * 60 * 1000
-    await expect(pruneRestoreSafetyRefs(cwd, { now: eightDaysLater })).resolves.toBe(1)
+    await expect(
+      pruneRestoreSafetyRefs(cwd, { now: eightDaysLater })
+    ).resolves.toBe(1)
     expect(listSafetyRefs()).toEqual([])
   }, 30_000)
 })

@@ -4,10 +4,7 @@
  * typed errors the UI can explain.
  */
 
-import {
-  gitRun,
-  isMissingRevisionError,
-} from "./process"
+import { gitRun, isMissingRevisionError } from "./process"
 import {
   validateGitRemoteName,
   assertValidBranchName,
@@ -201,17 +198,29 @@ export async function pull(cwd: string) {
 /** Refresh remote-tracking refs without merging into the working tree. */
 export async function fetchRemote(cwd: string) {
   if ((await listRemotes(cwd)).length === 0) {
-    throw new HttpError(400, "No remote configured. Add a remote before checking for updates.", "git_remote_error")
+    throw new HttpError(
+      400,
+      "No remote configured. Add a remote before checking for updates.",
+      "git_remote_error"
+    )
   }
   try {
-    await gitRun(cwd, ["fetch", "--all", "--no-recurse-submodules"], { timeoutMs: 60_000 })
+    await gitRun(cwd, ["fetch", "--all", "--no-recurse-submodules"], {
+      timeoutMs: 60_000,
+    })
     await invalidateStatusCache(cwd)
     return { status: await status(cwd) }
   } catch (err) {
-    const classified = classifyRemoteGitError(err instanceof Error ? err.message : String(err), "fetch")
-    throw new HttpError(classified?.status ?? 502,
-      classified?.message ?? "Could not fetch remote updates. Check your connection and Git credentials, then try again.",
-      "git_remote_error")
+    const classified = classifyRemoteGitError(
+      err instanceof Error ? err.message : String(err),
+      "fetch"
+    )
+    throw new HttpError(
+      classified?.status ?? 502,
+      classified?.message ??
+        "Could not fetch remote updates. Check your connection and Git credentials, then try again.",
+      "git_remote_error"
+    )
   }
 }
 
