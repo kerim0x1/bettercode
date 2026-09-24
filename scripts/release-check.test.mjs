@@ -4,8 +4,10 @@ import path from "node:path"
 import test from "node:test"
 
 import {
+  MOBILE_MODES,
   STEP_IDS,
   assessNodeVersion,
+  detectMobileToolchains,
   parseOptions,
   parseVersion,
   planSteps,
@@ -26,6 +28,8 @@ test("the release check runs its gates in the documented order", () => {
     "typecheck",
     "test",
     "build",
+    "mobile-android",
+    "mobile-ios",
     "package",
     "smoke",
     "installers",
@@ -109,6 +113,52 @@ test("plans keep preflight and explain every skipped step", () => {
     assert.ok(step.reason, `${step.id} is skipped without a reason`)
   }
 
-  const full = planSteps(parseOptions([], { CI: "true" }))
+  const full = planSteps(parseOptions([], { CI: "true" }), { android: null, ios: null })
   assert.equal(full.every((step) => step.run), true)
+})
+
+test("the phone app steps run where their toolchain is, and say why they do not elsewhere", () => {
+  const onWindows = { android: null, ios: "iOS builds need macOS with Xcode." }
+  const plan = planSteps(parseOptions([], {}), onWindows)
+  const step = (id) => plan.find((candidate) => candidate.id === id)
+  assert.deepEqual(step("mobile-android"), { id: "mobile-android", run: true })
+  assert.deepEqual(step("mobile-ios"), {
+    id: "mobile-ios",
+    run: false,
+    reason: "no iOS toolchain: iOS builds need macOS with Xcode.",
+  })
+
+  const noSdk = planSteps(parseOptions([], {}), { android: "The Android SDK was not found.", ios: null })
+  assert.equal(noSdk.find((candidate) => candidate.id === "mobile-android").reason, "no Android toolchain: The Android SDK was not found.")
+})
+
+test("--mobile names the platforms, and a named platform is not skipped for a missing toolchain", () => {
+  const missing = { android: "JDK 17 was not found.", ios: "iOS builds need macOS with Xcode." }
+  const runs = (mode) =>
+    planSteps(parseOptions(["--mobile", mode], {}), missing)
+      .filter((step) => step.id.startsWith("mobile-") && step.run)
+      .map((step) => step.id)
+  // Preflight reports the missing toolchain of a platform asked for by name.
+  assert.deepEqual(runs("android"), ["mobile-android"])
+  assert.deepEqual(runs("ios"), ["mobile-ios"])
+  assert.deepEqual(runs("all"), ["mobile-android", "mobile-ios"])
+  assert.deepEqual(runs("none"), [])
+  assert.deepEqual(runs("auto"), [])
+  const none = planSteps(parseOptions(["--mobile", "none"], {}), missing)
+  assert.equal(none.find((step) => step.id === "mobile-android").reason, "--mobile none")
+  assert.deepEqual(MOBILE_MODES, ["auto", "android", "ios", "all", "none"])
+  assert.throws(() => parseOptions(["--mobile", "windows-phone"], {}), /--mobile must be one of/)
+})
+
+test("toolchains are only probed for the platforms asked for", () => {
+  assert.deepEqual(detectMobileToolchains("none"), { android: "not requested", ios: "not requested" })
+  assert.equal(detectMobileToolchains("ios", { platform: "linux" }).android, "not requested")
+  assert.equal(detectMobileToolchains("ios", { platform: "linux" }).ios, "iOS builds need macOS with Xcode.")
+})
+
+test("the phone app steps call scripts that exist", () => {
+  const source = fs.readFileSync(path.join(root, "scripts", "release-check.mjs"), "utf8")
+  const scripts = [...source.matchAll(/path\.join\(root, "scripts", "(mobile-[a-z]+\.mjs)"\)/g)].map((match) => match[1])
+  assert.deepEqual(scripts.sort(), ["mobile-android.mjs", "mobile-ios.mjs"])
+  for (const script of scripts) assert.equal(fs.existsSync(path.join(root, "scripts", script)), true, script)
 })

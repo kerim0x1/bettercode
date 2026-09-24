@@ -4,20 +4,29 @@
 //
 //   preflight → clean install from the lockfile → workspace versions →
 //   formatting → lint → type-check → tests → production build →
+//   phone app on Android → phone app on iOS →
 //   package → packaged-app smoke → installers → installer smoke
 //
 // It runs the same steps locally, in the pre-push hook for release tags, and
 // in CI on every supported platform, and exits non-zero on the first
-// failure. Only Node built-ins are imported here: the install step deletes
-// and recreates node_modules while this script is running.
+// failure. Only Node built-ins (and scripts that use only built-ins) are
+// imported here: the install step deletes and recreates node_modules while
+// this script is running.
 //
 //   npm run release:check                    full gate for this OS and CPU
 //   npm run release:check -- --until build   stop after a step (Node matrix)
+//   npm run release:check -- --mobile none   leave out the phone app's builds
 //   npm run release:check -- --list          show the steps
 //
-// A run that skips anything (--skip-install, --from, --until, or the
-// installer smoke outside CI) says so in its summary and does not count as
-// a full release check.
+// The phone app's steps build it, check the APK or app, and run the device
+// tests on an emulator or simulator. With `--mobile auto` (the default) a
+// step runs when this machine has its toolchain (JDK 17 and the Android SDK;
+// macOS with Xcode) and is otherwise skipped with the reason. Naming a
+// platform (`--mobile android|ios|all`) makes a missing toolchain an error.
+//
+// A run that skips anything (--skip-install, --from, --until, a phone app
+// step, or the installer smoke outside CI) says so in its summary and does
+// not count as a full release check.
 
 import { spawnSync } from "node:child_process"
 import fs from "node:fs"
@@ -25,6 +34,8 @@ import { createRequire } from "node:module"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+
+import { findAndroidSdk, findJdk, resolveIos } from "./mobile-toolchain.mjs"
 
 const root = path.resolve(import.meta.dirname, "..")
 const require = createRequire(import.meta.url)
@@ -52,6 +63,8 @@ export const STEP_IDS = [
   "typecheck",
   "test",
   "build",
+  "mobile-android",
+  "mobile-ios",
   "package",
   "smoke",
   "installers",
@@ -143,11 +156,14 @@ export function assessNodeVersion({ current, pinned, engines, strict }) {
 // Options
 // ---------------------------------------------------------------------------
 
+export const MOBILE_MODES = ["auto", "android", "ios", "all", "none"]
+
 export function parseOptions(argv, env = process.env) {
   const options = {
     arch: process.arch,
     from: null,
     until: null,
+    mobile: "auto",
     skipInstall: false,
     installerSmoke: env.CI === "true" || env.CI === "1",
     list: false,
@@ -164,6 +180,7 @@ export function parseOptions(argv, env = process.env) {
     if (arg === "--arch") options.arch = value()
     else if (arg === "--from") options.from = value()
     else if (arg === "--until") options.until = value()
+    else if (arg === "--mobile") options.mobile = value()
     else if (arg === "--skip-install") options.skipInstall = true
     else if (arg === "--installer-smoke") options.installerSmoke = true
     else if (arg === "--no-installer-smoke") options.installerSmoke = false
@@ -182,11 +199,38 @@ export function parseOptions(argv, env = process.env) {
   if (options.arch !== "x64" && options.arch !== "arm64") {
     throw new Error(`--arch must be x64 or arm64, not ${options.arch}`)
   }
+  if (!MOBILE_MODES.includes(options.mobile)) {
+    throw new Error(`--mobile must be one of: ${MOBILE_MODES.join(", ")}`)
+  }
   return options
 }
 
-/** Which steps run, and why each of the others does not. */
-export function planSteps(options) {
+const MOBILE_STEPS = { "mobile-android": "android", "mobile-ios": "ios" }
+
+/** Whether `--mobile` asks for a platform (by name, or through `all` or `auto`). */
+function mobileWanted(mode, platform) {
+  return mode === "auto" || mode === "all" || mode === platform
+}
+
+/**
+ * Why each phone app platform cannot be built on this machine, or null
+ * when it can. Only what is needed to decide is probed, and nothing here
+ * reads node_modules, which may not be installed yet.
+ */
+export function detectMobileToolchains(mode, { env = process.env, platform = process.platform } = {}) {
+  const android = () => findJdk({ env, platform }).problem ?? findAndroidSdk({ env, platform }).problem ?? null
+  const ios = () => resolveIos({ platform }).problems[0] ?? null
+  return {
+    android: mobileWanted(mode, "android") ? android() : "not requested",
+    ios: mobileWanted(mode, "ios") ? ios() : "not requested",
+  }
+}
+
+/**
+ * Which steps run, and why each of the others does not. `toolchains` says
+ * why a phone app platform cannot be built here (null: it can).
+ */
+export function planSteps(options, toolchains = { android: "not detected", ios: "not detected" }) {
   const fromIndex = options.from ? STEP_IDS.indexOf(options.from) : 0
   const untilIndex = options.until ? STEP_IDS.indexOf(options.until) : STEP_IDS.length - 1
   return STEP_IDS.map((id, index) => {
@@ -195,6 +239,15 @@ export function planSteps(options) {
     if (index < fromIndex) return { id, run: false, reason: `before --from ${options.from}` }
     if (index > untilIndex) return { id, run: false, reason: `after --until ${options.until}` }
     if (id === "install" && options.skipInstall) return { id, run: false, reason: "--skip-install" }
+    if (id in MOBILE_STEPS) {
+      const platform = MOBILE_STEPS[id]
+      if (!mobileWanted(options.mobile, platform)) return { id, run: false, reason: `--mobile ${options.mobile}` }
+      // Asked for by name, a missing toolchain fails in preflight instead.
+      if (options.mobile === "auto" && toolchains[platform]) {
+        const name = platform === "ios" ? "iOS" : "Android"
+        return { id, run: false, reason: `no ${name} toolchain: ${toolchains[platform]}` }
+      }
+    }
     if (id === "installer-smoke" && !options.installerSmoke) {
       return {
         id,
@@ -288,7 +341,7 @@ function readJson(relativePath) {
   return JSON.parse(fs.readFileSync(path.join(root, relativePath), "utf8"))
 }
 
-function preflight(plan, options) {
+function preflight(plan, options, toolchains) {
   const ci = process.env.CI === "true" || process.env.CI === "1"
   const manifest = readJson("package.json")
   const pinned = fs.readFileSync(path.join(root, ".nvmrc"), "utf8").trim()
@@ -319,6 +372,15 @@ function preflight(plan, options) {
   if (!PLATFORM_FLAGS[process.platform]) {
     note("error", `Packaging is not configured for ${process.platform}.`)
   }
+  for (const [id, platform] of Object.entries(MOBILE_STEPS)) {
+    const name = platform === "ios" ? "iOS" : "Android"
+    if (runs(id) && toolchains[platform]) {
+      note("error", `--mobile ${options.mobile} needs the ${name} toolchain: ${toolchains[platform]}`)
+    } else if (runs(id)) {
+      note("ok", `${name} toolchain found for the phone app.`)
+    }
+  }
+
   if (options.arch !== process.arch) {
     note(
       "warn",
@@ -415,6 +477,16 @@ function makeSteps(options) {
           label: "node scripts/packaged-startup-smoke.mjs",
         })
       },
+      // Built with a throwaway key: release keys only exist in the release
+      // workflow. The step fails on a missing SDK package or emulator.
+      "mobile-android": () =>
+        run(process.execPath, [path.join(root, "scripts", "mobile-android.mjs"), "all", "--signing", "test-key"], {
+          label: "node scripts/mobile-android.mjs all --signing test-key",
+        }),
+      "mobile-ios": () =>
+        run(process.execPath, [path.join(root, "scripts", "mobile-ios.mjs"), "all"], {
+          label: "node scripts/mobile-ios.mjs all",
+        }),
       installers: () => {
         const { packageRoot } = readSmokeResult()
         // Build installers from the exact app the smoke test launched.
@@ -449,6 +521,7 @@ function printUsage() {
       "  --arch <x64|arm64>      target CPU architecture (default: this machine's)",
       "  --until <step>          stop after <step>",
       "  --from <step>           start at <step> (reuses earlier results)",
+      "  --mobile <mode>         phone app steps: auto (default), android, ios, all or none",
       "  --skip-install          reuse the current node_modules",
       "  --installer-smoke       install/launch/uninstall the installers on this machine",
       "  --no-installer-smoke    skip that even in CI",
@@ -474,7 +547,8 @@ export async function main(argv = process.argv.slice(2)) {
     return 0
   }
 
-  const plan = planSteps(options)
+  const toolchains = detectMobileToolchains(options.mobile)
+  const plan = planSteps(options, toolchains)
   if (options.list) {
     for (const step of plan) {
       process.stdout.write(`${step.run ? "run " : "skip"}  ${step.id}${step.reason ? `  (${step.reason})` : ""}\n`)
@@ -499,7 +573,7 @@ export async function main(argv = process.argv.slice(2)) {
       process.stdout.write(`\n${"=".repeat(72)}\n▶ ${step.id}\n${"=".repeat(72)}\n`)
       const stepStart = Date.now()
       try {
-        if (step.id === "preflight") preflight(plan, options)
+        if (step.id === "preflight") preflight(plan, options, toolchains)
         else steps[step.id]()
         results.push({ id: step.id, status: "passed", ms: Date.now() - stepStart })
       } catch (error) {
