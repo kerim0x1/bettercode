@@ -40,11 +40,10 @@ test("every npm script the release check calls exists", () => {
   for (const match of source.matchAll(/for \(const script of \[([^\]]+)\]\)/g)) {
     for (const name of match[1].matchAll(/"([^"]+)"/g)) called.add(name[1])
   }
-  const missing = [...called].filter(
-    (script) => script !== "export:web" && !(script in manifest.scripts)
-  )
+  const missing = [...called].filter((script) => !(script in manifest.scripts))
   assert.deepEqual(missing, [])
   assert.ok(called.has("format:check") && called.has("typecheck:shell") && called.has("test:mobile"))
+  assert.ok(called.has("mobile:check"), "the build step checks the mobile app's config and bundles")
 })
 
 test(".nvmrc pins an exact Node version inside the engines range", () => {

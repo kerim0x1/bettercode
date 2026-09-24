@@ -396,7 +396,9 @@ function makeSteps(options) {
         const nodeOptions = [process.env.NODE_OPTIONS, "--max-old-space-size=4096"].filter(Boolean).join(" ")
         npm(["run", "build"], { env: { NODE_OPTIONS: nodeOptions } })
         npm(["run", "perf:backend"])
-        npm(["run", "export:web", "--workspace", "@betterc0de/mobile"], { env: { EXPO_NO_TELEMETRY: "1" } })
+        // The phone app's config, native dependencies and JS bundles; the
+        // native builds need Android/iOS toolchains and run separately.
+        npm(["run", "mobile:check"], { env: { EXPO_NO_TELEMETRY: "1" } })
       },
       package: () => {
         nativeModulesRebuiltForElectron = true
