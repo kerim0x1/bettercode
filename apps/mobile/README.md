@@ -155,6 +155,14 @@ against sample chats and files (see [Demo mode](#demo-mode)).
   `src/lib/request-size.ts`). A message the desktop would refuse as too large
   is not sent at all. Photos alone go with the desktop's words for that
   (`ATTACHMENTS_ONLY_MESSAGE`).
+- A chat's files can be changed: **New file** and **New folder**, and
+  **Rename** and **Delete** beside each entry (`src/lib/file-actions.ts`), with
+  the desktop Explorer's delete question. A new file is written with
+  `expectedSha256: null`, so the desktop refuses it when the name exists
+  instead of emptying that file. Search finds names, or text with the
+  desktop's options (`src/components/content-search.tsx`); a match opens the
+  file at its line. The demo keeps these files in its repositories' working
+  trees (`src/transport/demo/files.ts`), so source control sees the changes.
 - File navigation always starts from `worktreePath || projectPath`; client-side
   containment checks complement the backend workspace guards.
 - The interface is in English, like the desktop's; dates and sizes follow the

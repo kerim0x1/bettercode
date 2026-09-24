@@ -74,7 +74,9 @@ provides touch-native screens for:
   commits. A read-only session gets none: the desktop refuses every git
   request from it;
 - project browsing plus chat-scoped files, text previews, diffs (in full,
-  file by file), and checkpoints;
+  file by file), and checkpoints; new files and folders, renaming and
+  deleting (a new file is never written over an existing one), and a search
+  of the files' text with the desktop's options;
 - host health, session identity, expiry, and self-revocation.
 
 The desktop prepares a message from the phone as it prepares its own (the
