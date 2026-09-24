@@ -1,11 +1,40 @@
 import { getRemoteBaseUrl, invoke } from "./runtime"
 
+/** The app a paired device identified itself as (the phone app sends this). */
+export interface RemoteSessionClient {
+  name: string
+  version: string
+  platform: string | null
+}
+
 export interface RemoteSession {
   id: string
   label: string
   createdAt: string
   lastSeenAt: string
   expiresAt: string
+  client?: RemoteSessionClient | null
+}
+
+const CLIENT_NAMES: Record<string, string> = {
+  "betterc0de-remote": "BetterC0de Remote",
+}
+const PLATFORM_NAMES: Record<string, string> = {
+  android: "Android",
+  ios: "iOS",
+  web: "web",
+}
+
+/** "BetterC0de Remote 0.1.0-beta.3 on Android", or `null` for a browser session. */
+export function describeRemoteClient(
+  client: RemoteSessionClient | null | undefined
+): string | null {
+  if (!client) return null
+  const name = CLIENT_NAMES[client.name] ?? client.name
+  const platform = client.platform
+    ? (PLATFORM_NAMES[client.platform] ?? client.platform)
+    : null
+  return `${name} ${client.version}${platform ? ` on ${platform}` : ""}`
 }
 
 export interface RemoteBootstrapResponse {

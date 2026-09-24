@@ -1,0 +1,2541 @@
+{
+  "apiVersion": 2,
+  "protocol": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "apiVersion": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "minClientVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "backendVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "capabilities": {
+        "type": "object",
+        "properties": {
+          "accessLevel": {
+            "default": "read_only",
+            "type": "string",
+            "enum": [
+              "full",
+              "read_only"
+            ]
+          },
+          "terminalGranted": {
+            "type": "boolean"
+          },
+          "maxRequestBytes": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "features": {
+            "maxItems": 128,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        },
+        "required": [
+          "accessLevel",
+          "terminalGranted",
+          "maxRequestBytes",
+          "features"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "required": [
+      "apiVersion",
+      "minClientVersion"
+    ],
+    "additionalProperties": {}
+  },
+  "contracts": {
+    "chatGoal": {
+      "method": "POST",
+      "path": "/chat/goal",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "goal": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string",
+                    "const": "betterc0de"
+                  },
+                  "objective": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "paused",
+                      "achieved",
+                      "blocked",
+                      "usageLimited",
+                      "budgetLimited",
+                      "unknown"
+                    ]
+                  },
+                  "startedAt": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "updatedAt": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "providerKind": {
+                    "type": "string"
+                  },
+                  "turns": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "tokens": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "tokenBudget": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "timeUsedSeconds": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "lastReason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "objective",
+                  "status",
+                  "startedAt",
+                  "updatedAt"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "goal"
+        ]
+      }
+    },
+    "chatSend": {
+      "method": "POST",
+      "path": "/chat/send",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "streaming",
+              "completed"
+            ]
+          },
+          "turnId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "replayed": {
+            "type": "boolean",
+            "const": true
+          },
+          "automaticCompaction": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string",
+                "const": "threshold-reached"
+              },
+              "commandMessageId": {
+                "type": "string"
+              },
+              "commandContent": {
+                "type": "string"
+              },
+              "commandCreatedAt": {
+                "type": "string"
+              },
+              "checkpointMessageId": {
+                "type": "string"
+              },
+              "checkpointContent": {
+                "type": "string"
+              },
+              "checkpointCreatedAt": {
+                "type": "string"
+              },
+              "generation": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "reason",
+              "commandMessageId",
+              "commandContent",
+              "commandCreatedAt",
+              "checkpointMessageId",
+              "checkpointContent",
+              "checkpointCreatedAt",
+              "generation"
+            ]
+          },
+          "providerHandoff": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string",
+                "const": "provider-switch"
+              },
+              "sourceProvider": {
+                "type": "string",
+                "minLength": 1
+              },
+              "targetProvider": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sourceModel": {
+                "type": "string",
+                "minLength": 1
+              },
+              "commandMessageId": {
+                "type": "string"
+              },
+              "commandContent": {
+                "type": "string"
+              },
+              "commandCreatedAt": {
+                "type": "string"
+              },
+              "checkpointMessageId": {
+                "type": "string"
+              },
+              "checkpointContent": {
+                "type": "string"
+              },
+              "checkpointCreatedAt": {
+                "type": "string"
+              },
+              "generation": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "reason",
+              "sourceProvider",
+              "targetProvider",
+              "sourceModel",
+              "commandMessageId",
+              "commandContent",
+              "commandCreatedAt",
+              "checkpointMessageId",
+              "checkpointContent",
+              "checkpointCreatedAt",
+              "generation"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "turnId"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "chatPersistUser": {
+      "method": "POST",
+      "path": "/chat/persist-user",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "persisted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "persisted"
+        ]
+      }
+    },
+    "chatInterrupt": {
+      "method": "POST",
+      "path": "/chat/interrupt",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "interrupted"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      }
+    },
+    "chatApproval": {
+      "method": "POST",
+      "path": "/chat/approval",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "acknowledged"
+              },
+              "applied": {
+                "type": "string",
+                "enum": [
+                  "live",
+                  "queued",
+                  "unsupported"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "additionalProperties": {}
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "failed"
+              },
+              "error": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "status",
+              "error"
+            ],
+            "additionalProperties": {}
+          }
+        ]
+      }
+    },
+    "chatPlanApproval": {
+      "method": "POST",
+      "path": "/chat/plan-approval",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "acknowledged"
+              },
+              "applied": {
+                "type": "string",
+                "enum": [
+                  "live",
+                  "queued",
+                  "unsupported"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "additionalProperties": {}
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "failed"
+              },
+              "error": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "status",
+              "error"
+            ],
+            "additionalProperties": {}
+          }
+        ]
+      }
+    },
+    "chatPermissionMode": {
+      "method": "POST",
+      "path": "/chat/permission-mode",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "acknowledged"
+              },
+              "applied": {
+                "type": "string",
+                "enum": [
+                  "live",
+                  "queued",
+                  "unsupported"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "additionalProperties": {}
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "failed"
+              },
+              "error": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "status",
+              "error"
+            ],
+            "additionalProperties": {}
+          }
+        ]
+      }
+    },
+    "chatUserInput": {
+      "method": "POST",
+      "path": "/chat/user-input",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "acknowledged"
+              },
+              "applied": {
+                "type": "string",
+                "enum": [
+                  "live",
+                  "queued",
+                  "unsupported"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "additionalProperties": {}
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "failed"
+              },
+              "error": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "status",
+              "error"
+            ],
+            "additionalProperties": {}
+          }
+        ]
+      }
+    },
+    "chatUserInputReject": {
+      "method": "POST",
+      "path": "/chat/user-input/reject",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "acknowledged"
+              },
+              "applied": {
+                "type": "string",
+                "enum": [
+                  "live",
+                  "queued",
+                  "unsupported"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "additionalProperties": {}
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "failed"
+              },
+              "error": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "status",
+              "error"
+            ],
+            "additionalProperties": {}
+          }
+        ]
+      }
+    },
+    "listThreads": {
+      "method": "GET",
+      "path": "/threads",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "goal": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string",
+                      "const": "betterc0de"
+                    },
+                    "objective": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "active",
+                        "paused",
+                        "achieved",
+                        "blocked",
+                        "usageLimited",
+                        "budgetLimited",
+                        "unknown"
+                      ]
+                    },
+                    "startedAt": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "updatedAt": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "providerKind": {
+                      "type": "string"
+                    },
+                    "turns": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "tokens": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "tokenBudget": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "timeUsedSeconds": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "lastReason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "objective",
+                    "status",
+                    "startedAt",
+                    "updatedAt"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "projectName": {
+              "type": "string"
+            },
+            "projectPath": {
+              "type": "string"
+            },
+            "messages": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "assistant",
+                      "system",
+                      "tool"
+                    ]
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "type": "string"
+                  },
+                  "turnId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "reasoning": {
+                    "type": "string"
+                  },
+                  "reasoningDurationMs": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "toolCalls": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "input": {},
+                        "output": {},
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "input-available",
+                            "output-available",
+                            "output-error"
+                          ]
+                        },
+                        "providerKind": {
+                          "type": "string"
+                        },
+                        "providerInstanceId": {
+                          "type": "string"
+                        },
+                        "turnId": {
+                          "type": "string"
+                        },
+                        "sessionId": {
+                          "type": "string"
+                        },
+                        "taskId": {
+                          "type": "string"
+                        },
+                        "parentTaskId": {
+                          "type": "string"
+                        },
+                        "agentId": {
+                          "type": "string"
+                        },
+                        "parentAgentId": {
+                          "type": "string"
+                        },
+                        "parentToolId": {
+                          "type": "string"
+                        },
+                        "startedAt": {
+                          "type": "string"
+                        },
+                        "completedAt": {
+                          "type": "string"
+                        },
+                        "durationMs": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "error": {
+                          "type": "string"
+                        },
+                        "outputPreview": {
+                          "type": "string"
+                        },
+                        "outputTruncated": {
+                          "type": "boolean"
+                        },
+                        "outputBytes": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "outputLineCount": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "input"
+                      ],
+                      "additionalProperties": {}
+                    }
+                  },
+                  "questions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "options": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "label": {
+                                "type": "string"
+                              },
+                              "description": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "label"
+                            ]
+                          }
+                        },
+                        "answer": {
+                          "type": "string"
+                        },
+                        "answeredAt": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "text",
+                        "options"
+                      ],
+                      "additionalProperties": {}
+                    }
+                  },
+                  "answeredQuestions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "question": {
+                          "type": "string"
+                        },
+                        "answer": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "question",
+                        "answer"
+                      ]
+                    }
+                  },
+                  "diffs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        },
+                        "additions": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "deletions": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "oldText": {
+                          "type": "string"
+                        },
+                        "newText": {
+                          "type": "string"
+                        },
+                        "isNew": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "additions",
+                        "deletions",
+                        "oldText",
+                        "newText",
+                        "isNew"
+                      ],
+                      "additionalProperties": {}
+                    }
+                  },
+                  "attachments": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "default": "file",
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "filename": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 1024
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "mediaType": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 256
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "url": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1048576
+                        }
+                      },
+                      "required": [
+                        "url"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "usage": {
+                    "type": "object",
+                    "properties": {
+                      "inputTokens": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "outputTokens": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "cacheReadTokens": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "cacheCreationTokens": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "cachedInputTokens": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "reasoningOutputTokens": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "totalTokens": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "usedTokens": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "totalProcessedTokens": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "maxTokens": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "toolUses": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "durationMs": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "totalCostUsd": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "compactsAutomatically": {
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": {}
+                  },
+                  "modelId": {
+                    "type": "string"
+                  },
+                  "systemInstructionCharacters": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "compactedContext": {
+                    "type": "boolean"
+                  },
+                  "internalContext": {
+                    "type": "string",
+                    "const": "provider-handoff"
+                  },
+                  "compactionGeneration": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "transcriptTruncated": {
+                    "type": "boolean"
+                  },
+                  "dispatchStatus": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "accepted",
+                      "completed",
+                      "failed",
+                      "uncertain",
+                      "reverted"
+                    ]
+                  },
+                  "dispatchFailed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "id",
+                  "role",
+                  "content",
+                  "createdAt"
+                ],
+                "additionalProperties": {}
+              }
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "envMode": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "branch": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "worktreePath": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "baseBranch": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "worktreeState": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "parentThreadId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "codexThreadId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "messageCount": {
+              "type": "number",
+              "minimum": 0
+            },
+            "lastModelId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "usage": {
+              "type": "object",
+              "properties": {
+                "inputTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "outputTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "cacheReadTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "cacheCreationTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "cachedInputTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "reasoningOutputTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "totalTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "usedTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "totalProcessedTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "maxTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "toolUses": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "durationMs": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "totalCostUsd": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "compactsAutomatically": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": {}
+            },
+            "session": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "providerKind": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "providerInstanceId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "providerThreadId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "resumeCursor": {},
+                    "continuationKey": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "status": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "activeTurnId": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "lastError": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "runtimeMode": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "updatedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": {}
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "projectName",
+            "projectPath",
+            "messages",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": {}
+        }
+      }
+    },
+    "getThread": {
+      "method": "GET",
+      "path": "/threads/:id",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "goal": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string",
+                    "const": "betterc0de"
+                  },
+                  "objective": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "paused",
+                      "achieved",
+                      "blocked",
+                      "usageLimited",
+                      "budgetLimited",
+                      "unknown"
+                    ]
+                  },
+                  "startedAt": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "updatedAt": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "providerKind": {
+                    "type": "string"
+                  },
+                  "turns": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "tokens": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "tokenBudget": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "timeUsedSeconds": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "lastReason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "objective",
+                  "status",
+                  "startedAt",
+                  "updatedAt"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "projectName": {
+            "type": "string"
+          },
+          "projectPath": {
+            "type": "string"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "assistant",
+                    "system",
+                    "tool"
+                  ]
+                },
+                "content": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "turnId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reasoning": {
+                  "type": "string"
+                },
+                "reasoningDurationMs": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "toolCalls": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "input": {},
+                      "output": {},
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "input-available",
+                          "output-available",
+                          "output-error"
+                        ]
+                      },
+                      "providerKind": {
+                        "type": "string"
+                      },
+                      "providerInstanceId": {
+                        "type": "string"
+                      },
+                      "turnId": {
+                        "type": "string"
+                      },
+                      "sessionId": {
+                        "type": "string"
+                      },
+                      "taskId": {
+                        "type": "string"
+                      },
+                      "parentTaskId": {
+                        "type": "string"
+                      },
+                      "agentId": {
+                        "type": "string"
+                      },
+                      "parentAgentId": {
+                        "type": "string"
+                      },
+                      "parentToolId": {
+                        "type": "string"
+                      },
+                      "startedAt": {
+                        "type": "string"
+                      },
+                      "completedAt": {
+                        "type": "string"
+                      },
+                      "durationMs": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "error": {
+                        "type": "string"
+                      },
+                      "outputPreview": {
+                        "type": "string"
+                      },
+                      "outputTruncated": {
+                        "type": "boolean"
+                      },
+                      "outputBytes": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "outputLineCount": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "input"
+                    ],
+                    "additionalProperties": {}
+                  }
+                },
+                "questions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "options": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "label": {
+                              "type": "string"
+                            },
+                            "description": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "label"
+                          ]
+                        }
+                      },
+                      "answer": {
+                        "type": "string"
+                      },
+                      "answeredAt": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "text",
+                      "options"
+                    ],
+                    "additionalProperties": {}
+                  }
+                },
+                "answeredQuestions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "question": {
+                        "type": "string"
+                      },
+                      "answer": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "question",
+                      "answer"
+                    ]
+                  }
+                },
+                "diffs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "additions": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "deletions": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "oldText": {
+                        "type": "string"
+                      },
+                      "newText": {
+                        "type": "string"
+                      },
+                      "isNew": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "additions",
+                      "deletions",
+                      "oldText",
+                      "newText",
+                      "isNew"
+                    ],
+                    "additionalProperties": {}
+                  }
+                },
+                "attachments": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "default": "file",
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      "filename": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 1024
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "mediaType": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 256
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "url": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1048576
+                      }
+                    },
+                    "required": [
+                      "url"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "usage": {
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "outputTokens": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "cacheReadTokens": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "cacheCreationTokens": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "cachedInputTokens": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "reasoningOutputTokens": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "totalTokens": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "usedTokens": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "totalProcessedTokens": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "maxTokens": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "toolUses": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "durationMs": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "totalCostUsd": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "compactsAutomatically": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": {}
+                },
+                "modelId": {
+                  "type": "string"
+                },
+                "systemInstructionCharacters": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "compactedContext": {
+                  "type": "boolean"
+                },
+                "internalContext": {
+                  "type": "string",
+                  "const": "provider-handoff"
+                },
+                "compactionGeneration": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "transcriptTruncated": {
+                  "type": "boolean"
+                },
+                "dispatchStatus": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "accepted",
+                    "completed",
+                    "failed",
+                    "uncertain",
+                    "reverted"
+                  ]
+                },
+                "dispatchFailed": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "role",
+                "content",
+                "createdAt"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "envMode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "worktreePath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "baseBranch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "worktreeState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "parentThreadId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "codexThreadId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "messageCount": {
+            "type": "number",
+            "minimum": 0
+          },
+          "lastModelId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "usage": {
+            "type": "object",
+            "properties": {
+              "inputTokens": {
+                "type": "number",
+                "minimum": 0
+              },
+              "outputTokens": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cacheReadTokens": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cacheCreationTokens": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cachedInputTokens": {
+                "type": "number",
+                "minimum": 0
+              },
+              "reasoningOutputTokens": {
+                "type": "number",
+                "minimum": 0
+              },
+              "totalTokens": {
+                "type": "number",
+                "minimum": 0
+              },
+              "usedTokens": {
+                "type": "number",
+                "minimum": 0
+              },
+              "totalProcessedTokens": {
+                "type": "number",
+                "minimum": 0
+              },
+              "maxTokens": {
+                "type": "number",
+                "minimum": 0
+              },
+              "toolUses": {
+                "type": "number",
+                "minimum": 0
+              },
+              "durationMs": {
+                "type": "number",
+                "minimum": 0
+              },
+              "totalCostUsd": {
+                "type": "number",
+                "minimum": 0
+              },
+              "compactsAutomatically": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": {}
+          },
+          "session": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "providerKind": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "providerInstanceId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "providerThreadId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "resumeCursor": {},
+                  "continuationKey": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "activeTurnId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "lastError": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "runtimeMode": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "updatedAt": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "projectName",
+          "projectPath",
+          "messages",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "listMessages": {
+      "method": "GET",
+      "path": "/threads/:id/messages",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "user",
+                "assistant",
+                "system",
+                "tool"
+              ]
+            },
+            "content": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "turnId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reasoning": {
+              "type": "string"
+            },
+            "reasoningDurationMs": {
+              "type": "number",
+              "minimum": 0
+            },
+            "toolCalls": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "input": {},
+                  "output": {},
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "input-available",
+                      "output-available",
+                      "output-error"
+                    ]
+                  },
+                  "providerKind": {
+                    "type": "string"
+                  },
+                  "providerInstanceId": {
+                    "type": "string"
+                  },
+                  "turnId": {
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "type": "string"
+                  },
+                  "taskId": {
+                    "type": "string"
+                  },
+                  "parentTaskId": {
+                    "type": "string"
+                  },
+                  "agentId": {
+                    "type": "string"
+                  },
+                  "parentAgentId": {
+                    "type": "string"
+                  },
+                  "parentToolId": {
+                    "type": "string"
+                  },
+                  "startedAt": {
+                    "type": "string"
+                  },
+                  "completedAt": {
+                    "type": "string"
+                  },
+                  "durationMs": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "error": {
+                    "type": "string"
+                  },
+                  "outputPreview": {
+                    "type": "string"
+                  },
+                  "outputTruncated": {
+                    "type": "boolean"
+                  },
+                  "outputBytes": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "outputLineCount": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "input"
+                ],
+                "additionalProperties": {}
+              }
+            },
+            "questions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "options": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "label": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "label"
+                      ]
+                    }
+                  },
+                  "answer": {
+                    "type": "string"
+                  },
+                  "answeredAt": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "text",
+                  "options"
+                ],
+                "additionalProperties": {}
+              }
+            },
+            "answeredQuestions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "question": {
+                    "type": "string"
+                  },
+                  "answer": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "question",
+                  "answer"
+                ]
+              }
+            },
+            "diffs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "additions": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "deletions": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "oldText": {
+                    "type": "string"
+                  },
+                  "newText": {
+                    "type": "string"
+                  },
+                  "isNew": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "path",
+                  "additions",
+                  "deletions",
+                  "oldText",
+                  "newText",
+                  "isNew"
+                ],
+                "additionalProperties": {}
+              }
+            },
+            "attachments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "default": "file",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "filename": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 1024
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "mediaType": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 256
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "url": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1048576
+                  }
+                },
+                "required": [
+                  "url"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "usage": {
+              "type": "object",
+              "properties": {
+                "inputTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "outputTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "cacheReadTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "cacheCreationTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "cachedInputTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "reasoningOutputTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "totalTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "usedTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "totalProcessedTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "maxTokens": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "toolUses": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "durationMs": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "totalCostUsd": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "compactsAutomatically": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": {}
+            },
+            "modelId": {
+              "type": "string"
+            },
+            "systemInstructionCharacters": {
+              "type": "number",
+              "minimum": 0
+            },
+            "compactedContext": {
+              "type": "boolean"
+            },
+            "internalContext": {
+              "type": "string",
+              "const": "provider-handoff"
+            },
+            "compactionGeneration": {
+              "type": "number",
+              "minimum": 0
+            },
+            "transcriptTruncated": {
+              "type": "boolean"
+            },
+            "dispatchStatus": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "accepted",
+                "completed",
+                "failed",
+                "uncertain",
+                "reverted"
+              ]
+            },
+            "dispatchFailed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "role",
+            "content",
+            "createdAt"
+          ],
+          "additionalProperties": {}
+        }
+      }
+    },
+    "listActivities": {
+      "method": "GET",
+      "path": "/threads/:id/activities",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            },
+            "turnId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "providerInstanceId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string"
+            },
+            "tone": {
+              "type": "string",
+              "enum": [
+                "thinking",
+                "tool",
+                "info",
+                "approval",
+                "error"
+              ]
+            },
+            "summary": {
+              "type": "string"
+            },
+            "payload": {},
+            "sequence": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "threadId",
+            "kind",
+            "tone",
+            "summary",
+            "payload",
+            "createdAt"
+          ],
+          "additionalProperties": {}
+        }
+      }
+    },
+    "saveThread": {
+      "method": "POST",
+      "path": "/threads",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    "updateThread": {
+      "method": "PATCH",
+      "path": "/threads/:id",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    "saveMessage": {
+      "method": "POST",
+      "path": "/threads/:id/messages",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    "getSettings": {
+      "method": "GET",
+      "path": "/settings",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      }
+    },
+    "updateSettings": {
+      "method": "PATCH",
+      "path": "/settings",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      }
+    }
+  }
+}

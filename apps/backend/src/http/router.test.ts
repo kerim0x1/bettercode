@@ -539,7 +539,10 @@ describe("buildApp HTTP metrics", () => {
     })
 
     expect(response.status).toBe(413)
-    expect(await response.json()).toEqual({ error: "request body too large" })
+    expect(await response.json()).toEqual({
+      error: "request body too large",
+      code: "request_too_large",
+    })
   })
 
   it("supports packaged Electron and explicitly configured remote origins", async () => {

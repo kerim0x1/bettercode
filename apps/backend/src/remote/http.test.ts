@@ -344,6 +344,7 @@ describe("remote access HTTP flow", () => {
     expect(publicPeer.status).toBe(426)
     expect(await publicPeer.json()).toEqual({
       error: "secure transport required",
+      code: "secure_transport_required",
     })
     // No socket at all (an in-process caller asking for a LAN host name)
     // is not a private peer either.
@@ -405,6 +406,7 @@ describe("remote access HTTP flow", () => {
     expect(mutation.status).toBe(403)
     expect(await mutation.json()).toEqual({
       error: "remote session is restricted to read-only monitoring",
+      code: "remote_read_only",
     })
 
     const leakedDesktopCredential = await app.request(
@@ -429,6 +431,7 @@ describe("remote access HTTP flow", () => {
     expect(response.status).toBe(426)
     expect(await response.json()).toEqual({
       error: "secure transport required",
+      code: "secure_transport_required",
     })
   })
 
@@ -614,7 +617,10 @@ describe("remote access HTTP flow", () => {
     })
 
     expect(response.status).toBe(413)
-    expect(await response.json()).toEqual({ error: "request body too large" })
+    expect(await response.json()).toEqual({
+      error: "request body too large",
+      code: "request_too_large",
+    })
   })
 
   it("does not accept a cookie from a different loopback origin port", async () => {

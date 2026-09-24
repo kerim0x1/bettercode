@@ -1788,6 +1788,17 @@ export const MIGRATIONS: Migration[] = [
     // SQL NULL means no goal metadata observed; JSON null is an authoritative clear.
     sql: `ALTER TABLE projection_threads ADD COLUMN provider_goal_json TEXT;`,
   },
+  {
+    // The phone app names itself and its version on every request, so the
+    // desktop's device list can show which paired phone needs an update.
+    version: 53,
+    name: "remote_session_client_info",
+    sql: `
+      ALTER TABLE remote_access_sessions ADD COLUMN client_name TEXT;
+      ALTER TABLE remote_access_sessions ADD COLUMN client_version TEXT;
+      ALTER TABLE remote_access_sessions ADD COLUMN client_platform TEXT;
+    `,
+  },
 ]
 
 /** Any statement that adds or removes an index, `CREATE UNIQUE INDEX` included. */

@@ -6,7 +6,9 @@ import { buildApp } from "../http/router"
 import { WsHub } from "../ws/server"
 import { createWsRpcHandler } from "../ws/rpc"
 import { logger } from "../observability/logger"
+import { describeRemoteProtocol } from "../remote/protocol"
 import { REMOTE_SESSION_COOKIE } from "../remote/service"
+import type { Settings } from "../settings/schema"
 import type { AppState } from "../appState"
 import type {
   BootRoot,
@@ -25,7 +27,7 @@ export function createTransport(
   state: AppState
 ): TransportContext {
   const { config, startupCleanup } = root
-  const { remoteAccess } = settingsCtx
+  const { remoteAccess, settings } = settingsCtx
   // ── HTTP + WS ────────────────────────────────────────────────────────
   // Minted by `createBootRoot`; the narrowing no longer carries across the
   // phase boundary, so assert it the same way `token` below already does.
@@ -52,10 +54,35 @@ export function createTransport(
     subscribeToRemoteSessionRevocations: (listener) =>
       remoteAccess.subscribeToSessionRevocations(listener),
     sessionCookieName: REMOTE_SESSION_COOKIE,
+    describeProtocol: (principal) =>
+      describeRemoteProtocol({
+        accessLevel:
+          principal.kind === "local" ? "full" : principal.accessLevel,
+        terminalAllowed:
+          principal.kind === "local" ||
+          settings.get().remote_access_allow_terminal === true,
+      }),
+    noteRemoteClient: (sessionId, client) =>
+      remoteAccess.noteClient(sessionId, client),
   })
   startupCleanup.push({
     name: "WebSocket hub",
     run: () => hub.close(),
+  })
+  // Paired devices learn about a changed terminal grant without reconnecting.
+  let terminalAllowed = settings.get().remote_access_allow_terminal === true
+  const refreshProtocolOnSettingsChange = (next: Settings) => {
+    const allowed = next.remote_access_allow_terminal === true
+    if (allowed === terminalAllowed) return
+    terminalAllowed = allowed
+    hub.refreshProtocol()
+  }
+  settings.on("change", refreshProtocolOnSettingsChange)
+  startupCleanup.push({
+    name: "protocol updates for paired devices",
+    run: () => {
+      settings.off("change", refreshProtocolOnSettingsChange)
+    },
   })
   hub.setRpcHandler(createWsRpcHandler(state, config))
   return { hub }

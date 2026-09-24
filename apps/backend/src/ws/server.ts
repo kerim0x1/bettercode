@@ -2,6 +2,13 @@ import { randomUUID } from "node:crypto"
 import type { IncomingMessage, Server as HttpServer } from "node:http"
 import type { Duplex } from "node:stream"
 import { WebSocketServer, WebSocket } from "ws"
+import {
+  WS_CLOSE_CLIENT_UPDATE_REQUIRED,
+  parseRemoteClientHeader,
+  parseRemoteClientInfo,
+  remoteClientNeedsUpdate,
+  type RemoteClientInfo,
+} from "@betterc0de/schema/remote-protocol"
 import { constantTimeEqual } from "../security/token"
 import { isAllowedBrowserOrigin } from "../security/origin"
 import {
@@ -103,6 +110,17 @@ export interface WsHubOptions {
   ) => () => void
   /** Periodic defense-in-depth revalidation interval. */
   readonly remoteSessionRevalidationMs?: number
+  /**
+   * Protocol block (apps/backend/src/remote/protocol.ts) sent to each client
+   * in `auth_ok`, and to paired devices again in `protocol_update` whenever
+   * `refreshProtocol` is called.
+   */
+  readonly describeProtocol?: (principal: WsPrincipal) => unknown
+  /** Records the app a paired device identified itself as. */
+  readonly noteRemoteClient?: (
+    sessionId: string,
+    client: RemoteClientInfo
+  ) => void
   /** HttpOnly browser-session cookie accepted during the upgrade. */
   readonly sessionCookieName?: string
   /** Maximum provider runtime frames retained for reconnect catch-up. */
@@ -350,8 +368,16 @@ export class WsHub {
         rejectUpgrade(socket, 429, "Too Many Requests")
         return
       }
+      const upgradeClient = parseRemoteClientHeader(
+        headerValue(request.headers["x-betterc0de-client"])
+      )
       wss.handleUpgrade(request, socket, head, (ws) =>
-        this.onConnection(ws, preAuthenticatedPrincipal, insecureNonLoopback)
+        this.onConnection(
+          ws,
+          preAuthenticatedPrincipal,
+          insecureNonLoopback,
+          upgradeClient
+        )
       )
     }
     httpServer.on("upgrade", this.upgradeHandler)
@@ -430,6 +456,25 @@ export class WsHub {
   /** Number of currently-authenticated clients (for health endpoints). */
   clientCount(): number {
     return this.clients.size
+  }
+
+  /**
+   * Re-sends the protocol block to every paired device, e.g. after the
+   * desktop turned their terminal grant on or off.
+   */
+  refreshProtocol(): void {
+    if (!this.options.describeProtocol) return
+    for (const client of this.clients) {
+      if (client.principal.kind !== "remote") continue
+      try {
+        client.send({
+          type: "protocol_update",
+          protocol: this.options.describeProtocol(client.principal),
+        })
+      } catch (error) {
+        logger.warn({ err: error }, "failed to send protocol update")
+      }
+    }
   }
 
   revokeRemoteSessions(sessionIds: readonly string[]): void {
@@ -532,7 +577,8 @@ export class WsHub {
   private onConnection(
     socket: WebSocket,
     preAuthenticatedPrincipal: WsPrincipal | null = null,
-    forceReadOnlyRemote = false
+    forceReadOnlyRemote = false,
+    upgradeClient: RemoteClientInfo | null = null
   ): void {
     let authenticated = preAuthenticatedPrincipal !== null
     let client: ReplayClient | null = null
@@ -583,9 +629,14 @@ export class WsHub {
     // the renderer's onmessage handler observes `auth_ok` exactly once,
     // matching the legacy code path.
     if (preAuthenticatedPrincipal) {
+      if (remoteClientNeedsUpdate(upgradeClient)) {
+        socket.close(WS_CLOSE_CLIENT_UPDATE_REQUIRED, "client update required")
+        return
+      }
       client = this.registerAuthenticatedClient(
         socket,
-        preAuthenticatedPrincipal
+        preAuthenticatedPrincipal,
+        upgradeClient
       )
     }
 
@@ -617,13 +668,28 @@ export class WsHub {
             socket.close(WS_CLOSE_UNAUTHORIZED, "auth failed")
             return
           }
+          // A too-old app is told so with its own close code: 4401 would
+          // make it discard a pairing that works again after an update.
+          const clientInfo =
+            parseRemoteClientInfo((msg as AuthMessage).client) ?? upgradeClient
+          if (remoteClientNeedsUpdate(clientInfo)) {
+            socket.close(
+              WS_CLOSE_CLIENT_UPDATE_REQUIRED,
+              "client update required"
+            )
+            return
+          }
           authenticated = true
           releasePendingSlot()
           if (timer) {
             clearTimeout(timer)
             timer = null
           }
-          client = this.registerAuthenticatedClient(socket, principal)
+          client = this.registerAuthenticatedClient(
+            socket,
+            principal,
+            clientInfo
+          )
           return
         }
 
@@ -773,7 +839,8 @@ export class WsHub {
 
   private registerAuthenticatedClient(
     socket: WebSocket,
-    principal: WsPrincipal
+    principal: WsPrincipal,
+    clientInfo: RemoteClientInfo | null = null
   ): ReplayClient {
     this.toolSnapshots.flush()
     const client: ReplayClient = {
@@ -801,6 +868,13 @@ export class WsHub {
       }
       sessionClients.add(client)
       this.armRemoteSessionExpiry(client)
+      if (clientInfo) {
+        try {
+          this.options.noteRemoteClient?.(principal.sessionId, clientInfo)
+        } catch (error) {
+          logger.warn({ err: error }, "failed to record the remote client")
+        }
+      }
     }
     socket.on("close", () => {
       if (client.replayTimer) clearTimeout(client.replayTimer)
@@ -826,6 +900,9 @@ export class WsHub {
           journalId: this.providerReplayJournalId,
           latestSequence: this.providerSequence,
         },
+        ...(this.options.describeProtocol
+          ? { protocol: this.options.describeProtocol(principal) }
+          : {}),
       })
     )
 
@@ -1086,9 +1163,15 @@ function isLoopbackUpgrade(
   }
 }
 
+function headerValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value
+}
+
 interface AuthMessage {
   type: "auth"
   token: string
+  /** `{ name, version, platform }` of the phone app; read by `parseRemoteClientInfo`. */
+  client?: unknown
 }
 
 interface ProviderReplayRequest {

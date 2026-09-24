@@ -1045,3 +1045,140 @@ function nextJsonMessages(
     ws.once("error", onError)
   })
 }
+
+describe("WsHub protocol negotiation", () => {
+  const PHONE = {
+    name: "betterc0de-remote",
+    version: "0.1.0-beta.3",
+    platform: "ios",
+  }
+  const TOO_OLD = {
+    name: "betterc0de-remote",
+    version: "0.0.1",
+    platform: "ios",
+  }
+
+  function remoteHub(extra: WsHubOptions = {}) {
+    return startHub({
+      authenticateToken: (token) =>
+        token === "remote-session"
+          ? {
+              kind: "remote",
+              sessionId: "session-1",
+              accessLevel: "full",
+              expiresAt: Date.now() + 60_000,
+            }
+          : null,
+      describeProtocol: (principal) => ({
+        apiVersion: 2,
+        principal: principal.kind,
+      }),
+      ...extra,
+    })
+  }
+
+  function opened(ws: WebSocket): Promise<void> {
+    return new Promise((resolve, reject) => {
+      ws.once("open", () => resolve())
+      ws.once("error", reject)
+    })
+  }
+
+  function closed(ws: WebSocket): Promise<{ code: number; reason: string }> {
+    return new Promise((resolve) => {
+      ws.once("close", (code, reason) =>
+        resolve({ code, reason: reason.toString("utf8") })
+      )
+    })
+  }
+
+  it("describes the protocol in auth_ok and records which app connected", async () => {
+    const noteRemoteClient = vi.fn()
+    const { url } = await remoteHub({ noteRemoteClient })
+    const ws = new WebSocket(url)
+    await opened(ws)
+    const auth = nextJson(ws)
+    ws.send(
+      JSON.stringify({ type: "auth", token: "remote-session", client: PHONE })
+    )
+    await expect(auth).resolves.toMatchObject({
+      type: "auth_ok",
+      replay: { journalId: expect.any(String) },
+      protocol: { apiVersion: 2, principal: "remote" },
+    })
+    expect(noteRemoteClient).toHaveBeenCalledWith("session-1", PHONE)
+    ws.close()
+  })
+
+  it("tells a too-old app to update with 4426, which keeps its pairing", async () => {
+    const noteRemoteClient = vi.fn()
+    const { hub, url } = await remoteHub({ noteRemoteClient })
+    const ws = new WebSocket(url)
+    await opened(ws)
+    const result = closed(ws)
+    ws.send(
+      JSON.stringify({ type: "auth", token: "remote-session", client: TOO_OLD })
+    )
+    await expect(result).resolves.toEqual({
+      code: 4426,
+      reason: "client update required",
+    })
+    expect(hub.clientCount()).toBe(0)
+    expect(noteRemoteClient).not.toHaveBeenCalled()
+  })
+
+  it("applies the same gate to an app that authenticated during the upgrade", async () => {
+    const { hub, url } = await remoteHub()
+    const ws = new WebSocket(url, {
+      headers: {
+        Authorization: "Bearer remote-session",
+        "X-BetterC0de-Client": "betterc0de-remote/0.0.1 (android)",
+      },
+    })
+    await expect(closed(ws)).resolves.toEqual({
+      code: 4426,
+      reason: "client update required",
+    })
+    expect(hub.clientCount()).toBe(0)
+  })
+
+  it("re-sends the protocol to paired devices only", async () => {
+    const { hub, url } = await remoteHub()
+    const phone = new WebSocket(url)
+    await opened(phone)
+    const phoneAuth = nextJson(phone)
+    phone.send(
+      JSON.stringify({ type: "auth", token: "remote-session", client: PHONE })
+    )
+    await phoneAuth
+    const desktop = new WebSocket(url, {
+      headers: {
+        Authorization: "Bearer secret",
+        Origin: "http://localhost:5173",
+      },
+    })
+    await expect(nextJson(desktop)).resolves.toMatchObject({
+      type: "auth_ok",
+      protocol: { principal: "local" },
+    })
+    const desktopFrames: Array<Record<string, unknown>> = []
+    desktop.on("message", (data) => {
+      desktopFrames.push(
+        JSON.parse(data.toString("utf8")) as Record<string, unknown>
+      )
+    })
+
+    const update = nextJson(phone)
+    hub.refreshProtocol()
+    await expect(update).resolves.toEqual({
+      type: "protocol_update",
+      protocol: { apiVersion: 2, principal: "remote" },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(
+      desktopFrames.filter((frame) => frame.type === "protocol_update")
+    ).toEqual([])
+    phone.close()
+    desktop.close()
+  })
+})

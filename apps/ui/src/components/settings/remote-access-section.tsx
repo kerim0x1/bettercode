@@ -31,6 +31,7 @@ import { getSettings } from "@/services/backend"
 import { TailscaleServeCard } from "@/components/remote/tailscale-serve-card"
 import {
   createRemotePairingLink,
+  describeRemoteClient,
   getRemoteBootstrap,
   getRemoteStatus,
   getTailscaleStatus,
@@ -590,9 +591,10 @@ export function SettingsRemoteAccessSection() {
         ) : (
           sessions.map((session) => {
             const current = session.id === currentSessionId
+            const client = describeRemoteClient(session.client)
             return (
               <SettingsRow
-                description={`${current ? "This browser · " : ""}Last active ${formatDate(session.lastSeenAt)}`}
+                description={`${current ? "This browser · " : ""}${client ? `${client} · ` : ""}Last active ${formatDate(session.lastSeenAt)}`}
                 key={session.id}
                 label={session.label}
               >

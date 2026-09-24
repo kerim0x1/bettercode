@@ -51,6 +51,11 @@
       "types": "./src/json-read.ts",
       "import": "./src/json-read.ts",
       "default": "./dist/json-read.js"
+    },
+    "./remote-protocol": {
+      "types": "./src/remote-protocol.ts",
+      "import": "./src/remote-protocol.ts",
+      "default": "./dist/remote-protocol.js"
     }
   },
   "scripts": {
@@ -74,6 +79,9 @@
       ],
       "json-read": [
         "dist/json-read.d.ts"
+      ],
+      "remote-protocol": [
+        "dist/remote-protocol.d.ts"
       ]
     }
   }

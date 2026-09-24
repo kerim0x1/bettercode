@@ -87,6 +87,8 @@ const EXPECTED_STARTUP_CLEANUP_ORDER = [
   "provider hub event subscription",
   "settings change listener",
   "WebSocket hub",
+  // Unwound before the hub closes, so no protocol update reaches a closing hub.
+  "protocol updates for paired devices",
   "provider runtime ingestion",
   "checkpoint reactor",
   "thread goals",
