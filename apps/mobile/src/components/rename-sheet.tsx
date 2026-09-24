@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   KeyboardAvoidingView,
   Modal,
@@ -39,9 +39,13 @@ export function RenameSheet({
   problem?: (name: string) => string | null
 }) {
   const [draft, setDraft] = useState(title)
+  const draftRef = useRef(title)
   const [saving, setSaving] = useState(false)
   useEffect(() => {
-    if (visible) setDraft(title)
+    if (visible) {
+      draftRef.current = title
+      setDraft(title)
+    }
   }, [title, visible])
   const next = draft.trim()
   const invalid = next ? (problem?.(next) ?? null) : null
@@ -49,6 +53,12 @@ export function RenameSheet({
     next.length > 0 && next !== title.trim() && !invalid && !saving
 
   const save = async () => {
+    // TextInput can deliver its last change before React renders it. Use the
+    // value from that event so a quick Save cannot submit an older name.
+    const next = draftRef.current.trim()
+    const invalid = next ? (problem?.(next) ?? null) : null
+    const canSave =
+      next.length > 0 && next !== title.trim() && !invalid && !saving
     if (!canSave) return
     setSaving(true)
     try {
@@ -81,7 +91,10 @@ export function RenameSheet({
             testID="rename-input"
             accessibilityLabel={label}
             value={draft}
-            onChangeText={setDraft}
+            onChangeText={(text) => {
+              draftRef.current = text
+              setDraft(text)
+            }}
             autoFocus
             selectTextOnFocus
             maxLength={1_024}
