@@ -16,6 +16,7 @@ import {
   findJdk,
   javaMajorVersion,
   maestroCacheRoot,
+  maestroFailures,
   maestroTestArgs,
   missingSdkPackages,
   parseAvdList,
@@ -219,6 +220,80 @@ test("runs every flow on one device and keeps a report", () => {
   assert.deepEqual(args.slice(0, 4), ["--device", "emulator-5554", "test", "flows"])
   assert.deepEqual(args.slice(4, 6), ["--format", "JUNIT"])
   assert.equal(args.includes(path.join("out", "maestro-junit.xml")), true)
+})
+
+/** A Maestro output folder: its JUnit report, and each flow's commands.json by flow name. */
+function maestroOutput(testcases, commands = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "maestro-output-"))
+  fs.writeFileSync(
+    path.join(dir, "maestro-junit.xml"),
+    `<?xml version='1.0' encoding='UTF-8'?>\n<testsuites>\n  <testsuite name="Test Suite" tests="${testcases.length}">\n${testcases.join("\n")}\n  </testsuite>\n</testsuites>\n`
+  )
+  for (const [name, entries] of Object.entries(commands)) {
+    fs.mkdirSync(path.join(dir, "maestro", name), { recursive: true })
+    fs.writeFileSync(path.join(dir, "maestro", name, "commands.json"), JSON.stringify(entries))
+  }
+  return dir
+}
+
+test("tells a flow the emulator dropped out of from one that failed a check", () => {
+  // As Maestro 2.10 wrote them in CI: JUnit says only "Unknown error" for a
+  // lost device; the flow's commands.json has adb's message.
+  const dir = maestroOutput(
+    [
+      `    <testcase id="The demo link opens the demo" name="The demo link opens the demo" file="apps/mobile/maestro/flows/demo-link.yaml" status="ERROR">
+      <properties><property name="tags" value="demo"/></properties>
+      <failure>Unknown error</failure>
+    </testcase>`,
+      `    <testcase id="Pairing" name="Pairing checks the input &amp; refuses a bare code" file="apps/mobile/maestro/flows/pairing-input.yaml" status="ERROR">
+      <failure>Assertion is false: id: pair-error is visible</failure>
+    </testcase>`,
+      `    <testcase id="Demo" name="The demo from the pairing screen to Exit demo" file="apps/mobile/maestro/flows/demo-chat.yaml" status="SUCCESS"/>`,
+    ],
+    {
+      "The demo link opens the demo": [
+        { command: { defineVariablesCommand: {} }, metadata: { status: "COMPLETED" } },
+        {
+          command: { launchAppCommand: {} },
+          metadata: {
+            status: "FAILED",
+            error: { message: "Command failed (host:transport:emulator-5554): device offline" },
+          },
+        },
+      ],
+    }
+  )
+  try {
+    assert.deepEqual(maestroFailures(dir), [
+      {
+        name: "The demo link opens the demo",
+        file: "apps/mobile/maestro/flows/demo-link.yaml",
+        reason: "Command failed (host:transport:emulator-5554): device offline",
+        lostDevice: true,
+      },
+      {
+        name: "Pairing checks the input & refuses a bare code",
+        file: "apps/mobile/maestro/flows/pairing-input.yaml",
+        reason: "Assertion is false: id: pair-error is visible",
+        lostDevice: false,
+      },
+    ])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("finds no failures in a run that passed", () => {
+  const dir = maestroOutput([
+    `    <testcase id="a" name="A flow" file="flows/a.yaml" status="SUCCESS">
+      <properties><property name="tags" value="demo"/></properties>
+    </testcase>`,
+  ])
+  try {
+    assert.deepEqual(maestroFailures(dir), [])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("reads the Xcode version", () => {
