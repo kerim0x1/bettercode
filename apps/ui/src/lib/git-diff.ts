@@ -71,7 +71,10 @@ export function parseGitDiff(text: string): DiffFile[] {
   const files: DiffFile[] = []
   if (!text) return files
 
-  const chunks = text.replace(/\r\n?/g, "\n").split(/^diff --git /m).filter(Boolean)
+  const chunks = text
+    .replace(/\r\n?/g, "\n")
+    .split(/^diff --git /m)
+    .filter(Boolean)
   for (const chunk of chunks) {
     const rawText = withFinalNewline(`diff --git ${chunk}`)
     const lines = rawText.split("\n")
@@ -115,10 +118,7 @@ export function parseGitDiff(text: string): DiffFile[] {
           content: line,
           hunkIndex: currentHunkIdx,
         })
-      } else if (
-        currentHunkIdx >= 0 &&
-        line.startsWith("+")
-      ) {
+      } else if (currentHunkIdx >= 0 && line.startsWith("+")) {
         additions += 1
         const diffLine: DiffLine = {
           type: "add",
@@ -128,10 +128,7 @@ export function parseGitDiff(text: string): DiffFile[] {
         }
         diffLines.push(diffLine)
         hunks[currentHunkIdx]?.lines.push(diffLine)
-      } else if (
-        currentHunkIdx >= 0 &&
-        line.startsWith("-")
-      ) {
+      } else if (currentHunkIdx >= 0 && line.startsWith("-")) {
         deletions += 1
         const diffLine: DiffLine = {
           type: "remove",
