@@ -55,6 +55,20 @@ export type GitLogEntry = HttpContractResponse<"gitLog">["commits"][number]
 export type GeneratedCommitMessage =
   HttpContractResponse<"generateCommitMessage">
 
+/** Matches of a content search, file by file. */
+export type ContentSearchResult = HttpContractResponse<"workspaceSearchContent">
+
+/** The desktop's content search options. */
+export interface ContentSearchOptions {
+  caseSensitive?: boolean
+  wholeWord?: boolean
+  regex?: boolean
+  /** Glob patterns, comma separated, as in the desktop's search. */
+  include?: string
+  exclude?: string
+  limit?: number
+}
+
 /** Lets a caller stop waiting for a slow request. */
 export interface CallOptions {
   signal?: AbortSignal
@@ -128,6 +142,35 @@ export interface RemoteApi {
     limit?: number
   ): Promise<FileSearchResult>
   readFile(root: string, absolutePath: string): Promise<FileContent>
+  /**
+   * Writes a file in the project. With `expectedSha256` (from readFile) the
+   * desktop refuses when the file changed since; with `null`, when it exists.
+   */
+  writeFile(
+    root: string,
+    relativePath: string,
+    contents: string,
+    expectedSha256?: string | null
+  ): Promise<void>
+  createFolder(root: string, relativePath: string): Promise<void>
+  /** Renames or moves a file or folder within the project. */
+  movePath(
+    root: string,
+    fromRelativePath: string,
+    toRelativePath: string
+  ): Promise<void>
+  /** Deletes a file, or with `recursive` a folder and everything in it. */
+  deletePath(
+    root: string,
+    relativePath: string,
+    recursive?: boolean
+  ): Promise<void>
+  /** Searches the text of the project's files, as the desktop's search. */
+  searchContent(
+    root: string,
+    query: string,
+    options?: ContentSearchOptions
+  ): Promise<ContentSearchResult>
 
   gitStatus(cwd: string, options?: CallOptions): Promise<GitStatusResult>
   /** The unstaged changes, or with `staged` the staged ones. */

@@ -35,6 +35,8 @@ export const SEND_TIMEOUT_MS = 210_000
 export const GIT_TIMEOUT_MS = 120_000
 /** How long reading git status, a diff or the history may take (the desktop's default). */
 export const GIT_READ_TIMEOUT_MS = 60_000
+/** How long writing, moving or deleting a file may take. */
+export const FILE_WRITE_TIMEOUT_MS = 60_000
 /** Commit message generation: the desktop allows 180 s for its CLIs, then its helpers. */
 export const COMMIT_MESSAGE_TIMEOUT_MS = 250_000
 
@@ -189,6 +191,39 @@ export function createLiveApi(connection: HttpConnection): RemoteApi {
           cwd: root,
           relativePath: relativePathWithinRoot(root, absolutePath),
         },
+      }),
+    writeFile: async (root, relativePath, contents, expectedSha256) => {
+      await contract("workspaceWrite", {
+        body: {
+          cwd: root,
+          relativePath,
+          contents,
+          ...(expectedSha256 === undefined ? {} : { expectedSha256 }),
+        },
+        timeoutMs: FILE_WRITE_TIMEOUT_MS,
+      })
+    },
+    createFolder: async (root, relativePath) => {
+      await contract("workspaceMkdir", {
+        body: { cwd: root, relativePath },
+        timeoutMs: FILE_WRITE_TIMEOUT_MS,
+      })
+    },
+    movePath: async (root, fromRelativePath, toRelativePath) => {
+      await contract("workspaceMove", {
+        body: { cwd: root, fromRelativePath, toRelativePath },
+        timeoutMs: FILE_WRITE_TIMEOUT_MS,
+      })
+    },
+    deletePath: async (root, relativePath, recursive = false) => {
+      await contract("workspaceDelete", {
+        body: { cwd: root, relativePath, recursive },
+        timeoutMs: FILE_WRITE_TIMEOUT_MS,
+      })
+    },
+    searchContent: (root, query, options = {}) =>
+      contract("workspaceSearchContent", {
+        body: { cwd: root, query, ...options },
       }),
 
     gitStatus: (cwd, options) =>

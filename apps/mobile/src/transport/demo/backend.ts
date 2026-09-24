@@ -15,7 +15,6 @@ import {
 import type {
   ChatMessage,
   ChatThread,
-  DirectoryEntry,
   RemoteBootstrap,
   RemoteSessionSummary,
   ThreadActivity,
@@ -35,6 +34,7 @@ import {
   demoMessages,
   demoThreads,
 } from "./fixtures"
+import { DemoFiles } from "./files"
 import { DemoGit } from "./git"
 
 /**
@@ -62,7 +62,11 @@ export const DEMO_PROTOCOL: RemoteProtocol = {
     accessLevel: "full",
     terminalGranted: false,
     maxRequestBytes: 2 * 1024 * 1024,
-    features: [REMOTE_FEATURES.threadsGet, REMOTE_FEATURES.threadsRename],
+    features: [
+      REMOTE_FEATURES.threadsGet,
+      REMOTE_FEATURES.threadsRename,
+      REMOTE_FEATURES.workspaceWriteIfMatch,
+    ],
   },
 }
 
@@ -112,6 +116,7 @@ export class DemoBackend {
   >()
   private counter = 0
   private readonly git: DemoGit
+  private readonly files: DemoFiles
   readonly api: RemoteApi
 
   constructor(options: DemoOptions = {}) {
@@ -121,6 +126,7 @@ export class DemoBackend {
     this.threads = demoThreads(now)
     this.messages = demoMessages(now)
     this.git = new DemoGit(demoGitSeeds(now), this.now)
+    this.files = new DemoFiles(this.git, DEMO_FILES, this.now)
     this.session = {
       id: "demo-session",
       label: "Demo",
@@ -273,34 +279,39 @@ export class DemoBackend {
         this.resolveApproval({ ...body, decision: "approve" }),
       rejectUserInput: async (body) =>
         this.resolveApproval({ ...body, decision: "deny" }),
-      listDirectory: async (path) => this.listDirectory(path),
-      searchFiles: async (root, needle, limit = 200) => {
-        const files = DEMO_FILES[root] ?? {}
-        const lower = needle.toLowerCase()
-        const entries = Object.entries(files)
-          .filter(([relative]) => relative.toLowerCase().includes(lower))
-          .slice(0, limit)
-          .map(([relative, content], index) => ({
-            path: `${root}/${relative}`,
-            name: relative.split("/").pop() ?? relative,
-            isDir: content === null,
-            score: 1_000 - index,
-          }))
-        return { entries, truncated: false, tookMs: 1 }
+      listDirectory: async (path) => copy(this.files.list(path)),
+      searchFiles: async (root, needle, limit = 200) =>
+        this.files.searchNames(root, needle, limit),
+      readFile: async (root, absolutePath) =>
+        this.files.read(root, absolutePath),
+      writeFile: async (root, relativePath, contents, expectedSha256) => {
+        checked("workspaceWrite", {
+          cwd: root,
+          relativePath,
+          contents,
+          ...(expectedSha256 === undefined ? {} : { expectedSha256 }),
+        })
+        this.files.write(root, relativePath, contents, expectedSha256)
       },
-      readFile: async (root, absolutePath) => {
-        const relative = absolutePath.slice(root.length + 1)
-        // A repository's working tree shows what staging and discarding did.
-        const working = this.git.workingFile(root, relative)
-        const content =
-          working === undefined ? DEMO_FILES[root]?.[relative] : working
-        if (typeof content !== "string") throw new Error("File not found.")
-        return {
-          content,
-          path: absolutePath,
-          size: content.length,
-          isUtf8: true,
-        }
+      createFolder: async (root, relativePath) => {
+        checked("workspaceMkdir", { cwd: root, relativePath })
+        this.files.createFolder(root, relativePath)
+      },
+      movePath: async (root, fromRelativePath, toRelativePath) => {
+        checked("workspaceMove", {
+          cwd: root,
+          fromRelativePath,
+          toRelativePath,
+        })
+        this.files.move(root, fromRelativePath, toRelativePath)
+      },
+      deletePath: async (root, relativePath, recursive = false) => {
+        checked("workspaceDelete", { cwd: root, relativePath, recursive })
+        this.files.delete(root, relativePath, recursive)
+      },
+      searchContent: async (root, query, options = {}) => {
+        checked("workspaceSearchContent", { cwd: root, query, ...options })
+        return this.files.searchContent(root, query, options)
       },
 
       gitStatus: async (cwd) =>
@@ -359,37 +370,6 @@ export class DemoBackend {
       providerInstanceId: DEMO_PROVIDER.instanceId,
       status: "ready",
       activeTurnId: null,
-    }
-  }
-
-  private listDirectory(path: string) {
-    const root = Object.keys(DEMO_FILES).find(
-      (candidate) => path === candidate || path.startsWith(`${candidate}/`)
-    )
-    if (!root) throw new Error("Folder not found.")
-    const folder = path === root ? "" : path.slice(root.length + 1)
-    const entries: DirectoryEntry[] = Object.entries(DEMO_FILES[root] ?? {})
-      .filter(([relative]) => {
-        const slash = relative.lastIndexOf("/")
-        return (slash === -1 ? "" : relative.slice(0, slash)) === folder
-      })
-      .map(([relative, content]) => ({
-        name: relative.split("/").pop() ?? relative,
-        path: `${root}/${relative}`,
-        isDir: content === null,
-        isSymlink: false,
-        size: content === null ? null : content.length,
-        mtime: this.now().getTime(),
-      }))
-      .sort(
-        (a, b) =>
-          Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name)
-      )
-    return {
-      path,
-      parent: path === root ? null : path.slice(0, path.lastIndexOf("/")),
-      entries,
-      truncated: false,
     }
   }
 

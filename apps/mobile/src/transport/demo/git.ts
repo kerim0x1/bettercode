@@ -270,6 +270,20 @@ export class DemoGit {
     })
   }
 
+  /** The folders of the demo's repositories. */
+  roots(): string[] {
+    return [...this.repos.keys()]
+  }
+
+  /**
+   * A repository's working tree, file path → contents, to change in place:
+   * the demo's file browser and editor work on it, so source control sees
+   * their changes. `undefined` when `root` is no demo repository.
+   */
+  worktreeOf(root: string): Map<string, string> | undefined {
+    return this.repos.get(root)?.worktree
+  }
+
   /**
    * A file in a repository's working tree: `undefined` when `root` is no
    * demo repository, `null` when the repository has no such file.
