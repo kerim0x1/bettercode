@@ -2,7 +2,6 @@ import { useEffect, useState } from "react"
 import {
   KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -49,10 +48,10 @@ export function RenameSheet({
       animationType="fade"
       onRequestClose={onCancel}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.wrap}
-      >
+      {/* A modal is a window of its own, which Android (edge to edge) does
+          not shrink for the keyboard: the sheet makes room itself there too,
+          or the keyboard covers Save on a small phone. */}
+      <KeyboardAvoidingView behavior="padding" style={styles.wrap}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Close"
