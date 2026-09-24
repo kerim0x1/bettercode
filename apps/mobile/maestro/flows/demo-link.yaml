@@ -12,6 +12,15 @@ tags:
       id: pair-screen
     timeout: 60000
 - openLink: betterc0de://demo?speed=instant
+# iOS asks before a link opens an app; the answer stays on screen otherwise,
+# over every flow after this one.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          text: Open
+          optional: true
 - extendedWaitUntil:
     visible:
       id: chats-screen

@@ -4,13 +4,15 @@
 // Needs macOS with Xcode 26 or newer and CocoaPods; from Windows, iOS
 // builds go through EAS (docs/development/mobile.md).
 //
-//   node scripts/mobile-ios.mjs build        unsigned simulator build, checked
+//   node scripts/mobile-ios.mjs build        simulator build, signed to run locally, checked
 //   node scripts/mobile-ios.mjs e2e [<app>]  boot a simulator, install, run the Maestro flows
 //   node scripts/mobile-ios.mjs all          both
 //
 // The build uses the Release configuration, so the JavaScript bundle is
-// inside the app as in TestFlight, for the simulator and without code
-// signing, into apps/mobile/build/ios. It then checks the app's Info.plist:
+// inside the app as in TestFlight, for the simulator, into
+// apps/mobile/build/ios. It is signed ad hoc ("to run locally"), which needs
+// no Apple account: an unsigned app has no entitlements, and without them
+// iOS refuses the keychain the app keeps its pairing in. It then checks the app's Info.plist:
 // bundle identifier, version, network policy (ATS), the encryption
 // declaration, the camera prompt and the betterc0de:// scheme. The signed
 // App Store build comes from EAS; this one proves that the native project
@@ -149,7 +151,11 @@ export function build({ env = process.env } = {}) {
       // One slice, for the simulator on this Mac.
       `ARCHS=${os.arch() === "arm64" ? "arm64" : "x86_64"}`,
       "ONLY_ACTIVE_ARCH=NO",
-      "CODE_SIGNING_ALLOWED=NO",
+      // Ad hoc: the simulator runs it, no team or profile is involved.
+      "CODE_SIGN_IDENTITY=-",
+      "CODE_SIGN_STYLE=Manual",
+      "DEVELOPMENT_TEAM=",
+      "PROVISIONING_PROFILE_SPECIFIER=",
       "COMPILER_INDEX_STORE_ENABLE=NO",
       "build",
     ],
