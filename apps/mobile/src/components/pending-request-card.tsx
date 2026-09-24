@@ -50,9 +50,7 @@ export function PendingRequestCard({
         )}
         <View style={styles.headerCopy}>
           <Text style={styles.eyebrow}>
-            {request.kind === "user-input"
-              ? "QUESTION"
-              : "APPROVAL REQUIRED"}
+            {request.kind === "user-input" ? "QUESTION" : "APPROVAL REQUIRED"}
           </Text>
           <Text style={styles.title}>{request.title}</Text>
         </View>

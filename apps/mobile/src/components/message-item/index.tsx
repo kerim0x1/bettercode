@@ -36,7 +36,11 @@ import { ToolCallGroup } from "./tool-calls"
 // Memoised: the list re-renders on every streamed delta of the *current*
 // turn, and the rows above it derive tool presentation and diff groups
 // from their message on each render.
-export const MessageItem = memo(function MessageItem({ message }: { message: ChatMessage }) {
+export const MessageItem = memo(function MessageItem({
+  message,
+}: {
+  message: ChatMessage
+}) {
   const isUser = message.role === "user"
   const isSystem = message.role === "system"
 
@@ -95,26 +99,32 @@ export function StreamingMessage({ stream }: { stream: StreamState }) {
   return (
     <View style={styles.assistantWrap}>
       <View style={styles.metaRow}>
-        <View
-          style={[styles.liveDot, !stream.running && styles.liveDotIdle]}
-        />
+        <View style={[styles.liveDot, !stream.running && styles.liveDotIdle]} />
         <Text style={styles.metaText}>
           {stream.running ? "Working…" : "Turn finished"}
         </Text>
         <Text style={styles.metaTime}>{formatTime(stream.startedAt)}</Text>
       </View>
       {stream.reasoning ? (
-        <Reasoning content={stream.reasoning} defaultOpen streaming={stream.running && stream.isReasoning === true} />
+        <Reasoning
+          content={stream.reasoning}
+          defaultOpen
+          streaming={stream.running && stream.isReasoning === true}
+        />
       ) : null}
       {stream.content ? (
         <MarkdownText content={stream.content} />
       ) : stream.running ? (
         <View style={styles.thinkingRow}>
           <CircleDashed size={15} color={colors.textMuted} />
-          <Text style={styles.thinkingText}>{stream.isReasoning ? "Thinking…" : "Working…"}</Text>
+          <Text style={styles.thinkingText}>
+            {stream.isReasoning ? "Thinking…" : "Working…"}
+          </Text>
         </View>
       ) : null}
-      {stream.error ? <Text style={styles.errorText}>{stream.error}</Text> : null}
+      {stream.error ? (
+        <Text style={styles.errorText}>{stream.error}</Text>
+      ) : null}
     </View>
   )
 }
@@ -188,21 +198,32 @@ function prettyModelName(modelId: string | undefined): string {
 
 function MetaBadges({ message }: { message: ChatMessage }) {
   if (!message.attachments?.length) return null
-  const elements = message.attachments.flatMap(attachment => {
-    const element = readBrowserElementAttachment({ ...attachment, type: attachment.type ?? "file" })
+  const elements = message.attachments.flatMap((attachment) => {
+    const element = readBrowserElementAttachment({
+      ...attachment,
+      type: attachment.type ?? "file",
+    })
     return element ? [element] : []
   })
   const fileCount = message.attachments.length - elements.length
   return (
     <View style={styles.metaBadges}>
-      {elements.map((element, index) => <View key={`element-${index}`} style={styles.badge}><Globe size={12} color={colors.textSecondary} /><Text style={styles.badgeText}>{`<${element.tagName}> ${element.label}`}</Text></View>)}
-      {fileCount > 0 && <View style={styles.badge}>
-        <Paperclip size={12} color={colors.textSecondary} />
-        <Text style={styles.badgeText}>
-          {fileCount}{" "}
-          {fileCount === 1 ? "file" : "files"}
-        </Text>
-      </View>}
+      {elements.map((element, index) => (
+        <View key={`element-${index}`} style={styles.badge}>
+          <Globe size={12} color={colors.textSecondary} />
+          <Text
+            style={styles.badgeText}
+          >{`<${element.tagName}> ${element.label}`}</Text>
+        </View>
+      ))}
+      {fileCount > 0 && (
+        <View style={styles.badge}>
+          <Paperclip size={12} color={colors.textSecondary} />
+          <Text style={styles.badgeText}>
+            {fileCount} {fileCount === 1 ? "file" : "files"}
+          </Text>
+        </View>
+      )}
     </View>
   )
 }

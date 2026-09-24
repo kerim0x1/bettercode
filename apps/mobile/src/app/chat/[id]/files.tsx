@@ -22,7 +22,14 @@ import {
 import { Screen, StateView } from "@/components/layout"
 import { IconButton } from "@/components/icon-button"
 import { FileRow } from "@/components/file-row"
-import { colors, font, minTouchTarget, radius, spacing, type } from "@/design/theme"
+import {
+  colors,
+  font,
+  minTouchTarget,
+  radius,
+  spacing,
+  type,
+} from "@/design/theme"
 import { effectiveThreadRoot, relativePathWithinRoot } from "@/lib/endpoint"
 import { remoteApi } from "@/lib/remote-api"
 import { useAppStore } from "@/store/app-store"
@@ -64,9 +71,7 @@ export default function FilesScreen() {
         setTruncated(result.truncated)
       } catch (caught) {
         setError(
-          caught instanceof Error
-            ? caught.message
-            : "Failed to load folder."
+          caught instanceof Error ? caught.message : "Failed to load folder."
         )
       } finally {
         setLoading(false)
@@ -114,9 +119,7 @@ export default function FilesScreen() {
       )
       setTruncated(result.truncated)
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "Search failed."
-      )
+      setError(caught instanceof Error ? caught.message : "Search failed.")
     } finally {
       setLoading(false)
     }
@@ -177,11 +180,7 @@ export default function FilesScreen() {
         </View>
         <IconButton
           icon={showHidden ? EyeOff : Eye}
-          label={
-            showHidden
-              ? "Hide hidden files"
-              : "Show hidden files"
-          }
+          label={showHidden ? "Hide hidden files" : "Show hidden files"}
           onPress={() => {
             const next = !showHidden
             setShowHidden(next)
@@ -318,7 +317,12 @@ const styles = StyleSheet.create({
     fontFamily: font.bold,
     letterSpacing: 1.1,
   },
-  title: { color: colors.text, fontSize: 17, fontFamily: font.bold, marginTop: 2 },
+  title: {
+    color: colors.text,
+    fontSize: 17,
+    fontFamily: font.bold,
+    marginTop: 2,
+  },
   pathBar: {
     minHeight: 58,
     paddingHorizontal: spacing.md,

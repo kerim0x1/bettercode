@@ -83,11 +83,7 @@ export default function TabsLayout() {
         options={{
           title: "Host",
           tabBarIcon: ({ color, focused }) => (
-            <TabIcon
-              icon={MonitorSmartphone}
-              color={color}
-              focused={focused}
-            />
+            <TabIcon icon={MonitorSmartphone} color={color} focused={focused} />
           ),
         }}
       />

@@ -209,8 +209,8 @@ export default function HostScreen() {
           <View style={styles.notice}>
             <ShieldCheck size={19} color={colors.warning} />
             <Text style={styles.noticeText}>
-              This LAN connection is not TLS-encrypted. Use it only on a
-              trusted network or behind your HTTPS tunnel.
+              This LAN connection is not TLS-encrypted. Use it only on a trusted
+              network or behind your HTTPS tunnel.
             </Text>
           </View>
         ) : null}

@@ -17,9 +17,7 @@ export function normalizeBaseUrl(value: string): string {
     throw new PairingInputError("Desktop address is invalid.")
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new PairingInputError(
-      "Only HTTP or HTTPS addresses are supported."
-    )
+    throw new PairingInputError("Only HTTP or HTTPS addresses are supported.")
   }
   if (url.username || url.password) {
     throw new PairingInputError(
@@ -67,9 +65,7 @@ export function parsePairingInput(
   }
 
   if (!/^[a-z][a-z\d+.-]*:\/\//i.test(candidate)) {
-    throw new PairingInputError(
-      "A bare code also needs the desktop address."
-    )
+    throw new PairingInputError("A bare code also needs the desktop address.")
   }
 
   let url: URL
@@ -113,7 +109,11 @@ export function relativePathWithinRoot(
 ): string {
   const normalizedRoot = normalizeFsPath(root).replace(/\/$/, "")
   const normalizedPath = normalizeFsPath(absolutePath)
-  if ([normalizedRoot, normalizedPath].some(value => value.split("/").includes(".."))) {
+  if (
+    [normalizedRoot, normalizedPath].some((value) =>
+      value.split("/").includes("..")
+    )
+  ) {
     throw new Error("File is outside the chat's project.")
   }
   const caseInsensitive = /^[a-z]:/i.test(normalizedRoot)

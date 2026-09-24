@@ -1,5 +1,9 @@
 import { create } from "zustand"
-import { normalizeProviderGoal, parseGoalCommand, isRecord } from "@betterc0de/schema"
+import {
+  normalizeProviderGoal,
+  parseGoalCommand,
+  isRecord,
+} from "@betterc0de/schema"
 import type {
   ChatMessage,
   ChatThread,
@@ -121,16 +125,22 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const owner = generation
     set({ loadingThreads: true, error: null })
     try {
-      const beforeLoad = new Map(get().threads.map((thread) => [thread.id, thread]))
+      const beforeLoad = new Map(
+        get().threads.map((thread) => [thread.id, thread])
+      )
       const threads = await remoteApi(profile).listThreads()
       if (owner !== generation) return
       threads.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
       set((state) => {
-        const current = new Map(state.threads.map((thread) => [thread.id, thread]))
+        const current = new Map(
+          state.threads.map((thread) => [thread.id, thread])
+        )
         return {
           threads: threads.map((thread) => {
             const live = current.get(thread.id)
-            return live && live !== beforeLoad.get(thread.id) && live.goal !== undefined
+            return live &&
+              live !== beforeLoad.get(thread.id) &&
+              live.goal !== undefined
               ? { ...thread, goal: live.goal }
               : thread
           }),
@@ -217,7 +227,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       updatedAt: now,
     }
     await remoteApi(profile).createThread(thread)
-    if (owner !== generation) throw new Error("The session changed while creating the chat.")
+    if (owner !== generation)
+      throw new Error("The session changed while creating the chat.")
     set((state) => ({ threads: [thread, ...state.threads] }))
     return thread
   },
@@ -234,12 +245,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (parseGoalCommand(content) !== null) {
       const options = get().turnOptionsByThread[threadId]
       const result = await remoteApi(profile).goal({
-        threadId, message: content, modelId: selection.modelId, providerKind: selection.providerKind,
-        providerInstanceId: selection.providerInstanceId, projectPath: thread.worktreePath || thread.projectPath,
-        appMode: "agent", reasoningEffort: options?.thinkingMode ?? null, fastMode: options?.fastMode ?? null,
+        threadId,
+        message: content,
+        modelId: selection.modelId,
+        providerKind: selection.providerKind,
+        providerInstanceId: selection.providerInstanceId,
+        projectPath: thread.worktreePath || thread.projectPath,
+        appMode: "agent",
+        reasoningEffort: options?.thinkingMode ?? null,
+        fastMode: options?.fastMode ?? null,
       })
       if (owner !== generation) return
-      set(state => ({ threads: state.threads.map(item => item.id === threadId && item.goal === thread.goal ? { ...item, goal: result.goal } : item) }))
+      set((state) => ({
+        threads: state.threads.map((item) =>
+          item.id === threadId && item.goal === thread.goal
+            ? { ...item, goal: result.goal }
+            : item
+        ),
+      }))
       return
     }
     const now = new Date().toISOString()
@@ -440,7 +463,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
         const thread = state.threads.find((item) => item.id === event.threadId)
         let patch: Partial<ChatThread> = {}
         if (metadata && typeof metadata === "object" && "goal" in metadata) {
-          const goal = normalizeProviderGoal(metadata.goal, thread?.goal, event.providerKind)
+          const goal = normalizeProviderGoal(
+            metadata.goal,
+            thread?.goal,
+            event.providerKind
+          )
           if (goal !== undefined) patch = { ...patch, goal }
         }
         // Providers name a thread mid-turn (`name`, the compat adapter's
@@ -455,7 +482,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         }
       }
       const existing = state.streamsByThread[event.threadId]
-      const newTool = toolId !== null && !existing?.observedToolIds?.includes(toolId)
+      const newTool =
+        toolId !== null && !existing?.observedToolIds?.includes(toolId)
       const touchesStream =
         started ||
         delta !== null ||
@@ -490,7 +518,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
           // turn streamed has been reloaded from the durable messages by
           // now, and a stale error must not survive into the next reply.
           const base = started
-            ? { ...current, content: "", reasoning: "", error: null, observedToolIds: [], startedAt: new Date().toISOString() }
+            ? {
+                ...current,
+                content: "",
+                reasoning: "",
+                error: null,
+                observedToolIds: [],
+                startedAt: new Date().toISOString(),
+              }
             : current
           stream = {
             ...stream,
@@ -611,7 +646,14 @@ export function pendingRequestsFromActivities(
   const pending = new Map<string, PendingRequest>()
   const settled = new Set<string>()
   for (const activity of activities) {
-    if (["approval.resolved", "plan-approval.resolved", "user-input.resolved"].includes(activity.kind) || isStaleRequestFailure(activity)) {
+    if (
+      [
+        "approval.resolved",
+        "plan-approval.resolved",
+        "user-input.resolved",
+      ].includes(activity.kind) ||
+      isStaleRequestFailure(activity)
+    ) {
       const id = requestIdFromPayload(activity.payload)
       if (id) settled.add(id)
     }

@@ -19,22 +19,47 @@ afterEach(() => vi.unstubAllGlobals())
 describe("mobile HTTP contracts", () => {
   it.each([null, {}, { authenticated: true, session: { id: "session" } }])(
     "rejects malformed successful pairing and session responses: %j",
-    async payload => {
-      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(payload), { status: 200 })))
-      await expect(pairMobile(profile.baseUrl, "one-time", "Phone")).rejects.toThrow("Invalid backend pairing response")
-      await expect(remoteApi(profile).bootstrap()).rejects.toThrow("Invalid backend session response")
+    async (payload) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () => new Response(JSON.stringify(payload), { status: 200 })
+        )
+      )
+      await expect(
+        pairMobile(profile.baseUrl, "one-time", "Phone")
+      ).rejects.toThrow("Invalid backend pairing response")
+      await expect(remoteApi(profile).bootstrap()).rejects.toThrow(
+        "Invalid backend session response"
+      )
     }
   )
 
   it("accepts complete pairing and session metadata", async () => {
     const session = {
-      enabled: true, authenticated: true, authentication: "remote",
-      environmentId: profile.environmentId, session: profile.session,
+      enabled: true,
+      authenticated: true,
+      authentication: "remote",
+      environmentId: profile.environmentId,
+      session: profile.session,
     }
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-      ...session, tokenType: "Bearer", sessionToken: profile.sessionToken,
-    }), { status: 200 })))
-    expect(await pairMobile(profile.baseUrl, "one-time", "Phone")).toMatchObject({ sessionToken: "session" })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ...session,
+              tokenType: "Bearer",
+              sessionToken: profile.sessionToken,
+            }),
+            { status: 200 }
+          )
+      )
+    )
+    expect(
+      await pairMobile(profile.baseUrl, "one-time", "Phone")
+    ).toMatchObject({ sessionToken: "session" })
     expect(await remoteApi(profile).bootstrap()).toEqual(session)
   })
   it("rejects malformed thread responses", async () => {

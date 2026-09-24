@@ -105,9 +105,7 @@ export default function ProjectsScreen() {
                     {item.path}
                   </Text>
                 </View>
-                <Text style={styles.threadCount}>
-                  {projectThreads.length}
-                </Text>
+                <Text style={styles.threadCount}>{projectThreads.length}</Text>
                 {open ? (
                   <ChevronDown size={16} color={colors.textMuted} />
                 ) : (

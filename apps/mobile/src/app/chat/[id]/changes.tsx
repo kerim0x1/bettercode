@@ -55,9 +55,7 @@ export default function ChangesScreen() {
       setDiffs(await remoteApi(profile).listDiffs(threadId))
     } catch (caught) {
       setError(
-        caught instanceof Error
-          ? caught.message
-          : "Failed to load changes."
+        caught instanceof Error ? caught.message : "Failed to load changes."
       )
     } finally {
       setLoading(false)
@@ -260,7 +258,12 @@ const styles = StyleSheet.create({
     fontFamily: font.bold,
     letterSpacing: 1.1,
   },
-  title: { color: colors.text, fontSize: 17, fontFamily: font.bold, marginTop: 2 },
+  title: {
+    color: colors.text,
+    fontSize: 17,
+    fontFamily: font.bold,
+    marginTop: 2,
+  },
   list: { padding: spacing.md, paddingBottom: spacing.xxl },
   emptyList: { flexGrow: 1 },
   card: {
@@ -301,12 +304,19 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     marginTop: 7,
   },
-  fileStat: { color: colors.textSecondary, fontFamily: font.regular,
-    fontSize: type.micro },
+  fileStat: {
+    color: colors.textSecondary,
+    fontFamily: font.regular,
+    fontSize: type.micro,
+  },
   add: { color: colors.mint, fontSize: type.micro, fontFamily: font.bold },
   del: { color: colors.danger, fontSize: type.micro, fontFamily: font.bold },
-  date: { marginLeft: "auto", color: colors.textMuted, fontFamily: font.regular,
-    fontSize: 10 },
+  date: {
+    marginLeft: "auto",
+    color: colors.textMuted,
+    fontFamily: font.regular,
+    fontSize: 10,
+  },
   preview: {
     padding: spacing.sm,
     backgroundColor: "#080A0C",

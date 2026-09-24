@@ -89,6 +89,10 @@ const styles = StyleSheet.create({
     fontSize: type.body,
     fontFamily: font.semibold,
   },
-  meta: { color: colors.textMuted, fontFamily: font.regular,
-    fontSize: type.micro, marginTop: 3 },
+  meta: {
+    color: colors.textMuted,
+    fontFamily: font.regular,
+    fontSize: type.micro,
+    marginTop: 3,
+  },
 })

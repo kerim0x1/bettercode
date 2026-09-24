@@ -56,9 +56,7 @@ export default function FileScreen() {
       .catch((caught) => {
         if (!cancelled) {
           setError(
-            caught instanceof Error
-              ? caught.message
-              : "Failed to read file."
+            caught instanceof Error ? caught.message : "Failed to read file."
           )
         }
       })
@@ -173,7 +171,12 @@ const styles = StyleSheet.create({
     fontFamily: font.bold,
     letterSpacing: 1.1,
   },
-  title: { color: colors.text, fontSize: 17, fontFamily: font.bold, marginTop: 2 },
+  title: {
+    color: colors.text,
+    fontSize: 17,
+    fontFamily: font.bold,
+    marginTop: 2,
+  },
   pathBar: {
     minHeight: 38,
     paddingHorizontal: spacing.md,
@@ -190,8 +193,11 @@ const styles = StyleSheet.create({
     fontFamily: type.mono,
     fontSize: type.micro,
   },
-  lineCount: { color: colors.textMuted, fontFamily: font.regular,
-    fontSize: type.micro },
+  lineCount: {
+    color: colors.textMuted,
+    fontFamily: font.regular,
+    fontSize: type.micro,
+  },
   codeList: { paddingVertical: spacing.sm },
   line: {
     minHeight: 21,

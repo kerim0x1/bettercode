@@ -66,7 +66,10 @@ export function ChatComposer({
   const goalCommand = /^\/goal(?:\s|$)/i.test(value.trim())
   const showStop = running && !goalCommand
   const canSend =
-    value.trim().length > 0 && !disabled && (!running || goalCommand) && Boolean(model)
+    value.trim().length > 0 &&
+    !disabled &&
+    (!running || goalCommand) &&
+    Boolean(model)
   const thinkingOptions = useMemo(() => thinkingOptionsFor(model), [model])
   const thinkingLabel = thinkingLabelFor(thinkingOptions, thinkingMode)
   const showThinking = thinkingOptions.length > 0
@@ -123,9 +126,7 @@ export function ChatComposer({
                 >
                   <Brain
                     size={13}
-                    color={
-                      thinkingMode ? colors.text : colors.textSecondary
-                    }
+                    color={thinkingMode ? colors.text : colors.textSecondary}
                   />
                   <Text style={styles.pillText} numberOfLines={1}>
                     {thinkingLabel}
@@ -150,10 +151,7 @@ export function ChatComposer({
                     fill={fastMode ? colors.warning : "none"}
                   />
                   <Text
-                    style={[
-                      styles.pillText,
-                      fastMode && styles.pillTextFast,
-                    ]}
+                    style={[styles.pillText, fastMode && styles.pillTextFast]}
                     numberOfLines={1}
                   >
                     {fastMode ? "Fast" : "Off"}
@@ -200,9 +198,7 @@ export function ChatComposer({
               <Brain
                 size={15}
                 color={
-                  option.mode === null
-                    ? colors.textMuted
-                    : colors.textSecondary
+                  option.mode === null ? colors.textMuted : colors.textSecondary
                 }
               />
             }
@@ -256,7 +252,10 @@ export function ChatComposer({
 }
 
 function normalize(value: string | null): string {
-  return (value ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "")
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "")
 }
 
 const styles = StyleSheet.create({

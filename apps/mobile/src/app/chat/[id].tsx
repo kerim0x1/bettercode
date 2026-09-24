@@ -111,9 +111,7 @@ export default function ChatScreen() {
           if (choice) setSelectedModel(threadId, choice)
         }
         setModelError(
-          nextOptions.length
-            ? null
-            : "No ready provider for this project."
+          nextOptions.length ? null : "No ready provider for this project."
         )
       })
       .catch((error) => {
@@ -316,23 +314,55 @@ export default function ChatScreen() {
 
       {thread?.goal ? (
         <View style={styles.goalCard} accessibilityLabel="Thread goal">
-          <Text style={styles.headerTitle}>{thread.goal.status === "achieved" ? "Goal achieved" : `Goal: ${thread.goal.status}`}</Text>
+          <Text style={styles.headerTitle}>
+            {thread.goal.status === "achieved"
+              ? "Goal achieved"
+              : `Goal: ${thread.goal.status}`}
+          </Text>
           <Text style={styles.project}>{thread.goal.objective}</Text>
-          {thread.goal.lastReason ? <Text style={styles.branch}>{thread.goal.lastReason}</Text> : null}
+          {thread.goal.lastReason ? (
+            <Text style={styles.branch}>{thread.goal.lastReason}</Text>
+          ) : null}
           {thread.goal.source === "betterc0de" ? (
             <View style={styles.goalActions}>
               {[
-                { label: "Edit", command: `/goal edit ${thread.goal.objective}` },
-                { label: thread.goal.status === "active" ? "Pause" : "Resume", command: thread.goal.status === "active" ? "/goal pause" : "/goal resume" },
+                {
+                  label: "Edit",
+                  command: `/goal edit ${thread.goal.objective}`,
+                },
+                {
+                  label: thread.goal.status === "active" ? "Pause" : "Resume",
+                  command:
+                    thread.goal.status === "active"
+                      ? "/goal pause"
+                      : "/goal resume",
+                },
                 { label: "Clear", command: "/goal clear" },
-              ].map(action => (
-                <Pressable key={action.label} accessibilityRole="button" accessibilityLabel={`${action.label} goal`}
+              ].map((action) => (
+                <Pressable
+                  key={action.label}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${action.label} goal`}
                   disabled={!currentModel || connectionState === "offline"}
                   onPress={() => {
-                    if (action.label === "Edit") { setDraft(action.command); return }
-                    if (currentModel) void send(profile, threadId, action.command, currentModel).catch(error =>
-                      Alert.alert("Goal update failed", error instanceof Error ? error.message : String(error)))
-                  }}>
+                    if (action.label === "Edit") {
+                      setDraft(action.command)
+                      return
+                    }
+                    if (currentModel)
+                      void send(
+                        profile,
+                        threadId,
+                        action.command,
+                        currentModel
+                      ).catch((error) =>
+                        Alert.alert(
+                          "Goal update failed",
+                          error instanceof Error ? error.message : String(error)
+                        )
+                      )
+                  }}
+                >
                   <Text style={styles.headerTitle}>{action.label}</Text>
                 </Pressable>
               ))}
@@ -381,7 +411,12 @@ function emptyThread(id: string) {
 }
 
 const styles = StyleSheet.create({
-  goalCard: { padding: spacing.md, gap: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  goalCard: {
+    padding: spacing.md,
+    gap: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
   goalActions: { flexDirection: "row", gap: spacing.lg },
   header: {
     minHeight: 56,

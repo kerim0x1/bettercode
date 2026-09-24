@@ -90,8 +90,7 @@ export default function PairScreen() {
     setScannerOpen(true)
   }
 
-  const manualIncomplete =
-    !input.trim() || (splitEntry && !host.trim())
+  const manualIncomplete = !input.trim() || (splitEntry && !host.trim())
 
   return (
     <Screen edges={["top", "bottom"]}>
@@ -251,8 +250,8 @@ export default function PairScreen() {
           </View>
 
           <Text style={styles.footnote}>
-            The code is single-use. Afterwards only a revocable session token
-            is stored encrypted on this device.
+            The code is single-use. Afterwards only a revocable session token is
+            stored encrypted on this device.
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>

@@ -72,12 +72,23 @@ export function reasoningDelta(event: DecodedRuntimeEvent): string | null {
 
 /** Tools may first arrive as an ACP snapshot rather than a start event. */
 export function runtimeToolId(event: DecodedRuntimeEvent): string | null {
-  const itemType = stringValue(event.payload.itemType) ?? stringValue(event.payload.item_type) ?? ""
-  const isTool = /^(?:tool[._](?:started|delta|completed|failed)|tool_call(?:_delta)?|tool_result)$/.test(event.type)
-    || (/^item[._](?:started|updated|completed)$/.test(event.type) && /command|tool|file|search|read|write|patch/i.test(itemType))
+  const itemType =
+    stringValue(event.payload.itemType) ??
+    stringValue(event.payload.item_type) ??
+    ""
+  const isTool =
+    /^(?:tool[._](?:started|delta|completed|failed)|tool_call(?:_delta)?|tool_result)$/.test(
+      event.type
+    ) ||
+    (/^item[._](?:started|updated|completed)$/.test(event.type) &&
+      /command|tool|file|search|read|write|patch/i.test(itemType))
   if (!isTool) return null
-  return stringValue(event.payload.toolId) ?? stringValue(event.payload.tool_id)
-    ?? stringValue(event.payload.itemId) ?? stringValue(event.payload.item_id)
+  return (
+    stringValue(event.payload.toolId) ??
+    stringValue(event.payload.tool_id) ??
+    stringValue(event.payload.itemId) ??
+    stringValue(event.payload.item_id)
+  )
 }
 
 export function replacementText(event: DecodedRuntimeEvent): {
