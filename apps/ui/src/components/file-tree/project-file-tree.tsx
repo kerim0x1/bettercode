@@ -19,16 +19,16 @@ import { getThreadStream, useChatStore } from "@/lib/chat-store"
 import { confirmCloseDirtyEditorTabs } from "@/lib/editor-close-confirmation"
 import { useEditorStore } from "@/lib/editor-store"
 import {
-  createDirectory,
   deleteWorkspacePath,
   moveWorkspacePath,
   searchEntriesDetailed,
-  writeFile,
   type WorkspaceSearchEntry,
 } from "@/services/backend"
 import { SearchTruncationNotice } from "@/components/search-truncation-notice"
 import { searchTruncationMessage } from "@/lib/search-truncation"
 import { InlineCreateInput } from "@/components/file-tree/inline-create-input"
+import { createTreeEntry, treeCreateErrorMessage } from "@/lib/file-tree-create"
+import { toast } from "@/lib/toast"
 import {
   FileTreeNode,
   type FileTreeOpenOptions,
@@ -534,19 +534,20 @@ export function ProjectFileTree({
       const parentCwd = resolveTreeEntryPath(parent)
       setCreating(null)
       try {
+        await createTreeEntry(parentCwd, trimmed, type)
         if (type === "file") {
-          await writeFile(parentCwd, trimmed, "")
           onFileSelect?.(resolveWorkspaceFilePath(parentCwd, trimmed), {
             preview: false,
           })
-        } else {
-          await createDirectory(parentCwd, trimmed)
         }
         // Make sure the parent folder is expanded so the new item is visible
         setExpandedPaths((prev) => new Set(prev).add(parent))
         refreshTree()
       } catch (err) {
         console.error("[file-tree] create failed:", err)
+        toast.error(`Could not create "${trimmed}"`, {
+          description: treeCreateErrorMessage(err),
+        })
       }
     },
     [creating, refreshTree, onFileSelect, resolveTreeEntryPath]

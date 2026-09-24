@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const runtime = vi.hoisted(() => ({
   httpInvoke: vi.fn(),
@@ -23,6 +23,7 @@ import {
   terminalOpen,
   unwrapContentSearchResponse,
   unwrapSearchEntriesResponse,
+  writeFile,
 } from "./workspaceApi"
 
 describe("workspace read paths", () => {
@@ -242,6 +243,39 @@ describe("remote terminal capabilities", () => {
       "trusted desktop bridge or a paired remote session"
     )
     expect(runtime.httpInvoke).not.toHaveBeenCalled()
+  })
+})
+
+describe("writing a file", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    runtime.invoke.mockResolvedValue(undefined)
+    // A write announces the changed file to the window.
+    vi.stubGlobal("window", { dispatchEvent: vi.fn() })
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it("sends the expected hash only when there is one, null included", async () => {
+    await writeFile("/repo", "a.txt", "text")
+    await writeFile("/repo", "b.txt", "", { expectedSha256: null })
+    await writeFile("/repo", "c.txt", "new", { expectedSha256: "a".repeat(64) })
+    expect(
+      runtime.invoke.mock.calls.map(([, options]) => options.body)
+    ).toEqual([
+      { cwd: "/repo", relativePath: "a.txt", contents: "text" },
+      {
+        cwd: "/repo",
+        relativePath: "b.txt",
+        contents: "",
+        expectedSha256: null,
+      },
+      {
+        cwd: "/repo",
+        relativePath: "c.txt",
+        contents: "new",
+        expectedSha256: "a".repeat(64),
+      },
+    ])
   })
 })
 
