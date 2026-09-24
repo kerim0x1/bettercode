@@ -15,6 +15,7 @@ import {
   ChevronRight,
   FolderGit2,
   GitBranch,
+  GitCommitHorizontal,
   Plus,
 } from "lucide-react-native"
 import { ConnectionPill, Screen, StateView, TopBar } from "@/components/layout"
@@ -199,6 +200,25 @@ export default function ProjectsScreen() {
                         <GitBranch size={14} color={colors.text} />
                         <Text style={styles.createSecondaryText}>
                           New worktree chat
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        testID={`source-control-${item.name}`}
+                        onPress={() =>
+                          router.push({
+                            pathname: "/git",
+                            params: { root: item.path, name: item.name },
+                          })
+                        }
+                        style={({ pressed }) => [
+                          styles.createSecondary,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <GitCommitHorizontal size={14} color={colors.text} />
+                        <Text style={styles.createSecondaryText}>
+                          Source control
                         </Text>
                       </Pressable>
                     </View>

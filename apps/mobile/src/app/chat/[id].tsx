@@ -29,6 +29,7 @@ import {
   ArrowLeft,
   Eye,
   FolderTree,
+  GitCommitHorizontal,
   GitCompareArrows,
   GitBranch,
   History,
@@ -527,6 +528,22 @@ export default function ChatScreen() {
             })
           }
         />
+        {thread && !readOnly ? (
+          <IconButton
+            icon={GitCommitHorizontal}
+            label="Source control"
+            testID="chat-source-control"
+            onPress={() =>
+              router.push({
+                pathname: "/git",
+                params: {
+                  root: effectiveThreadRoot(thread),
+                  name: thread.projectName,
+                },
+              })
+            }
+          />
+        ) : null}
         {thread && !readOnly ? (
           <IconButton
             icon={MoreHorizontal}

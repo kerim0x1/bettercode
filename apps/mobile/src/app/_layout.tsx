@@ -60,6 +60,10 @@ export default function RootLayout() {
           <Stack.Screen name="chat/[id]/files" />
           <Stack.Screen name="chat/[id]/file" />
           <Stack.Screen name="chat/[id]/changes" />
+          <Stack.Screen name="chat/[id]/diff" />
+          <Stack.Screen name="git/index" />
+          <Stack.Screen name="git/diff" />
+          <Stack.Screen name="git/history" />
         </Stack.Protected>
         <Stack.Protected guard={paired && updateRequired}>
           <Stack.Screen
