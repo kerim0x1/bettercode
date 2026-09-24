@@ -25,6 +25,15 @@ After installation, open **Settings → Providers**, connect a supported provide
 
 Unsigned Windows and macOS builds do not install updates automatically. Download and run the newer installer from Releases to update them. A successful CI run alone does not publish a download: the tag-triggered Release workflow runs the full release check on every platform and publishes the release only after all of them pass. Beta versions are marked as prereleases. Known problems of each version are listed in the [changelog](CHANGELOG.md).
 
+## Use the phone app
+
+BetterC0de Remote controls a running desktop app from a phone: chats, approvals, changes and files. It pairs with the desktop over your network (**Settings → Remote Access** on the desktop); see [remote access](docs/remote-access.md). **Try the demo** on its first screen shows the app without a desktop.
+
+- **Android.** Releases that include the phone app list `BetterC0de-Remote-<version>.apk` among their assets. Download it on the phone, allow your browser to install apps when Android asks, and open it. Before installing, you can compare its SHA-256 with the release's `SHA256SUMS.txt`. Android installs an update only if it is signed with the same key as the installed app. The release certificate's SHA-256 fingerprint is pinned in `apps/mobile/signing/android-release.json`; `apksigner verify --print-certs` shows it for a download.
+- **iPhone and iPad.** The app is distributed through Apple's TestFlight. Once the public beta link is published, it will be listed here and in the README.
+
+The app's version matches the desktop release it came with. When a desktop needs a newer app, the app asks to be updated and keeps its pairing.
+
 ## Requirements for a source checkout
 
 | Tool | Version |
