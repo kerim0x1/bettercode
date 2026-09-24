@@ -56,6 +56,16 @@
       "types": "./src/remote-protocol.ts",
       "import": "./src/remote-protocol.ts",
       "default": "./dist/remote-protocol.js"
+    },
+    "./chat-controls": {
+      "types": "./src/chat-controls.ts",
+      "import": "./src/chat-controls.ts",
+      "default": "./dist/chat-controls.js"
+    },
+    "./message-queue": {
+      "types": "./src/message-queue.ts",
+      "import": "./src/message-queue.ts",
+      "default": "./dist/message-queue.js"
     }
   },
   "scripts": {

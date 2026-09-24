@@ -1,4 +1,5 @@
 import { create } from "zustand"
+import type { PermissionLevel } from "@betterc0de/schema/chat-controls"
 import { getWindowAppMode, setWindowAppMode } from "@/lib/launch-params"
 import type { ProviderComposerSelectionMap } from "@/lib/provider-composer-selection"
 import {
@@ -28,12 +29,8 @@ export type EditorSidebarView =
   | "source-control"
   | "diff"
   | "agents"
-export type PermissionLevel =
-  | "read-only"
-  | "ask-on-edit"
-  | "default"
-  | "allow-edits"
-  | "bypass"
+/** The composer's permission presets (shared with the phone app). */
+export type { PermissionLevel }
 export type AgentWindowMode = "sidebar" | "tab" | "popout" | "fullscreen"
 
 export interface PreferencesState {
@@ -606,12 +603,13 @@ function handlePreferenceStorageEvent(event: StorageEvent) {
     ...DEFAULTS,
     ...stored,
   })
-  usePreferencesStore.setState(
-    {
-      ...mergePreferencePatch(sanitizeStoredPreferences(loaded), dirtyPreferencePatch),
-      appMode: usePreferencesStore.getState().appMode,
-    }
-  )
+  usePreferencesStore.setState({
+    ...mergePreferencePatch(
+      sanitizeStoredPreferences(loaded),
+      dirtyPreferencePatch
+    ),
+    appMode: usePreferencesStore.getState().appMode,
+  })
 }
 
 if (typeof window !== "undefined") {
@@ -700,7 +698,10 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
         raw !== null &&
         parsed.providerVisibilityDefaultsVersion !==
           PROVIDER_VISIBILITY_DEFAULTS_VERSION
-      set({ ...merged, appMode: getWindowAppMode(merged.appMode ?? DEFAULTS.appMode) })
+      set({
+        ...merged,
+        appMode: getWindowAppMode(merged.appMode ?? DEFAULTS.appMode),
+      })
 
       // Save if we migrated anything
       if (

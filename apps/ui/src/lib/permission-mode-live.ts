@@ -4,6 +4,10 @@
  */
 
 import { toast } from "sonner"
+import {
+  PERMISSION_MODE_FAILED,
+  PERMISSION_MODE_QUEUED,
+} from "@betterc0de/schema/chat-controls"
 import { useChatStore } from "@/lib/chat-store"
 import type { PermissionLevel } from "@/lib/preferences-store"
 import { setChatPermissionMode } from "@/services/backend"
@@ -15,7 +19,7 @@ import { setChatPermissionMode } from "@/services/backend"
 export function applyPermissionModeLive(
   id: PermissionLevel,
   provider?: { providerKind?: string; providerInstanceId?: string },
-  threadId?: string | null,
+  threadId?: string | null
 ): Promise<void> {
   if (!threadId) return Promise.resolve()
   return setChatPermissionMode(
@@ -23,16 +27,21 @@ export function applyPermissionModeLive(
     provider?.providerKind ?? "claude",
     id,
     provider?.providerInstanceId ?? null
-  ).then((result) => {
-    if (result?.status === "failed") throw new Error(result.error)
-    if (result?.applied !== "live" && useChatStore.getState().streamingByThread[threadId]?.isStreaming) {
-      toast.info("Permission mode saved for the next turn", {
-        description: "This provider cannot fully change its running turn's permissions. Stop and resend to apply the new mode now.",
-      })
-    }
-  }).catch(() => {
-    toast.error("Could not update the running turn's permissions", {
-      description: "The selected mode will apply to your next message. Pending approvals still need a response.",
+  )
+    .then((result) => {
+      if (result?.status === "failed") throw new Error(result.error)
+      if (
+        result?.applied !== "live" &&
+        useChatStore.getState().streamingByThread[threadId]?.isStreaming
+      ) {
+        toast.info(PERMISSION_MODE_QUEUED.title, {
+          description: PERMISSION_MODE_QUEUED.description,
+        })
+      }
     })
-  })
+    .catch(() => {
+      toast.error(PERMISSION_MODE_FAILED.title, {
+        description: PERMISSION_MODE_FAILED.description,
+      })
+    })
 }
