@@ -55,6 +55,29 @@ afterEach(() => {
 })
 
 describe("ProviderInstanceManager", () => {
+  it("passes Finder's resolved Codex path to built-in and custom adapters", () => {
+    const installedCodex = path.join(makeTempDir("betterc0de-codex-"), "codex")
+    vi.stubEnv("BETTERC0DE_CODEX_CLI_PATH", installedCodex)
+    const manager = new ProviderInstanceManager({
+      clientInfo: { name: "BetterC0de", title: "BetterC0de", version: "test" },
+      getStoredProviderThreadId: () => null,
+      persistProviderThreadId: () => {},
+    })
+    const instances = manager.reconcile(
+      settingsSchema.parse({
+        provider_instances: {
+          "codex-work": { driver: "codex", config: {} },
+        },
+      })
+    ).instances
+
+    for (const id of ["codex", "codex-work"]) {
+      expect(
+        instances.find((instance) => instance.instanceId === id)?.config
+      ).toMatchObject({ binaryPath: installedCodex })
+    }
+  })
+
   it("passes the shell-resolved Claude binary to a custom SDK adapter", () => {
     const installedClaude = path.join(
       makeTempDir("betterc0de-claude-"),

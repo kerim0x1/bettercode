@@ -186,6 +186,7 @@ const {
   beginCliProcessShutdown,
   resumeCliProcessAdmissions,
   shutdownAllCliProcesses,
+  resolveCliBinary,
 } = require("./shared/spawn-cli.cjs")
 
 const BACKEND_SHUTDOWN_TIMEOUT_MS = appConfig.BACKEND_SHUTDOWN_TIMEOUT_MS
@@ -1228,6 +1229,10 @@ async function startSpawnedBackend() {
   // valid for `fs.statSync`, but `child_process.spawn` bypasses asar mapping
   // and the OS fails ENOENT trying to exec a binary out of a virtual archive.
   const claudeCodeBinaryPath = resolveClaudeCodeBinaryPath()
+  const codexCliBinaryPath =
+    process.platform === "darwin" && !process.env.BETTERC0DE_CODEX_CLI_PATH
+      ? resolveCliBinary("codex")
+      : null
   const child = fork(backendEntry, [], {
     ...(devNodeExecPath ? { execPath: devNodeExecPath, execArgv: [] } : {}),
     cwd: userDataDir,
@@ -1240,6 +1245,7 @@ async function startSpawnedBackend() {
       // plaintext storage, matching pre-encryption behaviour.
       BETTERC0DE_SETTINGS_KEY: settingsEncryptionKey,
       ...(claudeCodeBinaryPath ? { BETTERC0DE_CLAUDE_CODE_PATH: claudeCodeBinaryPath } : {}),
+      ...(codexCliBinaryPath ? { BETTERC0DE_CODEX_CLI_PATH: codexCliBinaryPath } : {}),
     },
     silent: true,
     detached: process.platform !== "win32",
@@ -1418,6 +1424,13 @@ async function startInProcessBackend() {
   const claudeCodeBinaryPath = resolveClaudeCodeBinaryPath()
   if (claudeCodeBinaryPath) {
     process.env.BETTERC0DE_CLAUDE_CODE_PATH = claudeCodeBinaryPath
+  }
+  const codexCliBinaryPath =
+    process.platform === "darwin" && !process.env.BETTERC0DE_CODEX_CLI_PATH
+      ? resolveCliBinary("codex")
+      : null
+  if (codexCliBinaryPath) {
+    process.env.BETTERC0DE_CODEX_CLI_PATH = codexCliBinaryPath
   }
 
   try {

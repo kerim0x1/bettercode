@@ -57,15 +57,16 @@ function fakeTimers() {
   }
 }
 
-function startShellFixture(timers) {
+function startShellFixture(timers, { platform = "win32", codexBinaryPath = null } = {}) {
   const child = new EventEmitter()
   child.stdout = new EventEmitter()
   child.stderr = new EventEmitter()
   let stopped = false
   let healthChecks = 0
+  let forkOptions = null
   const context = {
     require: () => ({ accessSync() {} }),
-    process: { env: {}, platform: "win32" },
+    process: { env: {}, platform },
     path,
     app: { getAppPath: () => "/fixture" },
     appConfig,
@@ -77,8 +78,12 @@ function startShellFixture(timers) {
     resolveDevNodeExecPath: () => null,
     resolveBetterC0deUserDataDir: () => "/fixture/data",
     resolveClaudeCodeBinaryPath: () => null,
+    resolveCliBinary: () => codexBinaryPath,
     settingsEncryptionKey: "",
-    fork: () => child,
+    fork: (_entry, _args, options) => {
+      forkOptions = options
+      return child
+    },
     readline: { createInterface: ({ input }) => input },
     nodeBackendHandle: null,
     createBackendStartupWatchdog: (options) => createBackendStartupWatchdog({
@@ -96,6 +101,7 @@ function startShellFixture(timers) {
     result,
     get stopped() { return stopped },
     get healthChecks() { return healthChecks },
+    get forkOptions() { return forkOptions },
     ready() {
       child.stderr.emit("line", JSON.stringify({ status: "ready", port: 3773, token: "x".repeat(32) }))
     },
@@ -106,6 +112,20 @@ function startShellFixture(timers) {
     },
   }
 }
+
+test("Finder launch forwards the resolved Codex CLI to the backend", async () => {
+  const timers = fakeTimers()
+  const shell = startShellFixture(timers, {
+    platform: "darwin",
+    codexBinaryPath: "/opt/homebrew/bin/codex",
+  })
+  shell.ready()
+  await shell.result
+  assert.equal(
+    shell.forkOptions.env.BETTERC0DE_CODEX_CLI_PATH,
+    "/opt/homebrew/bin/codex",
+  )
+})
 
 test("the shell accepts readiness after a 35-second cold module load", async () => {
   const timers = fakeTimers()

@@ -239,6 +239,16 @@ function knownBinaryCandidates(bin) {
     path.join(home, ".local", "bin", bin),
     `/usr/local/bin/${bin}`,
     `/opt/homebrew/bin/${bin}`,
+    ...(process.platform === "darwin" && bin === "codex"
+      ? [
+          "/Applications/Codex.app/Contents/Resources/codex",
+          path.join(home, ".bun", "bin", "codex"),
+          path.join(home, ".npm-global", "bin", "codex"),
+          path.join(home, ".volta", "bin", "codex"),
+          path.join(home, "Library", "pnpm", "codex"),
+          "/opt/local/bin/codex",
+        ]
+      : []),
   ]
 }
 

@@ -24,6 +24,7 @@ import {
   type ApprovalRequestId,
 } from "./contracts"
 import { CodexAdapter } from "./codex/CodexAdapter"
+import { codexBinaryPath } from "./codex/CodexBinaryPath"
 import { ClaudeAdapter } from "./claude/ClaudeAdapter"
 import { ClaudeTerminalAdapter } from "./claudeTerminal/ClaudeTerminalAdapter"
 import { CursorAcpAdapter } from "./cursor/CursorAcpAdapter"
@@ -144,7 +145,7 @@ export class ProviderInstanceManager {
 
     if (driver === "codex") {
       const configuredBinaryPath = readConfigString(config.config, "binaryPath")
-      const binaryPath = configuredBinaryPath || "codex"
+      const binaryPath = codexBinaryPath(configuredBinaryPath)
       const effectiveConfig = {
         ...readConfigRecord(config.config),
         binaryPath,
@@ -443,7 +444,7 @@ function defaultProviderInstances(
       enabled: providers.codex?.enabled !== false,
       environment: inheritedProviderEnvironment(["OPENAI_API_KEY"]),
       config: {
-        binaryPath: codexProviderBinaryPath || "codex",
+        binaryPath: codexBinaryPath(codexProviderBinaryPath),
         homePath: process.env.CODEX_HOME ?? "",
         shadowHomePath: "",
         customModels: providers.codex?.custom_models ?? [],

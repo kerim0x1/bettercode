@@ -737,6 +737,38 @@ describe("native provider text generation", () => {
     )
   })
 
+  it("uses Finder's resolved Codex CLI for a provider handoff", async () => {
+    const installedCodex = path.join(os.tmpdir(), "installed-codex")
+    vi.stubEnv("BETTERC0DE_CODEX_CLI_PATH", installedCodex)
+    const run = vi.fn<NativeTextGenerationRunner["run"]>().mockResolvedValue({
+      stdout: '{"summary":"Continue the current work."}',
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    })
+
+    await expect(
+      runNativeTextGeneration(
+        {
+          settings: settingsWithInstance({
+            instanceId: "codex-work",
+            driver: "codex",
+            binaryPath: "codex",
+          }),
+          modelSelection: { instanceId: "codex-work", model: "gpt-5.4" },
+          prompt: "Summarize the conversation for the next provider",
+          schemaName: "threadContextSummary",
+        },
+        { run }
+      )
+    ).resolves.toBe('{"summary":"Continue the current work."}')
+    expect(run).toHaveBeenCalledWith(
+      installedCodex,
+      expect.any(Array),
+      expect.objectContaining({ cwd: expect.any(String) })
+    )
+  })
+
   it("rejects an oversized Codex output file without reading it unbounded", async () => {
     const runner: NativeTextGenerationRunner = {
       run: async (_command, args) => {

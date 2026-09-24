@@ -17,6 +17,10 @@ import { expandHomePath } from "../pathExpansion"
 import { deriveProviderInstanceConfigs } from "../provider/runtime/ProviderInstanceManager"
 import { resolveCodexHomeLayout } from "../provider/runtime/codex/CodexHomeLayout"
 import {
+  codexBinaryPath,
+  codexProcessEnvironment,
+} from "../provider/runtime/codex/CodexBinaryPath"
+import {
   createGrokAcpRuntime,
   type GrokAcpRuntimeOptions,
 } from "../provider/runtime/grok-cli/GrokAcpRuntime"
@@ -732,7 +736,9 @@ async function runCodexTextGeneration(
     await fs.writeFile(outputPath, "", "utf8")
     throwIfNativeTextGenerationUnavailable(lifecycleSignal)
 
-    const binaryPath = configString(config.config, "binaryPath") ?? "codex"
+    const binaryPath = codexBinaryPath(
+      configString(config.config, "binaryPath")
+    )
     const effort = assertCodexReasoningEffort(
       getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
         getModelSelectionStringOptionValue(modelSelection, "effort") ??
@@ -763,7 +769,7 @@ async function runCodexTextGeneration(
       // Without a workspace, run inside the private temp dir rather than
       // `process.cwd()` — that is the app's own install directory.
       cwd: resolveCwd(input.cwd, tempDir),
-      env: codexEnvironment(config),
+      env: codexProcessEnvironment(binaryPath, codexEnvironment(config)),
       stdin: input.prompt,
       timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       signal: lifecycleSignal,

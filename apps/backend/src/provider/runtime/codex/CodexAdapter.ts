@@ -43,6 +43,7 @@ import {
   parseBase64DataUrl,
 } from "../../attachments"
 import { type CodexHomeLayout, resolveCodexHomeLayout } from "./CodexHomeLayout"
+import { codexProcessEnvironment } from "./CodexBinaryPath"
 import { buildCodexCollaborationMode } from "./CodexDeveloperInstructions"
 import { CodexRpcClient } from "./rpc"
 import { translateCodexEvent } from "./translator"
@@ -460,7 +461,9 @@ export class CodexAdapter implements ProviderAdapterShape {
             version,
             status: accountStatus.status,
             auth: accountStatus.auth,
-            ...(accountStatus.message ? { message: accountStatus.message } : {}),
+            ...(accountStatus.message
+              ? { message: accountStatus.message }
+              : {}),
           }
           return this.cacheStatus(status)
         } catch (error) {
@@ -602,9 +605,7 @@ export class CodexAdapter implements ProviderAdapterShape {
     }
   }
 
-  async startSession(
-    input: CodexStartSessionInput
-  ): Promise<ProviderSession> {
+  async startSession(input: CodexStartSessionInput): Promise<ProviderSession> {
     if (this.startupInProgress) {
       throw Object.assign(
         new Error(
@@ -691,8 +692,7 @@ export class CodexAdapter implements ProviderAdapterShape {
       if (
         events.some(
           (event) =>
-            event.type === "turn.completed" ||
-            event.type === "turn.aborted"
+            event.type === "turn.completed" || event.type === "turn.aborted"
         ) &&
         currentContext
       ) {
@@ -732,14 +732,24 @@ export class CodexAdapter implements ProviderAdapterShape {
       requestedServiceTier,
       modelCapabilities
     )
-    let orchestratorServer: import("../../../services/orchestrator/mcp").OrchestratorServer | null | undefined
+    let orchestratorServer:
+      | import("../../../services/orchestrator/mcp").OrchestratorServer
+      | null
+      | undefined
     let providerThreadId: string | null = null
     let orchestrationConfig: string
     try {
-      orchestratorServer = input.cwd ? await this.options.resolveOrchestratorServer?.(input.cwd, input.threadId) : null
+      orchestratorServer = input.cwd
+        ? await this.options.resolveOrchestratorServer?.(
+            input.cwd,
+            input.threadId
+          )
+        : null
       orchestrationConfig = JSON.stringify(orchestratorServer ?? null)
       await runtime.start({
-        codeSearchServer: input.cwd ? await this.options.resolveCodeSearchServer?.(input.cwd) : null,
+        codeSearchServer: input.cwd
+          ? await this.options.resolveCodeSearchServer?.(input.cwd)
+          : null,
         orchestratorServer,
         cwd: input.cwd,
         storedProviderThreadId: stored,
@@ -823,10 +833,15 @@ export class CodexAdapter implements ProviderAdapterShape {
     return sessions
   }
 
-  async needsSessionConfigurationRefresh(input: { threadId: ThreadId; cwd?: string | null }): Promise<boolean> {
+  async needsSessionConfigurationRefresh(input: {
+    threadId: ThreadId
+    cwd?: string | null
+  }): Promise<boolean> {
     const context = this.sessions.get(input.threadId)
     if (!context || !this.options.resolveOrchestratorServer) return false
-    const server = input.cwd ? await this.options.resolveOrchestratorServer(input.cwd, input.threadId) : null
+    const server = input.cwd
+      ? await this.options.resolveOrchestratorServer(input.cwd, input.threadId)
+      : null
     return context.orchestrationConfig !== JSON.stringify(server ?? null)
   }
 
@@ -841,11 +856,7 @@ export class CodexAdapter implements ProviderAdapterShape {
       ["reasoningEffort", "effort"],
       input.reasoningEffort
     )
-    const fastMode = resolveTurnBooleanOption(
-      input,
-      "fastMode",
-      input.fastMode
-    )
+    const fastMode = resolveTurnBooleanOption(input, "fastMode", input.fastMode)
     const requestedEffort =
       normalizeCodexEffort(reasoningEffort) ?? reasoningEffort?.trim()
     const knownModels = this.modelsCache?.models ?? []
@@ -1030,20 +1041,14 @@ export class CodexAdapter implements ProviderAdapterShape {
     ).flatMap(([key, entries]) =>
       Array.from(entries, (context) => ({ key, context }))
     )
-    const probeContexts = Array.from(
-      this.probeCleanupQuarantines.values()
-    )
+    const probeContexts = Array.from(this.probeCleanupQuarantines.values())
     if (startupContexts.length === 0 && probeContexts.length === 0) return
-    const results = await Promise.allSettled(
-      [
-        ...startupContexts.map(({ key, context }) =>
-          this.closeStartupCleanupContext(key, context)
-        ),
-        ...probeContexts.map((context) =>
-          this.closeProbeCleanupContext(context)
-        ),
-      ]
-    )
+    const results = await Promise.allSettled([
+      ...startupContexts.map(({ key, context }) =>
+        this.closeStartupCleanupContext(key, context)
+      ),
+      ...probeContexts.map((context) => this.closeProbeCleanupContext(context)),
+    ])
     const failures = results.flatMap((result) =>
       result.status === "rejected" ? [result.reason] : []
     )
@@ -1190,7 +1195,8 @@ export class CodexAdapter implements ProviderAdapterShape {
     }
     const runtimeHome = this.resolveHomeLayout().runtimeHome
     if (runtimeHome) env.CODEX_HOME = runtimeHome
-    return Object.keys(env).length > 0 ? env : undefined
+    const childEnv = codexProcessEnvironment(this.options.binaryPath, env)
+    return Object.keys(childEnv).length > 0 ? childEnv : undefined
   }
 
   private authHomePath(): string | null {
@@ -1217,19 +1223,19 @@ export class CodexAdapter implements ProviderAdapterShape {
       "Codex skills probe",
       client,
       async (trackedClient) => {
-      await trackedClient.spawnChild()
-      await trackedClient.call("initialize", {
-        clientInfo: this.options.clientInfo,
-        capabilities: { experimentalApi: true },
-      })
-      trackedClient.notify("initialized", {})
+        await trackedClient.spawnChild()
+        await trackedClient.call("initialize", {
+          clientInfo: this.options.clientInfo,
+          capabilities: { experimentalApi: true },
+        })
+        trackedClient.notify("initialized", {})
 
-      const response = await trackedClient.call(
-        "skills/list",
-        { cwds: [cwd] },
-        8_000
-      )
-      return parseCodexSkillsListResponse(response, cwd)
+        const response = await trackedClient.call(
+          "skills/list",
+          { cwds: [cwd] },
+          8_000
+        )
+        return parseCodexSkillsListResponse(response, cwd)
       }
     )
   }
@@ -1245,35 +1251,37 @@ export class CodexAdapter implements ProviderAdapterShape {
       "Codex models probe",
       client,
       async (trackedClient) => {
-      await trackedClient.spawnChild()
-      await trackedClient.call("initialize", {
-        clientInfo: this.options.clientInfo,
-        capabilities: { experimentalApi: true },
-      })
-      trackedClient.notify("initialized", {})
+        await trackedClient.spawnChild()
+        await trackedClient.call("initialize", {
+          clientInfo: this.options.clientInfo,
+          capabilities: { experimentalApi: true },
+        })
+        trackedClient.notify("initialized", {})
 
-      const models: ProviderModel[] = []
-      const seenCursors = new Set<string>()
-      let pages = 0
-      let cursor: string | undefined
-      do {
-        const response = await trackedClient.call(
-          "model/list",
-          cursor ? { cursor } : {},
-          8_000
-        )
-        models.push(...parseCodexModelListResponse(response))
-        const record = asRecord(response)
-        cursor = readTrimmed(record, "nextCursor")
-        pages += 1
-        if (cursor) {
-          if (seenCursors.has(cursor) || pages >= MAX_CODEX_MODEL_PAGES) {
-            throw new Error("Codex model pagination exceeded its bounded cursor sequence")
+        const models: ProviderModel[] = []
+        const seenCursors = new Set<string>()
+        let pages = 0
+        let cursor: string | undefined
+        do {
+          const response = await trackedClient.call(
+            "model/list",
+            cursor ? { cursor } : {},
+            8_000
+          )
+          models.push(...parseCodexModelListResponse(response))
+          const record = asRecord(response)
+          cursor = readTrimmed(record, "nextCursor")
+          pages += 1
+          if (cursor) {
+            if (seenCursors.has(cursor) || pages >= MAX_CODEX_MODEL_PAGES) {
+              throw new Error(
+                "Codex model pagination exceeded its bounded cursor sequence"
+              )
+            }
+            seenCursors.add(cursor)
           }
-          seenCursors.add(cursor)
-        }
-      } while (cursor)
-      return models
+        } while (cursor)
+        return models
       }
     )
   }
@@ -1640,7 +1648,6 @@ function environmentValue(
     environment.find((item) => item.name === name)?.value.trim() || undefined
   )
 }
-
 
 function mergeCustomModels(
   base: ReadonlyArray<ProviderModel>,
