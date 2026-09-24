@@ -5,6 +5,9 @@ const root = path.resolve(import.meta.dirname, "..")
 const manifests = [
   "package.json",
   "apps/backend/package.json",
+  // The phone app ships with every desktop release under the same version
+  // (apps/mobile/app.config.ts derives the store versions from it).
+  "apps/mobile/package.json",
   "apps/shell/package.json",
   "apps/ui/package.json",
   "packages/schema/package.json",

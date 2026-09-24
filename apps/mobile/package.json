@@ -1,6 +1,6 @@
 {
   "name": "@betterc0de/mobile",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
@@ -31,7 +31,9 @@
     "expo-linking": "~56.0.15",
     "expo-router": "~56.2.15",
     "expo-secure-store": "~56.0.4",
+    "expo-splash-screen": "~56.0.13",
     "expo-status-bar": "~56.0.4",
+    "expo-system-ui": "~56.0.5",
     "lucide-react-native": "^1.25.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
