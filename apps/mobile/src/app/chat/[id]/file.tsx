@@ -1,14 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { FlatList, StyleSheet, Text, View } from "react-native"
-import { useLocalSearchParams, useRouter } from "expo-router"
-import { ArrowLeft, WrapText } from "lucide-react-native"
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router"
+import { ArrowLeft, Pencil, WrapText } from "lucide-react-native"
+import { REMOTE_FEATURES } from "@betterc0de/schema/remote-protocol"
+import { ActionButton } from "@/components/action-button"
 import { Screen, StateView } from "@/components/layout"
 import { IconButton } from "@/components/icon-button"
-import { colors, font, spacing, type } from "@/design/theme"
+import { colors, font, radius, spacing, type } from "@/design/theme"
+import { MAX_EDITABLE_BYTES } from "@/editor/protocol"
+import { draftFor } from "@/lib/editor-drafts"
 import { effectiveThreadRoot, relativePathWithinRoot } from "@/lib/endpoint"
 import { remoteErrorMessage } from "@/lib/remote-errors"
 import { useAppStore } from "@/store/app-store"
-import { useRemoteApi } from "@/transport/use-transport"
+import {
+  useFeature,
+  useReadOnly,
+  useRemoteApi,
+} from "@/transport/use-transport"
 
 export default function FileScreen() {
   const params = useLocalSearchParams<{
@@ -33,12 +41,17 @@ export default function FileScreen() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [wrap, setWrap] = useState(true)
+  const [size, setSize] = useState(0)
+  const [hasDraft, setHasDraft] = useState(false)
+  const readOnly = useReadOnly()
+  const canSaveSafely = useFeature(REMOTE_FEATURES.workspaceWriteIfMatch)
   const lines = useMemo(
     () => (content ?? "").replace(/\r\n/g, "\n").split("\n"),
     [content]
   )
 
-  useEffect(() => {
+  // Read again whenever the screen shows, so a save in the editor shows too.
+  const load = useCallback(() => {
     if (!api || !root || !absolutePath) return
     setLoading(true)
     setError(null)
@@ -63,6 +76,10 @@ export default function FileScreen() {
         // showing binary bytes as text is only noise.
         setBinary(result.isUtf8 === false)
         setContent(result.content)
+        setSize(result.size ?? new TextEncoder().encode(result.content).length)
+        setHasDraft(
+          draftFor(root, relativePathWithinRoot(root, absolutePath)) !== null
+        )
       })
       .catch((caught) => {
         if (!cancelled) setError(remoteErrorMessage(caught))
@@ -74,6 +91,7 @@ export default function FileScreen() {
       cancelled = true
     }
   }, [absolutePath, api, root])
+  useFocusEffect(load)
 
   // A search opens the file at its match: scroll there once it is shown.
   useEffect(() => {
@@ -89,6 +107,18 @@ export default function FileScreen() {
     return () => clearTimeout(timer)
   }, [binary, content, lines.length, targetLine])
 
+  const editable =
+    !readOnly &&
+    canSaveSafely &&
+    content !== null &&
+    !binary &&
+    size <= MAX_EDITABLE_BYTES
+  const edit = () =>
+    router.push({
+      pathname: "/chat/[id]/edit",
+      params: { id: threadId ?? "", path: absolutePath ?? "" },
+    })
+
   const name = fileName(absolutePath ?? "File")
   const relative = root && absolutePath ? safeRelative(root, absolutePath) : ""
 
@@ -102,7 +132,8 @@ export default function FileScreen() {
         />
         <View style={styles.headerCopy}>
           <Text style={styles.eyebrow}>
-            {extension(name).toUpperCase() || "TEXT"} · READ ONLY
+            {extension(name).toUpperCase() || "TEXT"}
+            {editable ? "" : " · READ ONLY"}
           </Text>
           <Text style={styles.title} numberOfLines={1}>
             {name}
@@ -114,6 +145,14 @@ export default function FileScreen() {
           tone={wrap ? "mint" : "default"}
           onPress={() => setWrap(!wrap)}
         />
+        {editable ? (
+          <IconButton
+            icon={Pencil}
+            label="Edit"
+            testID="file-edit"
+            onPress={edit}
+          />
+        ) : null}
       </View>
       <View style={styles.pathBar}>
         <Text style={styles.path} numberOfLines={1}>
@@ -125,6 +164,14 @@ export default function FileScreen() {
           </Text>
         ) : null}
       </View>
+      {hasDraft && editable ? (
+        <View style={styles.draft} testID="file-draft">
+          <Text style={styles.draftText}>
+            You have unsaved changes to this file on this phone.
+          </Text>
+          <ActionButton label="Continue editing" onPress={edit} />
+        </View>
+      ) : null}
       {!thread ? (
         <StateView
           title="Chat not loaded"
@@ -210,6 +257,20 @@ function safeRelative(root: string, value: string): string {
 }
 
 const styles = StyleSheet.create({
+  draft: {
+    margin: spacing.sm,
+    padding: spacing.sm,
+    gap: spacing.xs,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: "rgba(251,191,36,0.45)",
+    backgroundColor: colors.surface,
+  },
+  draftText: {
+    color: colors.textSecondary,
+    fontFamily: font.regular,
+    fontSize: type.micro,
+  },
   targetLine: { backgroundColor: "rgba(251,191,36,0.14)" },
   header: {
     minHeight: 68,

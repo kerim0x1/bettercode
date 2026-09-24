@@ -1,3 +1,4 @@
+import { forgetAllDrafts } from "@/lib/editor-drafts"
 import { fileDocumentStorage } from "@/lib/file-documents"
 import {
   memoryDocumentStorage,
@@ -36,8 +37,8 @@ export function AppRuntime() {
     void hydrate()
   }, [hydrate])
 
-  // Chat settings and queued messages belong to the connection they were
-  // made for: a paired desktop's are kept in the app's documents across
+  // Chat settings, queued messages and unsaved edits belong to the
+  // connection they were made for: a paired desktop's are kept in the app's documents across
   // restarts, the demo's only in memory, and ending a pairing ends them.
   useEffect(() => {
     if (!mode) return
@@ -52,6 +53,7 @@ export function AppRuntime() {
     if (sessionState !== "unpaired") return
     useQueueStore.getState().discardAll()
     useComposerSettings.getState().forgetAll()
+    forgetAllDrafts()
   }, [sessionState])
 
   useEffect(() => {
