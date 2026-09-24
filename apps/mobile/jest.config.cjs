@@ -16,4 +16,8 @@ module.exports = {
     "^lucide-react-native$": lucideCommonJs,
   },
   setupFilesAfterEnv: ["<rootDir>/jest.setup.cjs"],
+  // A test's first render loads the app's routes, and with them React
+  // Native and Expo through Babel. On a CI runner with a cold transform
+  // cache that alone can take longer than Jest's default of 5 s.
+  testTimeout: 30_000,
 }
