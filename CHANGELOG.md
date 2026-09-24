@@ -24,6 +24,7 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 - **Phone app: signing out.** When the desktop could not be reached, signing out forgot the pairing on the phone and left the session active on the desktop. The app now keeps the pairing and offers to forget it on the phone only.
 - **Phone app: a message sent again arrived twice.** After a send timed out, sending the text again made a second message with a new id. Retry now resends the same message, which the desktop recognises. The app also waits as long as the desktop does (up to 210 s) for a message whose chat is first compacted, instead of giving up after 20 s.
 - **A chat's worktree mode is recorded where the worktree is made.** Creating, resetting or removing a chat's worktree left its env mode as the client that asked had last written it; a chat given a worktree by another client could read as local. The desktop's backend now sets it together with the worktree's path and branch.
+- **Phone app: messages went out without the desktop's preparation.** The desktop runs its **on message send** hooks before each of its messages and gives the turn a system instruction (the mode and permission preset, the project, your skills, MCP servers and subagents, and the project's permission rules); messages from the phone got neither, only your rules and the project's rule files. The desktop now prepares them the same way: a hook that fails stops the message, and the phone says which hook and what it printed.
 - **Phone app: smaller fixes.** File search keeps the desktop's ranking. A reply ends when its own turn ends, not by comparing the phone's clock with the desktop's. After a reconnect the app checks the session at once instead of keeping the composer disabled for up to a minute.
 
 ### Added
@@ -69,6 +70,7 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 - The phone app's interface is in English throughout; it mixed in German labels and German date formats. Dates and file sizes follow the device's locale.
 - The desktop's permission presets, Bypass warning, chat modes and message queue come from `@betterc0de/schema`, which the phone app uses too; the desktop behaves as before.
 - So do the desktop's "Always allow" rules, its tool steps built from activities, its provider-handoff presentation and its provider names; again the desktop behaves as before. The "Always allow" rules gained tests of their own: which commands and paths may be remembered, and that a provider's unscoped suggestion is never stored.
+- The desktop's system instruction, the helpers that gather its skills, MCP servers and subagents, and its hooks' environment come from `@betterc0de/schema`, where the desktop's backend uses them for messages from the phone; the desktop behaves as before.
 - The Android app asks only for the camera (to scan the pairing QR code, and to take a photo for a message), network access and vibration. The storage, "display over other apps" and biometric permissions that the React Native template and a library declared are removed; the app uses none of them.
 
 ## [0.1.0-beta.2] - 2026-09-22

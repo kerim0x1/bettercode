@@ -70,6 +70,20 @@ provides touch-native screens for:
 - project browsing plus chat-scoped files, text previews, diffs, and checkpoints;
 - host health, session identity, expiry, and self-revocation.
 
+The desktop prepares a message from the phone as it prepares its own (the
+phone asks for it with `prepareTurn`, and desktops that do announce
+`chat.preparedTurns`):
+
+- Your **on message send** hooks run first, in order. One that fails stops
+  the message, and the phone shows the hook and what it printed
+  (`message_hook_failed`). A `/goal` command runs them once, not for each
+  of the goal's turns. The hook's last run, as the desktop's hook settings
+  show it, is recorded only for messages sent on the desktop.
+- The turn gets the system instruction the desktop builds: the mode and
+  permission preset, the project, your skills, MCP servers and subagents
+  and the project's own, the project's permission rules, and your rules and
+  the project's rule files.
+
 Build and start a development build from the repository root (see
 [apps/mobile/README.md](../apps/mobile/README.md)).
 Use **Scan QR** inside the app; the existing desktop QR works for both the
