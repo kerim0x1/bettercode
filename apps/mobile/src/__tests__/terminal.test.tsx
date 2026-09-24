@@ -2,6 +2,7 @@ import path from "node:path"
 import { afterEach, describe, expect, it, jest } from "@jest/globals"
 import { act, fireEvent, screen, waitFor } from "@testing-library/react-native"
 import { renderRouter } from "expo-router/testing-library"
+import { AccessibilityInfo } from "react-native"
 import { REMOTE_FEATURES } from "@betterc0de/schema/remote-protocol"
 import { useAppStore } from "@/store/app-store"
 import { useSessionStore } from "@/store/session-store"
@@ -101,6 +102,43 @@ describe("the terminal", () => {
       await typeAndWait("echo $((6*7))\r", /\r\n42\r\n/)
       await typeAndWait("pwd\r", /\/Users\/demo\/code\/weather-app\r\n/)
       expect(screen.getByTestId("terminal-keys")).toBeTruthy()
+    },
+    FLOW_TIMEOUT_MS
+  )
+
+  it(
+    "has the page read out only while a screen reader runs",
+    async () => {
+      let changed: ((enabled: boolean) => void) | undefined
+      // Swapped and put back, not spied on: a spy on the preset's own mock
+      // is that mock, and restoring it would empty it for the tests after
+      // this one.
+      const usual = {
+        isScreenReaderEnabled: AccessibilityInfo.isScreenReaderEnabled,
+        addEventListener: AccessibilityInfo.addEventListener,
+      }
+      AccessibilityInfo.isScreenReaderEnabled = () => Promise.resolve(true)
+      AccessibilityInfo.addEventListener = ((
+        event: string,
+        handler: unknown
+      ) => {
+        if (event === "screenReaderChanged")
+          changed = handler as (enabled: boolean) => void
+        return { remove: () => undefined }
+      }) as unknown as typeof AccessibilityInfo.addEventListener
+      const told = () =>
+        mockPage.commands.filter((command) => command.type === "screenReader")
+      try {
+        await openTerminal()
+        await waitFor(() =>
+          expect(told().at(-1)).toEqual({ type: "screenReader", enabled: true })
+        )
+        // TalkBack or VoiceOver turned off: typing takes the regular path.
+        await act(async () => changed?.(false))
+        expect(told().at(-1)).toEqual({ type: "screenReader", enabled: false })
+      } finally {
+        Object.assign(AccessibilityInfo, usual)
+      }
     },
     FLOW_TIMEOUT_MS
   )

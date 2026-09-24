@@ -1,7 +1,8 @@
 # A terminal in the demo: open it from a chat's menu, type in it (xterm.js
 # in the app's WebView) and read the answer. The only check of the WebView
 # and the terminal's page on a device; the screen tests use a stand-in for
-# the page. The page's text is read through xterm's screen reader tree.
+# the page. The page's text is read from the terminal's rows, which the page
+# leaves readable for accessibility services while no screen reader runs.
 appId: com.betterc0de.remote
 name: The terminal runs what is typed in the demo
 tags:

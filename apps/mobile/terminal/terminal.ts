@@ -29,9 +29,8 @@ const terminal = new Terminal({
   fontFamily: "Menlo, 'SF Mono', 'Roboto Mono', monospace",
   fontSize: 13,
   scrollback: 5_000,
-  // The rows xterm draws are hidden from VoiceOver and TalkBack; this mode
-  // gives them the text, and reads out what comes in.
-  screenReaderMode: true,
+  // Off until the app says VoiceOver or TalkBack runs (screenReader below).
+  screenReaderMode: false,
   theme: {
     background: "#0A0A0A",
     foreground: "#FAFAFA",
@@ -90,7 +89,27 @@ function handle(command: TerminalPageCommand): void {
     case "reset":
       terminal.reset()
       return
+    case "screenReader":
+      readOut(command.enabled === true)
+      return
   }
+}
+
+/**
+ * xterm hides the rows it draws from accessibility services. In screen
+ * reader mode it keeps a tree of their text of its own and announces what
+ * comes in, but it then reads a phone keyboard's typing by comparing the
+ * input field's text after a timer, which dropped characters on a slow
+ * Android emulator (whoami arrived as "whmi"). So that mode runs only while
+ * VoiceOver or TalkBack does. Otherwise typing takes xterm's regular path,
+ * and the rows stay readable: explored with a screen reader, or read by the
+ * device tests.
+ */
+function readOut(screenReader: boolean): void {
+  terminal.options.screenReaderMode = screenReader
+  const rows = parent?.querySelector(".xterm-rows")
+  if (screenReader) rows?.setAttribute("aria-hidden", "true")
+  else rows?.removeAttribute("aria-hidden")
 }
 
 function receive(data: unknown): void {
@@ -123,6 +142,7 @@ function receive(data: unknown): void {
 const parent = document.getElementById("terminal")
 if (!parent) throw new Error("The terminal's page has no terminal element.")
 terminal.open(parent)
+readOut(false)
 fit.fit()
 terminal.onData((data) => send({ type: "input", data }))
 terminal.onResize(({ cols, rows }) => send({ type: "resize", cols, rows }))

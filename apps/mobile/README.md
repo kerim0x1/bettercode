@@ -199,8 +199,11 @@ against sample chats and files (see [Demo mode](#demo-mode)).
   - The key row (`src/components/terminal-keys.tsx`) sends Esc, Tab, the
     arrows, Home/End, Page Up/Down and `| ~ / -`. Ctrl and Alt apply to the
     next key (`src/terminal/modifiers.ts`).
-  - The page keeps xterm's screen reader mode on, so VoiceOver and TalkBack
-    read the output.
+  - While VoiceOver or TalkBack runs, the page turns on xterm's screen reader
+    mode, which reads the output out. Otherwise the mode stays off and the
+    rows stay readable to accessibility services: in that mode, xterm reads
+    a phone keyboard's typing by comparing its input field's text after a
+    timer, which dropped characters on a slow Android emulator.
   - The app remembers a running terminal per folder
     (`src/terminal/terminal-link.ts`), so leaving the screen and coming back
     finds it again.

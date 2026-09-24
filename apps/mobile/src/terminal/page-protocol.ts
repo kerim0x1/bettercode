@@ -33,6 +33,8 @@ export type TerminalPageCommand =
   | { type: "key"; key: TerminalKey }
   | { type: "focus" }
   | { type: "reset" }
+  /** Whether VoiceOver or TalkBack runs: the page reads the terminal out then. */
+  | { type: "screenReader"; enabled: boolean }
 
 const size = z.number().int().min(1).max(1_000)
 
