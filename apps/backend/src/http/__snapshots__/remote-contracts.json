@@ -3072,6 +3072,115 @@
         "additionalProperties": {}
       }
     },
+    "workspaceWrite": {
+      "method": "POST",
+      "path": "/workspace/write",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    "workspaceMkdir": {
+      "method": "POST",
+      "path": "/workspace/mkdir",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    "workspaceMove": {
+      "method": "POST",
+      "path": "/workspace/move",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    "workspaceDelete": {
+      "method": "POST",
+      "path": "/workspace/delete",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    "workspaceSearchContent": {
+      "method": "POST",
+      "path": "/workspace/search-content",
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "matches": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "line": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "column": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "length": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "previewColumn": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "previewLength": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "preview": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "line",
+                      "column",
+                      "length",
+                      "previewColumn",
+                      "previewLength",
+                      "preview"
+                    ],
+                    "additionalProperties": {}
+                  }
+                }
+              },
+              "required": [
+                "path",
+                "name",
+                "matches"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "truncatedReason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "results",
+          "truncated"
+        ],
+        "additionalProperties": {}
+      }
+    },
     "generateCommitMessage": {
       "method": "POST",
       "path": "/chat/text-generation/commit-message",

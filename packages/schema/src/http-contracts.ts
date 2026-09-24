@@ -40,6 +40,13 @@ import {
   gitPushSchema,
 } from "./git"
 import {
+  workspaceContentSearchSchema,
+  workspaceDeleteSchema,
+  workspaceMkdirSchema,
+  workspaceMoveSchema,
+  workspaceWriteSchema,
+} from "./workspace"
+import {
   threadCheckpointRevertSchema,
   threadMessageSchema,
   threadMetaSchema,
@@ -287,6 +294,38 @@ export const gitHunkActionResponseSchema = z
     patchId: text,
     applied: z.boolean(),
     replayed: z.boolean().optional(),
+  })
+  .passthrough()
+
+/**
+ * A content search, file by file, with each match's line and a preview.
+ * `truncated` when a limit (results, files, bytes, time) cut it short.
+ */
+export const workspaceContentSearchResponseSchema = z
+  .object({
+    results: z.array(
+      z
+        .object({
+          path: text,
+          name: text,
+          matches: z.array(
+            z
+              .object({
+                line: count,
+                column: count,
+                length: count,
+                previewColumn: count,
+                previewLength: count,
+                preview: text,
+              })
+              .passthrough()
+          ),
+        })
+        .passthrough()
+    ),
+    truncated: z.boolean(),
+    // A string, not an enum: a desktop may add a reason.
+    truncatedReason: text.optional(),
   })
   .passthrough()
 
@@ -574,6 +613,36 @@ export const httpContracts = {
     gitOkResponseSchema
   ),
   gitLog: endpoint("POST", "/git/log", gitLogSchema, gitLogResponseSchema),
+  workspaceWrite: endpoint(
+    "POST",
+    "/workspace/write",
+    workspaceWriteSchema,
+    z.void()
+  ),
+  workspaceMkdir: endpoint(
+    "POST",
+    "/workspace/mkdir",
+    workspaceMkdirSchema,
+    z.void()
+  ),
+  workspaceMove: endpoint(
+    "POST",
+    "/workspace/move",
+    workspaceMoveSchema,
+    z.void()
+  ),
+  workspaceDelete: endpoint(
+    "POST",
+    "/workspace/delete",
+    workspaceDeleteSchema,
+    z.void()
+  ),
+  workspaceSearchContent: endpoint(
+    "POST",
+    "/workspace/search-content",
+    workspaceContentSearchSchema,
+    workspaceContentSearchResponseSchema
+  ),
   generateCommitMessage: endpoint(
     "POST",
     "/chat/text-generation/commit-message",
