@@ -133,6 +133,13 @@ export function describeRemoteError(error: unknown): RemoteErrorDescription {
           "It was removed when the chat was rewound on the desktop. Send it again as a new message.",
         action: "send_as_new",
       }
+    case "message_hook_failed":
+      // The desktop's own words name the hook and what it printed.
+      return {
+        title: "Stopped by a hook",
+        message: error.message,
+        action: "retry",
+      }
     case "workspace_untrusted":
       return {
         title: "Project not trusted",

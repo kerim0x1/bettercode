@@ -118,6 +118,8 @@ describe("sending messages through the outbox", () => {
     const { api, bodies } = desktop({ turnId: "turn-1" })
     await store().send(api, "thread-1", "Plan the refactor", selection)
     expect(bodies[0]).toMatchObject({
+      // The desktop runs its hooks and builds the system instruction.
+      prepareTurn: true,
       threadId: "thread-1",
       message: "Plan the refactor",
       userMessageContent: "Plan the refactor",

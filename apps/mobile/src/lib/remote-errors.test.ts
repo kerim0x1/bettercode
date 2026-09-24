@@ -56,6 +56,7 @@ describe("describeRemoteError", () => {
         "send_as_new",
       ],
       [refusal(409, "dispatch_reverted"), "Message undone", "send_as_new"],
+      [refusal(422, "message_hook_failed"), "Stopped by a hook", "retry"],
       [refusal(403, "workspace_untrusted"), "Project not trusted", undefined],
       [
         refusal(409, "checkpoint_recovery_required"),
@@ -99,5 +100,20 @@ describe("describeRemoteError", () => {
       "raw desktop message"
     )
     expect(describeRemoteError(new Error("boom")).message).toBe("boom")
+  })
+})
+
+describe("a message a hook stopped", () => {
+  it("names the hook and what it printed, in the desktop's words", () => {
+    const error = new RemoteApiError(
+      'Hook "npm run lint" failed: 3 problems',
+      422,
+      "message_hook_failed"
+    )
+    expect(describeRemoteError(error)).toEqual({
+      title: "Stopped by a hook",
+      message: 'Hook "npm run lint" failed: 3 problems',
+      action: "retry",
+    })
   })
 })

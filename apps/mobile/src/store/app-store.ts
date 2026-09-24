@@ -602,6 +602,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         appMode: "agent",
         reasoningEffort: options?.thinkingMode ?? null,
         fastMode: options?.fastMode ?? null,
+        // As a message: the desktop's hooks and instruction (sendBody).
+        prepareTurn: true,
       })
       if (owner !== generation) return { status: "sent" }
       set((state) => ({
@@ -1052,6 +1054,9 @@ function sendBody({
     modelId: selection.modelId,
     projectPath: thread.worktreePath || thread.projectPath,
     attachments: [...attachments],
+    // The desktop prepares the turn as it prepares its own messages: its
+    // "on message send" hooks, and the system instruction it builds.
+    prepareTurn: true,
     appMode: "agent",
     chatMode: settings.chatMode,
     permissionLevel: settings.permissionLevel,
