@@ -67,6 +67,11 @@
       "import": "./src/provider-label.ts",
       "default": "./dist/provider-label.js"
     },
+    "./thread-metadata": {
+      "types": "./src/thread-metadata.ts",
+      "import": "./src/thread-metadata.ts",
+      "default": "./dist/thread-metadata.js"
+    },
     "./always-allow": {
       "types": "./src/always-allow.ts",
       "import": "./src/always-allow.ts",

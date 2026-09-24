@@ -21,6 +21,13 @@ import {
 import type { ChatMessage, ChatThread, ThreadActivity } from "./domain"
 import { publicSettingsSchema } from "./public-settings"
 import { settingsPatchSchema } from "./settings"
+import { threadMetadataUpdateSchema } from "./thread-metadata"
+
+// Its own module, so a client can read the frame without every contract.
+export {
+  threadMetadataUpdateSchema,
+  type ThreadMetadataUpdate,
+} from "./thread-metadata"
 import {
   threadMessageSchema,
   threadMetaSchema,
@@ -207,19 +214,6 @@ const contextCheckpointResponseFields = {
   checkpointCreatedAt: text,
   generation: count,
 }
-
-/**
- * A chat's new title, as POST /threads/:id/title answers it and as every
- * connected client hears it (the `thread.metadata` WebSocket frame).
- */
-export const threadMetadataUpdateSchema = z
-  .object({
-    threadId: text.min(1),
-    title: text.min(1),
-    updatedAt: text.min(1),
-  })
-  .passthrough()
-export type ThreadMetadataUpdate = z.infer<typeof threadMetadataUpdateSchema>
 
 export const chatSendResponseSchema = z
   .object({

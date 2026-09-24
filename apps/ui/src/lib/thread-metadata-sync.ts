@@ -1,7 +1,7 @@
 import {
   threadMetadataUpdateSchema,
   type ThreadMetadataUpdate,
-} from "@betterc0de/schema/http-contracts"
+} from "@betterc0de/schema/thread-metadata"
 
 /**
  * A chat renamed on another client (a paired phone): the backend announces
