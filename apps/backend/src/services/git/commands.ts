@@ -43,21 +43,35 @@ const NO_COMMIT_PATTERNS = [
   /no changes added to commit/i,
 ] as const
 
+function nothingToCommit(): Error {
+  return Object.assign(
+    new Error(
+      "Nothing to commit — stage changes first or modify a tracked file."
+    ),
+    { statusCode: 400 }
+  )
+}
+
 export async function commit(cwd: string, message: string) {
-  const { stdout, stderr } = await gitRun(cwd, ["commit", "-F", "-"], {
-    input: message,
-  })
-  const combined = `${stdout}\n${stderr}`
+  let result: { stdout: string; stderr: string }
+  try {
+    result = await gitRun(cwd, ["commit", "-F", "-"], { input: message })
+  } catch (error) {
+    // Git exits with status 1 when there is nothing to commit, so gitRun
+    // rejects before the check below can see the output.
+    const failed = error as { stdout?: string; stderr?: string }
+    const output = `${failed.stdout ?? ""}\n${failed.stderr ?? ""}`
+    if (NO_COMMIT_PATTERNS.some((re) => re.test(output))) {
+      throw nothingToCommit()
+    }
+    throw error
+  }
+  const combined = `${result.stdout}\n${result.stderr}`
   if (NO_COMMIT_PATTERNS.some((re) => re.test(combined))) {
-    throw Object.assign(
-      new Error(
-        "Nothing to commit — stage changes first or modify a tracked file."
-      ),
-      { statusCode: 400 }
-    )
+    throw nothingToCommit()
   }
   await invalidateStatusCache(cwd)
-  return { output: stdout }
+  return { output: result.stdout }
 }
 
 /**

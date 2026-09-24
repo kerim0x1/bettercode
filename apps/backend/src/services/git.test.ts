@@ -395,6 +395,15 @@ describe("git checkpoint refs", () => {
     )
   })
 
+  it("answers a commit of nothing with a 400 in the desktop's words", async () => {
+    const cwd = createRepo()
+    await expect(commit(cwd, "nothing changed")).rejects.toMatchObject({
+      statusCode: 400,
+      message:
+        "Nothing to commit — stage changes first or modify a tracked file.",
+    })
+  })
+
   it("rejects option-like branch names before invoking checkout", async () => {
     const cwd = createRepo()
     await expect(checkout(cwd, "--orphan", false)).rejects.toMatchObject({
