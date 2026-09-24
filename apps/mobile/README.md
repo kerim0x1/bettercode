@@ -99,6 +99,11 @@ against sample chats and files (see [Demo mode](#demo-mode)).
   provider names come from `@betterc0de/schema` (`always-allow`,
   `activity-tools`, `provider-handoff`, `provider-label`), the desktop's own
   code, so both apps store the same rules and show the same steps.
+- A chat's menu renames it through `POST /threads/:id/title`, which changes
+  only the title and tells every client, so the desktop's next write of its
+  own copy keeps the new name. Desktops without the `threads.rename` feature
+  get no Rename: their next write would undo it. Deleting asks first, in the
+  desktop's words, and says when the chat's worktree goes with it.
 - `queue-store.ts` and `queue-runner.ts` queue messages written while the agent
   works, with the desktop's rules from `@betterc0de/schema/message-queue` (30
   per chat, one at a time, paused after a failure or a restart). The queue and

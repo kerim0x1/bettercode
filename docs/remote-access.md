@@ -51,6 +51,11 @@ provides touch-native screens for:
 - which chats wait for an answer (in the chat list, on the **Chats** tab and
   in every other chat), kept current as approvals are answered on the
   desktop, and the agent's tool steps while it works;
+- renaming a chat, which the desktop and every other paired device take over
+  at once (`POST /api/v1/threads/:id/title`, announced as the
+  `threads.rename` feature and sent to clients as a `thread.metadata`
+  frame), and deleting one, which also removes its worktree on the desktop,
+  with any changes there that are not committed;
 - project browsing plus chat-scoped files, text previews, diffs, and checkpoints;
 - host health, session identity, expiry, and self-revocation.
 
