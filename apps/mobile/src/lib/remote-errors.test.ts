@@ -44,6 +44,18 @@ describe("describeRemoteError", () => {
         "wait",
       ],
       [refusal(409, "turn_active"), "The agent is still working", "wait"],
+      [refusal(409, "dispatch_id_conflict"), "Message conflict", "send_as_new"],
+      [
+        refusal(409, "dispatch_outcome_unknown"),
+        "Not known if it arrived",
+        "send_as_new",
+      ],
+      [
+        refusal(409, "dispatch_failed"),
+        "The agent refused the message",
+        "send_as_new",
+      ],
+      [refusal(409, "dispatch_reverted"), "Message undone", "send_as_new"],
       [refusal(0, "timeout"), "No answer from the desktop", "retry"],
       [refusal(0, "network"), "Desktop unreachable", "retry"],
       [refusal(503), "Desktop busy", "retry"],

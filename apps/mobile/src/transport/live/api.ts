@@ -28,6 +28,9 @@ import {
   type RequestOptions,
 } from "./http"
 
+/** How long a message may take the desktop to start (the desktop's own limit). */
+export const SEND_TIMEOUT_MS = 210_000
+
 export async function pairMobile(
   baseUrl: string,
   credential: string,
@@ -58,11 +61,17 @@ export function createLiveApi(connection: HttpConnection): RemoteApi {
     httpJson<T>(connection, path, options)
   const contract = <K extends HttpContractName>(
     name: K,
-    options: { body?: HttpContractRequest<K>; id?: string; query?: string } = {}
+    options: {
+      body?: HttpContractRequest<K>
+      id?: string
+      query?: string
+      timeoutMs?: number
+    } = {}
   ) =>
     requestHttpContract(
       name,
-      ({ path, method, body }) => call<unknown>(path, { method, body }),
+      ({ path, method, body }) =>
+        call<unknown>(path, { method, body, timeoutMs: options.timeoutMs }),
       options
     )
 
@@ -116,8 +125,12 @@ export function createLiveApi(connection: HttpConnection): RemoteApi {
       ),
 
     goal: (body) => contract("chatGoal", { body }),
-    sendMessage: (body) => contract("chatSend", { body }),
+    // As on the desktop: compacting or handing a chat over to another
+    // provider can take the desktop up to 180 s before the turn starts.
+    sendMessage: (body) =>
+      contract("chatSend", { body, timeoutMs: SEND_TIMEOUT_MS }),
     interrupt: (body) => contract("chatInterrupt", { body }),
+    setPermissionMode: (body) => contract("chatPermissionMode", { body }),
     respondApproval: (body) => contract("chatApproval", { body }),
     respondPlan: (body) => contract("chatPlanApproval", { body }),
     respondUserInput: (body) => contract("chatUserInput", { body }),

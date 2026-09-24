@@ -69,6 +69,13 @@ export interface RemoteApi {
     providerInstanceId?: string | null
     threadId: string
   }): Promise<{ status: "interrupted" }>
+  /** Switches a chat's permission preset, in its running turn where the provider can. */
+  setPermissionMode(body: {
+    threadId: string
+    providerKind: string
+    providerInstanceId?: string | null
+    permissionLevel: string
+  }): Promise<ApprovalResponse>
   respondApproval(body: ChatRequestBody): Promise<ApprovalResponse>
   respondPlan(body: ChatRequestBody): Promise<ApprovalResponse>
   respondUserInput(body: ChatRequestBody): Promise<ApprovalResponse>

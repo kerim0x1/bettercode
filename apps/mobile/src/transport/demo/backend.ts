@@ -11,6 +11,7 @@ import type {
   RemoteSessionSummary,
   ThreadActivity,
 } from "@/types/remote"
+import { RemoteApiError } from "../live/http"
 import type { ChatRequestBody, RemoteApi } from "../types"
 import {
   DEMO_ENVIRONMENT_ID,
@@ -73,6 +74,11 @@ export class DemoBackend {
     { threadId: string; resolve: (approved: boolean) => void }
   >()
   private readonly turns = new Map<string, RunningTurn>()
+  /** Message id → the turn it started, as the desktop records each dispatch. */
+  private readonly dispatches = new Map<
+    string,
+    { threadId: string; turnId: string; content: string }
+  >()
   private readonly approvalAsked = new Set<string>()
   private counter = 0
   readonly api: RemoteApi
@@ -170,6 +176,11 @@ export class DemoBackend {
         this.cancelTurn(threadId, true)
         return { status: "interrupted" as const }
       },
+      // The scripted agent follows a new preset at once.
+      setPermissionMode: async () => ({
+        status: "acknowledged" as const,
+        applied: "live" as const,
+      }),
       respondApproval: async (body) => this.resolveApproval(body),
       respondPlan: async (body) => this.resolveApproval(body),
       respondUserInput: async (body) =>
@@ -253,8 +264,6 @@ export class DemoBackend {
     const threadId = String(body.threadId ?? "")
     const thread = this.threads.find((item) => item.id === threadId)
     if (!thread) throw new Error("Chat not found.")
-    if (this.turns.has(threadId))
-      throw new Error("The agent is still working on the previous message.")
     const text = String(body.message ?? body.userMessageContent ?? "").trim()
     const createdAt =
       typeof body.userMessageCreatedAt === "string"
@@ -264,6 +273,33 @@ export class DemoBackend {
       typeof body.userMessageId === "string"
         ? body.userMessageId
         : this.id("demo-user")
+    // Like the desktop: a message sent again under its id is answered with
+    // the turn it started, not run twice.
+    const earlier = this.dispatches.get(messageId)
+    if (earlier) {
+      if (earlier.threadId !== threadId || earlier.content !== text) {
+        throw new RemoteApiError(
+          `Dispatch id '${messageId}' is already bound to a different request.`,
+          409,
+          "dispatch_id_conflict"
+        )
+      }
+      return {
+        status:
+          this.turns.get(threadId)?.turnId === earlier.turnId
+            ? ("streaming" as const)
+            : ("completed" as const),
+        turnId: earlier.turnId,
+        replayed: true as const,
+      }
+    }
+    if (this.turns.has(threadId)) {
+      throw new RemoteApiError(
+        `Thread '${threadId}' already has active provider work.`,
+        409,
+        "turn_active"
+      )
+    }
     this.messages[threadId] = [
       ...(this.messages[threadId] ?? []).filter(
         (message) => message.id !== messageId
@@ -277,6 +313,7 @@ export class DemoBackend {
       },
     ]
     const turnId = this.id("demo-turn")
+    this.dispatches.set(messageId, { threadId, turnId, content: text })
     this.updateThread(threadId, (item) => ({
       ...item,
       title: item.title === "New Chat" ? titleFrom(text) : item.title,

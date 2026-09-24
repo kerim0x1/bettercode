@@ -7,6 +7,8 @@ export type RemoteErrorAction =
   | "pair_again"
   | "update_app"
   | "update_desktop"
+  /** The desktop will never accept this message id again; only a new message helps. */
+  | "send_as_new"
 
 export interface RemoteErrorDescription {
   readonly title: string
@@ -108,6 +110,28 @@ export function describeRemoteError(error: unknown): RemoteErrorDescription {
       return {
         title: "Message conflict",
         message: "This message was already sent with different content.",
+        action: "send_as_new",
+      }
+    case "dispatch_outcome_unknown":
+      return {
+        title: "Not known if it arrived",
+        message:
+          "The desktop restarted while it took this message. If the reply is missing, send it again as a new message.",
+        action: "send_as_new",
+      }
+    case "dispatch_failed":
+      return {
+        title: "The agent refused the message",
+        message:
+          "The desktop could not start it. Send it again as a new message.",
+        action: "send_as_new",
+      }
+    case "dispatch_reverted":
+      return {
+        title: "Message undone",
+        message:
+          "It was removed when the chat was rewound on the desktop. Send it again as a new message.",
+        action: "send_as_new",
       }
     case "timeout":
       return {

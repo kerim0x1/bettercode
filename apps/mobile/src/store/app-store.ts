@@ -4,6 +4,11 @@ import {
   parseGoalCommand,
   isRecord,
 } from "@betterc0de/schema"
+import {
+  PERMISSION_MODE_FAILED,
+  PERMISSION_MODE_QUEUED,
+  type PermissionLevel,
+} from "@betterc0de/schema/chat-controls"
 import type {
   ChatMessage,
   ChatThread,
@@ -12,8 +17,11 @@ import type {
   ProjectSummary,
   ThreadActivity,
 } from "@/types/remote"
-import { remoteErrorMessage } from "@/lib/remote-errors"
-import type { RemoteApi } from "@/transport/types"
+import { createId } from "@/lib/ids"
+import { describeRemoteError, remoteErrorMessage } from "@/lib/remote-errors"
+import { RemoteApiError } from "@/transport/live/http"
+import type { ChatRequestBody, RemoteApi } from "@/transport/types"
+import { useComposerSettings } from "./composer-settings-store"
 import {
   decodeRuntimeFrame,
   eventDelta,
@@ -55,6 +63,50 @@ export interface RuntimeOutcome {
   refreshThreads: boolean
 }
 
+/**
+ * A message the desktop has not confirmed yet. Its request is kept exactly
+ * as it was first sent: the desktop recognises a retry by the message id
+ * and refuses one whose request differs, and the chat's title in it can
+ * change while the message waits.
+ */
+export interface OutboxEntry {
+  threadId: string
+  /** "queue" when the message queue sends it and shows its failures. */
+  owner: "chat" | "queue"
+  body: ChatRequestBody
+  selection: ModelOption
+  /** Why the last attempt failed; `null` while one is under way. */
+  error: string | null
+  /** `false` once the desktop has said it will never accept this id. */
+  retryable: boolean
+}
+
+/**
+ * A message sent under an id it already has: a queued one keeps the id and
+ * time it was queued with, and a retry those of the first attempt.
+ */
+export interface SendDelivery {
+  messageId: string
+  createdAt: string
+  owner: OutboxEntry["owner"]
+  /** The thinking and Fast Mode choice queued with the message. */
+  turnOptions?: TurnOptions
+}
+
+/**
+ * `busy`: the chat was running another turn and nothing was recorded (only
+ * a queued message gets this; a message typed in the chat fails instead).
+ */
+export type SendOutcome =
+  | { status: "sent" }
+  | { status: "busy" }
+  | { status: "failed"; error: string }
+
+/** A notice the chat shows after a permission change: the desktop's words. */
+export type PermissionNotice =
+  | typeof PERMISSION_MODE_QUEUED
+  | typeof PERMISSION_MODE_FAILED
+
 interface AppStore {
   threads: ChatThread[]
   /** Cursor of the next page of chats, or `null` when all are loaded. */
@@ -72,6 +124,8 @@ interface AppStore {
   requestsByThread: Record<string, PendingRequest[]>
   selectedModels: Record<string, ModelOption>
   turnOptionsByThread: Record<string, TurnOptions>
+  /** Messages the desktop has not confirmed, by message id. */
+  outbox: Record<string, OutboxEntry>
   loadingThreads: boolean
   loadingProjects: boolean
   loadingMessages: Record<string, boolean>
@@ -89,12 +143,36 @@ interface AppStore {
   loadEarlierMessages: (api: RemoteApi, threadId: string) => Promise<void>
   loadActivities: (api: RemoteApi, threadId: string) => Promise<void>
   createThread: (api: RemoteApi, project: ProjectSummary) => Promise<ChatThread>
+  /**
+   * Sends a message, or runs a /goal command. A message that fails stays in
+   * the chat, marked, with its request in the outbox; a queued message's
+   * failure is the queue's to show, so it leaves the chat.
+   */
   send: (
     api: RemoteApi,
     threadId: string,
     content: string,
-    selection: ModelOption
-  ) => Promise<void>
+    selection: ModelOption,
+    delivery?: SendDelivery
+  ) => Promise<SendOutcome>
+  /** Sends a failed message again, unchanged and under the same id. */
+  retrySend: (api: RemoteApi, messageId: string) => Promise<SendOutcome>
+  /** Removes a failed message from the chat. */
+  discardFailed: (messageId: string) => void
+  /** Sends a failed message's text again as a new message. */
+  sendAgainAsNew: (api: RemoteApi, messageId: string) => Promise<SendOutcome>
+  /** Drops the saved requests of queued messages the queue no longer holds. */
+  pruneQueueOutbox: (queuedIds: ReadonlySet<string>) => void
+  /**
+   * Saves the chat's permission preset and tells the desktop, which also
+   * switches a running turn where the provider can. Resolves with the
+   * notice to show while a turn runs, or `null`.
+   */
+  changePermissionLevel: (
+    api: RemoteApi,
+    threadId: string,
+    level: PermissionLevel
+  ) => Promise<PermissionNotice | null>
   interrupt: (api: RemoteApi, threadId: string) => Promise<void>
   resolveRequest: (
     api: RemoteApi,
@@ -127,6 +205,7 @@ const initialState = {
   requestsByThread: {} as Record<string, PendingRequest[]>,
   selectedModels: {} as Record<string, ModelOption>,
   turnOptionsByThread: {} as Record<string, TurnOptions>,
+  outbox: {} as Record<string, OutboxEntry>,
   loadingThreads: false,
   loadingProjects: false,
   loadingMessages: {} as Record<string, boolean>,
@@ -259,7 +338,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
         const loaded = state.messagesByThread[threadId] ?? []
         const merged = mergeNewestPage(loaded, newest)
         return {
-          messagesByThread: { ...state.messagesByThread, [threadId]: merged },
+          messagesByThread: {
+            ...state.messagesByThread,
+            [threadId]: keepUnconfirmed(merged, loaded, state.outbox, threadId),
+          },
           earlierMessagesByThread: {
             ...state.earlierMessagesByThread,
             // A full page from a desktop that numbers its messages may have
@@ -357,13 +439,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return thread
   },
 
-  send: async (api, threadId, content, selection) => {
+  send: async (api, threadId, content, selection, delivery) => {
     const owner = generation
     const thread = get().threads.find((candidate) => candidate.id === threadId)
     if (!thread) throw new Error("Chat not found.")
-    const history = providerHistory(
-      get().messagesByThread[threadId] ?? thread.messages ?? []
-    )
     // Same parser as the desktop and the backend: a malformed command is
     // rejected here with the desktop's wording instead of a round trip.
     if (parseGoalCommand(content) !== null) {
@@ -379,7 +458,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         reasoningEffort: options?.thinkingMode ?? null,
         fastMode: options?.fastMode ?? null,
       })
-      if (owner !== generation) return
+      if (owner !== generation) return { status: "sent" }
       set((state) => ({
         threads: state.threads.map((item) =>
           item.id === threadId && item.goal === thread.goal
@@ -387,25 +466,44 @@ export const useAppStore = create<AppStore>((set, get) => ({
             : item
         ),
       }))
-      return
+      return { status: "sent" }
+    }
+    const messageId = delivery?.messageId ?? createId("mobile-message")
+    const createdAt = delivery?.createdAt ?? new Date().toISOString()
+    // A message sent before keeps the request it was first sent with.
+    const entry: OutboxEntry = get().outbox[messageId] ?? {
+      threadId,
+      owner: delivery?.owner ?? "chat",
+      selection,
+      error: null,
+      retryable: true,
+      body: sendBody({
+        thread,
+        messageId,
+        content,
+        createdAt,
+        selection,
+        turnOptions:
+          delivery?.turnOptions ?? get().turnOptionsByThread[threadId],
+      }),
     }
     const now = new Date().toISOString()
-    const messageId = createId("mobile-message")
-    const optimistic: ChatMessage = {
-      id: messageId,
-      role: "user",
-      content,
-      createdAt: now,
-      dispatchStatus: "pending",
-    }
-    const provider = {
-      providerKind: selection.providerKind,
-      providerInstanceId: selection.providerInstanceId,
-    }
     set((state) => ({
+      outbox: { ...state.outbox, [messageId]: { ...entry, error: null } },
       messagesByThread: {
         ...state.messagesByThread,
-        [threadId]: [...(state.messagesByThread[threadId] ?? []), optimistic],
+        [threadId]: [
+          ...(state.messagesByThread[threadId] ?? []).filter(
+            (message) => message.id !== messageId
+          ),
+          {
+            id: messageId,
+            role: "user",
+            content,
+            createdAt,
+            dispatchStatus: "pending",
+          },
+        ],
       },
       streamsByThread: {
         ...state.streamsByThread,
@@ -416,7 +514,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
           running: true,
           error: null,
           startedAt: now,
-          ...provider,
+          providerKind: entry.selection.providerKind,
+          providerInstanceId: entry.selection.providerInstanceId,
         },
       },
       threads: state.threads.map((item) =>
@@ -424,79 +523,91 @@ export const useAppStore = create<AppStore>((set, get) => ({
       ),
       error: null,
     }))
-    const turnOptions = get().turnOptionsByThread[threadId]
+    return dispatchOutboxMessage(api, messageId)
+  },
+
+  retrySend: async (api, messageId) => {
+    const entry = get().outbox[messageId]
+    if (!entry?.error || !entry.retryable)
+      throw new Error("This message cannot be sent again as it is.")
+    return get().send(
+      api,
+      entry.threadId,
+      String(entry.body.userMessageContent ?? ""),
+      entry.selection,
+      {
+        messageId,
+        createdAt: String(entry.body.userMessageCreatedAt ?? ""),
+        owner: entry.owner,
+      }
+    )
+  },
+
+  discardFailed: (messageId) =>
+    set((state) => {
+      const entry = state.outbox[messageId]
+      if (!entry || entry.error === null) return {}
+      return {
+        outbox: omitKey(state.outbox, messageId),
+        messagesByThread: {
+          ...state.messagesByThread,
+          [entry.threadId]: (
+            state.messagesByThread[entry.threadId] ?? []
+          ).filter((message) => message.id !== messageId),
+        },
+      }
+    }),
+
+  sendAgainAsNew: async (api, messageId) => {
+    const entry = get().outbox[messageId]
+    if (!entry || entry.error === null)
+      throw new Error("This message is not waiting to be sent again.")
+    get().discardFailed(messageId)
+    return get().send(
+      api,
+      entry.threadId,
+      String(entry.body.userMessageContent ?? ""),
+      entry.selection
+    )
+  },
+
+  pruneQueueOutbox: (queuedIds) =>
+    set((state) => {
+      const stale = Object.entries(state.outbox).filter(
+        ([id, entry]) => entry.owner === "queue" && !queuedIds.has(id)
+      )
+      if (stale.length === 0) return {}
+      const outbox = { ...state.outbox }
+      for (const [id] of stale) delete outbox[id]
+      return { outbox }
+    }),
+
+  changePermissionLevel: async (api, threadId, level) => {
+    useComposerSettings.getState().update(threadId, { permissionLevel: level })
+    const thread = get().threads.find((candidate) => candidate.id === threadId)
+    if (!thread) return null
+    const stream = get().streamsByThread[threadId]
+    const target = interruptTarget(
+      stream,
+      thread,
+      get().selectedModels[threadId]
+    )
+    if (!target) return null
+    // Every message carries the preset, so outside a turn the change needs
+    // no notice; during one, the user must know whether it took effect.
+    const running = Boolean(stream?.running || thread.session?.activeTurnId)
     try {
-      const result = await api.sendMessage({
-        providerKind: selection.providerKind,
-        providerInstanceId: selection.providerInstanceId,
+      const result = await api.setPermissionMode({
+        ...target,
         threadId,
-        userMessageId: messageId,
-        userMessageContent: content,
-        userMessageCreatedAt: now,
-        threadTitle: thread.title,
-        threadProjectName: thread.projectName,
-        threadCreatedAt: thread.createdAt,
-        message: content,
-        modelId: selection.modelId,
-        projectPath: thread.worktreePath || thread.projectPath,
-        history,
-        attachments: [],
-        appMode: "agent",
-        reasoningEffort: turnOptions?.thinkingMode ?? null,
-        fastMode: turnOptions?.fastMode ?? null,
+        permissionLevel: level,
       })
-      if (owner !== generation) return
-      set((state) => ({
-        messagesByThread: {
-          ...state.messagesByThread,
-          [threadId]: (state.messagesByThread[threadId] ?? []).map((message) =>
-            message.id === messageId
-              ? { ...message, dispatchStatus: "accepted" }
-              : message
-          ),
-        },
-        streamsByThread: {
-          ...state.streamsByThread,
-          [threadId]: {
-            ...(state.streamsByThread[threadId] ?? {
-              content: "",
-              reasoning: "",
-              running: true,
-              error: null,
-              startedAt: now,
-              ...provider,
-            }),
-            turnId: result.turnId,
-          },
-        },
-      }))
-    } catch (error) {
-      if (owner !== generation) return
-      set((state) => ({
-        messagesByThread: {
-          ...state.messagesByThread,
-          [threadId]: (state.messagesByThread[threadId] ?? []).map((message) =>
-            message.id === messageId
-              ? { ...message, dispatchStatus: "failed", dispatchFailed: true }
-              : message
-          ),
-        },
-        streamsByThread: {
-          ...state.streamsByThread,
-          [threadId]: {
-            ...(state.streamsByThread[threadId] ?? {
-              turnId: null,
-              content: "",
-              reasoning: "",
-              startedAt: now,
-              ...provider,
-            }),
-            running: false,
-            error: remoteErrorMessage(error),
-          },
-        },
-      }))
-      throw error
+      if (result.status === "failed") throw new Error(result.error)
+      return running && result.applied !== "live"
+        ? PERMISSION_MODE_QUEUED
+        : null
+    } catch {
+      return running ? PERMISSION_MODE_FAILED : null
     }
   },
 
@@ -731,6 +842,181 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 }))
 
+/**
+ * The /chat/send request for a message, built once: retries resend it as
+ * it is. The chat's permission preset and mode are the ones set on this
+ * phone when the message is first sent, as on the desktop.
+ */
+function sendBody({
+  thread,
+  messageId,
+  content,
+  createdAt,
+  selection,
+  turnOptions,
+}: {
+  thread: ChatThread
+  messageId: string
+  content: string
+  createdAt: string
+  selection: ModelOption
+  turnOptions: TurnOptions | undefined
+}): ChatRequestBody {
+  const settings = useComposerSettings.getState().settingsFor(thread.id)
+  return {
+    providerKind: selection.providerKind,
+    providerInstanceId: selection.providerInstanceId,
+    threadId: thread.id,
+    userMessageId: messageId,
+    userMessageContent: content,
+    userMessageCreatedAt: createdAt,
+    ...(thread.title ? { threadTitle: thread.title } : {}),
+    ...(thread.projectName ? { threadProjectName: thread.projectName } : {}),
+    threadCreatedAt: thread.createdAt,
+    message: content,
+    modelId: selection.modelId,
+    projectPath: thread.worktreePath || thread.projectPath,
+    attachments: [],
+    appMode: "agent",
+    chatMode: settings.chatMode,
+    permissionLevel: settings.permissionLevel,
+    reasoningEffort: turnOptions?.thinkingMode ?? null,
+    fastMode: turnOptions?.fastMode ?? null,
+  }
+}
+
+/**
+ * One attempt at delivering a message from the outbox. Everything but the
+ * history goes out exactly as the first time: the desktop leaves the
+ * history out when it recognises a retry, and a fresh one includes the
+ * replies that arrived since.
+ */
+async function dispatchOutboxMessage(
+  api: RemoteApi,
+  messageId: string
+): Promise<SendOutcome> {
+  const owner = generation
+  const entry = useAppStore.getState().outbox[messageId]
+  if (!entry) throw new Error("The message is no longer waiting to be sent.")
+  const { threadId } = entry
+  const history = providerHistory(
+    (useAppStore.getState().messagesByThread[threadId] ?? []).filter(
+      (message) => message.id !== messageId
+    )
+  )
+  try {
+    const result = await api.sendMessage({ ...entry.body, history })
+    if (owner === generation) settleOutboxMessage(messageId, result.turnId)
+    return { status: "sent" }
+  } catch (error) {
+    const description = describeRemoteError(error)
+    if (owner !== generation)
+      return { status: "failed", error: description.message }
+    const code = error instanceof RemoteApiError ? error.code : undefined
+    // The desktop already has the message and is still starting its turn.
+    if (code === "dispatch_in_progress") {
+      settleOutboxMessage(messageId, null)
+      return { status: "sent" }
+    }
+    const failed: OutboxEntry = {
+      ...entry,
+      error: description.message,
+      retryable: description.action !== "send_as_new",
+    }
+    useAppStore.setState((state) => {
+      const messages = state.messagesByThread[threadId] ?? []
+      const stream = state.streamsByThread[threadId]
+      return {
+        outbox:
+          entry.owner === "queue" && code === "turn_active"
+            ? // Nothing was recorded; the queue sends it after this turn.
+              omitKey(state.outbox, messageId)
+            : { ...state.outbox, [messageId]: failed },
+        messagesByThread: {
+          ...state.messagesByThread,
+          // The queue shows its own failures and keeps the message; the
+          // chat shows it only while it is on its way.
+          [threadId]:
+            entry.owner === "queue"
+              ? messages.filter((message) => message.id !== messageId)
+              : messages.map((message) =>
+                  message.id === messageId
+                    ? {
+                        ...message,
+                        dispatchStatus: "failed",
+                        dispatchFailed: true,
+                      }
+                    : message
+                ),
+        },
+        streamsByThread: isPlaceholderStream(stream)
+          ? omitKey(state.streamsByThread, threadId)
+          : state.streamsByThread,
+      }
+    })
+    if (entry.owner === "queue" && code === "turn_active")
+      return { status: "busy" }
+    return { status: "failed", error: description.message }
+  }
+}
+
+/** The desktop accepted the message: it leaves the outbox. */
+function settleOutboxMessage(messageId: string, turnId: string | null) {
+  useAppStore.setState((state) => {
+    const entry = state.outbox[messageId]
+    if (!entry) return {}
+    const { threadId } = entry
+    const stream = state.streamsByThread[threadId]
+    return {
+      outbox: omitKey(state.outbox, messageId),
+      messagesByThread: {
+        ...state.messagesByThread,
+        [threadId]: (state.messagesByThread[threadId] ?? []).map((message) =>
+          message.id === messageId
+            ? { ...message, dispatchStatus: "accepted", dispatchFailed: false }
+            : message
+        ),
+      },
+      // A turn that already finished and was cleared stays cleared; one
+      // whose start event came first keeps the id it brought.
+      streamsByThread:
+        stream && turnId && !stream.turnId
+          ? { ...state.streamsByThread, [threadId]: { ...stream, turnId } }
+          : state.streamsByThread,
+    }
+  })
+}
+
+/** Whether the stream is still only what a send put up: nothing arrived for it yet. */
+function isPlaceholderStream(stream: StreamState | undefined): boolean {
+  return Boolean(
+    stream &&
+    stream.turnId === null &&
+    !stream.content &&
+    !stream.reasoning &&
+    !stream.observedToolIds?.length
+  )
+}
+
+/**
+ * Messages still in the outbox that a reload does not list yet: the
+ * desktop has not recorded them (or not yet), and the chat must not lose
+ * them, or their Retry.
+ */
+function keepUnconfirmed(
+  merged: ChatMessage[],
+  loaded: ChatMessage[],
+  outbox: Record<string, OutboxEntry>,
+  threadId: string
+): ChatMessage[] {
+  const listed = new Set(merged.map((message) => message.id))
+  const unconfirmed = loaded.filter(
+    (message) =>
+      outbox[message.id]?.threadId === threadId && !listed.has(message.id)
+  )
+  return unconfirmed.length > 0 ? [...merged, ...unconfirmed] : merged
+}
+
 function metadataTitle(payload: Record<string, unknown>): string | null {
   const raw = payload.name ?? payload.title
   const title = typeof raw === "string" ? raw.trim() : ""
@@ -826,10 +1112,6 @@ function mergeNewestPage(
     return sequence !== null && sequence < first
   })
   return [...earlier, ...newest]
-}
-
-function createId(prefix: string): string {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {

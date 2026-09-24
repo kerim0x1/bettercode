@@ -177,6 +177,57 @@ describe("demo desktop", () => {
     })
   })
 
+  it("answers a message sent again under its id instead of running it twice", async () => {
+    const { transport, events } = demo()
+    const threadId = "demo-release-notes"
+    const body = {
+      threadId,
+      userMessageId: "u1",
+      message: "Draft the release notes",
+    }
+    const first = await transport.api.sendMessage(body)
+    const again = await transport.api.sendMessage(body)
+    expect(again).toEqual({
+      status: "streaming",
+      turnId: first.turnId,
+      replayed: true,
+    })
+    await expect(
+      transport.api.sendMessage({ ...body, message: "Something else" })
+    ).rejects.toMatchObject({ status: 409, code: "dispatch_id_conflict" })
+    await vi.runAllTimersAsync()
+    const approval = events()
+      .map((event) => pendingRequestFromEvent(event))
+      .find((request) => request !== null)
+    await transport.api.respondApproval({
+      threadId,
+      requestId: approval!.id,
+      decision: "approve",
+    })
+    await vi.runAllTimersAsync()
+    expect(
+      events().filter((event) => event.type === "turn_started")
+    ).toHaveLength(1)
+    expect(await transport.api.sendMessage(body)).toMatchObject({
+      status: "completed",
+      replayed: true,
+    })
+    expect(
+      (await transport.api.listMessages(threadId)).filter(
+        (message) => message.id === "u1"
+      )
+    ).toHaveLength(1)
+  })
+
+  it("refuses a second message while a reply runs, as the desktop does", async () => {
+    const { transport } = demo()
+    const threadId = "demo-release-notes"
+    await transport.api.sendMessage({ threadId, message: "First" })
+    await expect(
+      transport.api.sendMessage({ threadId, message: "Second" })
+    ).rejects.toMatchObject({ status: 409, code: "turn_active" })
+  })
+
   it("names a new chat after its first message", async () => {
     const { transport } = demo()
     const now = "2026-09-24T10:00:00.000Z"

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { createLiveApi, pairMobile } from "./api"
+import { SEND_TIMEOUT_MS, createLiveApi, pairMobile } from "./api"
 import { RemoteApiError, type HttpConnection } from "./http"
 
 const PHONE = {
@@ -204,6 +204,59 @@ describe("mobile HTTP contracts", () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it("waits as long as the desktop does for a message to start", async () => {
+    const hanging = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () =>
+            reject(new Error("aborted"))
+          )
+        })
+    )
+    vi.useFakeTimers()
+    try {
+      let settled = false
+      const pending = createLiveApi(connection(hanging))
+        .sendMessage({ threadId: "t", message: "hello", modelId: "model" })
+        .finally(() => {
+          settled = true
+        })
+      const assertion = expect(pending).rejects.toMatchObject({
+        code: "timeout",
+      })
+      // Compacting a long chat first can take the desktop minutes.
+      await vi.advanceTimersByTimeAsync(SEND_TIMEOUT_MS - 1)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await assertion
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("switches a chat's permission preset through the shared contract", async () => {
+    const fetchMock = stubFetch(
+      json({ status: "acknowledged", applied: "queued" })
+    )
+    await expect(
+      createLiveApi(connection(fetchMock)).setPermissionMode({
+        threadId: "t",
+        providerKind: "claude",
+        providerInstanceId: null,
+        permissionLevel: "read-only",
+      })
+    ).resolves.toEqual({ status: "acknowledged", applied: "queued" })
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("http://localhost:4321/api/v1/chat/permission-mode")
+    expect(init.method).toBe("POST")
+    expect(JSON.parse(String(init.body))).toEqual({
+      threadId: "t",
+      providerKind: "claude",
+      providerInstanceId: null,
+      permissionLevel: "read-only",
+    })
   })
 
   it("rejects malformed thread responses", async () => {
