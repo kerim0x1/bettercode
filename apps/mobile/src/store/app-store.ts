@@ -3,6 +3,7 @@ import {
   normalizeProviderGoal,
   parseGoalCommand,
   isRecord,
+  type PermissionUpdate,
 } from "@betterc0de/schema"
 import {
   PERMISSION_MODE_FAILED,
@@ -23,6 +24,7 @@ import { RemoteApiError } from "@/transport/live/http"
 import type { ChatRequestBody, RemoteApi } from "@/transport/types"
 import { useComposerSettings } from "./composer-settings-store"
 import {
+  decodeActivityFrame,
   decodeRuntimeFrame,
   eventDelta,
   isTurnStarted,
@@ -56,6 +58,9 @@ export interface StreamState {
 
 /** Messages are loaded newest first, this many at a time. */
 export const MESSAGE_PAGE_SIZE = 200
+
+/** At most this many chats have their activities loaded to catch up on requests. */
+export const ATTENTION_REFRESH_LIMIT = 8
 
 export interface RuntimeOutcome {
   threadId: string
@@ -142,6 +147,12 @@ interface AppStore {
   ) => Promise<void>
   loadEarlierMessages: (api: RemoteApi, threadId: string) => Promise<void>
   loadActivities: (api: RemoteApi, threadId: string) => Promise<void>
+  /**
+   * Loads the activities of the chats that may wait for the user: those a
+   * turn runs in, and those with an open request. Live activity frames are
+   * not replayed after a reconnect, so this catches up on what they missed.
+   */
+  refreshAttention: (api: RemoteApi) => Promise<void>
   createThread: (api: RemoteApi, project: ProjectSummary) => Promise<ChatThread>
   /**
    * Sends a message, or runs a /goal command. A message that fails stays in
@@ -181,6 +192,8 @@ interface AppStore {
       decision?: "approve" | "deny"
       answers?: Record<string, unknown>
       message?: string
+      /** "Always allow": the rule the desktop stores with the approval. */
+      updatedPermissions?: PermissionUpdate[]
     }
   ) => Promise<void>
   setSelectedModel: (threadId: string, option: ModelOption) => void
@@ -418,6 +431,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }))
   },
 
+  refreshAttention: async (api) => {
+    const state = get()
+    const ids = new Set([
+      ...state.threads
+        .filter((thread) => thread.session?.activeTurnId)
+        .map((thread) => thread.id),
+      ...Object.entries(state.requestsByThread)
+        .filter(([, requests]) => requests.length > 0)
+        .map(([threadId]) => threadId),
+    ])
+    await Promise.allSettled(
+      [...ids]
+        .slice(0, ATTENTION_REFRESH_LIMIT)
+        .map((threadId) => get().loadActivities(api, threadId))
+    )
+  },
+
   createThread: async (api, project) => {
     const owner = generation
     const now = new Date().toISOString()
@@ -651,6 +681,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
               ...body,
               decision: response.decision ?? "deny",
               message: response.message ?? null,
+              ...(response.updatedPermissions?.length
+                ? { updatedPermissions: response.updatedPermissions }
+                : {}),
             })
     if (result.status === "failed")
       throw new Error(result.error || "Response failed.")
@@ -684,6 +717,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })),
 
   applyFrame: (frame) => {
+    const activity = decodeActivityFrame(frame)
+    if (activity) {
+      set((state) => applyActivity(state, activity))
+      return null
+    }
     const event = decodeRuntimeFrame(frame)
     if (!event) return null
     const delta = eventDelta(event)
@@ -1124,20 +1162,7 @@ export function pendingRequestsFromActivities(
   activities: ThreadActivity[]
 ): PendingRequest[] {
   const pending = new Map<string, PendingRequest>()
-  const settled = new Set<string>()
-  for (const activity of activities) {
-    if (
-      [
-        "approval.resolved",
-        "plan-approval.resolved",
-        "user-input.resolved",
-      ].includes(activity.kind) ||
-      isStaleRequestFailure(activity)
-    ) {
-      const id = requestIdFromPayload(activity.payload)
-      if (id) settled.add(id)
-    }
-  }
+  const settled = settledRequestIds(activities)
   const ordered = [...activities].sort(
     (a, b) =>
       (a.sequence ?? 0) - (b.sequence ?? 0) ||
@@ -1153,22 +1178,7 @@ export function pendingRequestsFromActivities(
       }
       continue
     }
-    const payload = isRecord(activity.payload) ? activity.payload : {}
-    const event = decodeRuntimeFrame({
-      channel: "provider.runtimeEvent",
-      data: {
-        event_type: eventType,
-        thread_id: activity.threadId,
-        providerInstanceId: activity.providerInstanceId,
-        payload: {
-          ...payload,
-          detail:
-            typeof payload.detail === "string"
-              ? payload.detail
-              : activity.summary,
-        },
-      },
-    })
+    const event = activityAsEvent(activity, eventType)
     if (!event) continue
     const opened = pendingRequestFromEvent(event)
     if (opened && !settled.has(opened.id)) pending.set(opened.id, opened)
@@ -1176,6 +1186,113 @@ export function pendingRequestsFromActivities(
     if (resolved) pending.delete(resolved)
   }
   return [...pending.values()]
+}
+
+/** The requests these activities settle: answered, or refused as stale. */
+function settledRequestIds(activities: ThreadActivity[]): Set<string> {
+  const settled = new Set<string>()
+  for (const activity of activities) {
+    if (!settlesRequest(activity)) continue
+    const id = requestIdFromPayload(activity.payload)
+    if (id) settled.add(id)
+  }
+  return settled
+}
+
+function settlesRequest(activity: ThreadActivity): boolean {
+  return (
+    [
+      "approval.resolved",
+      "plan-approval.resolved",
+      "user-input.resolved",
+    ].includes(activity.kind) || isStaleRequestFailure(activity)
+  )
+}
+
+/** A request activity read as the runtime event that announced it. */
+function activityAsEvent(activity: ThreadActivity, eventType: string) {
+  const payload = isRecord(activity.payload) ? activity.payload : {}
+  return decodeRuntimeFrame({
+    channel: "provider.runtimeEvent",
+    data: {
+      event_type: eventType,
+      thread_id: activity.threadId,
+      providerInstanceId: activity.providerInstanceId,
+      payload: {
+        ...payload,
+        detail:
+          typeof payload.detail === "string"
+            ? payload.detail
+            : activity.summary,
+      },
+    },
+  })
+}
+
+/**
+ * An activity the desktop just recorded (a `thread.activity` frame). A chat
+ * whose activities are loaded keeps them all and derives its open requests
+ * again, as after a load. For any other chat only its requests are tracked,
+ * so a chat never opened on the phone still shows that it waits for an
+ * answer, and its activity history does not pile up in memory.
+ */
+function applyActivity(
+  state: AppStore,
+  activity: ThreadActivity
+): Partial<AppStore> {
+  const { threadId } = activity
+  const current = state.requestsByThread[threadId] ?? []
+  const loaded = state.activitiesByThread[threadId]
+  if (loaded) {
+    const activities = [
+      ...loaded.filter((item) => item.id !== activity.id),
+      activity,
+    ]
+    // Tool output arrives many times a second; only a request's own
+    // activities can change what the chat waits for.
+    if (!settlesRequest(activity) && activityEventType(activity.kind) === null)
+      return {
+        activitiesByThread: {
+          ...state.activitiesByThread,
+          [threadId]: activities,
+        },
+      }
+    const open = pendingRequestsFromActivities(activities)
+    const settled = settledRequestIds(activities)
+    // A request only a runtime event has announced so far stays until an
+    // activity settles it; the order the chat shows them in is kept.
+    const kept = current.filter((request) => !settled.has(request.id))
+    const added = open.filter(
+      (request) => !current.some((item) => item.id === request.id)
+    )
+    return {
+      activitiesByThread: {
+        ...state.activitiesByThread,
+        [threadId]: activities,
+      },
+      requestsByThread: {
+        ...state.requestsByThread,
+        [threadId]: [...kept, ...added],
+      },
+    }
+  }
+  let requests = current
+  if (settlesRequest(activity)) {
+    const id = requestIdFromPayload(activity.payload)
+    requests = requests.filter((request) => request.id !== id)
+  } else {
+    const eventType = activityEventType(activity.kind)
+    const event = eventType ? activityAsEvent(activity, eventType) : null
+    const opened = event ? pendingRequestFromEvent(event) : null
+    const resolved = event ? resolvedRequestId(event) : null
+    if (resolved)
+      requests = requests.filter((request) => request.id !== resolved)
+    if (opened && !requests.some((request) => request.id === opened.id))
+      requests = [...requests, opened]
+  }
+  return requests === current
+    ? {}
+    : { requestsByThread: { ...state.requestsByThread, [threadId]: requests } }
 }
 
 function activityEventType(kind: string): string | null {

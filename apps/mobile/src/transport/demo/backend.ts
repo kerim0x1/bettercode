@@ -354,10 +354,40 @@ export class DemoBackend {
       this.approvalAsked.add(threadId)
       ranTests = await this.askToRunTests(turn, threadId)
     }
+    if (ranTests && !turn.cancelled) await this.runTests(turn, threadId)
     if (turn.cancelled) return
     await this.stream(turn, threadId, "content", replyFor(request, ranTests))
     if (turn.cancelled) return
     this.finishTurn(threadId, turn, "turn_completed", ranTests)
+  }
+
+  /** The approved command, recorded step by step as a desktop records a tool. */
+  private async runTests(turn: RunningTurn, threadId: string): Promise<void> {
+    const tool = {
+      providerKind: DEMO_PROVIDER.kind,
+      providerInstanceId: DEMO_PROVIDER.instanceId,
+      toolId: this.id("demo-live-tool"),
+      toolName: "Bash",
+      input: { command: "npm test" },
+    }
+    this.addActivity(
+      threadId,
+      turn.turnId,
+      "tool.started",
+      "Ran command",
+      tool,
+      "tool"
+    )
+    await this.wait(turn, this.chunkDelayMs * 10)
+    if (turn.cancelled) return
+    this.addActivity(
+      threadId,
+      turn.turnId,
+      "tool.completed",
+      "Ran command completed",
+      { ...tool, output: "24 passed (1.8s)" },
+      "tool"
+    )
   }
 
   private async askToRunTests(
@@ -367,6 +397,9 @@ export class DemoBackend {
     const requestId = this.id("demo-approval")
     const payload = {
       requestId,
+      // The desktop records the provider with the request, for answering it.
+      providerKind: DEMO_PROVIDER.kind,
+      providerInstanceId: DEMO_PROVIDER.instanceId,
       title: "Run npm test",
       toolName: "Bash",
       input: { command: "npm test" },
@@ -521,7 +554,8 @@ export class DemoBackend {
     turnId: string,
     kind: string,
     summary: string,
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
+    tone: ThreadActivity["tone"] = "approval"
   ): void {
     const activity: ThreadActivity = {
       id: this.id("demo-activity"),
@@ -529,13 +563,15 @@ export class DemoBackend {
       turnId,
       providerInstanceId: DEMO_PROVIDER.instanceId,
       kind,
-      tone: "approval",
+      tone,
       summary,
       payload,
       sequence: this.counter,
       createdAt: this.now().toISOString(),
     }
     this.activities[threadId] = [...(this.activities[threadId] ?? []), activity]
+    const frame = { channel: "thread.activity", data: activity }
+    for (const listener of [...this.listeners]) listener(frame)
   }
 
   private updateThread(

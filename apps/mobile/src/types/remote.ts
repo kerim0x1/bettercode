@@ -1,6 +1,7 @@
 import type {
   ChatMessage,
   ChatThread,
+  PermissionUpdate,
   ThreadActivity,
   ProviderInstanceSnapshot,
 } from "@betterc0de/schema"
@@ -174,6 +175,10 @@ export interface PendingRequest {
   title: string
   detail?: string
   input?: unknown
+  /** The tool a tool approval is for, which "Always allow" scopes its rule to. */
+  toolName?: string
+  /** The provider's own "Always allow" suggestion, validated. */
+  suggestions?: PermissionUpdate[]
   questions?: Array<{
     id: string
     header?: string

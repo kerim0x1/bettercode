@@ -11,14 +11,60 @@ import {
 } from "./runtime-events"
 
 describe("mobile runtime event decoding", () => {
-  it.each([" ", "\n", "\t", ""])("preserves whitespace-only stream chunks: %j", delta => {
-    const frame = (type: string) => decodeRuntimeFrame({
-      channel: "provider.runtimeEvent",
-      data: { type, threadId: "thread", payload: { delta } },
-    })!
-    expect(eventDelta(frame("content.delta"))).toBe(delta)
-    expect(reasoningDelta(frame("reasoning.delta"))).toBe(delta)
+  it.each([" ", "\n", "\t", ""])(
+    "preserves whitespace-only stream chunks: %j",
+    (delta) => {
+      const frame = (type: string) =>
+        decodeRuntimeFrame({
+          channel: "provider.runtimeEvent",
+          data: { type, threadId: "thread", payload: { delta } },
+        })!
+      expect(eventDelta(frame("content.delta"))).toBe(delta)
+      expect(reasoningDelta(frame("reasoning.delta"))).toBe(delta)
+    }
+  )
+  it("reads the tool and the provider's Always allow suggestions of an approval", () => {
+    const scoped = {
+      type: "addRules",
+      rules: [{ toolName: "Bash", ruleContent: "npm run lint" }],
+      behavior: "allow",
+      destination: "localSettings",
+    }
+    const request = pendingRequestFromEvent(
+      decodeRuntimeFrame({
+        channel: "provider.runtimeEvent",
+        data: {
+          event_type: "tool_approval_requested",
+          thread_id: "thread-1",
+          providerKind: "claude",
+          payload: {
+            requestId: "approval-1",
+            tool_name: "Bash",
+            input: { command: "npm run lint" },
+            // Malformed suggestions are dropped, not trusted.
+            suggestions: [scoped, { type: "addRules", rules: "everything" }],
+          },
+        },
+      })!
+    )
+    expect(request).toMatchObject({
+      kind: "approval",
+      toolName: "Bash",
+      suggestions: [scoped],
+    })
+    const question = pendingRequestFromEvent(
+      decodeRuntimeFrame({
+        channel: "provider.runtimeEvent",
+        data: {
+          event_type: "user_input_requested",
+          thread_id: "thread-1",
+          payload: { requestId: "question-1", toolName: "AskUserQuestion" },
+        },
+      })!
+    )
+    expect(question?.toolName).toBeUndefined()
   })
+
   it("recognizes replay gaps that require durable rehydration", () => {
     expect(
       isReplayGapFrame({
@@ -116,7 +162,9 @@ describe("mobile runtime event decoding", () => {
           providerKind: "claude",
           requestId: "question-1",
           kind: "user_input",
-          questions: [{ id: "q1", question: "Which branch?", options: ["main", "dev"] }],
+          questions: [
+            { id: "q1", question: "Which branch?", options: ["main", "dev"] },
+          ],
         },
       },
     })!

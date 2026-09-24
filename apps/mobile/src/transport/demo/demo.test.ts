@@ -219,6 +219,41 @@ describe("demo desktop", () => {
     ).toHaveLength(1)
   })
 
+  it("records what the agent does as activities and sends them live, as the desktop does", async () => {
+    const { transport, frames, events } = demo()
+    const threadId = "demo-release-notes"
+    await transport.api.sendMessage({ threadId, message: "Draft the notes" })
+    await vi.advanceTimersByTimeAsync(1_000)
+    const approval = events()
+      .map((event) => pendingRequestFromEvent(event))
+      .find((request) => request !== null)
+    await transport.api.respondApproval({
+      threadId,
+      requestId: approval!.id,
+      decision: "approve",
+    })
+    await vi.runAllTimersAsync()
+
+    const recorded = await transport.api.listActivities(threadId)
+    expect(recorded.map((activity) => activity.kind)).toEqual([
+      "approval.requested",
+      "approval.resolved",
+      "tool.started",
+      "tool.completed",
+    ])
+    expect(recorded[2]).toMatchObject({
+      tone: "tool",
+      payload: { toolName: "Bash", input: { command: "npm test" } },
+    })
+    expect(recorded[0]?.payload).toMatchObject({ providerKind: "demo" })
+    const live = frames.filter(
+      (frame) => (frame as { channel?: string }).channel === "thread.activity"
+    )
+    expect(
+      live.map((frame) => (frame as { data: { id: string } }).data.id)
+    ).toEqual(recorded.map((activity) => activity.id))
+  })
+
   it("refuses a second message while a reply runs, as the desktop does", async () => {
     const { transport } = demo()
     const threadId = "demo-release-notes"
