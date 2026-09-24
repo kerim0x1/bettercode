@@ -66,7 +66,13 @@ export function AppRuntime() {
     const pendingRefreshes = new Set<ReturnType<typeof setTimeout>>()
     const app = useAppStore.getState()
     app.reset()
-    void Promise.allSettled([app.refreshThreads(api), app.refreshProjects(api)])
+    void Promise.allSettled([
+      app
+        .refreshThreads(api)
+        .then(() => useAppStore.getState().refreshAttention(api)),
+      app.refreshProjects(api),
+    ])
+    let connectedBefore = false
     const channel = transport.createChannel({
       onState: (state) => {
         setSocketState(state)
@@ -74,6 +80,12 @@ export function AppRuntime() {
         // of leaving the composer disabled until the next periodic check.
         if (state === "live" && useSessionStore.getState().state !== "online")
           void check()
+        // Activity frames sent while the phone was away are not replayed:
+        // an approval answered on the desktop meanwhile would stay open.
+        if (state === "live") {
+          if (connectedBefore) void useAppStore.getState().refreshAttention(api)
+          connectedBefore = true
+        }
       },
       onProtocol: setProtocol,
       onUpdateRequired: () => markAppUpdateRequired(),

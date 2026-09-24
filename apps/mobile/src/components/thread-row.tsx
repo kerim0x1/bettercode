@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native"
 import { formatDay } from "@/lib/format"
 import { GitBranch, MessageSquare } from "lucide-react-native"
 import type { ChatThread } from "@/types/remote"
+import { attentionSummary, type ThreadAttention } from "@/lib/attention"
 import { colors, font, radius, spacing, type } from "@/design/theme"
 
 /**
@@ -13,16 +14,21 @@ import { colors, font, radius, spacing, type } from "@/design/theme"
 export function ThreadRow({
   thread,
   active,
+  attention = null,
   onPress,
 }: {
   thread: ChatThread
   active: boolean
+  /** What the agent waits for from the user in this chat, if anything. */
+  attention?: ThreadAttention | null
   onPress: () => void
 }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${thread.title}, ${thread.projectName}`}
+      accessibilityLabel={`${thread.title}, ${thread.projectName}${
+        attention ? `, waiting for you: ${attentionSummary(attention)}` : ""
+      }`}
       testID={`thread-row-${thread.id}`}
       onPress={onPress}
       style={({ pressed }) => [
@@ -58,6 +64,17 @@ export function ThreadRow({
             </View>
           ) : null}
         </View>
+        {attention ? (
+          <View
+            style={styles.attention}
+            testID={`thread-attention-${thread.id}`}
+          >
+            <View style={styles.attentionDot} />
+            <Text style={styles.attentionText} numberOfLines={1}>
+              Waiting for you · {attentionSummary(attention)}
+            </Text>
+          </View>
+        ) : null}
       </View>
     </Pressable>
   )
@@ -125,5 +142,18 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontFamily: font.medium,
     fontSize: 11,
+  },
+  attention: { flexDirection: "row", alignItems: "center", gap: 6 },
+  attentionDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.warning,
+  },
+  attentionText: {
+    flexShrink: 1,
+    color: colors.warning,
+    fontFamily: font.medium,
+    fontSize: 12,
   },
 })

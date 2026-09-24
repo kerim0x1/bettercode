@@ -96,7 +96,17 @@ export const MessageItem = memo(function MessageItem({
   )
 })
 
-export function StreamingMessage({ stream }: { stream: StreamState }) {
+/**
+ * The reply while it streams. `tools` are the turn's tool steps so far,
+ * built from its activities like the finished message's.
+ */
+export function StreamingMessage({
+  stream,
+  tools = [],
+}: {
+  stream: StreamState
+  tools?: NonNullable<ChatMessage["toolCalls"]>
+}) {
   return (
     <View style={styles.assistantWrap}>
       <View style={styles.metaRow}>
@@ -113,6 +123,7 @@ export function StreamingMessage({ stream }: { stream: StreamState }) {
           streaming={stream.running && stream.isReasoning === true}
         />
       ) : null}
+      {tools.length ? <ToolCallGroup tools={tools} /> : null}
       {stream.content ? (
         <MarkdownText content={stream.content} />
       ) : stream.running ? (

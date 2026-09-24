@@ -11,6 +11,10 @@ import {
 } from "react-native"
 import * as Haptics from "expo-haptics"
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router"
+import {
+  buildActivityTools,
+  groupToolActivitiesByTurn,
+} from "@betterc0de/schema/activity-tools"
 import type { PermissionLevel } from "@betterc0de/schema/chat-controls"
 import {
   ArrowLeft,
@@ -28,10 +32,13 @@ import { IconButton } from "@/components/icon-button"
 import { ChatComposer } from "@/components/chat-composer"
 import { MessageItem, StreamingMessage } from "@/components/message-item"
 import { ModelPicker } from "@/components/model-picker"
+import { OtherChatsWaiting } from "@/components/other-chats-waiting"
 import { PendingRequestCard } from "@/components/pending-request-card"
+import { ProviderHandoffNotice } from "@/components/provider-handoff-notice"
 import { QueuedMessages } from "@/components/queued-messages"
 import { SendFailure } from "@/components/send-failure"
 import { colors, font, radius, spacing, type } from "@/design/theme"
+import { chatTimeline, type TimelineEntry } from "@/lib/chat-timeline"
 import { effectiveThreadRoot } from "@/lib/endpoint"
 import { modelOptions, preferredModel } from "@/lib/provider-selection"
 import { remoteErrorMessage } from "@/lib/remote-errors"
@@ -75,6 +82,19 @@ export default function ChatScreen() {
   const stream = useAppStore((state) =>
     threadId ? state.streamsByThread[threadId] : undefined
   )
+  const activities = useAppStore((state) =>
+    threadId ? state.activitiesByThread[threadId] : undefined
+  )
+  // The running turn's tool steps, as the desktop shows them while it works.
+  const streamTurnId = stream?.turnId ?? null
+  const liveTools = useMemo(() => {
+    if (!streamTurnId || !activities) return []
+    const turn = groupToolActivitiesByTurn(activities).get(streamTurnId)
+    return (turn ? buildActivityTools(turn) : []).map((tool) => ({
+      ...tool,
+      state: toolState(tool.state),
+    }))
+  }, [activities, streamTurnId])
   const storedRequests = useAppStore((state) =>
     threadId ? state.requestsByThread[threadId] : undefined
   )
@@ -120,13 +140,24 @@ export default function ChatScreen() {
   /** Looking up a chat that is not in the loaded pages: idle, loading, missing, or an error text. */
   const [lookup, setLookup] = useState<string>("idle")
   const [loadingEarlier, setLoadingEarlier] = useState(false)
-  const listRef = useRef<FlatList<ChatMessage>>(null)
+  const listRef = useRef<FlatList<TimelineEntry>>(null)
   const thread = threads.find((candidate) => candidate.id === threadId)
   const threadRoot = thread ? effectiveThreadRoot(thread) : ""
   const isRunning = Boolean(stream?.running || thread?.session?.activeTurnId)
   const effectiveMessages = useMemo(
     () => messages ?? thread?.messages ?? [],
     [messages, thread?.messages]
+  )
+  const hasStreamOutput = Boolean(stream?.content)
+  // The messages as the desktop shows them: a provider handoff's internal
+  // messages give way to a notice where it happened.
+  const timeline = useMemo(
+    () =>
+      chatTimeline(effectiveMessages, activities ?? [], {
+        running: isRunning,
+        hasOutput: hasStreamOutput,
+      }),
+    [activities, effectiveMessages, hasStreamOutput, isRunning]
   )
 
   useEffect(() => {
@@ -352,6 +383,7 @@ export default function ChatScreen() {
         />
       </View>
 
+      <OtherChatsWaiting threadId={threadId} />
       {connectionState === "offline" ||
       connectionState === "remote_disabled" ? (
         <View style={styles.offlineBanner}>
@@ -392,14 +424,16 @@ export default function ChatScreen() {
       ) : (
         <FlatList
           ref={listRef}
-          data={effectiveMessages}
+          data={timeline}
           keyExtractor={(item) => item.id}
           extraData={outbox}
           renderItem={({ item }) => {
+            if (item.kind === "handoff")
+              return <ProviderHandoffNotice entry={item.entry} />
             const failure = outbox[item.id]
             return (
               <>
-                <MessageItem message={item} />
+                <MessageItem message={item.message} />
                 {failure?.error && failure.owner === "chat" ? (
                   <SendFailure
                     entry={failure}
@@ -465,13 +499,16 @@ export default function ChatScreen() {
           }
           ListFooterComponent={
             <View>
-              {stream ? <StreamingMessage stream={stream} /> : null}
+              {stream ? (
+                <StreamingMessage stream={stream} tools={liveTools} />
+              ) : null}
               {requests.map((request) => (
                 <PendingRequestCard
                   key={request.id}
                   request={request}
                   busy={busyRequest === request.id}
                   readOnly={readOnly}
+                  alwaysAllow={composerSettings.permissionLevel !== "read-only"}
                   onRespond={(response) => {
                     if (!api) return
                     setBusyRequest(request.id)
@@ -619,6 +656,14 @@ export default function ChatScreen() {
       />
     </Screen>
   )
+}
+
+function toolState(
+  state: string | undefined
+): NonNullable<ChatMessage["toolCalls"]>[number]["state"] {
+  return state === "output-available" || state === "output-error"
+    ? state
+    : "input-available"
 }
 
 function emptyThread(id: string) {

@@ -1,6 +1,6 @@
 import path from "node:path"
 import { afterEach, describe, expect, it, jest } from "@jest/globals"
-import { fireEvent, screen, waitFor } from "@testing-library/react-native"
+import { act, fireEvent, screen, waitFor } from "@testing-library/react-native"
 import { renderRouter } from "expo-router/testing-library"
 import { Alert, type AlertButton } from "react-native"
 import {
@@ -136,6 +136,154 @@ describe("chat controls", () => {
     },
     FLOW_TIMEOUT_MS
   )
+})
+
+describe("always allow", () => {
+  it(
+    "stores the exact rule it shows, where the user chose",
+    async () => {
+      const api = await openDemoChat()
+      const respond = jest.spyOn(api, "respondApproval")
+      await write("Draft the release notes")
+      await fireEvent.press(screen.getByTestId("chat-send"))
+      expect(await screen.findByText("Run npm test", {}, STREAMED)).toBeTruthy()
+
+      await fireEvent.press(screen.getByTestId("request-always-allow"))
+      expect(await screen.findByText("This session")).toBeTruthy()
+      expect(screen.getByText("All projects")).toBeTruthy()
+      expect(screen.getAllByText("Bash(npm:*)")).toHaveLength(3)
+      await fireEvent.press(screen.getByText("This project"))
+
+      await waitFor(() => expect(respond).toHaveBeenCalledTimes(1))
+      expect(respond.mock.calls[0]![0]).toMatchObject({
+        requestId: expect.any(String),
+        decision: "approve",
+        updatedPermissions: [
+          {
+            type: "addRules",
+            rules: [{ toolName: "Bash", ruleContent: "npm:*" }],
+            behavior: "allow",
+            destination: "localSettings",
+          },
+        ],
+      })
+      expect(await screen.findByText(/24 passed/, {}, STREAMED)).toBeTruthy()
+    },
+    FLOW_TIMEOUT_MS
+  )
+
+  it(
+    "is not offered while the chat's preset is Read-only",
+    async () => {
+      await openDemoChat()
+      await fireEvent.press(await screen.findByTestId("composer-permissions"))
+      await fireEvent.press(await screen.findByText("Read-only"))
+      expect(
+        await screen.findByLabelText("Permissions: Read-only")
+      ).toBeTruthy()
+      await write("Draft the release notes")
+      await fireEvent.press(screen.getByTestId("chat-send"))
+      expect(await screen.findByText("Run npm test", {}, STREAMED)).toBeTruthy()
+      expect(screen.getByTestId("request-approve")).toBeTruthy()
+      expect(screen.queryByTestId("request-always-allow")).toBeNull()
+    },
+    FLOW_TIMEOUT_MS
+  )
+})
+
+describe("chats that wait for an answer", () => {
+  it(
+    "are marked in the list, and in every other chat until answered",
+    async () => {
+      await openDemoChat()
+      await write("Draft the release notes")
+      await fireEvent.press(screen.getByTestId("chat-send"))
+      expect(await screen.findByText("Run npm test", {}, STREAMED)).toBeTruthy()
+      // The waiting chat itself shows the request, not the line.
+      expect(screen.queryByTestId("other-chat-waiting")).toBeNull()
+
+      await fireEvent.press(screen.getByLabelText("Back"))
+      expect(
+        await screen.findByTestId(`thread-attention-${THREAD}`)
+      ).toBeTruthy()
+      expect(screen.getByText("Waiting for you · 1 approval")).toBeTruthy()
+
+      await fireEvent.press(screen.getByTestId("thread-row-demo-dark-mode"))
+      expect(
+        await screen.findByText(
+          "Release notes for 1.4 waits for you · 1 approval"
+        )
+      ).toBeTruthy()
+      await fireEvent.press(screen.getByTestId("other-chat-waiting"))
+      await fireEvent.press(await screen.findByTestId("request-approve"))
+      expect(await screen.findByText(/24 passed/, {}, STREAMED)).toBeTruthy()
+
+      await fireEvent.press(screen.getByLabelText("Back"))
+      await waitFor(() =>
+        expect(screen.queryByTestId("other-chat-waiting")).toBeNull()
+      )
+    },
+    FLOW_TIMEOUT_MS
+  )
+})
+
+describe("a reply in progress", () => {
+  it("shows the tool steps of its turn as the desktop records them", async () => {
+    pairWithTestDesktop()
+    useAppStore.setState({
+      streamsByThread: {
+        [THREAD]: {
+          turnId: "turn-live",
+          content: "",
+          reasoning: "",
+          running: true,
+          error: null,
+          startedAt: new Date().toISOString(),
+        },
+      },
+    })
+    await renderRouter(
+      { "chat/[id]": ChatScreen },
+      { initialUrl: `/chat/${THREAD}` }
+    )
+    await waitFor(() =>
+      expect(useAppStore.getState().activitiesByThread[THREAD]).toBeDefined()
+    )
+    const tool = (kind: string, turnId: string, extra = {}) => ({
+      channel: "thread.activity",
+      data: {
+        id: `${kind}-${turnId}`,
+        threadId: THREAD,
+        turnId,
+        providerInstanceId: "demo-agent",
+        kind,
+        tone: "tool",
+        summary: "Ran command",
+        payload: {
+          toolId: `tool-${turnId}`,
+          toolName: "Bash",
+          input: { command: "npm test" },
+          ...extra,
+        },
+        sequence: 1,
+        createdAt: new Date().toISOString(),
+      },
+    })
+    await act(async () => {
+      // Another turn's step is not this reply's.
+      useAppStore.getState().applyFrame(tool("tool.started", "turn-old"))
+      useAppStore.getState().applyFrame(tool("tool.started", "turn-live"))
+    })
+    expect(await screen.findByText("1 step")).toBeTruthy()
+    await act(async () => {
+      useAppStore
+        .getState()
+        .applyFrame(
+          tool("tool.completed", "turn-live", { output: "24 passed" })
+        )
+    })
+    expect(screen.getByText("1 step")).toBeTruthy()
+  })
 })
 
 describe("a message the desktop did not take", () => {

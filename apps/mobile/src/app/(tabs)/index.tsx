@@ -16,6 +16,7 @@ import { MessageSquarePlus, Plus, Search, X } from "lucide-react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { ConnectionPill, Screen, StateView, TopBar } from "@/components/layout"
 import { ThreadRow } from "@/components/thread-row"
+import { threadAttention } from "@/lib/attention"
 import {
   colors,
   font,
@@ -38,6 +39,7 @@ export default function ChatsScreen() {
   const threads = useAppStore((state) => state.threads)
   const projects = useAppStore((state) => state.projects)
   const streams = useAppStore((state) => state.streamsByThread)
+  const requestsByThread = useAppStore((state) => state.requestsByThread)
   const loading = useAppStore((state) => state.loadingThreads)
   const loadingMore = useAppStore((state) => state.loadingMoreThreads)
   const hasMore = useAppStore((state) => state.nextThreadsCursor !== null)
@@ -154,12 +156,14 @@ export default function ChatsScreen() {
         <FlatList
           data={filtered}
           keyExtractor={(item) => item.id}
+          extraData={requestsByThread}
           renderItem={({ item }) => (
             <ThreadRow
               thread={item}
               active={Boolean(
                 streams[item.id]?.running || item.session?.activeTurnId
               )}
+              attention={threadAttention(requestsByThread[item.id])}
               onPress={() => openThread(item.id)}
             />
           )}

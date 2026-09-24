@@ -8,6 +8,7 @@ import {
 import type { LucideProps } from "lucide-react-native"
 import type { ComponentType } from "react"
 import { colors, font, radius } from "@/design/theme"
+import { useAppStore } from "@/store/app-store"
 
 /**
  * Bottom tab bar in the desktop chrome style: sidebar-colored bar with a
@@ -32,6 +33,12 @@ function TabIcon({
 }
 
 export default function TabsLayout() {
+  const waiting = useAppStore(
+    (state) =>
+      Object.values(state.requestsByThread).filter(
+        (requests) => requests.length > 0
+      ).length
+  )
   return (
     <Tabs
       screenOptions={{
@@ -58,6 +65,8 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: "Chats",
+          tabBarBadge: waiting > 0 ? waiting : undefined,
+          tabBarBadgeStyle: styles.badge,
           tabBarIcon: ({ color, focused }) => (
             <TabIcon icon={MessagesSquare} color={color} focused={focused} />
           ),
@@ -94,4 +103,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   iconPillActive: { backgroundColor: colors.surfaceActive },
+  // Chats waiting for an answer: the amber of the rows that say so.
+  badge: {
+    backgroundColor: colors.warning,
+    color: colors.primaryForeground,
+    fontFamily: font.semibold,
+    fontSize: 10,
+  },
 })
