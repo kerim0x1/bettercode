@@ -15,7 +15,9 @@
     "build:ios:dev": "eas build --platform ios --profile development",
     "build:ios:preview": "eas build --platform ios --profile preview",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.config.json",
-    "test": "vitest run --config vitest.config.ts",
+    "test": "npm run test:unit && npm run test:components",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:components": "jest --config jest.config.cjs",
     "eas-build-post-install": "npm run build --workspace @betterc0de/schema"
   },
   "dependencies": {
