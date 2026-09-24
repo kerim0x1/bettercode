@@ -44,6 +44,11 @@ import {
   lineNumbers,
 } from "@codemirror/view"
 import { tags } from "@lezer/highlight"
+import {
+  joinedLength,
+  lineBreakOf,
+  type LineBreak,
+} from "../src/editor/line-breaks"
 import type {
   EditorCommand,
   EditorEvent,
@@ -161,6 +166,8 @@ const language = new Compartment()
 const access = new Compartment()
 const wrapping = new Compartment()
 let view: EditorView | null = null
+/** The file's line break, which the text's lines are joined with. */
+let lineBreak: LineBreak = "\n"
 /** The text as loaded, to tell the app whether there are changes. */
 let loaded = ""
 let changeTimer: ReturnType<typeof setTimeout> | null = null
@@ -169,12 +176,20 @@ function send(event: EditorEvent): void {
   window.ReactNativeWebView?.postMessage(JSON.stringify(event))
 }
 
+/** The editor's text, with the file's line breaks. */
+function currentText(editor: EditorView): string {
+  const doc = editor.state.doc
+  return doc.sliceString(0, doc.length, lineBreak)
+}
+
 function reportChange(): void {
   if (!view) return
-  const doc = view.state.doc
   send({
     type: "changed",
-    dirty: doc.length !== loaded.length || doc.toString() !== loaded,
+    // A different length needs no look at the text.
+    dirty:
+      joinedLength(view.state.doc, lineBreak) !== loaded.length ||
+      currentText(view) !== loaded,
     canUndo: undoDepth(view.state) > 0,
     canRedo: redoDepth(view.state) > 0,
   })
@@ -239,7 +254,7 @@ function goToLine(line: number): void {
 function handle(command: EditorCommand): void {
   switch (command.type) {
     case "load": {
-      loaded = command.text
+      lineBreak = lineBreakOf(command.text)
       const state = EditorState.create({
         doc: command.text,
         extensions: extensions(command),
@@ -250,6 +265,9 @@ function handle(command: EditorCommand): void {
         if (!parent) throw new Error("The editor's page has no editor element.")
         view = new EditorView({ state, parent })
       }
+      // The text as the editor gives it back: in a file that mixes line
+      // breaks, all are its most common one (src/editor/line-breaks.ts).
+      loaded = currentText(view)
       if (command.line) goToLine(command.line)
       reportChange()
       return
@@ -270,11 +288,11 @@ function handle(command: EditorCommand): void {
       send({
         type: "text",
         requestId: command.requestId,
-        text: view?.state.doc.toString() ?? "",
+        text: view ? currentText(view) : "",
       })
       return
     case "markSaved":
-      if (view) loaded = view.state.doc.toString()
+      if (view) loaded = currentText(view)
       reportChange()
       return
     case "undo":
