@@ -1,6 +1,7 @@
 import type {
   ApprovalResponse,
   ChatSendResponse,
+  ThreadMetadataUpdate,
 } from "@betterc0de/schema/http-contracts"
 import type { RemoteProtocol } from "@betterc0de/schema/remote-protocol"
 import type {
@@ -61,6 +62,10 @@ export interface RemoteApi {
   listDiffs(threadId: string): Promise<ThreadDiffs>
   listProjects(): Promise<ProjectSummary[]>
   createThread(thread: ChatThread): Promise<void>
+  /** Only from desktops that list the `threads.rename` feature. */
+  renameThread(threadId: string, title: string): Promise<ThreadMetadataUpdate>
+  /** Deletes the chat, its history and its worktree on the desktop. */
+  deleteThread(threadId: string): Promise<void>
   listProviderInstances(cwd?: string | null): Promise<ProviderInstance[]>
   goal(body: ChatRequestBody): Promise<{ goal: ChatThread["goal"] | null }>
   sendMessage(body: ChatRequestBody): Promise<ChatSendResponse>

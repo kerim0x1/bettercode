@@ -212,4 +212,43 @@ describe.each([
       )
     ).rejects.toThrow()
   })
+
+  // Last: it renames the shared chat and deletes one of its own.
+  it("renames a chat, and deletes one", async () => {
+    const bootstrap = parseRemoteBootstrap(await fixture.api.bootstrap())
+    expect(hasFeature(bootstrap.protocol, REMOTE_FEATURES.threadsRename)).toBe(
+      true
+    )
+    const renamed = await fixture.api.renameThread(
+      fixture.threadId,
+      "  Renamed through the contract  "
+    )
+    expect(() =>
+      httpContracts.renameThread.response.parse(renamed)
+    ).not.toThrow()
+    expect(renamed).toMatchObject({
+      threadId: fixture.threadId,
+      title: "Renamed through the contract",
+    })
+    const thread = await fixture.api.getThread(fixture.threadId)
+    expect(thread).toMatchObject({
+      title: "Renamed through the contract",
+      // Nothing else about the chat changes.
+      projectPath: fixture.projectRoot,
+    })
+
+    const now = new Date().toISOString()
+    await fixture.api.createThread({
+      id: "contract-delete",
+      title: "To delete",
+      projectName: "contract-project",
+      projectPath: fixture.projectRoot,
+      messages: [],
+      createdAt: now,
+      updatedAt: now,
+    })
+    expect(await fixture.api.getThread("contract-delete")).not.toBeNull()
+    await fixture.api.deleteThread("contract-delete")
+    expect(await fixture.api.getThread("contract-delete")).toBeNull()
+  })
 })

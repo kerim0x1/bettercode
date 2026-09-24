@@ -21,11 +21,14 @@ import type {
 import { createId } from "@/lib/ids"
 import { describeRemoteError, remoteErrorMessage } from "@/lib/remote-errors"
 import { RemoteApiError } from "@/transport/live/http"
+import type { ThreadMetadataUpdate } from "@betterc0de/schema/http-contracts"
 import type { ChatRequestBody, RemoteApi } from "@/transport/types"
 import { useComposerSettings } from "./composer-settings-store"
+import { useQueueStore } from "./queue-store"
 import {
   decodeActivityFrame,
   decodeRuntimeFrame,
+  decodeThreadMetadataFrame,
   eventDelta,
   isTurnStarted,
   isTurnTerminal,
@@ -154,6 +157,17 @@ interface AppStore {
    */
   refreshAttention: (api: RemoteApi) => Promise<void>
   createThread: (api: RemoteApi, project: ProjectSummary) => Promise<ChatThread>
+  /** Renames a chat on the desktop, which tells every other client. */
+  renameThread: (
+    api: RemoteApi,
+    threadId: string,
+    title: string
+  ) => Promise<void>
+  /**
+   * Deletes a chat on the desktop (its worktree too) and forgets everything
+   * this phone kept for it: messages, requests, queue and settings.
+   */
+  deleteThread: (api: RemoteApi, threadId: string) => Promise<void>
   /**
    * Sends a message, or runs a /goal command. A message that fails stays in
    * the chat, marked, with its request in the outbox; a queued message's
@@ -469,6 +483,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return thread
   },
 
+  renameThread: async (api, threadId, title) => {
+    const owner = generation
+    const update = await api.renameThread(threadId, title)
+    if (owner === generation) set((state) => applyThreadMetadata(state, update))
+  },
+
+  deleteThread: async (api, threadId) => {
+    const owner = generation
+    await api.deleteThread(threadId)
+    if (owner !== generation) return
+    set((state) => forgetThread(state, threadId))
+    useQueueStore.getState().discardThread(threadId)
+    useComposerSettings.getState().forget(threadId)
+  },
+
   send: async (api, threadId, content, selection, delivery) => {
     const owner = generation
     const thread = get().threads.find((candidate) => candidate.id === threadId)
@@ -720,6 +749,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const activity = decodeActivityFrame(frame)
     if (activity) {
       set((state) => applyActivity(state, activity))
+      return null
+    }
+    const metadata = decodeThreadMetadataFrame(frame)
+    if (metadata) {
+      set((state) => applyThreadMetadata(state, metadata))
       return null
     }
     const event = decodeRuntimeFrame(frame)
@@ -995,6 +1029,44 @@ async function dispatchOutboxMessage(
     if (entry.owner === "queue" && code === "turn_active")
       return { status: "busy" }
     return { status: "failed", error: description.message }
+  }
+}
+
+/** A chat's new title, from a rename here or a `thread.metadata` frame. */
+function applyThreadMetadata(
+  state: AppStore,
+  update: ThreadMetadataUpdate
+): Partial<AppStore> {
+  if (!state.threads.some((thread) => thread.id === update.threadId)) return {}
+  return {
+    threads: sortByUpdated(
+      state.threads.map((thread) =>
+        thread.id === update.threadId
+          ? { ...thread, title: update.title, updatedAt: update.updatedAt }
+          : thread
+      )
+    ),
+  }
+}
+
+/** Everything the phone keeps for a chat, gone with it. */
+function forgetThread(state: AppStore, threadId: string): Partial<AppStore> {
+  return {
+    threads: state.threads.filter((thread) => thread.id !== threadId),
+    messagesByThread: omitKey(state.messagesByThread, threadId),
+    earlierMessagesByThread: omitKey(state.earlierMessagesByThread, threadId),
+    messagesErrorByThread: omitKey(state.messagesErrorByThread, threadId),
+    activitiesByThread: omitKey(state.activitiesByThread, threadId),
+    streamsByThread: omitKey(state.streamsByThread, threadId),
+    requestsByThread: omitKey(state.requestsByThread, threadId),
+    selectedModels: omitKey(state.selectedModels, threadId),
+    turnOptionsByThread: omitKey(state.turnOptionsByThread, threadId),
+    loadingMessages: omitKey(state.loadingMessages, threadId),
+    outbox: Object.fromEntries(
+      Object.entries(state.outbox).filter(
+        ([, entry]) => entry.threadId !== threadId
+      )
+    ),
   }
 }
 

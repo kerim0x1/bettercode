@@ -119,6 +119,9 @@ export function createLiveApi(connection: HttpConnection): RemoteApi {
       call<ThreadDiffs>(`/threads/${encodeURIComponent(threadId)}/diffs`),
     listProjects: () => call<ProjectSummary[]>("/projects"),
     createThread: (thread) => contract("saveThread", { body: thread }),
+    renameThread: (threadId, title) =>
+      contract("renameThread", { id: threadId, body: { title } }),
+    deleteThread: (threadId) => contract("deleteThread", { id: threadId }),
     listProviderInstances: (cwd) =>
       call<ProviderInstance[]>(
         `/providers/instances${query({ cwd: cwd || undefined })}`

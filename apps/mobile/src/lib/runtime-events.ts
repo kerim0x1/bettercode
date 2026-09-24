@@ -2,7 +2,11 @@ import {
   permissionUpdateSchema,
   type PermissionUpdate,
 } from "@betterc0de/schema"
-import { threadActivityResponseSchema } from "@betterc0de/schema/http-contracts"
+import {
+  threadActivityResponseSchema,
+  threadMetadataUpdateSchema,
+  type ThreadMetadataUpdate,
+} from "@betterc0de/schema/http-contracts"
 import { isRecord } from "@betterc0de/schema/json-read"
 import type { PendingRequest, ThreadActivity } from "@/types/remote"
 
@@ -25,6 +29,15 @@ export interface DecodedRuntimeEvent {
 export function decodeActivityFrame(frame: unknown): ThreadActivity | null {
   if (!isRecord(frame) || frame.channel !== "thread.activity") return null
   const parsed = threadActivityResponseSchema.safeParse(frame.data)
+  return parsed.success ? parsed.data : null
+}
+
+/** A chat renamed on the desktop or another client (`thread.metadata`). */
+export function decodeThreadMetadataFrame(
+  frame: unknown
+): ThreadMetadataUpdate | null {
+  if (!isRecord(frame) || frame.channel !== "thread.metadata") return null
+  const parsed = threadMetadataUpdateSchema.safeParse(frame.data)
   return parsed.success ? parsed.data : null
 }
 

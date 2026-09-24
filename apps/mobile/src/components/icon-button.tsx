@@ -15,6 +15,7 @@ export function IconButton({
   disabled = false,
   tone = "default",
   style,
+  testID,
 }: {
   icon: ComponentType<LucideProps>
   label: string
@@ -22,6 +23,7 @@ export function IconButton({
   disabled?: boolean
   tone?: "default" | "primary" | "mint" | "danger"
   style?: ViewStyle
+  testID?: string
 }) {
   const filled = tone === "primary" || tone === "mint"
   const iconColor = filled
@@ -34,6 +36,7 @@ export function IconButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled }}
+      testID={testID}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [

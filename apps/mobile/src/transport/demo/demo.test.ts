@@ -254,6 +254,29 @@ describe("demo desktop", () => {
     ).toEqual(recorded.map((activity) => activity.id))
   })
 
+  it("renames a chat for every client, and deletes one", async () => {
+    const { transport, frames } = demo()
+    const renamed = await transport.api.renameThread(
+      "demo-dark-mode",
+      "  Dark mode  "
+    )
+    expect(renamed).toMatchObject({
+      threadId: "demo-dark-mode",
+      title: "Dark mode",
+    })
+    expect(frames).toContainEqual({ channel: "thread.metadata", data: renamed })
+    expect((await transport.api.getThread("demo-dark-mode"))?.title).toBe(
+      "Dark mode"
+    )
+    await expect(
+      transport.api.renameThread("missing", "Name")
+    ).rejects.toMatchObject({ status: 404, code: "thread_not_found" })
+
+    await transport.api.deleteThread("demo-dark-mode")
+    expect(await transport.api.getThread("demo-dark-mode")).toBeNull()
+    expect(await transport.api.listMessages("demo-dark-mode")).toEqual([])
+  })
+
   it("refuses a second message while a reply runs, as the desktop does", async () => {
     const { transport } = demo()
     const threadId = "demo-release-notes"

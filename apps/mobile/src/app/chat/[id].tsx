@@ -16,6 +16,7 @@ import {
   groupToolActivitiesByTurn,
 } from "@betterc0de/schema/activity-tools"
 import type { PermissionLevel } from "@betterc0de/schema/chat-controls"
+import { REMOTE_FEATURES } from "@betterc0de/schema/remote-protocol"
 import {
   ArrowLeft,
   Eye,
@@ -23,6 +24,9 @@ import {
   GitCompareArrows,
   GitBranch,
   Info,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
   WifiOff,
   X,
 } from "lucide-react-native"
@@ -31,11 +35,13 @@ import { Screen, StateView } from "@/components/layout"
 import { IconButton } from "@/components/icon-button"
 import { ChatComposer } from "@/components/chat-composer"
 import { MessageItem, StreamingMessage } from "@/components/message-item"
+import { DropdownRow, DropdownSheet } from "@/components/dropdown-sheet"
 import { ModelPicker } from "@/components/model-picker"
 import { OtherChatsWaiting } from "@/components/other-chats-waiting"
 import { PendingRequestCard } from "@/components/pending-request-card"
 import { ProviderHandoffNotice } from "@/components/provider-handoff-notice"
 import { QueuedMessages } from "@/components/queued-messages"
+import { RenameSheet } from "@/components/rename-sheet"
 import { SendFailure } from "@/components/send-failure"
 import { colors, font, radius, spacing, type } from "@/design/theme"
 import { chatTimeline, type TimelineEntry } from "@/lib/chat-timeline"
@@ -54,7 +60,11 @@ import {
 import { useQueueStore } from "@/store/queue-store"
 import { useSessionStore } from "@/store/session-store"
 import type { RemoteApi } from "@/transport/types"
-import { useReadOnly, useRemoteApi } from "@/transport/use-transport"
+import {
+  useFeature,
+  useReadOnly,
+  useRemoteApi,
+} from "@/transport/use-transport"
 
 const EMPTY_REQUESTS: PendingRequest[] = []
 /** Goal commands run at once, even while a reply runs; they never queue. */
@@ -132,6 +142,11 @@ export default function ChatScreen() {
       : false
   )
   const [notice, setNotice] = useState<PermissionNotice | null>(null)
+  const [actionsOpen, setActionsOpen] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const renameThread = useAppStore((state) => state.renameThread)
+  const deleteThread = useAppStore((state) => state.deleteThread)
+  const canRename = useFeature(REMOTE_FEATURES.threadsRename)
   const [draft, setDraft] = useState("")
   const [options, setOptions] = useState<ModelOption[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -299,6 +314,36 @@ export default function ChatScreen() {
   const retry = onFailure(retrySend)
   const sendAsNew = onFailure(sendAgainAsNew)
 
+  // The desktop's question, and what it leaves out: deleting a chat also
+  // removes its worktree, with whatever is not committed there.
+  const confirmDelete = () => {
+    if (!thread || !api) return
+    const name = thread.title || "New Chat"
+    const worktree = thread.worktreePath
+      ? ` Its worktree at ${thread.worktreePath} is removed too, with any changes there that are not committed.`
+      : ""
+    Alert.alert(
+      "Delete chat?",
+      `"${name}" will be permanently deleted.${worktree}`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            router.back()
+            deleteThread(api, thread.id).catch((error) =>
+              Alert.alert(
+                "Could not delete the chat",
+                remoteErrorMessage(error)
+              )
+            )
+          },
+        },
+      ]
+    )
+  }
+
   const choosePermission = (level: PermissionLevel) => {
     setNotice(null)
     if (!api) {
@@ -381,6 +426,14 @@ export default function ChatScreen() {
             })
           }
         />
+        {thread && !readOnly ? (
+          <IconButton
+            icon={MoreHorizontal}
+            label="Chat actions"
+            testID="chat-actions"
+            onPress={() => setActionsOpen(true)}
+          />
+        ) : null}
       </View>
 
       <OtherChatsWaiting threadId={threadId} />
@@ -647,6 +700,50 @@ export default function ChatScreen() {
           }
         />
       )}
+      <DropdownSheet
+        visible={actionsOpen}
+        onClose={() => setActionsOpen(false)}
+        title="Chat"
+      >
+        {canRename ? (
+          <DropdownRow
+            icon={<Pencil size={15} color={colors.textSecondary} />}
+            label="Rename"
+            onPress={() => {
+              setActionsOpen(false)
+              setRenaming(true)
+            }}
+          />
+        ) : null}
+        <DropdownRow
+          icon={<Trash2 size={15} color={colors.danger} />}
+          label="Delete chat"
+          destructive
+          onPress={() => {
+            setActionsOpen(false)
+            confirmDelete()
+          }}
+        />
+      </DropdownSheet>
+      {thread ? (
+        <RenameSheet
+          visible={renaming}
+          title={thread.title}
+          onCancel={() => setRenaming(false)}
+          onSave={async (title) => {
+            if (!api) return
+            try {
+              await renameThread(api, thread.id, title)
+              setRenaming(false)
+            } catch (error) {
+              Alert.alert(
+                "Could not rename the chat",
+                remoteErrorMessage(error)
+              )
+            }
+          }}
+        />
+      ) : null}
       <ModelPicker
         visible={pickerOpen}
         options={options}

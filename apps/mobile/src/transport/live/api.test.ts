@@ -259,6 +259,38 @@ describe("mobile HTTP contracts", () => {
     })
   })
 
+  it("renames and deletes a chat through the shared contracts", async () => {
+    const renamed = {
+      threadId: "t",
+      title: "Release notes",
+      updatedAt: "2026-09-24T10:00:00.000Z",
+    }
+    const fetchMock = stubFetch(
+      json(renamed),
+      new Response(null, { status: 204 })
+    )
+    const api = createLiveApi(connection(fetchMock))
+    await expect(api.renameThread("t", "Release notes")).resolves.toEqual(
+      renamed
+    )
+    await expect(api.deleteThread("t")).resolves.toBeUndefined()
+    const [renameUrl, renameInit] = fetchMock.mock.calls[0] as [
+      string,
+      RequestInit,
+    ]
+    expect(renameUrl).toBe("http://localhost:4321/api/v1/threads/t/title")
+    expect(renameInit.method).toBe("POST")
+    expect(JSON.parse(String(renameInit.body))).toEqual({
+      title: "Release notes",
+    })
+    const [deleteUrl, deleteInit] = fetchMock.mock.calls[1] as [
+      string,
+      RequestInit,
+    ]
+    expect(deleteUrl).toBe("http://localhost:4321/api/v1/threads/t")
+    expect(deleteInit.method).toBe("DELETE")
+  })
+
   it("rejects malformed thread responses", async () => {
     const fetchMock = stubFetch(json([{ id: "t" }]))
     await expect(

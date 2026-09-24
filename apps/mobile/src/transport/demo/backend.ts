@@ -49,7 +49,7 @@ export const DEMO_PROTOCOL: RemoteProtocol = {
     accessLevel: "full",
     terminalGranted: false,
     maxRequestBytes: 2 * 1024 * 1024,
-    features: [REMOTE_FEATURES.threadsGet],
+    features: [REMOTE_FEATURES.threadsGet, REMOTE_FEATURES.threadsRename],
   },
 }
 
@@ -168,6 +168,29 @@ export class DemoBackend {
           ...this.threads.filter((item) => item.id !== thread.id),
         ]
         this.messages[thread.id] ??= []
+      },
+      renameThread: async (threadId, title) => {
+        if (!this.threads.some((thread) => thread.id === threadId))
+          throw new RemoteApiError("thread not found", 404, "thread_not_found")
+        const update = {
+          threadId,
+          title: title.trim(),
+          updatedAt: this.now().toISOString(),
+        }
+        this.updateThread(threadId, (thread) => ({
+          ...thread,
+          title: update.title,
+          updatedAt: update.updatedAt,
+        }))
+        const frame = { channel: "thread.metadata", data: update }
+        for (const listener of [...this.listeners]) listener(frame)
+        return copy(update)
+      },
+      deleteThread: async (threadId) => {
+        this.cancelTurn(threadId)
+        this.threads = this.threads.filter((thread) => thread.id !== threadId)
+        delete this.messages[threadId]
+        delete this.activities[threadId]
       },
       listProviderInstances: async () => copy(DEMO_PROVIDER_INSTANCES),
       goal: async () => ({ goal: null }),
