@@ -36,6 +36,7 @@ import {
 } from "./fixtures"
 import { DemoFiles } from "./files"
 import { DemoGit } from "./git"
+import { DemoTerminals } from "./terminal"
 
 /**
  * An in-memory stand-in for a paired desktop. It backs "Try the demo"
@@ -60,12 +61,14 @@ export const DEMO_PROTOCOL: RemoteProtocol = {
   backendVersion: "demo",
   capabilities: {
     accessLevel: "full",
-    terminalGranted: false,
+    // The demo's terminal is a pretend shell (./terminal.ts).
+    terminalGranted: true,
     maxRequestBytes: 2 * 1024 * 1024,
     features: [
       REMOTE_FEATURES.threadsGet,
       REMOTE_FEATURES.threadsRename,
       REMOTE_FEATURES.workspaceWriteIfMatch,
+      REMOTE_FEATURES.terminal,
     ],
   },
 }
@@ -117,6 +120,7 @@ export class DemoBackend {
   private counter = 0
   private readonly git: DemoGit
   private readonly files: DemoFiles
+  private readonly terminals: DemoTerminals
   readonly api: RemoteApi
 
   constructor(options: DemoOptions = {}) {
@@ -127,6 +131,21 @@ export class DemoBackend {
     this.messages = demoMessages(now)
     this.git = new DemoGit(demoGitSeeds(now), this.now)
     this.files = new DemoFiles(this.git, DEMO_FILES, this.now)
+    this.terminals = new DemoTerminals(
+      {
+        roots: () => this.git.roots(),
+        list: (path) =>
+          this.files
+            .list(path)
+            .entries.map((entry) =>
+              entry.isDir ? `${entry.name}/` : entry.name
+            ),
+        now: this.now,
+      },
+      (frame) => {
+        for (const listener of [...this.listeners]) listener(frame)
+      }
+    )
     this.session = {
       id: "demo-session",
       label: "Demo",
@@ -144,6 +163,11 @@ export class DemoBackend {
     return () => {
       this.listeners.delete(listener)
     }
+  }
+
+  /** A call over the stream: the terminal's (./terminal.ts). */
+  async call(method: string, params: unknown): Promise<unknown> {
+    return JSON.parse(JSON.stringify(this.terminals.handle(method, params)))
   }
 
   /** Stops every scripted turn; nothing is scheduled afterwards. */

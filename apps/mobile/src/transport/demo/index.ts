@@ -28,6 +28,7 @@ export function createDemoTransport(
           unsubscribe = null
         },
         reconnectNow: () => undefined,
+        call: (method, params) => backend.call(method, params),
       }
     },
     dispose: () => backend.dispose(),
