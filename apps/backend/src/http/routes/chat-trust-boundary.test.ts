@@ -20,15 +20,29 @@ describe("chat send workspace and permission trust boundary", () => {
   it("confines remote compaction configuration reads to approved workspaces", async () => {
     const registered = await temporaryDirectory("compaction-registered")
     const outside = await temporaryDirectory("compaction-outside")
-    const app = chatApp({ projects: [registered], threadProjectPath: registered, startTurn: vi.fn() })
-    const read = (cwd: string | undefined, token: string) => app.request("/chat/compaction/decision", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ threadId: "thread-1", cwd, incomingContent: "continue" }),
+    const app = chatApp({
+      projects: [registered],
+      threadProjectPath: registered,
+      startTurn: vi.fn(),
     })
+    const read = (cwd: string | undefined, token: string) =>
+      app.request("/chat/compaction/decision", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          threadId: "thread-1",
+          cwd,
+          incomingContent: "continue",
+        }),
+      })
     const denied = await read(outside, "remote-secret")
     expect(denied.status).toBe(403)
-    expect(await denied.json()).toMatchObject({ code: "workspace_not_registered" })
+    expect(await denied.json()).toMatchObject({
+      code: "workspace_not_registered",
+    })
     expect((await read(registered, "remote-secret")).status).toBe(200)
     expect((await read(undefined, "remote-secret")).status).toBe(200)
     expect((await read(outside, "desktop-secret")).status).toBe(200)
@@ -293,7 +307,10 @@ function chatApp(input: {
       dataDir: input.projects[0] ?? process.cwd(),
       authToken: "desktop-secret",
     },
-    remoteAccess: { authenticate: (token: string) => token === "remote-secret" ? { id: "remote-session" } : null },
+    remoteAccess: {
+      authenticate: (token: string) =>
+        token === "remote-secret" ? { id: "remote-session" } : null,
+    },
     settings: {
       get: () => ({ auto_save_conversations: false }),
     },

@@ -50,8 +50,17 @@ function reserveRemoteProviderTurn(
 }
 
 export function registerChatRoutes(api: Hono, state: AppState): void {
-  api.post("/chat/goal", c => handleHttpContract(c, "chatGoal", async body =>
-    controlThreadGoal(state, body, () => reserveRemoteProviderTurn(state, c)), { operation: "chat goal" }))
+  api.post("/chat/goal", (c) =>
+    handleHttpContract(
+      c,
+      "chatGoal",
+      async (body) =>
+        controlThreadGoal(state, body, () =>
+          reserveRemoteProviderTurn(state, c)
+        ),
+      { operation: "chat goal" }
+    )
+  )
   api.post("/chat/persist-user", (c) =>
     handleHttpContract(
       c,
@@ -76,8 +85,14 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
       c,
       "chatSend",
       async (parsedBody) => {
-        if (parsedBody.orchestration?.enabled && requestIdentity(c, state.config, state)?.kind !== "local")
-          throw new HttpError(403, "Only the desktop host can configure orchestration.")
+        if (
+          parsedBody.orchestration?.enabled &&
+          requestIdentity(c, state.config, state)?.kind !== "local"
+        )
+          throw new HttpError(
+            403,
+            "Only the desktop host can configure orchestration."
+          )
         return dispatchChatTurn(state, parsedBody, () =>
           reserveRemoteProviderTurn(state, c)
         )
@@ -104,9 +119,10 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
           body.cwd ??
           state.threads.getThreadProjectPath?.(body.threadId) ??
           null
-        const approvedCwd = cwd && requestIdentity(c, state.config, state)?.kind === "remote"
-          ? await resolveApprovedWorkspaceRoot(state, cwd)
-          : cwd
+        const approvedCwd =
+          cwd && requestIdentity(c, state.config, state)?.kind === "remote"
+            ? await resolveApprovedWorkspaceRoot(state, cwd)
+            : cwd
         const resolved = await resolveAutoCompactionDecisionForThread(state, {
           threadId: body.threadId,
           cwd: approvedCwd,
