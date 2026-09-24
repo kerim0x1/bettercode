@@ -38,8 +38,9 @@ export function AppRuntime() {
   }, [hydrate])
 
   // Chat settings, queued messages and unsaved edits belong to the
-  // connection they were made for: a paired desktop's are kept in the app's documents across
-  // restarts, the demo's only in memory, and ending a pairing ends them.
+  // connection they were made for: a paired desktop's are kept in the app's
+  // documents across restarts, the demo's only in memory, and ending a
+  // pairing ends them.
   useEffect(() => {
     if (!mode) return
     setDocumentStorage(

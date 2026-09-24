@@ -2,7 +2,7 @@ import path from "node:path"
 import { afterEach, describe, expect, it, jest } from "@jest/globals"
 import { act, fireEvent, screen, waitFor } from "@testing-library/react-native"
 import { renderRouter } from "expo-router/testing-library"
-import { Alert, type AlertButton } from "react-native"
+import { Alert, BackHandler, type AlertButton } from "react-native"
 import { draftFor } from "@/lib/editor-drafts"
 import { useAppStore } from "@/store/app-store"
 import { useSessionStore } from "@/store/session-store"
@@ -301,6 +301,77 @@ describe("the editor", () => {
       // The draft's changes are unsaved, though the editor started with them.
       expect(screen.getByText(/UNSAVED/)).toBeTruthy()
       expect(screen.getByTestId("editor-save")).toBeEnabled()
+    },
+    FLOW_TIMEOUT_MS
+  )
+
+  it(
+    "keeps typing that goes on without a pause as a draft",
+    async () => {
+      await openTheme()
+      const typed = ["a\n", "ab\n", "abc\n", "abcd\n", "abcde\n"]
+      // A change every 300 ms: never a second without one. (renderRouter
+      // runs the app on Jest's fake timers; the test moves the clock.)
+      for (const text of typed) {
+        await act(async () => mockEditor.type(text))
+        await act(async () => {
+          jest.advanceTimersByTime(300)
+        })
+      }
+      const draft = draftFor(ROOT, "src/theme.ts")
+      expect(draft).not.toBeNull()
+      expect(typed).toContain(draft?.text)
+    },
+    FLOW_TIMEOUT_MS
+  )
+
+  it(
+    "lets the draft go when the changes are undone",
+    async () => {
+      await openTheme()
+      const original = mockEditor.loaded
+      await act(async () => mockEditor.type("changed\n"))
+      await waitFor(
+        () => expect(draftFor(ROOT, "src/theme.ts")?.text).toBe("changed\n"),
+        { timeout: 5_000 }
+      )
+
+      await act(async () => mockEditor.type(original))
+      expect(draftFor(ROOT, "src/theme.ts")).toBeNull()
+      expect(screen.queryByText(/UNSAVED/)).toBeNull()
+      await fireEvent.press(screen.getByLabelText("Back"))
+      expect(await screen.findByTestId("file-edit")).toBeTruthy()
+      expect(screen.queryByTestId("file-draft")).toBeNull()
+    },
+    FLOW_TIMEOUT_MS
+  )
+
+  it(
+    "keeps the edits as a draft when Android's back leaves the editor",
+    async () => {
+      const handlers: Array<() => boolean | null | undefined> = []
+      jest
+        .spyOn(BackHandler, "addEventListener")
+        .mockImplementation((_event, handler) => {
+          handlers.push(handler)
+          return {
+            remove: () => {
+              const index = handlers.indexOf(handler)
+              if (index >= 0) handlers.splice(index, 1)
+            },
+          }
+        })
+      await openTheme()
+      await act(async () => mockEditor.type("typed\n"))
+
+      // Right away, before the draft's second is up.
+      let handled: boolean | null | undefined
+      await act(async () => {
+        handled = handlers.at(-1)?.()
+      })
+      expect(handled).toBe(true)
+      expect(await screen.findByTestId("file-draft")).toBeTruthy()
+      expect(draftFor(ROOT, "src/theme.ts")?.text).toBe("typed\n")
     },
     FLOW_TIMEOUT_MS
   )

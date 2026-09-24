@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Alert, Modal, StyleSheet, Text, View } from "react-native"
-import { useLocalSearchParams, useRouter } from "expo-router"
+import { Alert, BackHandler, Modal, StyleSheet, Text, View } from "react-native"
+import {
+  Stack,
+  useFocusEffect,
+  useLocalSearchParams,
+  useRouter,
+} from "expo-router"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { ArrowLeft, Redo2, Save, Undo2, WrapText, X } from "lucide-react-native"
 import { parseGitDiff } from "@betterc0de/schema/git-diff"
@@ -38,7 +43,10 @@ function fileName(value: string): string {
   return value.replace(/\\/g, "/").split("/").pop() || value
 }
 
-/** Seconds after the last change before the draft is written. */
+/**
+ * How long after a change the draft is written: the most typing that is
+ * ever only in the editor.
+ */
 const DRAFT_DELAY_MS = 1_000
 
 const isConflict = (error: unknown) =>
@@ -130,6 +138,8 @@ export default function EditScreen() {
   const wrapRef = useRef(wrap)
   wrapRef.current = wrap
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const restoredRef = useRef(restored)
+  restoredRef.current = restored
   const unsaved = dirty || restored
 
   /** Puts a text into the editor: the file, a draft, or the desktop's. */
@@ -290,14 +300,25 @@ export default function EditScreen() {
         setDirty(event.dirty)
         setHistory({ canUndo: event.canUndo, canRedo: event.canRedo })
         if (event.dirty) {
-          if (draftTimer.current) clearTimeout(draftTimer.current)
-          draftTimer.current = setTimeout(() => {
-            void writeDraft().catch(() => undefined)
-          }, DRAFT_DELAY_MS)
+          // A second after the first change, not after the last: typing
+          // on and on is still kept.
+          if (!draftTimer.current) {
+            draftTimer.current = setTimeout(() => {
+              draftTimer.current = null
+              void writeDraft().catch(() => undefined)
+            }, DRAFT_DELAY_MS)
+          }
+        } else if (!restoredRef.current) {
+          // Back to the desktop's text (undone, or saved): no draft.
+          if (draftTimer.current) {
+            clearTimeout(draftTimer.current)
+            draftTimer.current = null
+          }
+          clearDraft(root, relative)
         }
       }
     },
-    [writeDraft]
+    [relative, root, writeDraft]
   )
 
   /**
@@ -374,11 +395,34 @@ export default function EditScreen() {
     })
   }
 
-  const leave = async () => {
-    // A leave keeps the edits as a draft; nothing is lost.
-    if (unsaved) await writeDraft().catch(() => undefined)
-    router.back()
-  }
+  /** A second press while the draft is written would go back twice. */
+  const leaving = useRef(false)
+  const leave = useCallback(async () => {
+    if (leaving.current) return
+    leaving.current = true
+    try {
+      // A leave keeps the edits as a draft; nothing is lost.
+      if (unsaved) await writeDraft().catch(() => undefined)
+      router.back()
+    } finally {
+      leaving.current = false
+    }
+  }, [router, unsaved, writeDraft])
+
+  // Android's back (button or gesture) leaves the same way. On iOS the
+  // swipe back is off while edits are unsaved: Back keeps them as a draft.
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener(
+        "hardwareBackPress",
+        () => {
+          void leave()
+          return true
+        }
+      )
+      return () => subscription.remove()
+    }, [leave])
+  )
 
   const comparison = useMemo(() => {
     if (!conflict) return null
@@ -391,6 +435,7 @@ export default function EditScreen() {
 
   return (
     <Screen edges={["top", "bottom"]}>
+      <Stack.Screen options={{ gestureEnabled: !unsaved }} />
       <View style={styles.header}>
         <IconButton
           icon={ArrowLeft}
