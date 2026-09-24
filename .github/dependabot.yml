@@ -10,6 +10,25 @@ updates:
         dependency-type: production
       development-dependencies:
         dependency-type: development
+    ignore:
+      # The Expo SDK fixes React Native and its native modules as one set
+      # (`expo install --check` in mobile:check enforces it). Moving to a new
+      # SDK is done deliberately, all packages at once. React Native is still
+      # 0.x, so its "minor" releases are the breaking ones.
+      - dependency-name: "expo"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "expo-*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@expo/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "jest-expo"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-native"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "react-native-*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "@react-native/*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

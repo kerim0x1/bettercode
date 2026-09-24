@@ -7,6 +7,12 @@ inputs:
     description: Node version to use instead of the exact pin in .nvmrc.
     required: false
     default: ""
+  desktop:
+    description: >-
+      "false" for jobs that build only the phone app: no Electron cache and
+      no Linux packaging tools.
+    required: false
+    default: "true"
 runs:
   using: composite
   steps:
@@ -19,6 +25,7 @@ runs:
         cache: npm
 
     - name: Cache Electron and electron-builder downloads
+      if: inputs.desktop == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
@@ -32,7 +39,7 @@ runs:
         restore-keys: electron-${{ runner.os }}-${{ runner.arch }}-
 
     - name: Install Linux packaging and display tools
-      if: runner.os == 'Linux'
+      if: runner.os == 'Linux' && inputs.desktop == 'true'
       shell: bash
       # xvfb: virtual display for the packaged-app smoke tests.
       # rpm: rpmbuild for electron-builder's .rpm target.

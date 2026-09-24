@@ -4,6 +4,9 @@ name: CI
 # has to pass: clean install, versions, formatting, lint, type-check, tests,
 # production build, packaging, a launch of the packaged app, installers, and
 # an install → launch → uninstall test of those installers on a clean runner.
+# The phone app is built and tested on an Android emulator and an iOS
+# simulator by jobs of its own. No job here uses secrets: the APK is signed
+# with a throwaway key, and the iOS build is unsigned.
 
 on:
   push:
@@ -51,7 +54,8 @@ jobs:
         uses: ./.github/actions/prepare
 
       - name: release:check
-        run: npm run release:check -- --arch ${{ matrix.arch }}
+        # The phone app is built by the mobile-* jobs below.
+        run: npm run release:check -- --arch ${{ matrix.arch }} --mobile none
 
   node-compat:
     name: Node ${{ matrix.node }} source and build (${{ matrix.os }})
@@ -78,3 +82,99 @@ jobs:
 
       - name: release:check up to the production build
         run: npm run release:check -- --until build
+
+  mobile-android:
+    name: Phone app on Android (emulator)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      # The desktop's native rebuild and Electron are not needed here.
+      BETTERC0DE_SKIP_POSTINSTALL: "1"
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Prepare
+        uses: ./.github/actions/prepare
+        with:
+          desktop: "false"
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Prepare Android
+        uses: ./.github/actions/prepare-android
+
+      - name: Build and check the APK (throwaway key)
+        run: node scripts/mobile-android.mjs build --signing test-key
+
+      - name: Device tests on the emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          # The app's targetSdk (a test keeps the two equal).
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          # The name the device tests look for (scripts/mobile-toolchain.mjs).
+          avd-name: BetterC0de_Test
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: node scripts/mobile-android.mjs e2e
+
+      - name: Keep the device-test evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mobile-android-e2e
+          path: apps/mobile/build/e2e/android
+          if-no-files-found: ignore
+
+  mobile-ios:
+    name: Phone app on iOS (simulator)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      BETTERC0DE_SKIP_POSTINSTALL: "1"
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      # The Xcode App Store builds need; see docs/development/mobile.md.
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Prepare
+        uses: ./.github/actions/prepare
+        with:
+          desktop: "false"
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Set up JDK 17 for Maestro
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Cache CocoaPods and Maestro
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/Library/Caches/CocoaPods
+            ~/Library/Caches/betterc0de/maestro
+          key: ios-${{ runner.arch }}-${{ hashFiles('package-lock.json', 'apps/mobile/maestro/maestro.json') }}
+          restore-keys: ios-${{ runner.arch }}-
+
+      - name: Build, check and device-test the app
+        run: node scripts/mobile-ios.mjs all
+
+      - name: Keep the device-test evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mobile-ios-e2e
+          path: apps/mobile/build/e2e/ios
+          if-no-files-found: ignore
