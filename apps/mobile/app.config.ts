@@ -131,6 +131,16 @@ export default function appConfig({ config }: ConfigContext): ExpoConfig {
         backgroundColor: CANVAS,
       },
       permissions: ["android.permission.CAMERA"],
+      // Declared by the React Native template and expo-secure-store (for
+      // biometric unlock), none of which the app uses. Each would show in
+      // the install dialog; scripts/mobile-android.mjs lists what remains.
+      blockedPermissions: [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+      ],
       ...(googleServicesFile ? { googleServicesFile } : {}),
     },
     web: {

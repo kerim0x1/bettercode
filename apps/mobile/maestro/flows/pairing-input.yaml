@@ -1,0 +1,26 @@
+# A bare pairing code is refused before anything is sent: the app needs
+# the desktop's address with it.
+appId: com.betterc0de.remote
+name: Pairing checks the input before it connects
+tags:
+  - pairing
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: pair-screen
+    timeout: 60000
+- tapOn:
+    id: pair-manual-tab
+- tapOn:
+    id: pair-input
+- inputText: ABCD-EFGH-JKLM
+- hideKeyboard
+- tapOn:
+    id: pair-connect
+- extendedWaitUntil:
+    visible:
+      id: pair-error
+    timeout: 10000
+- assertVisible: A bare code also needs the desktop address.

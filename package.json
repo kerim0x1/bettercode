@@ -24,6 +24,7 @@
     "mobile:icons": "node scripts/generate-mobile-icons.mjs",
     "mobile:prebuild": "node scripts/mobile-prebuild.mjs",
     "mobile:toolchain": "node scripts/mobile-toolchain.mjs",
+    "mobile:apk": "node scripts/mobile-android.mjs",
     "typecheck:mobile": "npm run typecheck --workspace @betterc0de/mobile",
     "test:mobile": "npm run test --workspace @betterc0de/mobile",
     "test:e2e:remote": "npm run build:backend && npm run test:e2e --workspace @betterc0de/mobile",

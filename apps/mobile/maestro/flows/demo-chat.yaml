@@ -1,0 +1,48 @@
+# The demo, as App Review sees it: start it from the pairing screen, open a
+# chat, send a message, approve the agent's request, read the reply, and
+# leave the demo from the Host tab.
+appId: com.betterc0de.remote
+name: The demo from the pairing screen to Exit demo
+tags:
+  - demo
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: pair-demo
+    timeout: 60000
+- tapOn:
+    id: pair-demo
+- extendedWaitUntil:
+    visible:
+      id: chats-screen
+    timeout: 20000
+- assertVisible:
+    id: connection-demo
+- tapOn:
+    id: thread-row-demo-release-notes
+- tapOn:
+    id: chat-input
+- inputText: Draft the release notes
+- hideKeyboard
+- tapOn:
+    id: chat-send
+- extendedWaitUntil:
+    visible: Run npm test
+    timeout: 30000
+- tapOn:
+    id: request-approve
+- extendedWaitUntil:
+    visible: .*24 passed.*
+    timeout: 30000
+- assertNotVisible:
+    id: request-approve
+- tapOn: Back
+- tapOn: Host
+- tapOn:
+    id: exit-demo
+- extendedWaitUntil:
+    visible:
+      id: pair-screen
+    timeout: 20000

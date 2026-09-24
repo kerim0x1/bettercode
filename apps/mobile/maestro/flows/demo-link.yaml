@@ -1,0 +1,22 @@
+# betterc0de://demo opens the demo. This checks the scheme the native
+# project registers, which only a real build has.
+appId: com.betterc0de.remote
+name: The demo link opens the demo
+tags:
+  - demo
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: pair-screen
+    timeout: 60000
+- openLink: betterc0de://demo?speed=instant
+- extendedWaitUntil:
+    visible:
+      id: chats-screen
+    timeout: 20000
+- assertVisible:
+    id: connection-demo
+- assertVisible:
+    id: thread-row-demo-dark-mode
