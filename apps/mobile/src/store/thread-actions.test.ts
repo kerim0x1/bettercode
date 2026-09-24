@@ -88,6 +88,117 @@ describe("renaming a chat", () => {
   })
 })
 
+describe("worktree chats", () => {
+  const project = { name: "Project", path: "/repo" }
+
+  beforeEach(() => store().reset())
+
+  it("creates the chat, then its worktree, and shows it on the chat", async () => {
+    const createThread = vi.fn(async () => undefined)
+    const createWorktree = vi.fn(async (threadId: string) => ({
+      worktreeId: "w",
+      threadId,
+      worktreePath: "/home/.betterc0de/worktrees/abc",
+      branch: "agent/abc/new",
+      baseBranch: "release/1.4",
+      headSha: null,
+    }))
+    const thread = await store().createWorktreeChat(
+      { createThread, createWorktree } as unknown as RemoteApi,
+      project,
+      "release/1.4"
+    )
+    expect(createWorktree).toHaveBeenCalledWith(thread.id, {
+      baseRepoPath: "/repo",
+      baseBranch: "release/1.4",
+    })
+    expect(store().threads[0]).toMatchObject({
+      id: thread.id,
+      envMode: "worktree",
+      worktreePath: "/home/.betterc0de/worktrees/abc",
+      branch: "agent/abc/new",
+      baseBranch: "release/1.4",
+    })
+  })
+
+  it("deletes the chat again when its worktree cannot be made", async () => {
+    const createThread = vi.fn(async () => undefined)
+    const deleteThread = vi.fn(async () => undefined)
+    const createWorktree = vi.fn(async () => {
+      throw new Error("not a git repository")
+    })
+    await expect(
+      store().createWorktreeChat(
+        { createThread, createWorktree, deleteThread } as unknown as RemoteApi,
+        project
+      )
+    ).rejects.toThrow("not a git repository")
+    expect(deleteThread).toHaveBeenCalledOnce()
+    expect(store().threads).toEqual([])
+  })
+})
+
+describe("restoring a checkpoint", () => {
+  beforeEach(() => store().reset())
+
+  it("reverts on the desktop, then loads the chat again from scratch", async () => {
+    useAppStore.setState({
+      threads: [chat("thread-1", "2026-09-24T08:00:00.000Z")],
+      messagesByThread: {
+        "thread-1": [
+          {
+            id: "gone",
+            role: "assistant",
+            content: "later reply",
+            createdAt: "2026-09-24T09:00:00.000Z",
+          },
+        ],
+      },
+    })
+    const revertCheckpoint = vi.fn(async () => ({
+      reverted: true,
+      rolledBackTurns: 1,
+      deletedMessages: 2,
+      boundaryMessageId: "kept",
+    }))
+    const kept = {
+      id: "kept",
+      role: "assistant" as const,
+      content: "reply",
+      createdAt: "2026-09-24T08:30:00.000Z",
+    }
+    const api = {
+      revertCheckpoint,
+      listMessages: vi.fn(async () => [kept]),
+      listActivities: vi.fn(async () => []),
+      listThreadsPage: vi.fn(async () => ({
+        threads: [chat("thread-1", "2026-09-24T08:00:00.000Z")],
+        nextCursor: null,
+      })),
+    } as unknown as RemoteApi
+    await store().restoreCheckpoint(api, "thread-1", 1)
+    expect(revertCheckpoint).toHaveBeenCalledWith("thread-1", 1)
+    expect(store().messagesByThread["thread-1"]).toEqual([kept])
+  })
+
+  it("says why the desktop did not restore", async () => {
+    const revertCheckpoint = vi.fn(async () => ({
+      reverted: false,
+      rolledBackTurns: 0,
+      deletedMessages: 0,
+      boundaryMessageId: null,
+      reason: "No checkpoint for turn 3.",
+    }))
+    await expect(
+      store().restoreCheckpoint(
+        { revertCheckpoint } as unknown as RemoteApi,
+        "thread-1",
+        3
+      )
+    ).rejects.toThrow("No checkpoint for turn 3.")
+  })
+})
+
 describe("deleting a chat", () => {
   beforeEach(() => {
     store().reset()

@@ -23,6 +23,7 @@ import { remoteErrorMessage } from "@/lib/remote-errors"
 import { useAppStore } from "@/store/app-store"
 import { useReadOnly, useRemoteApi } from "@/transport/use-transport"
 import type { ProjectSummary } from "@/types/remote"
+import { WorktreeChatSheet } from "@/components/worktree-chat-sheet"
 
 export default function ProjectsScreen() {
   const router = useRouter()
@@ -34,8 +35,12 @@ export default function ProjectsScreen() {
   const loading = useAppStore((state) => state.loadingProjects)
   const refreshProjects = useAppStore((state) => state.refreshProjects)
   const createThread = useAppStore((state) => state.createThread)
+  const createWorktreeChat = useAppStore((state) => state.createWorktreeChat)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [creating, setCreating] = useState<string | null>(null)
+  const [worktreeProject, setWorktreeProject] = useState<ProjectSummary | null>(
+    null
+  )
 
   const threadsByProject = useMemo(() => {
     const map: Record<string, typeof threads> = {}
@@ -56,6 +61,19 @@ export default function ProjectsScreen() {
       Alert.alert("Could not create chat", remoteErrorMessage(error))
     } finally {
       setCreating(null)
+    }
+  }
+  const startWorktreeChat = async (baseBranch: string) => {
+    if (!api || !worktreeProject) return
+    try {
+      const thread = await createWorktreeChat(api, worktreeProject, baseBranch)
+      setWorktreeProject(null)
+      router.push({ pathname: "/chat/[id]", params: { id: thread.id } })
+    } catch (error) {
+      Alert.alert(
+        "Could not create the worktree chat",
+        remoteErrorMessage(error)
+      )
     }
   }
   const refresh = () => api && void refreshProjects(api).catch(() => undefined)
@@ -151,22 +169,39 @@ export default function ProjectsScreen() {
                     </Text>
                   ) : null}
                   {readOnly ? null : (
-                    <Pressable
-                      accessibilityRole="button"
-                      disabled={creating !== null}
-                      onPress={() => void startChat(item)}
-                      style={({ pressed }) => [
-                        styles.create,
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      {creating === item.path ? (
-                        <ActivityIndicator color={colors.primaryForeground} />
-                      ) : (
-                        <Plus size={15} color={colors.primaryForeground} />
-                      )}
-                      <Text style={styles.createText}>New chat</Text>
-                    </Pressable>
+                    <View style={styles.actions}>
+                      <Pressable
+                        accessibilityRole="button"
+                        disabled={creating !== null}
+                        onPress={() => void startChat(item)}
+                        style={({ pressed }) => [
+                          styles.create,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        {creating === item.path ? (
+                          <ActivityIndicator color={colors.primaryForeground} />
+                        ) : (
+                          <Plus size={15} color={colors.primaryForeground} />
+                        )}
+                        <Text style={styles.createText}>New chat</Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        testID={`worktree-chat-${item.name}`}
+                        disabled={creating !== null}
+                        onPress={() => setWorktreeProject(item)}
+                        style={({ pressed }) => [
+                          styles.createSecondary,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <GitBranch size={14} color={colors.text} />
+                        <Text style={styles.createSecondaryText}>
+                          New worktree chat
+                        </Text>
+                      </Pressable>
+                    </View>
                   )}
                 </View>
               ) : null}
@@ -191,6 +226,11 @@ export default function ProjectsScreen() {
             />
           )
         }
+      />
+      <WorktreeChatSheet
+        project={worktreeProject}
+        onClose={() => setWorktreeProject(null)}
+        onCreate={startWorktreeChat}
       />
     </Screen>
   )
@@ -293,6 +333,23 @@ const styles = StyleSheet.create({
   },
   createText: {
     color: colors.primaryForeground,
+    fontSize: 12,
+    fontFamily: font.semibold,
+  },
+  actions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
+  createSecondary: {
+    minHeight: 34,
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  createSecondaryText: {
+    color: colors.text,
     fontSize: 12,
     fontFamily: font.semibold,
   },

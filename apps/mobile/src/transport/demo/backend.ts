@@ -80,6 +80,11 @@ export class DemoBackend {
     { threadId: string; turnId: string; content: string }
   >()
   private readonly approvalAsked = new Set<string>()
+  /** Per chat, a checkpoint after each finished turn, as the desktop keeps them. */
+  private readonly checkpoints = new Map<
+    string,
+    Array<{ turnCount: number; messageCount: number; activityId: string }>
+  >()
   private counter = 0
   readonly api: RemoteApi
 
@@ -186,6 +191,36 @@ export class DemoBackend {
         for (const listener of [...this.listeners]) listener(frame)
         return copy(update)
       },
+      listBranches: async (cwd) => {
+        if (!DEMO_PROJECTS.some((project) => project.path === cwd))
+          throw new RemoteApiError("Not a git repository.", 400)
+        return { branches: ["main", "release/1.4"], current: "main" }
+      },
+      createWorktree: async (threadId, body) => {
+        if (!this.threads.some((thread) => thread.id === threadId))
+          throw new RemoteApiError("thread not found", 404, "thread_not_found")
+        const short = threadId.replace(/[^a-z0-9]/gi, "").slice(0, 8)
+        const worktree = {
+          worktreeId: this.id("demo-worktree"),
+          threadId,
+          worktreePath: `/Users/demo/.betterc0de/worktrees/${short}`,
+          branch: `agent/${short}/demo`,
+          baseBranch: body.baseBranch ?? "main",
+          headSha: null,
+        }
+        this.updateThread(threadId, (thread) => ({
+          ...thread,
+          envMode: "worktree",
+          worktreePath: worktree.worktreePath,
+          branch: worktree.branch,
+          baseBranch: worktree.baseBranch,
+          worktreeState: "ready",
+          updatedAt: this.now().toISOString(),
+        }))
+        return copy(worktree)
+      },
+      revertCheckpoint: async (threadId, turnCount) =>
+        this.revertCheckpoint(threadId, turnCount),
       deleteThread: async (threadId) => {
         this.cancelTurn(threadId)
         this.threads = this.threads.filter((thread) => thread.id !== threadId)
@@ -526,7 +561,83 @@ export class DemoBackend {
       messageCount: (this.messages[threadId] ?? []).length,
       session: this.idleSession(),
     }))
+    if (event === "turn_completed" && turn.content.trim()) {
+      this.captureCheckpoint(threadId, turn.turnId)
+    }
     this.emit(threadId, turn.turnId, event)
+  }
+
+  /** What the desktop's checkpoint reactor records after a finished turn. */
+  private captureCheckpoint(threadId: string, turnId: string): void {
+    const list = this.checkpoints.get(threadId) ?? []
+    const turnCount = list.length + 1
+    this.addActivity(
+      threadId,
+      turnId,
+      "checkpoint.captured",
+      "Checkpoint captured",
+      {
+        status: "ready",
+        checkpointRef: `demo-checkpoint-${turnCount}`,
+        turn_id: turnId,
+        turn_index: turnCount,
+        checkpointTurnCount: turnCount,
+      },
+      "info"
+    )
+    const activityId = this.activities[threadId]?.at(-1)?.id ?? ""
+    this.checkpoints.set(threadId, [
+      ...list,
+      {
+        turnCount,
+        messageCount: (this.messages[threadId] ?? []).length,
+        activityId,
+      },
+    ])
+  }
+
+  private revertCheckpoint(threadId: string, turnCount: number) {
+    if (this.turns.has(threadId)) {
+      throw new RemoteApiError(
+        `Thread '${threadId}' already has active provider work.`,
+        409,
+        "turn_active"
+      )
+    }
+    const list = this.checkpoints.get(threadId) ?? []
+    const target = list.find((checkpoint) => checkpoint.turnCount === turnCount)
+    if (!target) {
+      return {
+        reverted: false,
+        rolledBackTurns: 0,
+        deletedMessages: 0,
+        boundaryMessageId: null,
+        reason: `No checkpoint for turn ${turnCount}.`,
+      }
+    }
+    const later = list.filter((checkpoint) => checkpoint.turnCount > turnCount)
+    const messages = this.messages[threadId] ?? []
+    const kept = messages.slice(0, target.messageCount)
+    this.messages[threadId] = kept
+    const dropped = new Set(later.map((checkpoint) => checkpoint.activityId))
+    this.activities[threadId] = (this.activities[threadId] ?? []).filter(
+      (activity) => !dropped.has(activity.id)
+    )
+    this.checkpoints.set(
+      threadId,
+      list.filter((checkpoint) => checkpoint.turnCount <= turnCount)
+    )
+    this.updateThread(threadId, (item) => ({
+      ...item,
+      updatedAt: this.now().toISOString(),
+      messageCount: kept.length,
+    }))
+    return {
+      reverted: true,
+      rolledBackTurns: later.length,
+      deletedMessages: messages.length - kept.length,
+      boundaryMessageId: kept.at(-1)?.id ?? null,
+    }
   }
 
   private cancelTurn(threadId: string, notify = false): void {

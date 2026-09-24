@@ -240,6 +240,8 @@ describe("demo desktop", () => {
       "approval.resolved",
       "tool.started",
       "tool.completed",
+      // After the finished turn, as the desktop's checkpoint reactor does.
+      "checkpoint.captured",
     ])
     expect(recorded[2]).toMatchObject({
       tone: "tool",
@@ -275,6 +277,77 @@ describe("demo desktop", () => {
     await transport.api.deleteThread("demo-dark-mode")
     expect(await transport.api.getThread("demo-dark-mode")).toBeNull()
     expect(await transport.api.listMessages("demo-dark-mode")).toEqual([])
+  })
+
+  it("starts a chat in a worktree from a branch", async () => {
+    const { transport } = demo()
+    const root = "/Users/demo/code/weather-app"
+    expect(await transport.api.listBranches(root)).toEqual({
+      branches: ["main", "release/1.4"],
+      current: "main",
+    })
+    await expect(transport.api.listBranches("/elsewhere")).rejects.toThrow()
+    const worktree = await transport.api.createWorktree("demo-dark-mode", {
+      baseRepoPath: root,
+      baseBranch: "release/1.4",
+    })
+    expect(await transport.api.getThread("demo-dark-mode")).toMatchObject({
+      envMode: "worktree",
+      worktreePath: worktree.worktreePath,
+      branch: worktree.branch,
+      baseBranch: "release/1.4",
+    })
+  })
+
+  it("keeps a checkpoint after each finished turn and restores one", async () => {
+    const { transport, events } = demo()
+    const threadId = "demo-release-notes"
+    await transport.api.sendMessage({ threadId, message: "First" })
+    await vi.advanceTimersByTimeAsync(1_000)
+    const approval = events()
+      .map((event) => pendingRequestFromEvent(event))
+      .find((request) => request !== null)
+    await transport.api.respondApproval({
+      threadId,
+      requestId: approval!.id,
+      decision: "approve",
+    })
+    await vi.runAllTimersAsync()
+    await transport.api.sendMessage({ threadId, message: "Second" })
+    await vi.runAllTimersAsync()
+
+    const captures = (await transport.api.listActivities(threadId)).filter(
+      (activity) => activity.kind === "checkpoint.captured"
+    )
+    expect(captures.map((activity) => activity.payload)).toMatchObject([
+      { status: "ready", turn_index: 1 },
+      { status: "ready", turn_index: 2 },
+    ])
+    expect(
+      (await transport.api.listMessages(threadId)).map(
+        (message) => message.role
+      )
+    ).toEqual(["user", "assistant", "user", "assistant"])
+
+    expect(await transport.api.revertCheckpoint(threadId, 1)).toMatchObject({
+      reverted: true,
+      rolledBackTurns: 1,
+      deletedMessages: 2,
+    })
+    expect(
+      (await transport.api.listMessages(threadId)).map(
+        (message) => message.role
+      )
+    ).toEqual(["user", "assistant"])
+    // The later checkpoint went with its turn.
+    expect(
+      (await transport.api.listActivities(threadId)).filter(
+        (activity) => activity.kind === "checkpoint.captured"
+      )
+    ).toHaveLength(1)
+    expect(await transport.api.revertCheckpoint(threadId, 2)).toMatchObject({
+      reverted: false,
+    })
   })
 
   it("refuses a second message while a reply runs, as the desktop does", async () => {

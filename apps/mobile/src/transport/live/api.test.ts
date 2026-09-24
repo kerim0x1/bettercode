@@ -291,6 +291,48 @@ describe("mobile HTTP contracts", () => {
     expect(deleteInit.method).toBe("DELETE")
   })
 
+  it("lists branches, makes a worktree and restores a checkpoint through the shared contracts", async () => {
+    const fetchMock = stubFetch(
+      json({ branches: ["main"], current: "main" }),
+      json({
+        worktreeId: "w",
+        threadId: "t",
+        worktreePath: "/wt",
+        branch: "agent/t/x",
+        baseBranch: "main",
+        headSha: null,
+      }),
+      json({
+        reverted: true,
+        rolledBackTurns: 1,
+        deletedMessages: 2,
+        boundaryMessageId: "m",
+      })
+    )
+    const api = createLiveApi(connection(fetchMock))
+    await expect(api.listBranches("/repo")).resolves.toEqual({
+      branches: ["main"],
+      current: "main",
+    })
+    await expect(
+      api.createWorktree("t", { baseRepoPath: "/repo" })
+    ).resolves.toMatchObject({ worktreePath: "/wt" })
+    await expect(api.revertCheckpoint("t", 1)).resolves.toMatchObject({
+      reverted: true,
+    })
+    const calls = fetchMock.mock.calls as Array<[string, RequestInit]>
+    expect(calls.map(([url]) => url)).toEqual([
+      "http://localhost:4321/api/v1/git/branches",
+      "http://localhost:4321/api/v1/threads/t/worktree",
+      "http://localhost:4321/api/v1/threads/t/checkpoint/revert",
+    ])
+    expect(JSON.parse(String(calls[0]![1].body))).toEqual({ cwd: "/repo" })
+    expect(JSON.parse(String(calls[2]![1].body))).toMatchObject({
+      turnCount: 1,
+      preserveFuture: false,
+    })
+  })
+
   it("rejects malformed thread responses", async () => {
     const fetchMock = stubFetch(json([{ id: "t" }]))
     await expect(

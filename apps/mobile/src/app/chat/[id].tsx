@@ -15,7 +15,11 @@ import {
   buildActivityTools,
   groupToolActivitiesByTurn,
 } from "@betterc0de/schema/activity-tools"
-import type { PermissionLevel } from "@betterc0de/schema/chat-controls"
+import {
+  CHECKPOINT_RESTORE_BODY,
+  CHECKPOINT_RESTORE_TITLE,
+  type PermissionLevel,
+} from "@betterc0de/schema/chat-controls"
 import { REMOTE_FEATURES } from "@betterc0de/schema/remote-protocol"
 import {
   ArrowLeft,
@@ -23,6 +27,7 @@ import {
   FolderTree,
   GitCompareArrows,
   GitBranch,
+  History,
   Info,
   MoreHorizontal,
   Pencil,
@@ -45,6 +50,7 @@ import { RenameSheet } from "@/components/rename-sheet"
 import { SendFailure } from "@/components/send-failure"
 import { colors, font, radius, spacing, type } from "@/design/theme"
 import { chatTimeline, type TimelineEntry } from "@/lib/chat-timeline"
+import { restorableTurns, restorePoints } from "@/lib/checkpoints"
 import { effectiveThreadRoot } from "@/lib/endpoint"
 import { modelOptions, preferredModel } from "@/lib/provider-selection"
 import { remoteErrorMessage } from "@/lib/remote-errors"
@@ -145,6 +151,7 @@ export default function ChatScreen() {
   const [actionsOpen, setActionsOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const renameThread = useAppStore((state) => state.renameThread)
+  const restoreCheckpoint = useAppStore((state) => state.restoreCheckpoint)
   const deleteThread = useAppStore((state) => state.deleteThread)
   const canRename = useFeature(REMOTE_FEATURES.threadsRename)
   const [draft, setDraft] = useState("")
@@ -166,6 +173,12 @@ export default function ChatScreen() {
   const hasStreamOutput = Boolean(stream?.content)
   // The messages as the desktop shows them: a provider handoff's internal
   // messages give way to a notice where it happened.
+  // Where the desktop offers "Restore checkpoint": after each reply whose
+  // turn has a checkpoint, except the chat's last message.
+  const restoreAt = useMemo(
+    () => restorePoints(effectiveMessages, restorableTurns(activities ?? [])),
+    [activities, effectiveMessages]
+  )
   const timeline = useMemo(
     () =>
       chatTimeline(effectiveMessages, activities ?? [], {
@@ -344,6 +357,25 @@ export default function ChatScreen() {
     )
   }
 
+  const confirmRestore = (turnCount: number) => {
+    if (!api) return
+    Alert.alert(CHECKPOINT_RESTORE_TITLE, CHECKPOINT_RESTORE_BODY, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Restore",
+        style: "destructive",
+        onPress: () => {
+          restoreCheckpoint(api, threadId, turnCount).catch((error) =>
+            Alert.alert(
+              "Could not restore the checkpoint",
+              remoteErrorMessage(error)
+            )
+          )
+        },
+      },
+    ])
+  }
+
   const choosePermission = (level: PermissionLevel) => {
     setNotice(null)
     if (!api) {
@@ -484,9 +516,29 @@ export default function ChatScreen() {
             if (item.kind === "handoff")
               return <ProviderHandoffNotice entry={item.entry} />
             const failure = outbox[item.id]
+            const restoreTurn = restoreAt.get(item.id)
             return (
               <>
                 <MessageItem message={item.message} />
+                {restoreTurn !== undefined && !isRunning && !readOnly ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Restore checkpoint: messages and files to this point"
+                    testID={`restore-checkpoint-${item.id}`}
+                    onPress={() => confirmRestore(restoreTurn)}
+                    style={({ pressed }) => [
+                      styles.checkpoint,
+                      pressed && styles.checkpointPressed,
+                    ]}
+                  >
+                    <View style={styles.checkpointLine} />
+                    <History size={13} color={colors.textMuted} />
+                    <Text style={styles.checkpointText}>
+                      Restore checkpoint
+                    </Text>
+                    <View style={styles.checkpointLine} />
+                  </Pressable>
+                ) : null}
                 {failure?.error && failure.owner === "chat" ? (
                   <SendFailure
                     entry={failure}
@@ -898,6 +950,25 @@ const styles = StyleSheet.create({
     fontFamily: font.regular,
     fontSize: 12,
     lineHeight: 17,
+  },
+  checkpoint: {
+    minHeight: 32,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  checkpointPressed: { opacity: 0.6 },
+  checkpointLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+  },
+  checkpointText: {
+    color: colors.textMuted,
+    fontFamily: font.medium,
+    fontSize: 12,
   },
   messagesEmpty: { flexGrow: 1 },
   footerSpace: { height: spacing.sm },

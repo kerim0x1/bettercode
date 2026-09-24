@@ -133,6 +133,25 @@ export function describeRemoteError(error: unknown): RemoteErrorDescription {
           "It was removed when the chat was rewound on the desktop. Send it again as a new message.",
         action: "send_as_new",
       }
+    case "workspace_untrusted":
+      return {
+        title: "Project not trusted",
+        message:
+          "The desktop has not been told to trust this project folder yet. Trust it on the desktop, then try again.",
+      }
+    case "checkpoint_recovery_required":
+      return {
+        title: "A restore did not finish",
+        message:
+          "An earlier checkpoint restore in this chat was interrupted. Resolve it on the desktop before restoring another one.",
+      }
+    case "worktree_removal_pending":
+      return {
+        title: "Worktree still being removed",
+        message:
+          "This chat's previous worktree is still being removed on the desktop. Try again when it is gone.",
+        action: "retry",
+      }
     case "timeout":
       return {
         title: "No answer from the desktop",

@@ -30,6 +30,8 @@ import {
 
 /** How long a message may take the desktop to start (the desktop's own limit). */
 export const SEND_TIMEOUT_MS = 210_000
+/** How long creating a worktree or restoring a checkpoint may take. */
+export const GIT_TIMEOUT_MS = 120_000
 
 export async function pairMobile(
   baseUrl: string,
@@ -122,6 +124,24 @@ export function createLiveApi(connection: HttpConnection): RemoteApi {
     renameThread: (threadId, title) =>
       contract("renameThread", { id: threadId, body: { title } }),
     deleteThread: (threadId) => contract("deleteThread", { id: threadId }),
+    listBranches: (cwd) => contract("gitBranches", { body: { cwd } }),
+    // Checking out a large repository, or restoring one, takes a while.
+    createWorktree: (threadId, body) =>
+      contract("createThreadWorktree", {
+        id: threadId,
+        body,
+        timeoutMs: GIT_TIMEOUT_MS,
+      }),
+    revertCheckpoint: (threadId, turnCount) =>
+      contract("revertThreadCheckpoint", {
+        id: threadId,
+        body: {
+          turnCount,
+          updatedAt: new Date().toISOString(),
+          preserveFuture: false,
+        },
+        timeoutMs: GIT_TIMEOUT_MS,
+      }),
     listProviderInstances: (cwd) =>
       call<ProviderInstance[]>(
         `/providers/instances${query({ cwd: cwd || undefined })}`

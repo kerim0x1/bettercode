@@ -1,6 +1,7 @@
 import type {
   ApprovalResponse,
   ChatSendResponse,
+  HttpContractResponse,
   ThreadMetadataUpdate,
 } from "@betterc0de/schema/http-contracts"
 import type { RemoteProtocol } from "@betterc0de/schema/remote-protocol"
@@ -66,6 +67,24 @@ export interface RemoteApi {
   renameThread(threadId: string, title: string): Promise<ThreadMetadataUpdate>
   /** Deletes the chat, its history and its worktree on the desktop. */
   deleteThread(threadId: string): Promise<void>
+  /** A project's local branches, and the checked-out one. */
+  listBranches(cwd: string): Promise<HttpContractResponse<"gitBranches">>
+  /**
+   * Gives a chat its own git worktree, on a new branch from `baseBranch`
+   * (the checked-out branch when omitted). The desktop records it on the chat.
+   */
+  createWorktree(
+    threadId: string,
+    body: { baseRepoPath: string; baseBranch?: string }
+  ): Promise<HttpContractResponse<"createThreadWorktree">>
+  /**
+   * Returns the chat and its whole project folder to the checkpoint after
+   * turn `turnCount` (from the chat's `checkpoint.captured` activities).
+   */
+  revertCheckpoint(
+    threadId: string,
+    turnCount: number
+  ): Promise<HttpContractResponse<"revertThreadCheckpoint">>
   listProviderInstances(cwd?: string | null): Promise<ProviderInstance[]>
   goal(body: ChatRequestBody): Promise<{ goal: ChatThread["goal"] | null }>
   sendMessage(body: ChatRequestBody): Promise<ChatSendResponse>

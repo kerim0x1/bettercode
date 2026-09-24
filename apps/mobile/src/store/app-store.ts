@@ -157,6 +157,26 @@ interface AppStore {
    */
   refreshAttention: (api: RemoteApi) => Promise<void>
   createThread: (api: RemoteApi, project: ProjectSummary) => Promise<ChatThread>
+  /**
+   * Starts a chat in its own git worktree, on a new branch from
+   * `baseBranch` (the checked-out branch when omitted), as the desktop's
+   * worktree mode does. A chat whose worktree could not be made is deleted
+   * again, and the error is passed on.
+   */
+  createWorktreeChat: (
+    api: RemoteApi,
+    project: ProjectSummary,
+    baseBranch?: string
+  ) => Promise<ChatThread>
+  /**
+   * Returns the chat and its whole project folder to the checkpoint after
+   * turn `turnCount`, then loads the chat again.
+   */
+  restoreCheckpoint: (
+    api: RemoteApi,
+    threadId: string,
+    turnCount: number
+  ) => Promise<void>
   /** Renames a chat on the desktop, which tells every other client. */
   renameThread: (
     api: RemoteApi,
@@ -481,6 +501,61 @@ export const useAppStore = create<AppStore>((set, get) => ({
       throw new Error("The session changed while creating the chat.")
     set((state) => ({ threads: [thread, ...state.threads] }))
     return thread
+  },
+
+  createWorktreeChat: async (api, project, baseBranch) => {
+    const thread = await get().createThread(api, project)
+    const owner = generation
+    try {
+      const worktree = await api.createWorktree(thread.id, {
+        baseRepoPath: project.path,
+        ...(baseBranch ? { baseBranch } : {}),
+      })
+      const updated: ChatThread = {
+        ...thread,
+        envMode: "worktree",
+        worktreePath: worktree.worktreePath,
+        branch: worktree.branch,
+        baseBranch: worktree.baseBranch,
+        worktreeState: "ready",
+      }
+      if (owner === generation)
+        set((state) => ({
+          threads: state.threads.map((item) =>
+            item.id === thread.id ? { ...item, ...updated } : item
+          ),
+        }))
+      return updated
+    } catch (error) {
+      // An empty chat without the worktree it was made for is only in the
+      // way; if deleting it fails too, it stays and can be deleted by hand.
+      await get()
+        .deleteThread(api, thread.id)
+        .catch(() => undefined)
+      throw error
+    }
+  },
+
+  restoreCheckpoint: async (api, threadId, turnCount) => {
+    const result = await api.revertCheckpoint(threadId, turnCount)
+    if (!result.reverted) {
+      throw new Error(
+        result.reason ??
+          `The checkpoint after turn ${turnCount} could not be restored.`
+      )
+    }
+    // The messages after the checkpoint are gone on the desktop; none of
+    // the loaded pages may keep them.
+    set((state) => ({
+      messagesByThread: { ...state.messagesByThread, [threadId]: [] },
+      earlierMessagesByThread: omitKey(state.earlierMessagesByThread, threadId),
+      streamsByThread: omitKey(state.streamsByThread, threadId),
+    }))
+    await Promise.allSettled([
+      get().loadMessages(api, threadId),
+      get().loadActivities(api, threadId),
+      get().refreshThreads(api),
+    ])
   },
 
   renameThread: async (api, threadId, title) => {

@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, jest } from "@jest/globals"
 import { fireEvent, screen, waitFor } from "@testing-library/react-native"
 import { renderRouter } from "expo-router/testing-library"
 import { Alert, type AlertButton } from "react-native"
+import {
+  CHECKPOINT_RESTORE_BODY,
+  CHECKPOINT_RESTORE_TITLE,
+} from "@betterc0de/schema/chat-controls"
 import { REMOTE_FEATURES } from "@betterc0de/schema/remote-protocol"
 import ChatScreen from "@/app/chat/[id]"
 import { useAppStore } from "@/store/app-store"
@@ -11,6 +15,8 @@ import { pairWithTestDesktop } from "./support/sessions"
 
 const APP_DIRECTORY = path.resolve(__dirname, "..", "app")
 const FLOW_TIMEOUT_MS = 60_000
+/** Streaming is timer-driven; give it more than the default second. */
+const STREAMED = { timeout: 10_000 }
 
 afterEach(async () => {
   jest.restoreAllMocks()
@@ -108,6 +114,81 @@ describe("chat actions", () => {
     expect(await screen.findByText("Delete chat")).toBeTruthy()
     expect(screen.queryByText("Rename")).toBeNull()
   })
+
+  it(
+    "starts a chat in its own worktree, from the branch chosen",
+    async () => {
+      await renderRouter(APP_DIRECTORY, { initialUrl: "/demo?speed=instant" })
+      await fireEvent.press(await screen.findByText("Projects"))
+      await fireEvent.press(await screen.findByText("weather-app"))
+      await fireEvent.press(
+        await screen.findByTestId("worktree-chat-weather-app")
+      )
+      // The checked-out branch comes first, and is the default.
+      expect(await screen.findByText("Checked out")).toBeTruthy()
+      expect(screen.getByText("Start from main")).toBeTruthy()
+      await fireEvent.press(screen.getByText("release/1.4"))
+      await fireEvent.press(screen.getByTestId("worktree-create"))
+
+      expect(await screen.findByTestId("chat-input")).toBeTruthy()
+      const created = useAppStore
+        .getState()
+        .threads.find((thread) => thread.envMode === "worktree")
+      expect(created).toMatchObject({ baseBranch: "release/1.4" })
+      // The chat's header names its branch.
+      expect(screen.getByText(created!.branch!)).toBeTruthy()
+    },
+    FLOW_TIMEOUT_MS
+  )
+
+  it(
+    "restores a checkpoint after the desktop's warning",
+    async () => {
+      await renderRouter(APP_DIRECTORY, { initialUrl: "/demo?speed=instant" })
+      await fireEvent.press(
+        await screen.findByTestId("thread-row-demo-release-notes")
+      )
+      await fireEvent.changeText(
+        await screen.findByTestId("chat-input"),
+        "Draft the release notes"
+      )
+      await fireEvent.press(screen.getByTestId("chat-send"))
+      await fireEvent.press(
+        await screen.findByTestId("request-approve", {}, STREAMED)
+      )
+      expect(await screen.findByText(/24 passed/, {}, STREAMED)).toBeTruthy()
+      await fireEvent.changeText(
+        await screen.findByTestId("chat-input"),
+        "Shorten them"
+      )
+      await fireEvent.press(
+        await screen.findByTestId("chat-send", {}, STREAMED)
+      )
+
+      // The first reply now has a checkpoint the chat can go back to.
+      const restore = await screen.findByTestId(
+        /^restore-checkpoint-/,
+        {},
+        STREAMED
+      )
+      const alert = answerAlerts("destructive")
+      await fireEvent.press(restore)
+      expect(alert).toHaveBeenCalledWith(
+        CHECKPOINT_RESTORE_TITLE,
+        CHECKPOINT_RESTORE_BODY,
+        expect.any(Array)
+      )
+      await waitFor(
+        () => expect(screen.queryByText("Shorten them")).toBeNull(),
+        STREAMED
+      )
+      // The first turn stays: the request (which the demo's reply quotes)
+      // and the reply with its test run.
+      expect(screen.getAllByText("Draft the release notes").length).toBe(2)
+      expect(screen.getByText(/24 passed/)).toBeTruthy()
+    },
+    FLOW_TIMEOUT_MS
+  )
 
   it("offers no actions to a phone that can only watch", async () => {
     pairWithTestDesktop({ accessLevel: "read_only" })

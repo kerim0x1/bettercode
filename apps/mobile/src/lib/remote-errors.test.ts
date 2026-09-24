@@ -56,6 +56,17 @@ describe("describeRemoteError", () => {
         "send_as_new",
       ],
       [refusal(409, "dispatch_reverted"), "Message undone", "send_as_new"],
+      [refusal(403, "workspace_untrusted"), "Project not trusted", undefined],
+      [
+        refusal(409, "checkpoint_recovery_required"),
+        "A restore did not finish",
+        undefined,
+      ],
+      [
+        refusal(409, "worktree_removal_pending"),
+        "Worktree still being removed",
+        "retry",
+      ],
       [refusal(0, "timeout"), "No answer from the desktop", "retry"],
       [refusal(0, "network"), "Desktop unreachable", "retry"],
       [refusal(503), "Desktop busy", "retry"],
