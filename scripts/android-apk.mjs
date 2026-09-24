@@ -1,8 +1,10 @@
 // Reads what an Android APK contains and how it is signed, for
 // scripts/mobile-android.mjs and the release assembly. No dependencies: a
-// ZIP central-directory reader, an ELF program-header reader, and parsers
-// for the text the Android SDK tools print (apksigner, aapt2, keytool).
+// ZIP central-directory reader, an ELF program-header reader, an APK
+// Signing Block reader, and parsers for the text the Android SDK tools
+// print (apksigner, aapt2, keytool).
 
+import { createHash } from "node:crypto"
 import zlib from "node:zlib"
 
 const END_OF_CENTRAL_DIRECTORY = 0x06054b50
@@ -128,6 +130,86 @@ export function misalignedLibraries(archive, entries = readZipEntries(archive), 
     }
   }
   return problems
+}
+
+// ---------------------------------------------------------------------------
+// APK Signing Block (https://source.android.com/docs/security/features/apksigning/v2)
+// ---------------------------------------------------------------------------
+
+const APK_SIGNING_BLOCK_MAGIC = "APK Sig Block 42"
+/** The signature scheme blocks, by their ID in the APK Signing Block. */
+const SIGNATURE_SCHEMES = new Map([
+  [0x7109871a, "v2"],
+  [0xf05368c0, "v3"],
+  [0x1b93ad61, "v3.1"],
+])
+
+function damaged() {
+  return new Error("The APK Signing Block is damaged.")
+}
+
+/** The uint32-length-prefixed item at `offset`, and where the next field starts. */
+function lengthPrefixed(buffer, offset = 0) {
+  if (offset + 4 > buffer.length) throw damaged()
+  const end = offset + 4 + buffer.readUInt32LE(offset)
+  if (end > buffer.length) throw damaged()
+  return { item: buffer.subarray(offset + 4, end), next: end }
+}
+
+/** All items of a sequence of uint32-length-prefixed items. */
+function lengthPrefixedItems(buffer) {
+  const items = []
+  for (let offset = 0; offset < buffer.length; ) {
+    const { item, next } = lengthPrefixed(buffer, offset)
+    items.push(item)
+    offset = next
+  }
+  return items
+}
+
+/**
+ * The signers of each signature scheme in the APK Signing Block, each with
+ * the SHA-256 of its certificates (DER): the value apksigner reports as
+ * "certificate SHA-256 digest". Empty when the APK has no signing block (a
+ * v1-only signature). This reads which certificates an APK names, not
+ * whether its signatures are valid; apksigner checks those in the build.
+ */
+export function apkSigners(archive) {
+  const end = findEndOfCentralDirectory(archive)
+  const centralDirectory = archive.readUInt32LE(end + 16)
+  if (
+    centralDirectory < 32 ||
+    archive.toString("latin1", centralDirectory - 16, centralDirectory) !== APK_SIGNING_BLOCK_MAGIC
+  ) {
+    return []
+  }
+  const size = Number(archive.readBigUInt64LE(centralDirectory - 24))
+  const start = centralDirectory - size - 8
+  if (start < 0 || Number(archive.readBigUInt64LE(start)) !== size) throw damaged()
+  const signers = []
+  for (let offset = start + 8; offset < centralDirectory - 24; ) {
+    const length = Number(archive.readBigUInt64LE(offset))
+    if (length < 4 || offset + 8 + length > centralDirectory - 24) throw damaged()
+    const scheme = SIGNATURE_SCHEMES.get(archive.readUInt32LE(offset + 8))
+    if (scheme) {
+      const value = archive.subarray(offset + 12, offset + 8 + length)
+      for (const signer of lengthPrefixedItems(lengthPrefixed(value).item)) {
+        // Signed data starts with the digests, then the certificates; v3
+        // follows them with fields that are not length-prefixed.
+        const signedData = lengthPrefixed(signer).item
+        const digests = lengthPrefixed(signedData)
+        const certificates = lengthPrefixed(signedData, digests.next).item
+        signers.push({
+          scheme,
+          certificates: lengthPrefixedItems(certificates).map((certificate) =>
+            createHash("sha256").update(certificate).digest("hex")
+          ),
+        })
+      }
+    }
+    offset += 8 + length
+  }
+  return signers
 }
 
 /** Colon-separated or plain hex, any case → lowercase hex. */

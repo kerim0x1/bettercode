@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import test from "node:test"
-import zlib from "node:zlib"
 
 import {
   PAGE_SIZE_16K,
+  apkSigners,
   elfLoadSegmentAlignments,
   misalignedLibraries,
   nativeAbis,
@@ -14,87 +15,7 @@ import {
   readZipEntries,
   readZipEntry,
 } from "./android-apk.mjs"
-
-/**
- * A ZIP archive with the given entries. `padding` adds bytes to an entry's
- * local extra field only, the way zipalign does, and `alignTo` pads the
- * entry so its data starts on that boundary.
- */
-function makeZip(files) {
-  const locals = []
-  const centrals = []
-  let offset = 0
-  for (const { name, data, method = 8, alignTo = 0 } of files) {
-    const nameBytes = Buffer.from(name, "utf8")
-    const stored = method === 8 ? zlib.deflateRawSync(data) : data
-    let extra = Buffer.alloc(0)
-    if (alignTo) {
-      const dataStart = offset + 30 + nameBytes.length
-      extra = Buffer.alloc((alignTo - (dataStart % alignTo)) % alignTo)
-    }
-    const crc = zlib.crc32(data)
-    const local = Buffer.alloc(30)
-    local.writeUInt32LE(0x04034b50, 0)
-    local.writeUInt16LE(20, 4)
-    local.writeUInt16LE(method, 8)
-    local.writeUInt32LE(crc, 14)
-    local.writeUInt32LE(stored.length, 18)
-    local.writeUInt32LE(data.length, 22)
-    local.writeUInt16LE(nameBytes.length, 26)
-    local.writeUInt16LE(extra.length, 28)
-    const central = Buffer.alloc(46)
-    central.writeUInt32LE(0x02014b50, 0)
-    central.writeUInt16LE(20, 4)
-    central.writeUInt16LE(20, 6)
-    central.writeUInt16LE(method, 10)
-    central.writeUInt32LE(crc, 16)
-    central.writeUInt32LE(stored.length, 20)
-    central.writeUInt32LE(data.length, 24)
-    central.writeUInt16LE(nameBytes.length, 28)
-    central.writeUInt32LE((0o100644 << 16) >>> 0, 38)
-    central.writeUInt32LE(offset, 42)
-    const localRecord = Buffer.concat([local, nameBytes, extra, stored])
-    locals.push(localRecord)
-    centrals.push(Buffer.concat([central, nameBytes]))
-    offset += localRecord.length
-  }
-  const directory = Buffer.concat(centrals)
-  const end = Buffer.alloc(22)
-  end.writeUInt32LE(0x06054b50, 0)
-  end.writeUInt16LE(files.length, 8)
-  end.writeUInt16LE(files.length, 10)
-  end.writeUInt32LE(directory.length, 12)
-  end.writeUInt32LE(offset, 16)
-  return Buffer.concat([...locals, directory, end])
-}
-
-/** A little-endian ELF shared library with one PT_LOAD header per alignment (and one PT_DYNAMIC). */
-function makeElf(alignments, { bits = 64 } = {}) {
-  const headerSize = bits === 64 ? 64 : 52
-  const entrySize = bits === 64 ? 56 : 32
-  const headers = [...alignments.map((align) => ({ type: 1, align })), { type: 2, align: 8 }]
-  const elf = Buffer.alloc(headerSize + entrySize * headers.length)
-  elf.writeUInt32BE(0x7f454c46, 0)
-  elf[4] = bits === 64 ? 2 : 1
-  elf[5] = 1
-  elf[6] = 1
-  if (bits === 64) {
-    elf.writeBigUInt64LE(BigInt(headerSize), 0x20)
-    elf.writeUInt16LE(entrySize, 0x36)
-    elf.writeUInt16LE(headers.length, 0x38)
-  } else {
-    elf.writeUInt32LE(headerSize, 0x1c)
-    elf.writeUInt16LE(entrySize, 0x2a)
-    elf.writeUInt16LE(headers.length, 0x2c)
-  }
-  headers.forEach(({ type, align }, index) => {
-    const at = headerSize + index * entrySize
-    elf.writeUInt32LE(type, at)
-    if (bits === 64) elf.writeBigUInt64LE(BigInt(align), at + 0x30)
-    else elf.writeUInt32LE(align, at + 0x1c)
-  })
-  return elf
-}
+import { makeElf, makeZip, schemeBlock, withSigningBlock } from "./fixtures/mobile/apk.mjs"
 
 test("reads stored and deflated entries, with local padding the central directory does not have", () => {
   const manifest = Buffer.from("<manifest/>".repeat(40))
@@ -225,4 +146,34 @@ test("reads the SHA-256 fingerprint keytool prints, in one spelling", () => {
   )
   assert.equal(parseKeytoolFingerprint("no certificate here"), null)
   assert.equal(normalizeFingerprint("AA:bb:0C"), "aabb0c")
+})
+
+const sha256 = (buffer) => createHash("sha256").update(buffer).digest("hex")
+
+test("reads the certificates each signature scheme names, skipping other blocks", () => {
+  const release = Buffer.from("release certificate (DER)")
+  const intermediate = Buffer.from("second certificate (DER)")
+  const archive = withSigningBlock(makeZip([{ name: "AndroidManifest.xml", data: Buffer.from("<manifest/>") }]), [
+    [0x7109871a, schemeBlock([release, intermediate])],
+    [0x42726577, Buffer.alloc(64)], // verity padding
+    [0xf05368c0, schemeBlock([release], { v3: true })],
+  ])
+  assert.deepEqual(apkSigners(archive), [
+    { scheme: "v2", certificates: [sha256(release), sha256(intermediate)] },
+    { scheme: "v3", certificates: [sha256(release)] },
+  ])
+  // The entries are still readable after the block.
+  assert.equal(readZipEntries(archive)[0].name, "AndroidManifest.xml")
+})
+
+test("an APK without a signing block names no signers; a damaged one is refused", () => {
+  const plain = makeZip([{ name: "AndroidManifest.xml", data: Buffer.from("<manifest/>") }])
+  assert.deepEqual(apkSigners(plain), [])
+  const archive = withSigningBlock(plain, [[0x7109871a, schemeBlock([Buffer.from("certificate")])]])
+  const centralDirectory = archive.readUInt32LE(archive.length - 22 + 16)
+  const damaged = Buffer.from(archive)
+  // Claim a signer longer than the block.
+  const blockStart = centralDirectory - Number(archive.readBigUInt64LE(centralDirectory - 24)) - 8
+  damaged.writeUInt32LE(0xffff, blockStart + 8 + 12)
+  assert.throws(() => apkSigners(damaged), /The APK Signing Block is damaged/)
 })
