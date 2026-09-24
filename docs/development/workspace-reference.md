@@ -531,6 +531,7 @@ The renderer's backend access layer:
 - `npm run mobile:check` — check the app config, native dependencies and the Android/iOS/web bundles
 - `npm run mobile:prebuild` / `npm run mobile:icons` — regenerate the native projects or the icons
 - `npm run typecheck:mobile` / `npm run test:mobile` — verify the React Native workspace
+- `npm run test:e2e:remote` — build the backend, then run the phone app's network client against it in-process
 
 ## Codex CLI integration
 

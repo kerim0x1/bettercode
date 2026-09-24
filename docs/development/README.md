@@ -70,7 +70,7 @@ The source gate checks workspace versions, builds the backend and shared schema,
 
 `--list`, `--until <step>`, `--from <step>`, `--skip-install` and `--installer-smoke` control a run; see `npm run release:check -- --help`. The scripts live in `scripts/release-check.mjs`, `scripts/packaged-startup-smoke.mjs` and `scripts/installer-smoke.mjs`.
 
-For a focused edit, use the relevant scripts: `npm test`, `npm run test:backend`, `npm run test:mobile`, or `npm run test:packaging`. The optional local video compositions have a separate `npm run typecheck:remotion` check; it skips cleanly when the ignored `remotion/` directory is absent.
+For a focused edit, use the relevant scripts: `npm test`, `npm run test:backend`, `npm run test:mobile`, `npm run test:e2e:remote` (the phone app's network client against a real backend), or `npm run test:packaging`. The optional local video compositions have a separate `npm run typecheck:remotion` check; it skips cleanly when the ignored `remotion/` directory is absent.
 
 ## Build desktop packages
 

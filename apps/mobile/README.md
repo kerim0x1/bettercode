@@ -28,8 +28,12 @@ npm run mobile:check       # app config, native dependencies, JS bundles
 npm run mobile:prebuild    # regenerate apps/mobile/android and ios
 npm run mobile:icons       # re-render the icons from apps/ui/public/favicon.svg
 npm run typecheck:mobile
-npm run test:mobile
+npm run test:mobile        # logic and screen tests
+npm run test:e2e:remote    # the app's network client against a real desktop backend
 ```
+
+No desktop at hand? **Try the demo** on the pairing screen runs the whole app
+against sample chats and files (see [Demo mode](#demo-mode)).
 
 ## Configuration
 
@@ -51,17 +55,74 @@ npm run test:mobile
 
 ## Architecture
 
-- Expo Router owns the pre-auth stack, three authenticated tabs, and the chat,
-  file, and diff detail routes.
-- `session-store.ts` hydrates the Keychain/Keystore profile and monitors host
-  health. Web preview storage is intentionally only a development fallback.
-- `remote-api.ts` is the typed Bearer-authenticated HTTP boundary.
-- `remote-socket.ts` implements native in-band authentication, reconnect
-  backoff, event journal replay, and duplicate suppression.
-- `app-store.ts` owns thread/project hydration, optimistic sends, streams,
-  pending approvals, and provider-question responses.
+- Expo Router owns the routes. The root layout (`src/app/_layout.tsx`) decides
+  which ones exist from the session: the pairing screen while unpaired, the
+  tabs and chat screens while paired, and the update screen while the desktop
+  needs a newer app. Screens do not redirect on their own.
+- `src/transport/` is the one way to the desktop. `RemoteApi` (HTTP calls)
+  and `RemoteChannel` (the live event stream) have two implementations:
+  - `live/` talks to the paired desktop: typed, Bearer-authenticated HTTP with
+    per-call timeouts and error codes, and a WebSocket with in-band
+    authentication, reconnect backoff, event replay and duplicate
+    suppression. It imports nothing from React Native, so Node tests run it
+    against a real backend.
+  - `demo/` is an in-memory desktop for the demo mode.
+  Screens reach it through `useRemoteApi()`, `useReadOnly()` and
+  `useFeature()` (`src/transport/use-transport.ts`).
+- `session-store.ts` restores the pairing from the Keychain/Keystore and checks
+  it against the desktop (see [Session and pairing](#session-and-pairing)).
+  Web preview storage is intentionally only a development fallback.
+- `app-store.ts` owns chat and project lists (paged), messages (200 at a time,
+  older ones on request), optimistic sends, streams, pending approvals and
+  answers to the agent's questions.
 - File navigation always starts from `worktreePath || projectPath`; client-side
   containment checks complement the backend workspace guards.
+- The interface is in English, like the desktop's; dates and sizes follow the
+  device's locale (`src/lib/format.ts`). A test fails when German text returns.
+
+## Session and pairing
+
+- The app sends `X-BetterC0de-Client: betterc0de-remote/<version> (<platform>)`
+  with every request and in the WebSocket `auth` frame. A desktop that needs a
+  newer app answers `426 client_update_required` (WebSocket close `4426`); the
+  app then shows **Update BetterC0de Remote** and keeps the pairing, so it
+  connects again after the update. See "Phone app and desktop versions" in
+  [`docs/remote-access.md`](../../docs/remote-access.md).
+- While **Remote Access** is off on the desktop, the app says so and keeps the
+  pairing. Turning Remote Access off ends the desktop's sessions, so once it is
+  back on the app explains that the desktop signed the phone out and asks to
+  pair again. The pairing is only dropped when the desktop reports the session
+  as ended, or when its address now belongs to a different desktop.
+- A read-only session (paired over plain HTTP from a public address, which the
+  desktop allows only with `BETTERC0DE_ALLOW_INSECURE_REMOTE_ACCESS`) shows
+  chats, files and changes, but no composer and no approval buttons.
+- **Sign out this phone** revokes the session on the desktop first. When the
+  desktop cannot be reached, the app keeps the pairing and offers
+  **Forget on this phone**, which leaves the session listed on the desktop
+  until it is revoked there.
+
+## Demo mode
+
+**Try the demo** on the pairing screen, or the link `betterc0de://demo`, opens
+the app against an in-memory desktop with two sample projects, three chats,
+files and changes. A message gets a streamed reply that asks once per chat to
+run the tests, like a real agent asking for approval. The demo never touches
+the network, and **Exit demo** on the **Host** tab returns to pairing. App
+Review, the screen tests and the device tests use it; `?speed=instant`
+streams without delays.
+
+## Tests
+
+| Command | Runner | What |
+| --- | --- | --- |
+| `npm run test:mobile` | Vitest (`src/**/*.test.ts`) | Stores, transport, demo, helpers, in Node |
+| `npm run test:mobile` | Jest with `jest-expo` (`src/__tests__/*.test.tsx`) | Screens and routes, rendered with React Native Testing Library and `expo-router/testing-library` |
+| `npm run test:e2e:remote` | Vitest (`e2e/*.e2e.test.ts`) | The app's network client against the desktop backend, started in-process from `apps/backend/dist` (the script builds it first), and one contract that the demo and a real desktop both have to meet |
+
+Screen tests live in `src/__tests__`, never in `src/app`: Expo Router bundles
+every file there as a route, and a test fails if one appears. Component tests
+cannot reach the network; `jest.setup.cjs` makes `fetch` and `WebSocket`
+fail.
 
 ## Network and security
 
