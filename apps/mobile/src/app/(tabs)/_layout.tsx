@@ -1,4 +1,4 @@
-import { Redirect, Tabs } from "expo-router"
+import { Tabs } from "expo-router"
 import { StyleSheet, View } from "react-native"
 import {
   FolderGit2,
@@ -8,7 +8,6 @@ import {
 import type { LucideProps } from "lucide-react-native"
 import type { ComponentType } from "react"
 import { colors, font, radius } from "@/design/theme"
-import { useSessionStore } from "@/store/session-store"
 
 /**
  * Bottom tab bar in the desktop chrome style: sidebar-colored bar with a
@@ -33,11 +32,6 @@ function TabIcon({
 }
 
 export default function TabsLayout() {
-  const profile = useSessionStore((state) => state.profile)
-  const state = useSessionStore((store) => store.state)
-  if (!profile && state !== "hydrating" && state !== "checking") {
-    return <Redirect href="/pair" />
-  }
   return (
     <Tabs
       screenOptions={{

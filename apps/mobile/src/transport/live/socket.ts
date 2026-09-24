@@ -1,9 +1,12 @@
 import { isRecord } from "@betterc0de/schema/json-read"
-import type { ConnectionProfile } from "@/types/remote"
 import { ProviderReplayCursor } from "@betterc0de/schema/provider-replay"
-import { websocketUrl } from "./endpoint"
-
-export type RemoteSocketState = "connecting" | "live" | "reconnecting" | "error"
+import {
+  WS_CLOSE_CLIENT_UPDATE_REQUIRED,
+  type RemoteClientInfo,
+} from "@betterc0de/schema/remote-protocol"
+import { websocketUrl } from "@/lib/endpoint"
+import { parseRemoteProtocol } from "@/lib/remote-session"
+import type { ChannelHandlers, RemoteChannel } from "../types"
 
 /**
  * The backend closes a socket with this code when the session was
@@ -15,29 +18,31 @@ export const WS_CLOSE_UNAUTHORIZED = 4401
 /** The renderer waits this long for `auth_ok`; a silent socket is dead. */
 const AUTH_HANDSHAKE_TIMEOUT_MS = 10_000
 
-interface RemoteSocketOptions {
-  onFrame: (frame: unknown) => void
-  onState: (state: RemoteSocketState) => void
-  /**
-   * The backend refused the session. The socket stops retrying until
-   * `reconnectNow()`; the caller re-checks the session and either clears
-   * the pairing or, if the host still accepts it, reconnects explicitly.
-   */
-  onUnauthorized?: () => void
+export interface SocketConnection {
+  readonly baseUrl: string
+  readonly sessionToken: string
+  /** Sent in the `auth` frame so the desktop can ask a too-old app to update. */
+  readonly client: RemoteClientInfo | null
 }
 
-export class RemoteSocket {
+/**
+ * The desktop's live event stream. Authenticates in-band, replays what it
+ * missed while disconnected (`provider_replay`), reconnects with backoff,
+ * and stops for good on 4401 (session gone) or 4426 (app too old) until the
+ * caller decides what to do.
+ */
+export class RemoteSocket implements RemoteChannel {
   private socket: WebSocket | null = null
   private stopped = true
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private reconnectAttempt = 0
-  private unauthorized = false
+  private halted = false
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null
   private readonly replay = new ProviderReplayCursor()
 
   constructor(
-    private readonly profile: ConnectionProfile,
-    private readonly options: RemoteSocketOptions
+    private readonly connection: SocketConnection,
+    private readonly handlers: ChannelHandlers
   ) {}
 
   start(): void {
@@ -59,7 +64,7 @@ export class RemoteSocket {
 
   reconnectNow(): void {
     if (this.stopped) return
-    this.unauthorized = false
+    this.halted = false
     this.clearHandshakeTimer()
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     this.reconnectTimer = null
@@ -71,8 +76,8 @@ export class RemoteSocket {
 
   private connect(reconnecting: boolean): void {
     if (this.stopped) return
-    this.options.onState(reconnecting ? "reconnecting" : "connecting")
-    const socket = new WebSocket(websocketUrl(this.profile.baseUrl))
+    this.handlers.onState(reconnecting ? "reconnecting" : "connecting")
+    const socket = new WebSocket(websocketUrl(this.connection.baseUrl))
     this.socket = socket
     let authenticated = false
     this.armHandshakeTimer(socket)
@@ -80,7 +85,11 @@ export class RemoteSocket {
     socket.onopen = () => {
       if (this.stopped || this.socket !== socket) return
       socket.send(
-        JSON.stringify({ type: "auth", token: this.profile.sessionToken })
+        JSON.stringify({
+          type: "auth",
+          token: this.connection.sessionToken,
+          ...(this.connection.client ? { client: this.connection.client } : {}),
+        })
       )
     }
 
@@ -99,17 +108,23 @@ export class RemoteSocket {
         authenticated = true
         this.clearHandshakeTimer()
         this.reconnectAttempt = 0
-        this.options.onState("live")
+        this.handlers.onState("live")
+        this.handlers.onProtocol?.(parseRemoteProtocol(frame.protocol))
         const replay = this.replay.negotiate(frame.replay)
         if (replay) socket.send(JSON.stringify(replay))
         return
       }
+      if (frame.type === "protocol_update") {
+        this.handlers.onProtocol?.(parseRemoteProtocol(frame.protocol))
+        return
+      }
 
-      this.replay.deliver(frame, this.options.onFrame)
+      this.replay.deliver(frame, this.handlers.onFrame)
     }
 
     socket.onerror = () => {
-      if (!this.stopped && this.socket === socket) this.options.onState("error")
+      if (!this.stopped && this.socket === socket)
+        this.handlers.onState("error")
     }
 
     socket.onclose = (event) => {
@@ -120,9 +135,15 @@ export class RemoteSocket {
       }
       if (this.stopped || !wasCurrent) return
       if (event.code === WS_CLOSE_UNAUTHORIZED) {
-        this.unauthorized = true
-        this.options.onState("error")
-        this.options.onUnauthorized?.()
+        this.halted = true
+        this.handlers.onState("error")
+        this.handlers.onUnauthorized?.()
+        return
+      }
+      if (event.code === WS_CLOSE_CLIENT_UPDATE_REQUIRED) {
+        this.halted = true
+        this.handlers.onState("error")
+        this.handlers.onUpdateRequired?.()
         return
       }
       this.scheduleReconnect()
@@ -149,9 +170,9 @@ export class RemoteSocket {
   }
 
   private scheduleReconnect(): void {
-    if (this.unauthorized) return
+    if (this.halted) return
     this.reconnectAttempt += 1
-    this.options.onState("reconnecting")
+    this.handlers.onState("reconnecting")
     const delay = Math.min(
       15_000,
       700 * 2 ** Math.min(this.reconnectAttempt, 5)

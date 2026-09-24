@@ -17,19 +17,23 @@ import {
   spacing,
   type,
 } from "@/design/theme"
-import { useSessionStore } from "@/store/session-store"
+import { connectionBadge } from "@/lib/connection-status"
+import { selectAccessLevel, useSessionStore } from "@/store/session-store"
 
 export function Screen({
   children,
   style,
   edges = ["top"],
+  testID,
 }: {
   children: ReactNode
   style?: ViewStyle
   edges?: Array<"top" | "right" | "bottom" | "left">
+  /** Lets end-to-end flows find the screen. */
+  testID?: string
 }) {
   return (
-    <SafeAreaView style={[styles.screen, style]} edges={edges}>
+    <SafeAreaView style={[styles.screen, style]} edges={edges} testID={testID}>
       {children}
     </SafeAreaView>
   )
@@ -81,25 +85,32 @@ export function TopBar({
 }
 
 export function ConnectionPill() {
+  const mode = useSessionStore((store) => store.mode)
   const state = useSessionStore((store) => store.state)
-  const socket = useSessionStore((store) => store.socketState)
-  const live = state === "online" && socket === "live"
-  const label = live
-    ? "Live"
-    : state === "offline"
-      ? "Offline"
-      : socket === "reconnecting"
-        ? "Connecting"
-        : "Online"
+  const socketState = useSessionStore((store) => store.socketState)
+  const readOnly = useSessionStore(
+    (store) => selectAccessLevel(store) === "read_only"
+  )
+  const badge = connectionBadge({ mode, state, socketState, readOnly })
+  const muted = !badge.healthy
   return (
-    <View style={[styles.connectionPill, !live && styles.connectionPillMuted]}>
+    <View
+      testID={`connection-${badge.kind}`}
+      accessible
+      accessibilityLabel={`Connection: ${badge.label}`}
+      style={[styles.connectionPill, muted && styles.connectionPillMuted]}
+    >
       <View
-        style={[styles.connectionDot, !live && styles.connectionDotMuted]}
+        style={[
+          styles.connectionDot,
+          badge.kind === "demo" && styles.connectionDotDemo,
+          muted && styles.connectionDotMuted,
+        ]}
       />
       <Text
-        style={[styles.connectionText, !live && styles.connectionTextMuted]}
+        style={[styles.connectionText, muted && styles.connectionTextMuted]}
       >
-        {label}
+        {badge.label}
       </Text>
     </View>
   )
@@ -218,6 +229,7 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: colors.success,
   },
+  connectionDotDemo: { backgroundColor: colors.info },
   connectionDotMuted: { backgroundColor: colors.warning },
   connectionText: {
     color: colors.textSecondary,

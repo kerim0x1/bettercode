@@ -7,7 +7,7 @@ export class PairingInputError extends Error {}
 
 export function normalizeBaseUrl(value: string): string {
   let raw = value.trim()
-  if (!raw) throw new PairingInputError("Desktop-Adresse fehlt.")
+  if (!raw) throw new PairingInputError("The desktop address is missing.")
   if (!/^[a-z][a-z\d+.-]*:\/\//i.test(raw)) raw = `http://${raw}`
 
   let url: URL

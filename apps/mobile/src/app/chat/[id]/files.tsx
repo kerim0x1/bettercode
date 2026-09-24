@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from "react-native"
-import { Redirect, useLocalSearchParams, useRouter } from "expo-router"
+import { useLocalSearchParams, useRouter } from "expo-router"
 import {
   ArrowLeft,
   ArrowUp,
@@ -31,16 +31,16 @@ import {
   type,
 } from "@/design/theme"
 import { effectiveThreadRoot, relativePathWithinRoot } from "@/lib/endpoint"
-import { remoteApi } from "@/lib/remote-api"
+import { remoteErrorMessage } from "@/lib/remote-errors"
 import { useAppStore } from "@/store/app-store"
-import { useSessionStore } from "@/store/session-store"
+import { useRemoteApi } from "@/transport/use-transport"
 import type { DirectoryEntry } from "@/types/remote"
 
 export default function FilesScreen() {
   const params = useLocalSearchParams<{ id: string | string[] }>()
   const threadId = Array.isArray(params.id) ? params.id[0] : params.id
   const router = useRouter()
-  const profile = useSessionStore((state) => state.profile)
+  const api = useRemoteApi()
   const thread = useAppStore((state) =>
     state.threads.find((item) => item.id === threadId)
   )
@@ -48,6 +48,8 @@ export default function FilesScreen() {
   const [currentPath, setCurrentPath] = useState(root)
   const [parent, setParent] = useState<string | null>(null)
   const [entries, setEntries] = useState<DirectoryEntry[]>([])
+  /** Search results keep the desktop's ranking; folders are sorted here. */
+  const [searching, setSearching] = useState(false)
   const [query, setQuery] = useState("")
   const [showHidden, setShowHidden] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -56,28 +58,24 @@ export default function FilesScreen() {
 
   const loadDirectory = useCallback(
     async (path: string, includeHidden: boolean) => {
-      if (!profile || !root) return
+      if (!api || !root) return
       setLoading(true)
       setError(null)
       try {
         relativePathWithinRoot(root, path)
-        const result = await remoteApi(profile).listDirectory(
-          path,
-          includeHidden
-        )
+        const result = await api.listDirectory(path, includeHidden)
         setCurrentPath(result.path)
         setParent(result.parent)
         setEntries(result.entries)
+        setSearching(false)
         setTruncated(result.truncated)
       } catch (caught) {
-        setError(
-          caught instanceof Error ? caught.message : "Failed to load folder."
-        )
+        setError(remoteErrorMessage(caught))
       } finally {
         setLoading(false)
       }
     },
-    [profile, root]
+    [api, root]
   )
 
   useEffect(() => {
@@ -90,16 +88,17 @@ export default function FilesScreen() {
 
   const sortedEntries = useMemo(
     () =>
-      [...entries].sort(
-        (a, b) =>
-          Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name)
-      ),
-    [entries]
+      searching
+        ? entries
+        : [...entries].sort(
+            (a, b) =>
+              Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name)
+          ),
+    [entries, searching]
   )
 
-  if (!profile) return <Redirect href="/pair" />
-
   const runSearch = async () => {
+    if (!api) return
     const needle = query.trim()
     if (!needle) {
       await loadDirectory(currentPath, showHidden)
@@ -108,7 +107,7 @@ export default function FilesScreen() {
     setLoading(true)
     setError(null)
     try {
-      const result = await remoteApi(profile).searchFiles(root, needle)
+      const result = await api.searchFiles(root, needle)
       setEntries(
         result.entries.map((entry) => ({
           ...entry,
@@ -117,9 +116,10 @@ export default function FilesScreen() {
           mtime: null,
         }))
       )
+      setSearching(true)
       setTruncated(result.truncated)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Search failed.")
+      setError(remoteErrorMessage(caught))
     } finally {
       setLoading(false)
     }
@@ -135,10 +135,10 @@ export default function FilesScreen() {
       relativePathWithinRoot(root, entry.path)
     } catch (caught) {
       Alert.alert(
-        "Pfad blockiert",
+        "Outside the project",
         caught instanceof Error
           ? caught.message
-          : "Path is outside the project."
+          : "This path is outside the chat's project."
       )
       return
     }
@@ -173,7 +173,7 @@ export default function FilesScreen() {
           onPress={() => router.back()}
         />
         <View style={styles.headerCopy}>
-          <Text style={styles.eyebrow}>CHAT-DATEIEN</Text>
+          <Text style={styles.eyebrow}>CHAT FILES</Text>
           <Text style={styles.title} numberOfLines={1}>
             {thread?.projectName ?? "Project"}
           </Text>
@@ -190,7 +190,7 @@ export default function FilesScreen() {
         />
         <IconButton
           icon={RefreshCw}
-          label="Aktualisieren"
+          label="Refresh"
           tone="mint"
           onPress={() => void refreshVisible()}
         />
@@ -245,7 +245,7 @@ export default function FilesScreen() {
       </View>
       {truncated ? (
         <Text style={styles.truncated}>
-          Ergebnis begrenzt — verfeinere deine Suche.
+          Showing the first results. Refine the search to see others.
         </Text>
       ) : null}
       {error ? (

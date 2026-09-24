@@ -13,6 +13,8 @@ import {
   Clock3,
   Eye,
   EyeOff,
+  FlaskConical,
+  Info,
   Laptop2,
   LogOut,
   RefreshCw,
@@ -29,34 +31,43 @@ import {
   spacing,
   type,
 } from "@/design/theme"
+import { APP_VERSION } from "@/lib/app-info"
 import { isSecureEndpoint } from "@/lib/endpoint"
-import { remoteApi } from "@/lib/remote-api"
-import { useSessionStore } from "@/store/session-store"
+import { formatDateTime } from "@/lib/format"
+import { selectAccessLevel, useSessionStore } from "@/store/session-store"
+import { useRemoteApi } from "@/transport/use-transport"
 import type { RemoteStatus } from "@/types/remote"
 
 export default function HostScreen() {
   const router = useRouter()
-  const profile = useSessionStore((state) => state.profile)
+  const api = useRemoteApi()
+  const mode = useSessionStore((store) => store.mode)
+  const profile = useSessionStore((store) => store.profile)
   const state = useSessionStore((store) => store.state)
   const socketState = useSessionStore((store) => store.socketState)
   const error = useSessionStore((store) => store.error)
+  const protocol = useSessionStore((store) => store.protocol)
+  const compatibility = useSessionStore((store) => store.compatibility)
+  const readOnly = useSessionStore(
+    (store) => selectAccessLevel(store) === "read_only"
+  )
   const check = useSessionStore((store) => store.check)
   const logout = useSessionStore((store) => store.logout)
   const forget = useSessionStore((store) => store.forget)
+  const exitDemo = useSessionStore((store) => store.exitDemo)
   const [status, setStatus] = useState<RemoteStatus | null>(null)
   const [loading, setLoading] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
   // Endpoint and identity values are masked until explicitly revealed so a
   // glance (or a screenshot) doesn't leak the host address or session ids.
   const [revealed, setRevealed] = useState(false)
+  const demo = mode === "demo"
 
   const refresh = async () => {
-    if (!profile) return
+    if (!api) return
     setLoading(true)
     try {
-      const [, nextStatus] = await Promise.all([
-        check(),
-        remoteApi(profile).status(),
-      ])
+      const [, nextStatus] = await Promise.all([check(), api.status()])
       setStatus(nextStatus)
     } catch {
       // Connection error is already surfaced by the session store.
@@ -66,39 +77,93 @@ export default function HostScreen() {
   }
   useEffect(() => {
     void refresh()
-    // The endpoint identity is the stable trigger; refresh itself is intentionally local.
+    // The connection is the stable trigger; refresh itself is intentionally local.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.environmentId])
+  }, [api])
 
-  const confirmLogout = () => {
-    Alert.alert("Disconnect?", "The session will be revoked on the desktop.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Disconnect",
-        style: "destructive",
-        onPress: () => void logout().then(() => router.replace("/pair")),
-      },
-    ])
+  const leave = () => router.replace("/pair")
+
+  const signOut = async () => {
+    setSigningOut(true)
+    try {
+      const result = await logout()
+      if (result.revoked) {
+        leave()
+        return
+      }
+      Alert.alert(
+        "The desktop could not be told",
+        `${result.error}\n\nIf you forget it only on this phone, the session stays listed on the desktop until you revoke it there.`,
+        [
+          { text: "Keep", style: "cancel" },
+          {
+            text: "Forget on this phone",
+            style: "destructive",
+            onPress: () => void forget().then(leave),
+          },
+        ]
+      )
+    } finally {
+      setSigningOut(false)
+    }
   }
 
-  const forgetOffline = () => {
-    Alert.alert(
-      "Forget local connection?",
-      "The device can then only reconnect with a new pairing code.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Forget",
-          style: "destructive",
-          onPress: () => void forget().then(() => router.replace("/pair")),
-        },
-      ]
-    )
+  const confirmSignOut = () => {
+    Alert.alert("Sign out this phone?", "The desktop revokes its session.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Sign out", style: "destructive", onPress: () => void signOut() },
+    ])
   }
 
   const conceal = (value: string | undefined | null): string => {
     if (!value) return "–"
     return revealed ? value : "••••••••••••"
+  }
+
+  if (demo) {
+    return (
+      <Screen>
+        <TopBar title="Host" right={<ConnectionPill />} />
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.heroCard} testID="demo-host-card">
+            <View style={styles.hostIcon}>
+              <FlaskConical size={22} color={colors.info} />
+            </View>
+            <View style={styles.heroCopy}>
+              <Text style={styles.hostLabel}>DEMO</Text>
+              <Text style={styles.demoTitle}>No computer is connected</Text>
+              <Text style={styles.hostMeta}>
+                The chats, files and replies are sample data on this phone.
+              </Text>
+            </View>
+          </View>
+          <View style={styles.notice}>
+            <Info size={19} color={colors.info} />
+            <Text style={styles.noticeText}>
+              To work with your own projects, install BetterC0de on your
+              computer, turn on Settings → Remote Access and pair this phone
+              with the QR code it shows.
+            </Text>
+          </View>
+          <Text style={styles.sectionTitle}>APP</Text>
+          <View style={styles.panel}>
+            <KeyValue label="Version" value={APP_VERSION} last />
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            testID="exit-demo"
+            onPress={() => {
+              exitDemo()
+              leave()
+            }}
+            style={({ pressed }) => [styles.refresh, pressed && styles.pressed]}
+          >
+            <LogOut size={16} color={colors.text} />
+            <Text style={styles.refreshText}>Exit demo</Text>
+          </Pressable>
+        </ScrollView>
+      </Screen>
+    )
   }
 
   return (
@@ -122,11 +187,7 @@ export default function HostScreen() {
             <Text style={styles.hostUrl} numberOfLines={1}>
               {profile ? conceal(profile.baseUrl) : "Not connected"}
             </Text>
-            <Text style={styles.hostMeta}>
-              {status?.listeningOnNetwork
-                ? "Reachable on the network"
-                : "Checking connection status"}
-            </Text>
+            <Text style={styles.hostMeta}>{hostSummary(state, status)}</Text>
           </View>
           <Pressable
             accessibilityRole="button"
@@ -147,10 +208,39 @@ export default function HostScreen() {
           </Pressable>
         </View>
 
-        {error ? (
+        {state === "remote_disabled" ? (
+          <View style={styles.notice}>
+            <Unplug size={19} color={colors.warning} />
+            <Text style={styles.noticeText}>
+              Remote Access is turned off on the desktop. Turn it on in Settings
+              → Remote Access. This phone stays paired and reconnects by itself.
+            </Text>
+          </View>
+        ) : error ? (
           <View style={styles.errorCard}>
             <Unplug size={18} color={colors.danger} />
             <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
+
+        {readOnly ? (
+          <View style={styles.notice}>
+            <Eye size={19} color={colors.warning} />
+            <Text style={styles.noticeText}>
+              This phone can only watch: it paired over plain HTTP from outside
+              your network. Pair it again over your Wi-Fi, Tailscale or HTTPS to
+              send messages and approve actions.
+            </Text>
+          </View>
+        ) : null}
+
+        {compatibility.kind === "legacy_desktop" ? (
+          <View style={styles.notice}>
+            <Info size={19} color={colors.info} />
+            <Text style={styles.noticeText}>
+              The desktop app is older than this phone app. Chats work; update
+              BetterC0de on the desktop to use everything the app can do.
+            </Text>
           </View>
         ) : null}
 
@@ -172,19 +262,13 @@ export default function HostScreen() {
           />
           <InfoRow
             icon={<CheckCircle2 size={16} color={colors.success} />}
-            label="Remote access"
-            value={
-              status?.enabled
-                ? "Active"
-                : state === "online"
-                  ? "Active"
-                  : "Unknown"
-            }
+            label="Access"
+            value={readOnly ? "Watch only" : "Full"}
           />
           <InfoRow
             icon={<Clock3 size={16} color={colors.warning} />}
             label="Session valid until"
-            value={formatDate(profile?.session.expiresAt)}
+            value={formatDateTime(profile?.session.expiresAt)}
             last
           />
         </View>
@@ -197,10 +281,11 @@ export default function HostScreen() {
             value={conceal(profile?.environmentId)}
             mono
           />
+          <KeyValue label="Session" value={conceal(profile?.session.id)} mono />
+          <KeyValue label="App version" value={APP_VERSION} />
           <KeyValue
-            label="Session"
-            value={conceal(profile?.session.id)}
-            mono
+            label="Desktop version"
+            value={protocol?.backendVersion ?? "–"}
             last
           />
         </View>
@@ -227,19 +312,28 @@ export default function HostScreen() {
         </Pressable>
         <Pressable
           accessibilityRole="button"
-          onPress={state === "offline" ? forgetOffline : confirmLogout}
+          disabled={signingOut}
+          onPress={confirmSignOut}
           style={({ pressed }) => [styles.logout, pressed && styles.pressed]}
         >
           <LogOut size={16} color={colors.danger} />
           <Text style={styles.logoutText}>
-            {state === "offline"
-              ? "Forget connection locally"
-              : "Revoke session"}
+            {signingOut ? "Signing out…" : "Sign out this phone"}
           </Text>
         </Pressable>
       </ScrollView>
     </Screen>
   )
+}
+
+function hostSummary(
+  state: ReturnType<typeof useSessionStore.getState>["state"],
+  status: RemoteStatus | null
+): string {
+  if (state === "remote_disabled") return "Remote Access is off on the desktop"
+  if (state === "offline") return "Not reachable right now"
+  if (state === "checking") return "Checking connection…"
+  return status?.listeningOnNetwork ? "Reachable on the network" : "Connected"
 }
 
 function InfoRow({
@@ -296,19 +390,6 @@ function socketStateLabel(value: string): string {
   return "Ready"
 }
 
-function formatDate(value?: string): string {
-  if (!value) return "–"
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return "–"
-  return date.toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
-}
-
 const styles = StyleSheet.create({
   content: { padding: spacing.sm, paddingBottom: spacing.xxl, gap: spacing.sm },
   heroCard: {
@@ -336,6 +417,12 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontFamily: font.semibold,
     letterSpacing: 1.2,
+  },
+  demoTitle: {
+    color: colors.text,
+    fontFamily: font.semibold,
+    fontSize: 15,
+    marginTop: 4,
   },
   hostUrl: {
     color: colors.text,

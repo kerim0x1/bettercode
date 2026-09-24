@@ -1,6 +1,5 @@
-import type { ConnectionProfile } from "@/types/remote"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { RemoteSocket } from "./remote-socket"
+import { RemoteSocket, type SocketConnection } from "./socket"
 
 class FakeSocket {
   static CLOSING = 2
@@ -25,18 +24,15 @@ class FakeSocket {
   }
 }
 
-const profile: ConnectionProfile = {
+const PHONE = {
+  name: "betterc0de-remote",
+  version: "0.1.0-beta.3",
+  platform: "ios",
+}
+const connection: SocketConnection = {
   baseUrl: "https://desktop.example",
-  environmentId: "test",
   sessionToken: "test-token",
-  pairedAt: "2026-09-05",
-  session: {
-    id: "session",
-    label: "phone",
-    createdAt: "2026-09-05",
-    lastSeenAt: "2026-09-05",
-    expiresAt: "2026-09-06",
-  },
+  client: PHONE,
 }
 
 const event = (sequence: number, journalId = "journal") => ({
@@ -64,7 +60,7 @@ afterEach(() => {
 function setup() {
   const onFrame = vi.fn()
   const onState = vi.fn()
-  const client = new RemoteSocket(profile, { onFrame, onState })
+  const client = new RemoteSocket(connection, { onFrame, onState })
   client.start()
   return { client, socket: FakeSocket.instances[0]!, onFrame, onState }
 }
@@ -178,7 +174,7 @@ describe("mobile socket lifecycle and replay", () => {
   it("stops retrying after the host refuses the session and lets the caller decide", () => {
     const onUnauthorized = vi.fn()
     const onState = vi.fn()
-    const client = new RemoteSocket(profile, {
+    const client = new RemoteSocket(connection, {
       onFrame: vi.fn(),
       onState,
       onUnauthorized,
@@ -223,5 +219,85 @@ describe("mobile socket lifecycle and replay", () => {
     client.stop()
     vi.runAllTimers()
     expect(FakeSocket.instances).toHaveLength(1)
+  })
+})
+
+describe("mobile socket version negotiation", () => {
+  it("names the app in the auth frame and reports the desktop's protocol", () => {
+    const onProtocol = vi.fn()
+    const client = new RemoteSocket(connection, {
+      onFrame: vi.fn(),
+      onState: vi.fn(),
+      onProtocol,
+    })
+    client.start()
+    const socket = FakeSocket.instances[0]!
+    socket.onopen?.()
+    expect(JSON.parse(socket.send.mock.calls[0]![0] as string)).toEqual({
+      type: "auth",
+      token: "test-token",
+      client: PHONE,
+    })
+    const protocol = {
+      apiVersion: 2,
+      minClientVersion: "0.1.0-beta.1",
+      capabilities: {
+        accessLevel: "full",
+        terminalGranted: false,
+        maxRequestBytes: 2097152,
+        features: [],
+      },
+    }
+    socket.frame({
+      type: "auth_ok",
+      replay: { journalId: "journal", latestSequence: 0 },
+      protocol,
+    })
+    expect(onProtocol).toHaveBeenLastCalledWith(protocol)
+    socket.frame({
+      type: "protocol_update",
+      protocol: {
+        ...protocol,
+        capabilities: { ...protocol.capabilities, terminalGranted: true },
+      },
+    })
+    expect(onProtocol).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        capabilities: expect.objectContaining({ terminalGranted: true }),
+      })
+    )
+    client.stop()
+  })
+
+  it("reports an older desktop as having no protocol", () => {
+    const onProtocol = vi.fn()
+    const client = new RemoteSocket(connection, {
+      onFrame: vi.fn(),
+      onState: vi.fn(),
+      onProtocol,
+    })
+    client.start()
+    FakeSocket.instances[0]!.authenticate()
+    expect(onProtocol).toHaveBeenCalledWith(null)
+    client.stop()
+  })
+
+  it("stops on 4426 and asks for an app update without dropping the pairing", () => {
+    const onUpdateRequired = vi.fn()
+    const onUnauthorized = vi.fn()
+    const onState = vi.fn()
+    const client = new RemoteSocket(connection, {
+      onFrame: vi.fn(),
+      onState,
+      onUnauthorized,
+      onUpdateRequired,
+    })
+    client.start()
+    FakeSocket.instances[0]!.onclose?.({ code: 4426 })
+    expect(onUpdateRequired).toHaveBeenCalledOnce()
+    expect(onUnauthorized).not.toHaveBeenCalled()
+    expect(onState).toHaveBeenLastCalledWith("error")
+    expect(vi.getTimerCount()).toBe(0)
+    client.stop()
   })
 })

@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from "react-native"
+import { formatDay } from "@/lib/format"
 import { GitBranch, MessageSquare } from "lucide-react-native"
 import type { ChatThread } from "@/types/remote"
 import { colors, font, radius, spacing, type } from "@/design/theme"
@@ -22,6 +23,7 @@ export function ThreadRow({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`${thread.title}, ${thread.projectName}`}
+      testID={`thread-row-${thread.id}`}
       onPress={onPress}
       style={({ pressed }) => [
         styles.row,
@@ -71,10 +73,7 @@ function relativeTime(value: string): string {
   if (hours < 24) return `${hours}h ago`
   const days = Math.floor(hours / 24)
   if (days < 7) return `${days}d ago`
-  return new Date(value).toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-  })
+  return formatDay(value)
 }
 
 const styles = StyleSheet.create({

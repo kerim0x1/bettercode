@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Pressable,
@@ -12,6 +13,7 @@ import * as Haptics from "expo-haptics"
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router"
 import {
   ArrowLeft,
+  Eye,
   FolderTree,
   GitCompareArrows,
   GitBranch,
@@ -26,10 +28,11 @@ import { ModelPicker } from "@/components/model-picker"
 import { PendingRequestCard } from "@/components/pending-request-card"
 import { colors, font, spacing, type } from "@/design/theme"
 import { effectiveThreadRoot } from "@/lib/endpoint"
-import { remoteApi } from "@/lib/remote-api"
 import { modelOptions, preferredModel } from "@/lib/provider-selection"
+import { remoteErrorMessage } from "@/lib/remote-errors"
 import { useAppStore } from "@/store/app-store"
 import { useSessionStore } from "@/store/session-store"
+import { useReadOnly, useRemoteApi } from "@/transport/use-transport"
 
 const EMPTY_REQUESTS: PendingRequest[] = []
 
@@ -37,9 +40,18 @@ export default function ChatScreen() {
   const params = useLocalSearchParams<{ id: string | string[] }>()
   const threadId = Array.isArray(params.id) ? params.id[0] : params.id
   const router = useRouter()
-  const profile = useSessionStore((state) => state.profile)
+  const api = useRemoteApi()
+  const readOnly = useReadOnly()
   const connectionState = useSessionStore((state) => state.state)
   const threads = useAppStore((state) => state.threads)
+  const messagesError = useAppStore((state) =>
+    threadId ? (state.messagesErrorByThread[threadId] ?? null) : null
+  )
+  const hasEarlier = useAppStore((state) =>
+    threadId ? Boolean(state.earlierMessagesByThread[threadId]) : false
+  )
+  const loadEarlierMessages = useAppStore((state) => state.loadEarlierMessages)
+  const ensureThread = useAppStore((state) => state.ensureThread)
   const messages = useAppStore((state) =>
     threadId ? state.messagesByThread[threadId] : undefined
   )
@@ -71,6 +83,9 @@ export default function ChatScreen() {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [modelError, setModelError] = useState<string | null>(null)
   const [busyRequest, setBusyRequest] = useState<string | null>(null)
+  /** Looking up a chat that is not in the loaded pages: idle, loading, missing, or an error text. */
+  const [lookup, setLookup] = useState<string>("idle")
+  const [loadingEarlier, setLoadingEarlier] = useState(false)
   const listRef = useRef<FlatList<ChatMessage>>(null)
   const thread = threads.find((candidate) => candidate.id === threadId)
   const threadRoot = thread ? effectiveThreadRoot(thread) : ""
@@ -81,17 +96,35 @@ export default function ChatScreen() {
   )
 
   useEffect(() => {
-    if (!profile || !threadId) return
+    if (!api || !threadId) return
     void Promise.allSettled([
-      loadMessages(profile, threadId),
-      loadActivities(profile, threadId),
+      loadMessages(api, threadId),
+      loadActivities(api, threadId),
     ])
-  }, [loadActivities, loadMessages, profile, threadId])
+  }, [api, loadActivities, loadMessages, threadId])
+
+  // A chat from a link or notification may not be in the loaded pages yet.
+  const known = Boolean(thread)
+  useEffect(() => {
+    if (!api || !threadId || known) return
+    let cancelled = false
+    setLookup("loading")
+    ensureThread(api, threadId)
+      .then((found) => {
+        if (!cancelled) setLookup(found ? "idle" : "missing")
+      })
+      .catch((error) => {
+        if (!cancelled) setLookup(remoteErrorMessage(error))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [api, ensureThread, known, threadId])
 
   useEffect(() => {
-    if (!profile || !thread || !threadId) return
+    if (!api || !thread || !threadId) return
     let cancelled = false
-    void remoteApi(profile)
+    void api
       .listProviderInstances(threadRoot)
       .then((instances) => {
         if (cancelled) return
@@ -115,17 +148,14 @@ export default function ChatScreen() {
         )
       })
       .catch((error) => {
-        if (!cancelled)
-          setModelError(
-            error instanceof Error ? error.message : "Failed to load models."
-          )
+        if (!cancelled) setModelError(remoteErrorMessage(error))
       })
     return () => {
       cancelled = true
     }
     // Message model ids are only needed for initial preference, not every streamed update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile, setSelectedModel, thread?.id, threadId, threadRoot])
+  }, [api, setSelectedModel, thread?.id, threadId, threadRoot])
 
   const currentModel = useMemo(
     () =>
@@ -138,38 +168,52 @@ export default function ChatScreen() {
     [effectiveMessages, options, selected, thread, threadId]
   )
 
-  if (!profile) return <Redirect href="/pair" />
   if (!threadId) return <Redirect href="/(tabs)" />
+
+  const reload = () => {
+    if (!api) return
+    void Promise.allSettled([
+      loadMessages(api, threadId),
+      loadActivities(api, threadId),
+    ])
+  }
 
   const submit = async () => {
     const content = draft.trim()
-    if (!content || !thread || !currentModel) return
+    if (!api || !content || !thread || !currentModel) return
     setDraft("")
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
       () => undefined
     )
     try {
-      await send(profile, thread.id, content, currentModel)
+      await send(api, thread.id, content, currentModel)
     } catch (error) {
       setDraft(content)
-      Alert.alert(
-        "Message not sent",
-        error instanceof Error ? error.message : "Unknown error"
-      )
+      Alert.alert("Message not sent", remoteErrorMessage(error))
     }
   }
 
   const stop = async () => {
+    if (!api) return
     try {
-      await interrupt(profile, threadId)
+      await interrupt(api, threadId)
       await Haptics.notificationAsync(
         Haptics.NotificationFeedbackType.Warning
       ).catch(() => undefined)
     } catch (error) {
-      Alert.alert(
-        "Failed to stop",
-        error instanceof Error ? error.message : "Unknown error"
-      )
+      Alert.alert("Could not stop the agent", remoteErrorMessage(error))
+    }
+  }
+
+  const showEarlier = async () => {
+    if (!api) return
+    setLoadingEarlier(true)
+    try {
+      await loadEarlierMessages(api, threadId)
+    } catch (error) {
+      Alert.alert("Could not load earlier messages", remoteErrorMessage(error))
+    } finally {
+      setLoadingEarlier(false)
     }
   }
 
@@ -222,11 +266,14 @@ export default function ChatScreen() {
         />
       </View>
 
-      {connectionState === "offline" ? (
+      {connectionState === "offline" ||
+      connectionState === "remote_disabled" ? (
         <View style={styles.offlineBanner}>
           <WifiOff size={16} color={colors.warning} />
           <Text style={styles.offlineText}>
-            Desktop offline — history stays readable.
+            {connectionState === "remote_disabled"
+              ? "Remote Access is off on the desktop."
+              : "Desktop offline. The loaded history stays readable."}
           </Text>
         </View>
       ) : null}
@@ -239,11 +286,22 @@ export default function ChatScreen() {
         </Pressable>
       ) : null}
 
-      {!thread && !threads.length ? (
+      {!thread && lookup !== "idle" && lookup !== "loading" ? (
+        <StateView
+          title={lookup === "missing" ? "Chat not found" : "Chat unavailable"}
+          message={
+            lookup === "missing"
+              ? "It was deleted on the desktop, or it belongs to a different desktop."
+              : lookup
+          }
+          actionLabel="Back to chats"
+          onAction={() => router.replace("/(tabs)")}
+        />
+      ) : !thread ? (
         <StateView
           loading
           title="Loading chat"
-          message="Fetching thread data from the desktop."
+          message="Fetching the chat from the desktop."
         />
       ) : (
         <FlatList
@@ -260,21 +318,48 @@ export default function ChatScreen() {
               refreshing={Boolean(loading)}
               tintColor={colors.mint}
               colors={[colors.mint]}
-              onRefresh={() =>
-                void Promise.allSettled([
-                  loadMessages(profile, threadId),
-                  loadActivities(profile, threadId),
-                ])
-              }
+              onRefresh={reload}
             />
           }
-          ListEmptyComponent={
-            !stream ? (
-              <StateView
-                title="Ready for the first prompt"
-                message="Write a message below. The desktop agent handles execution and persistence."
-              />
+          ListHeaderComponent={
+            hasEarlier ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Load earlier messages"
+                disabled={loadingEarlier}
+                onPress={() => void showEarlier()}
+                style={styles.earlier}
+              >
+                {loadingEarlier ? (
+                  <ActivityIndicator color={colors.textSecondary} />
+                ) : (
+                  <Text style={styles.earlierText}>Load earlier messages</Text>
+                )}
+              </Pressable>
             ) : null
+          }
+          ListEmptyComponent={
+            stream ? null : loading ? (
+              <StateView loading title="Loading messages" message="" />
+            ) : messagesError ? (
+              <StateView
+                title="Messages unavailable"
+                message={messagesError}
+                actionLabel="Try again"
+                onAction={reload}
+              />
+            ) : (
+              <StateView
+                title={
+                  readOnly ? "No messages yet" : "Ready for the first prompt"
+                }
+                message={
+                  readOnly
+                    ? "Messages sent from the desktop appear here."
+                    : "Write a message below. The desktop agent runs it and keeps the history."
+                }
+              />
+            )
           }
           ListFooterComponent={
             <View>
@@ -284,15 +369,15 @@ export default function ChatScreen() {
                   key={request.id}
                   request={request}
                   busy={busyRequest === request.id}
+                  readOnly={readOnly}
                   onRespond={(response) => {
+                    if (!api) return
                     setBusyRequest(request.id)
-                    void resolveRequest(profile, request, response)
+                    void resolveRequest(api, request, response)
                       .catch((error) =>
                         Alert.alert(
                           "Response failed",
-                          error instanceof Error
-                            ? error.message
-                            : "Unknown error"
+                          remoteErrorMessage(error)
                         )
                       )
                       .finally(() => setBusyRequest(null))
@@ -343,22 +428,24 @@ export default function ChatScreen() {
                   key={action.label}
                   accessibilityRole="button"
                   accessibilityLabel={`${action.label} goal`}
-                  disabled={!currentModel || connectionState === "offline"}
+                  disabled={
+                    !currentModel || connectionState === "offline" || readOnly
+                  }
                   onPress={() => {
                     if (action.label === "Edit") {
                       setDraft(action.command)
                       return
                     }
-                    if (currentModel)
+                    if (api && currentModel)
                       void send(
-                        profile,
+                        api,
                         threadId,
                         action.command,
                         currentModel
                       ).catch((error) =>
                         Alert.alert(
                           "Goal update failed",
-                          error instanceof Error ? error.message : String(error)
+                          remoteErrorMessage(error)
                         )
                       )
                   }}
@@ -370,22 +457,35 @@ export default function ChatScreen() {
           ) : null}
         </View>
       ) : null}
-      <ChatComposer
-        value={draft}
-        onChange={setDraft}
-        onSend={() => void submit()}
-        onStop={() => void stop()}
-        onChooseModel={() => setPickerOpen(true)}
-        model={currentModel}
-        running={isRunning}
-        disabled={connectionState === "offline" || !thread}
-        thinkingMode={turnOptions?.thinkingMode ?? null}
-        onThinkingModeChange={(mode) =>
-          setTurnOptions(threadId, { thinkingMode: mode })
-        }
-        fastMode={turnOptions?.fastMode ?? false}
-        onFastModeChange={(fastMode) => setTurnOptions(threadId, { fastMode })}
-      />
+      {readOnly ? (
+        <View style={styles.readOnly} testID="read-only-banner">
+          <Eye size={16} color={colors.textSecondary} />
+          <Text style={styles.readOnlyText}>
+            This phone can only watch: it paired over plain HTTP from outside
+            your network. Pair it over Wi-Fi, Tailscale or HTTPS to send
+            messages.
+          </Text>
+        </View>
+      ) : (
+        <ChatComposer
+          value={draft}
+          onChange={setDraft}
+          onSend={() => void submit()}
+          onStop={() => void stop()}
+          onChooseModel={() => setPickerOpen(true)}
+          model={currentModel}
+          running={isRunning}
+          disabled={connectionState !== "online" || !thread}
+          thinkingMode={turnOptions?.thinkingMode ?? null}
+          onThinkingModeChange={(mode) =>
+            setTurnOptions(threadId, { thinkingMode: mode })
+          }
+          fastMode={turnOptions?.fastMode ?? false}
+          onFastModeChange={(fastMode) =>
+            setTurnOptions(threadId, { fastMode })
+          }
+        />
+      )}
       <ModelPicker
         visible={pickerOpen}
         options={options}
@@ -483,6 +583,34 @@ const styles = StyleSheet.create({
     fontSize: type.micro,
   },
   messages: { paddingTop: spacing.lg, paddingBottom: spacing.md },
+  earlier: {
+    minHeight: 44,
+    marginBottom: spacing.sm,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  earlierText: {
+    color: colors.textSecondary,
+    fontFamily: font.medium,
+    fontSize: type.small,
+  },
+  readOnly: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    backgroundColor: colors.surface,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.xs,
+  },
+  readOnlyText: {
+    flex: 1,
+    color: colors.textSecondary,
+    fontFamily: font.regular,
+    fontSize: type.small,
+    lineHeight: 20,
+  },
   messagesEmpty: { flexGrow: 1 },
   footerSpace: { height: spacing.sm },
 })

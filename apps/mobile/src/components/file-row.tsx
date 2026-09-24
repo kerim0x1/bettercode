@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from "react-native"
+import { formatBytes } from "@/lib/format"
 import {
   ChevronRight,
   File,
@@ -38,7 +39,7 @@ export function FileRow({
           {entry.isSymlink ? <Link2 size={13} color={colors.warning} /> : null}
         </View>
         <Text style={styles.meta}>
-          {entry.isDir ? "Ordner" : formatBytes(entry.size)}
+          {entry.isDir ? "Folder" : formatBytes(entry.size) || "File"}
         </Text>
       </View>
       <ChevronRight size={18} color={colors.textMuted} />
@@ -50,14 +51,6 @@ function isCodeFile(name: string): boolean {
   return /\.(?:[cm]?[jt]sx?|py|rb|rs|go|java|kt|swift|lua|css|scss|html|vue|svelte|json|ya?ml|toml|md|sql|sh|ps1)$/i.test(
     name
   )
-}
-
-function formatBytes(size: number | null): string {
-  if (size === null) return "File"
-  if (size < 1024) return `${size} B`
-  if (size < 1024 ** 2)
-    return `${(size / 1024).toFixed(size < 10_240 ? 1 : 0)} KB`
-  return `${(size / 1024 ** 2).toFixed(1)} MB`
 }
 
 const styles = StyleSheet.create({

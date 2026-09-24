@@ -24,21 +24,26 @@ import {
   spacing,
   type,
 } from "@/design/theme"
+import { remoteErrorMessage } from "@/lib/remote-errors"
 import { useAppStore } from "@/store/app-store"
-import { useSessionStore } from "@/store/session-store"
+import { useReadOnly, useRemoteApi } from "@/transport/use-transport"
 import type { ProjectSummary } from "@/types/remote"
 
 type Filter = "all" | "active"
 
 export default function ChatsScreen() {
   const router = useRouter()
-  const profile = useSessionStore((state) => state.profile)
+  const api = useRemoteApi()
+  const readOnly = useReadOnly()
   const threads = useAppStore((state) => state.threads)
   const projects = useAppStore((state) => state.projects)
   const streams = useAppStore((state) => state.streamsByThread)
   const loading = useAppStore((state) => state.loadingThreads)
-  const error = useAppStore((state) => state.error)
+  const loadingMore = useAppStore((state) => state.loadingMoreThreads)
+  const hasMore = useAppStore((state) => state.nextThreadsCursor !== null)
+  const error = useAppStore((state) => state.threadsError)
   const refreshThreads = useAppStore((state) => state.refreshThreads)
+  const loadMoreThreads = useAppStore((state) => state.loadMoreThreads)
   const createThread = useAppStore((state) => state.createThread)
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<Filter>("all")
@@ -64,39 +69,44 @@ export default function ChatsScreen() {
   const openThread = (id: string) =>
     router.push({ pathname: "/chat/[id]", params: { id } })
   const startThread = async (project: ProjectSummary) => {
-    if (!profile) return
+    if (!api) return
     setCreating(project.path)
     try {
-      const thread = await createThread(profile, project)
+      const thread = await createThread(api, project)
       setNewChatOpen(false)
       openThread(thread.id)
     } catch (error) {
-      Alert.alert(
-        "Could not create chat",
-        error instanceof Error ? error.message : "Unknown error"
-      )
+      Alert.alert("Could not create chat", remoteErrorMessage(error))
     } finally {
       setCreating(null)
     }
   }
+  const refresh = () => api && void refreshThreads(api).catch(() => undefined)
+  const loadMore = () =>
+    api && hasMore && void loadMoreThreads(api).catch(() => undefined)
 
   return (
-    <Screen>
+    <Screen testID="chats-screen">
       <TopBar title="Chats" right={<ConnectionPill />} />
       <View style={styles.summary}>
         <Text style={styles.summaryText}>
           {threads.length} {threads.length === 1 ? "thread" : "threads"}
           {activeCount > 0 ? ` · ${activeCount} active` : ""}
         </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Create new chat"
-          onPress={() => setNewChatOpen(true)}
-          style={({ pressed }) => [styles.newButton, pressed && styles.pressed]}
-        >
-          <Plus size={16} color={colors.primaryForeground} />
-          <Text style={styles.newButtonText}>New</Text>
-        </Pressable>
+        {readOnly ? null : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Create new chat"
+            onPress={() => setNewChatOpen(true)}
+            style={({ pressed }) => [
+              styles.newButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Plus size={16} color={colors.primaryForeground} />
+            <Text style={styles.newButtonText}>New</Text>
+          </Pressable>
+        )}
       </View>
       <View style={styles.controls}>
         <View style={styles.search}>
@@ -138,9 +148,7 @@ export default function ChatsScreen() {
           title="Chats unavailable"
           message={error}
           actionLabel="Try again"
-          onAction={() =>
-            profile && void refreshThreads(profile).catch(() => undefined)
-          }
+          onAction={refresh}
         />
       ) : (
         <FlatList
@@ -164,10 +172,27 @@ export default function ChatsScreen() {
               refreshing={loading}
               tintColor={colors.mint}
               colors={[colors.mint]}
-              onRefresh={() =>
-                profile && void refreshThreads(profile).catch(() => undefined)
-              }
+              onRefresh={refresh}
             />
+          }
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={
+            hasMore ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Load older chats"
+                disabled={loadingMore}
+                onPress={loadMore}
+                style={styles.loadMore}
+              >
+                {loadingMore ? (
+                  <ActivityIndicator color={colors.textSecondary} />
+                ) : (
+                  <Text style={styles.loadMoreText}>Load older chats</Text>
+                )}
+              </Pressable>
+            ) : null
           }
           ListEmptyComponent={
             <StateView
@@ -181,10 +206,12 @@ export default function ChatsScreen() {
                   : "Create a chat for one of your desktop projects."
               }
               actionLabel={
-                !query && filter === "all" ? "Create chat" : undefined
+                !query && filter === "all" && !readOnly
+                  ? "Create chat"
+                  : undefined
               }
               onAction={
-                !query && filter === "all"
+                !query && filter === "all" && !readOnly
                   ? () => setNewChatOpen(true)
                   : undefined
               }
@@ -358,6 +385,18 @@ const styles = StyleSheet.create({
   },
   filterTextActive: { color: colors.text },
   list: { paddingTop: spacing.xs, paddingBottom: spacing.xxl },
+  loadMore: {
+    minHeight: minTouchTarget,
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadMoreText: {
+    color: colors.textSecondary,
+    fontFamily: font.medium,
+    fontSize: type.small,
+  },
   emptyList: { flexGrow: 1 },
   pressed: { opacity: 0.7 },
   modal: { flex: 1, backgroundColor: colors.canvas },

@@ -15,10 +15,13 @@ import { MarkdownText } from "./markdown-text"
 export function PendingRequestCard({
   request,
   busy,
+  readOnly = false,
   onRespond,
 }: {
   request: PendingRequest
   busy: boolean
+  /** A watch-only session sees the request but must answer it on the desktop. */
+  readOnly?: boolean
   onRespond: (response: {
     decision?: "approve" | "deny"
     answers?: Record<string, unknown>
@@ -41,7 +44,7 @@ export function PendingRequestCard({
   )
 
   return (
-    <View style={styles.card}>
+    <View style={styles.card} testID={`request-${request.id}`}>
       <View style={styles.header}>
         {request.kind === "user-input" ? (
           <HelpCircle size={19} color={colors.info} />
@@ -69,7 +72,11 @@ export function PendingRequestCard({
           {formatInput(request.input)}
         </Text>
       ) : null}
-      {request.kind === "user-input" ? (
+      {readOnly ? (
+        <Text style={styles.readOnlyNote}>
+          This phone can only watch. Answer this on the desktop.
+        </Text>
+      ) : request.kind === "user-input" ? (
         <View style={styles.questions}>
           {questions.map((question) => (
             <View key={question.id} style={styles.question}>
@@ -158,12 +165,14 @@ export function PendingRequestCard({
             <ActionButton
               label="Deny"
               icon="deny"
+              testID="request-deny"
               disabled={busy}
               onPress={() => onRespond({ decision: "deny" })}
             />
             <ActionButton
               label="Send answer"
               icon="approve"
+              testID="request-answer"
               disabled={busy || !canAnswer}
               onPress={() => onRespond({ answers })}
               primary
@@ -186,6 +195,7 @@ export function PendingRequestCard({
             <ActionButton
               label="Deny"
               icon="deny"
+              testID="request-deny"
               disabled={busy}
               onPress={() =>
                 onRespond({
@@ -197,6 +207,7 @@ export function PendingRequestCard({
             <ActionButton
               label={request.kind === "plan" ? "Implement plan" : "Approve"}
               icon="approve"
+              testID="request-approve"
               disabled={busy}
               onPress={() => onRespond({ decision: "approve" })}
               primary
@@ -211,12 +222,14 @@ export function PendingRequestCard({
 function ActionButton({
   label,
   icon,
+  testID,
   disabled,
   primary = false,
   onPress,
 }: {
   label: string
   icon: "approve" | "deny"
+  testID: string
   disabled: boolean
   primary?: boolean
   onPress: () => void
@@ -225,6 +238,7 @@ function ActionButton({
     <Pressable
       accessibilityRole="button"
       accessibilityState={{ disabled }}
+      testID={testID}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
@@ -280,6 +294,12 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   header: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm },
+  readOnlyNote: {
+    color: colors.textSecondary,
+    fontFamily: font.medium,
+    fontSize: 13,
+    lineHeight: 19,
+  },
   headerCopy: { flex: 1, minWidth: 0 },
   eyebrow: {
     color: colors.textSecondary,

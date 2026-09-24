@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from "react"
 import { FlatList, StyleSheet, Text, View } from "react-native"
-import { Redirect, useLocalSearchParams, useRouter } from "expo-router"
+import { useLocalSearchParams, useRouter } from "expo-router"
 import { ArrowLeft, WrapText } from "lucide-react-native"
 import { Screen, StateView } from "@/components/layout"
 import { IconButton } from "@/components/icon-button"
 import { colors, font, spacing, type } from "@/design/theme"
 import { effectiveThreadRoot, relativePathWithinRoot } from "@/lib/endpoint"
-import { remoteApi } from "@/lib/remote-api"
+import { remoteErrorMessage } from "@/lib/remote-errors"
 import { useAppStore } from "@/store/app-store"
-import { useSessionStore } from "@/store/session-store"
+import { useRemoteApi } from "@/transport/use-transport"
 
 export default function FileScreen() {
   const params = useLocalSearchParams<{
@@ -18,13 +18,14 @@ export default function FileScreen() {
   const threadId = Array.isArray(params.id) ? params.id[0] : params.id
   const absolutePath = Array.isArray(params.path) ? params.path[0] : params.path
   const router = useRouter()
-  const profile = useSessionStore((state) => state.profile)
+  const api = useRemoteApi()
   const thread = useAppStore((state) =>
     state.threads.find((item) => item.id === threadId)
   )
   const root = thread ? effectiveThreadRoot(thread) : ""
   const [content, setContent] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [binary, setBinary] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [wrap, setWrap] = useState(true)
   const lines = useMemo(
@@ -33,9 +34,10 @@ export default function FileScreen() {
   )
 
   useEffect(() => {
-    if (!profile || !root || !absolutePath) return
+    if (!api || !root || !absolutePath) return
     setLoading(true)
     setError(null)
+    setBinary(false)
     try {
       relativePathWithinRoot(root, absolutePath)
     } catch (caught) {
@@ -48,17 +50,17 @@ export default function FileScreen() {
       return
     }
     let cancelled = false
-    void remoteApi(profile)
+    void api
       .readFile(root, absolutePath)
       .then((result) => {
-        if (!cancelled) setContent(result.content)
+        if (cancelled) return
+        // Desktops that report it tell a text file from a binary one;
+        // showing binary bytes as text is only noise.
+        setBinary(result.isUtf8 === false)
+        setContent(result.content)
       })
       .catch((caught) => {
-        if (!cancelled) {
-          setError(
-            caught instanceof Error ? caught.message : "Failed to read file."
-          )
-        }
+        if (!cancelled) setError(remoteErrorMessage(caught))
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -66,9 +68,8 @@ export default function FileScreen() {
     return () => {
       cancelled = true
     }
-  }, [absolutePath, profile, root])
+  }, [absolutePath, api, root])
 
-  if (!profile) return <Redirect href="/pair" />
   const name = fileName(absolutePath ?? "File")
   const relative = root && absolutePath ? safeRelative(root, absolutePath) : ""
 
@@ -82,7 +83,7 @@ export default function FileScreen() {
         />
         <View style={styles.headerCopy}>
           <Text style={styles.eyebrow}>
-            {extension(name).toUpperCase() || "TEXT"} · NUR LESEN
+            {extension(name).toUpperCase() || "TEXT"} · READ ONLY
           </Text>
           <Text style={styles.title} numberOfLines={1}>
             {name}
@@ -100,17 +101,31 @@ export default function FileScreen() {
           /{relative}
         </Text>
         {content !== null ? (
-          <Text style={styles.lineCount}>{lines.length} Zeilen</Text>
+          <Text style={styles.lineCount}>
+            {lines.length} {lines.length === 1 ? "line" : "lines"}
+          </Text>
         ) : null}
       </View>
-      {loading ? (
+      {!thread ? (
+        <StateView
+          title="Chat not loaded"
+          message="Open the chat again to browse its files."
+          actionLabel="Back"
+          onAction={() => router.back()}
+        />
+      ) : loading ? (
         <StateView
           loading
           title="Loading file"
-          message="Inhalt kommt direkt vom Desktop-Workspace."
+          message="Reading it from the desktop."
         />
       ) : error ? (
         <StateView title="File not readable" message={error} />
+      ) : binary ? (
+        <StateView
+          title="Not a text file"
+          message="This file is binary, so it is not shown here. Open it on the desktop."
+        />
       ) : (
         <FlatList
           data={lines}

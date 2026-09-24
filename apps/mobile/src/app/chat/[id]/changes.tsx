@@ -7,7 +7,7 @@ import {
   Text,
   View,
 } from "react-native"
-import { Redirect, useLocalSearchParams, useRouter } from "expo-router"
+import { useLocalSearchParams, useRouter } from "expo-router"
 import {
   ArrowLeft,
   ChevronDown,
@@ -18,9 +18,10 @@ import {
 import { Screen, StateView } from "@/components/layout"
 import { IconButton } from "@/components/icon-button"
 import { colors, font, radius, spacing, type } from "@/design/theme"
-import { remoteApi } from "@/lib/remote-api"
+import { formatShortDateTime } from "@/lib/format"
+import { remoteErrorMessage } from "@/lib/remote-errors"
 import { useAppStore } from "@/store/app-store"
-import { useSessionStore } from "@/store/session-store"
+import { useRemoteApi } from "@/transport/use-transport"
 import type { ThreadDiffs } from "@/types/remote"
 
 interface DiffItem {
@@ -38,7 +39,7 @@ export default function ChangesScreen() {
   const params = useLocalSearchParams<{ id: string | string[] }>()
   const threadId = Array.isArray(params.id) ? params.id[0] : params.id
   const router = useRouter()
-  const profile = useSessionStore((state) => state.profile)
+  const api = useRemoteApi()
   const thread = useAppStore((state) =>
     state.threads.find((item) => item.id === threadId)
   )
@@ -48,24 +49,22 @@ export default function ChangesScreen() {
   const [expanded, setExpanded] = useState<string | null>(null)
 
   const load = async () => {
-    if (!profile || !threadId) return
+    if (!api || !threadId) return
     setLoading(true)
     setError(null)
     try {
-      setDiffs(await remoteApi(profile).listDiffs(threadId))
+      setDiffs(await api.listDiffs(threadId))
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "Failed to load changes."
-      )
+      setError(remoteErrorMessage(caught))
     } finally {
       setLoading(false)
     }
   }
   useEffect(() => {
     void load()
-    // Thread identity is the stable fetch key.
+    // The connection and the chat are the stable fetch keys.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.environmentId, threadId])
+  }, [api, threadId])
 
   const items = useMemo<DiffItem[]>(() => {
     if (!diffs) return []
@@ -93,8 +92,6 @@ export default function ChangesScreen() {
     ].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
   }, [diffs])
 
-  if (!profile) return <Redirect href="/pair" />
-
   return (
     <Screen edges={["top", "bottom"]}>
       <View style={styles.header}>
@@ -111,7 +108,7 @@ export default function ChangesScreen() {
         </View>
         <IconButton
           icon={RefreshCw}
-          label="Aktualisieren"
+          label="Refresh"
           tone="mint"
           onPress={() => void load()}
         />
@@ -163,7 +160,7 @@ export default function ChangesScreen() {
                     <View style={styles.stats}>
                       {item.files !== null ? (
                         <Text style={styles.fileStat}>
-                          {item.files} Dateien
+                          {item.files} {item.files === 1 ? "file" : "files"}
                         </Text>
                       ) : null}
                       {item.additions !== null ? (
@@ -173,7 +170,7 @@ export default function ChangesScreen() {
                         <Text style={styles.del}>−{item.deletions}</Text>
                       ) : null}
                       <Text style={styles.date}>
-                        {formatDate(item.createdAt)}
+                        {formatShortDateTime(item.createdAt)}
                       </Text>
                     </View>
                   </View>
@@ -222,22 +219,12 @@ function DiffPreview({ value }: { value: string }) {
         </Text>
       ))}
       {lines.length > visible.length ? (
-        <Text style={styles.capped}>Diff auf 500 Zeilen begrenzt.</Text>
+        <Text style={styles.capped}>
+          Showing the first 500 lines of this diff.
+        </Text>
       ) : null}
     </View>
   )
-}
-
-function formatDate(value: string): string {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime())
-    ? ""
-    : date.toLocaleString("de-DE", {
-        day: "2-digit",
-        month: "short",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
 }
 
 const styles = StyleSheet.create({

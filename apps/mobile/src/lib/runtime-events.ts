@@ -5,7 +5,8 @@ export interface DecodedRuntimeEvent {
   threadId: string
   type: string
   payload: Record<string, unknown>
-  providerKind: string
+  /** `null` when the event does not say; never guessed, so Stop cannot reach the wrong agent. */
+  providerKind: string | null
   providerInstanceId: string | null
   turnId: string | null
   requestId: string | null
@@ -32,7 +33,7 @@ export function decodeRuntimeFrame(frame: unknown): DecodedRuntimeEvent | null {
       stringValue(payload.provider_kind) ??
       stringValue(data.providerKind) ??
       stringValue(data.provider) ??
-      "openai",
+      null,
     providerInstanceId:
       stringValue(payload.providerInstanceId) ??
       stringValue(payload.provider_instance_id) ??
@@ -192,7 +193,9 @@ export function pendingRequestFromEvent(
     id: requestId,
     threadId: event.threadId,
     kind: isUserInput ? "user-input" : isPlan ? "plan" : "approval",
-    providerKind: event.providerKind,
+    // Answering needs the provider; an event without one gets an empty kind,
+    // which the desktop refuses, instead of a guessed provider.
+    providerKind: event.providerKind ?? "",
     providerInstanceId: event.providerInstanceId,
     title: isUserInput
       ? "Input required"

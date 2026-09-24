@@ -7,13 +7,13 @@ import {
 import type {
   ChatMessage,
   ChatThread,
-  ConnectionProfile,
   ModelOption,
   PendingRequest,
   ProjectSummary,
   ThreadActivity,
 } from "@/types/remote"
-import { remoteApi } from "@/lib/remote-api"
+import { remoteErrorMessage } from "@/lib/remote-errors"
+import type { RemoteApi } from "@/transport/types"
 import {
   decodeRuntimeFrame,
   eventDelta,
@@ -41,7 +41,13 @@ export interface StreamState {
   running: boolean
   error: string | null
   startedAt: string
+  /** The provider running this turn; Stop must reach this one, whatever the picker shows now. */
+  providerKind?: string | null
+  providerInstanceId?: string | null
 }
+
+/** Messages are loaded newest first, this many at a time. */
+export const MESSAGE_PAGE_SIZE = 200
 
 export interface RuntimeOutcome {
   threadId: string
@@ -51,8 +57,16 @@ export interface RuntimeOutcome {
 
 interface AppStore {
   threads: ChatThread[]
+  /** Cursor of the next page of chats, or `null` when all are loaded. */
+  nextThreadsCursor: string | null
+  loadingMoreThreads: boolean
+  threadsError: string | null
   projects: ProjectSummary[]
+  projectsError: string | null
   messagesByThread: Record<string, ChatMessage[]>
+  /** Whether the desktop has older messages than the loaded ones. */
+  earlierMessagesByThread: Record<string, boolean>
+  messagesErrorByThread: Record<string, string | null>
   activitiesByThread: Record<string, ThreadActivity[]>
   streamsByThread: Record<string, StreamState>
   requestsByThread: Record<string, PendingRequest[]>
@@ -62,30 +76,28 @@ interface AppStore {
   loadingProjects: boolean
   loadingMessages: Record<string, boolean>
   error: string | null
-  refreshThreads: (profile: ConnectionProfile) => Promise<void>
-  refreshProjects: (profile: ConnectionProfile) => Promise<void>
+  refreshThreads: (api: RemoteApi) => Promise<void>
+  loadMoreThreads: (api: RemoteApi) => Promise<void>
+  /** Fetches one chat that is not in the loaded pages (a deep link, a notification). */
+  ensureThread: (api: RemoteApi, threadId: string) => Promise<ChatThread | null>
+  refreshProjects: (api: RemoteApi) => Promise<void>
   loadMessages: (
-    profile: ConnectionProfile,
+    api: RemoteApi,
     threadId: string,
     clearCompletedStream?: boolean
   ) => Promise<void>
-  loadActivities: (
-    profile: ConnectionProfile,
-    threadId: string
-  ) => Promise<void>
-  createThread: (
-    profile: ConnectionProfile,
-    project: ProjectSummary
-  ) => Promise<ChatThread>
+  loadEarlierMessages: (api: RemoteApi, threadId: string) => Promise<void>
+  loadActivities: (api: RemoteApi, threadId: string) => Promise<void>
+  createThread: (api: RemoteApi, project: ProjectSummary) => Promise<ChatThread>
   send: (
-    profile: ConnectionProfile,
+    api: RemoteApi,
     threadId: string,
     content: string,
     selection: ModelOption
   ) => Promise<void>
-  interrupt: (profile: ConnectionProfile, threadId: string) => Promise<void>
+  interrupt: (api: RemoteApi, threadId: string) => Promise<void>
   resolveRequest: (
-    profile: ConnectionProfile,
+    api: RemoteApi,
     request: PendingRequest,
     response: {
       decision?: "approve" | "deny"
@@ -102,8 +114,14 @@ interface AppStore {
 
 const initialState = {
   threads: [] as ChatThread[],
+  nextThreadsCursor: null as string | null,
+  loadingMoreThreads: false,
+  threadsError: null as string | null,
   projects: [] as ProjectSummary[],
+  projectsError: null as string | null,
   messagesByThread: {} as Record<string, ChatMessage[]>,
+  earlierMessagesByThread: {} as Record<string, boolean>,
+  messagesErrorByThread: {} as Record<string, string | null>,
   activitiesByThread: {} as Record<string, ThreadActivity[]>,
   streamsByThread: {} as Record<string, StreamState>,
   requestsByThread: {} as Record<string, PendingRequest[]>,
@@ -121,84 +139,190 @@ let generation = 0
 export const useAppStore = create<AppStore>((set, get) => ({
   ...initialState,
 
-  refreshThreads: async (profile) => {
+  refreshThreads: async (api) => {
     const owner = generation
-    set({ loadingThreads: true, error: null })
+    set({ loadingThreads: true, threadsError: null, error: null })
     try {
       const beforeLoad = new Map(
         get().threads.map((thread) => [thread.id, thread])
       )
-      const threads = await remoteApi(profile).listThreads()
+      const page = await api.listThreadsPage()
       if (owner !== generation) return
-      threads.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
       set((state) => {
         const current = new Map(
           state.threads.map((thread) => [thread.id, thread])
         )
+        const first = page.threads.map((thread) => {
+          const live = current.get(thread.id)
+          return live &&
+            live !== beforeLoad.get(thread.id) &&
+            live.goal !== undefined
+            ? { ...thread, goal: live.goal }
+            : thread
+        })
+        // Chats from later pages stay, so a refresh never drops the pages
+        // the user already scrolled through.
+        const firstIds = new Set(first.map((thread) => thread.id))
+        const beyond = page.nextCursor
+          ? state.threads.filter((thread) => !firstIds.has(thread.id))
+          : []
         return {
-          threads: threads.map((thread) => {
-            const live = current.get(thread.id)
-            return live &&
-              live !== beforeLoad.get(thread.id) &&
-              live.goal !== undefined
-              ? { ...thread, goal: live.goal }
-              : thread
-          }),
+          threads: sortByUpdated([...first, ...beyond]),
+          nextThreadsCursor:
+            beyond.length > 0
+              ? (state.nextThreadsCursor ?? page.nextCursor)
+              : page.nextCursor,
           loadingThreads: false,
         }
       })
     } catch (error) {
       if (owner !== generation) return
-      set({ loadingThreads: false, error: readableError(error) })
+      const message = remoteErrorMessage(error)
+      set({ loadingThreads: false, threadsError: message, error: message })
       throw error
     }
   },
 
-  refreshProjects: async (profile) => {
+  loadMoreThreads: async (api) => {
     const owner = generation
-    set({ loadingProjects: true })
+    const cursor = get().nextThreadsCursor
+    if (!cursor || get().loadingMoreThreads) return
+    set({ loadingMoreThreads: true })
     try {
-      const projects = await remoteApi(profile).listProjects()
+      const page = await api.listThreadsPage(cursor)
+      if (owner !== generation) return
+      set((state) => {
+        const known = new Set(state.threads.map((thread) => thread.id))
+        return {
+          threads: sortByUpdated([
+            ...state.threads,
+            ...page.threads.filter((thread) => !known.has(thread.id)),
+          ]),
+          nextThreadsCursor: page.nextCursor,
+          loadingMoreThreads: false,
+        }
+      })
+    } catch (error) {
+      if (owner !== generation) return
+      set({
+        loadingMoreThreads: false,
+        threadsError: remoteErrorMessage(error),
+      })
+      throw error
+    }
+  },
+
+  ensureThread: async (api, threadId) => {
+    const known = get().threads.find((thread) => thread.id === threadId)
+    if (known) return known
+    const owner = generation
+    const thread = await api.getThread(threadId)
+    if (owner !== generation || !thread) return null
+    set((state) =>
+      state.threads.some((item) => item.id === thread.id)
+        ? {}
+        : { threads: sortByUpdated([...state.threads, thread]) }
+    )
+    return get().threads.find((item) => item.id === threadId) ?? thread
+  },
+
+  refreshProjects: async (api) => {
+    const owner = generation
+    set({ loadingProjects: true, projectsError: null })
+    try {
+      const projects = await api.listProjects()
       if (owner !== generation) return
       projects.sort((a, b) => a.name.localeCompare(b.name))
       set({ projects, loadingProjects: false })
     } catch (error) {
       if (owner !== generation) return
-      set({ loadingProjects: false, error: readableError(error) })
+      set({ loadingProjects: false, projectsError: remoteErrorMessage(error) })
       throw error
     }
   },
 
-  loadMessages: async (profile, threadId, clearCompletedStream = false) => {
+  loadMessages: async (api, threadId, clearCompletedStream = false) => {
     const owner = generation
     set((state) => ({
       loadingMessages: { ...state.loadingMessages, [threadId]: true },
+      messagesErrorByThread: {
+        ...state.messagesErrorByThread,
+        [threadId]: null,
+      },
     }))
     try {
-      const messages = await remoteApi(profile).listMessages(threadId)
+      const newest = await api.listMessages(threadId, {
+        limit: MESSAGE_PAGE_SIZE,
+      })
       if (owner !== generation) return
-      set((state) => ({
-        messagesByThread: { ...state.messagesByThread, [threadId]: messages },
-        loadingMessages: { ...state.loadingMessages, [threadId]: false },
-        streamsByThread:
-          clearCompletedStream &&
-          shouldClearCompletedStream(state.streamsByThread[threadId], messages)
-            ? omitKey(state.streamsByThread, threadId)
-            : state.streamsByThread,
-      }))
+      set((state) => {
+        const loaded = state.messagesByThread[threadId] ?? []
+        const merged = mergeNewestPage(loaded, newest)
+        return {
+          messagesByThread: { ...state.messagesByThread, [threadId]: merged },
+          earlierMessagesByThread: {
+            ...state.earlierMessagesByThread,
+            // A full page from a desktop that numbers its messages may have
+            // more before it; earlier pages the user loaded keep their answer.
+            [threadId]:
+              merged.length > newest.length
+                ? (state.earlierMessagesByThread[threadId] ?? false)
+                : newest.length >= MESSAGE_PAGE_SIZE &&
+                  messageSequence(newest[0]) !== null,
+          },
+          loadingMessages: { ...state.loadingMessages, [threadId]: false },
+          streamsByThread:
+            clearCompletedStream &&
+            shouldClearCompletedStream(state.streamsByThread[threadId], newest)
+              ? omitKey(state.streamsByThread, threadId)
+              : state.streamsByThread,
+        }
+      })
     } catch (error) {
       if (owner !== generation) return
       set((state) => ({
         loadingMessages: { ...state.loadingMessages, [threadId]: false },
-        error: readableError(error),
+        messagesErrorByThread: {
+          ...state.messagesErrorByThread,
+          [threadId]: remoteErrorMessage(error),
+        },
       }))
       throw error
     }
   },
 
-  loadActivities: async (profile, threadId) => {
+  loadEarlierMessages: async (api, threadId) => {
     const owner = generation
-    const activities = await remoteApi(profile).listActivities(threadId)
+    const loaded = get().messagesByThread[threadId] ?? []
+    const oldest = messageSequence(loaded[0])
+    if (oldest === null || !get().earlierMessagesByThread[threadId]) return
+    const earlier = await api.listMessages(threadId, {
+      limit: MESSAGE_PAGE_SIZE,
+      beforeSequence: oldest,
+    })
+    if (owner !== generation) return
+    set((state) => {
+      const current = state.messagesByThread[threadId] ?? []
+      const known = new Set(current.map((message) => message.id))
+      return {
+        messagesByThread: {
+          ...state.messagesByThread,
+          [threadId]: [
+            ...earlier.filter((message) => !known.has(message.id)),
+            ...current,
+          ],
+        },
+        earlierMessagesByThread: {
+          ...state.earlierMessagesByThread,
+          [threadId]: earlier.length >= MESSAGE_PAGE_SIZE,
+        },
+      }
+    })
+  },
+
+  loadActivities: async (api, threadId) => {
+    const owner = generation
+    const activities = await api.listActivities(threadId)
     if (owner !== generation) return
     set((state) => ({
       activitiesByThread: {
@@ -212,7 +336,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }))
   },
 
-  createThread: async (profile, project) => {
+  createThread: async (api, project) => {
     const owner = generation
     const now = new Date().toISOString()
     const thread: ChatThread = {
@@ -226,14 +350,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
       createdAt: now,
       updatedAt: now,
     }
-    await remoteApi(profile).createThread(thread)
+    await api.createThread(thread)
     if (owner !== generation)
       throw new Error("The session changed while creating the chat.")
     set((state) => ({ threads: [thread, ...state.threads] }))
     return thread
   },
 
-  send: async (profile, threadId, content, selection) => {
+  send: async (api, threadId, content, selection) => {
     const owner = generation
     const thread = get().threads.find((candidate) => candidate.id === threadId)
     if (!thread) throw new Error("Chat not found.")
@@ -244,7 +368,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     // rejected here with the desktop's wording instead of a round trip.
     if (parseGoalCommand(content) !== null) {
       const options = get().turnOptionsByThread[threadId]
-      const result = await remoteApi(profile).goal({
+      const result = await api.goal({
         threadId,
         message: content,
         modelId: selection.modelId,
@@ -274,6 +398,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       createdAt: now,
       dispatchStatus: "pending",
     }
+    const provider = {
+      providerKind: selection.providerKind,
+      providerInstanceId: selection.providerInstanceId,
+    }
     set((state) => ({
       messagesByThread: {
         ...state.messagesByThread,
@@ -288,6 +416,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
           running: true,
           error: null,
           startedAt: now,
+          ...provider,
         },
       },
       threads: state.threads.map((item) =>
@@ -297,7 +426,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }))
     const turnOptions = get().turnOptionsByThread[threadId]
     try {
-      const result = await remoteApi(profile).sendMessage({
+      const result = await api.sendMessage({
         providerKind: selection.providerKind,
         providerInstanceId: selection.providerInstanceId,
         threadId,
@@ -335,6 +464,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
               running: true,
               error: null,
               startedAt: now,
+              ...provider,
             }),
             turnId: result.turnId,
           },
@@ -359,9 +489,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
               content: "",
               reasoning: "",
               startedAt: now,
+              ...provider,
             }),
             running: false,
-            error: readableError(error),
+            error: remoteErrorMessage(error),
           },
         },
       }))
@@ -369,20 +500,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  interrupt: async (profile, threadId) => {
+  interrupt: async (api, threadId) => {
     const thread = get().threads.find((candidate) => candidate.id === threadId)
     if (!thread) throw new Error("Chat not found.")
-    const selected = get().selectedModels[threadId]
-    await remoteApi(profile).interrupt({
-      providerKind:
-        selected?.providerKind || thread.session?.providerKind || "openai",
-      providerInstanceId:
-        selected?.providerInstanceId || thread.session?.providerInstanceId,
-      threadId,
-    })
+    const target = interruptTarget(
+      get().streamsByThread[threadId],
+      thread,
+      get().selectedModels[threadId]
+    )
+    if (!target) throw new Error("It is not known which agent runs this chat.")
+    await api.interrupt({ ...target, threadId })
   },
 
-  resolveRequest: async (profile, request, response) => {
+  resolveRequest: async (api, request, response) => {
     const owner = generation
     const body = {
       providerKind: request.providerKind,
@@ -390,7 +520,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
       threadId: request.threadId,
       requestId: request.id,
     }
-    const api = remoteApi(profile)
     const result =
       request.kind === "user-input"
         ? response.decision === "deny"
@@ -466,7 +595,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
           const goal = normalizeProviderGoal(
             metadata.goal,
             thread?.goal,
-            event.providerKind
+            event.providerKind ?? undefined
           )
           if (goal !== undefined) patch = { ...patch, goal }
         }
@@ -499,6 +628,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
           running: false,
           error: null,
           startedAt: new Date().toISOString(),
+          providerKind: event.providerKind,
+          providerInstanceId: event.providerInstanceId,
         }
         let stream = current
         if (newTool) {
@@ -525,6 +656,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
                 error: null,
                 observedToolIds: [],
                 startedAt: new Date().toISOString(),
+                providerKind: event.providerKind,
+                providerInstanceId: event.providerInstanceId,
               }
             : current
           stream = {
@@ -610,6 +743,10 @@ function metadataTitle(payload: Record<string, unknown>): string | null {
  * reply: reloading 180 ms later usually finds it, but when the list does
  * not yet hold an assistant message from this turn the streamed text is
  * the only copy the user has, so it stays until a later reload finds one.
+ *
+ * The reply is recognised by its turn id. Only when the desktop stores no
+ * turn ids does the time decide, and the phone's clock may be off from the
+ * desktop's, so that is the fallback, not the rule.
  */
 export function shouldClearCompletedStream(
   stream: StreamState | undefined,
@@ -618,12 +755,77 @@ export function shouldClearCompletedStream(
   if (!stream) return false
   if (stream.running) return false
   if (stream.content.length === 0) return true
+  const assistant = messages.filter((message) => message.role === "assistant")
+  if (stream.turnId && assistant.some((message) => message.turnId)) {
+    return assistant.some((message) => message.turnId === stream.turnId)
+  }
   const startedAt = Date.parse(stream.startedAt)
-  return messages.some(
+  return assistant.some(
     (message) =>
-      message.role === "assistant" &&
-      (Number.isNaN(startedAt) || Date.parse(message.createdAt) >= startedAt)
+      Number.isNaN(startedAt) || Date.parse(message.createdAt) >= startedAt
   )
+}
+
+/**
+ * Which agent Stop must reach: the one running the turn (recorded when it
+ * was sent or started), then the chat's session, and only then the model
+ * picker, which may already show a different provider for the next message.
+ */
+export function interruptTarget(
+  stream: StreamState | undefined,
+  thread: ChatThread,
+  selected: ModelOption | undefined
+): { providerKind: string; providerInstanceId: string | null } | null {
+  if (stream?.providerKind) {
+    return {
+      providerKind: stream.providerKind,
+      providerInstanceId: stream.providerInstanceId ?? null,
+    }
+  }
+  if (thread.session?.providerKind) {
+    return {
+      providerKind: thread.session.providerKind,
+      providerInstanceId: thread.session.providerInstanceId ?? null,
+    }
+  }
+  if (selected) {
+    return {
+      providerKind: selected.providerKind,
+      providerInstanceId: selected.providerInstanceId,
+    }
+  }
+  return null
+}
+
+function sortByUpdated(threads: ChatThread[]): ChatThread[] {
+  return [...threads].sort(
+    (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
+  )
+}
+
+/** The desktop numbers messages when asked for a page; older desktops do not. */
+function messageSequence(message: ChatMessage | undefined): number | null {
+  const sequence = (message as { sequence?: unknown } | undefined)?.sequence
+  return typeof sequence === "number" && Number.isFinite(sequence)
+    ? sequence
+    : null
+}
+
+/**
+ * The newest page replaces the newest part of what is loaded; earlier pages
+ * the user already fetched stay in front of it.
+ */
+function mergeNewestPage(
+  loaded: ChatMessage[],
+  newest: ChatMessage[]
+): ChatMessage[] {
+  const first = messageSequence(newest[0])
+  if (first === null) return newest
+  const earlier = loaded.filter((message) => {
+    const sequence = messageSequence(message)
+    return sequence !== null && sequence < first
+  })
+  return [...earlier, ...newest]
 }
 
 function createId(prefix: string): string {
@@ -634,10 +836,6 @@ function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   const next = { ...record }
   delete next[key]
   return next
-}
-
-function readableError(error: unknown): string {
-  return error instanceof Error ? error.message : "Request failed."
 }
 
 export function pendingRequestsFromActivities(

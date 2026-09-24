@@ -4,8 +4,13 @@ import type {
   ThreadActivity,
   ProviderInstanceSnapshot,
 } from "@betterc0de/schema"
+import type {
+  RemoteAccessLevel,
+  RemoteProtocol,
+} from "@betterc0de/schema/remote-protocol"
 
 export type { ChatMessage, ChatThread, ThreadActivity }
+export type { RemoteAccessLevel, RemoteProtocol }
 
 export interface RemoteSessionSummary {
   id: string
@@ -13,6 +18,11 @@ export interface RemoteSessionSummary {
   createdAt: string
   lastSeenAt: string
   expiresAt: string
+  /**
+   * `read_only` for sessions paired over public plain HTTP. Profiles stored
+   * before the field existed read as `full`, which is what they were.
+   */
+  accessLevel?: RemoteAccessLevel
 }
 
 export interface ConnectionProfile {
@@ -29,6 +39,8 @@ export interface RemoteBootstrap {
   authentication: "local" | "remote" | null
   environmentId: string | null
   session: RemoteSessionSummary | null
+  /** `null` from desktops that predate protocol negotiation. */
+  protocol: RemoteProtocol | null
 }
 
 export interface RemotePairResponse {
@@ -39,6 +51,7 @@ export interface RemotePairResponse {
   tokenType: "Bearer"
   sessionToken: string
   session: RemoteSessionSummary
+  protocol: RemoteProtocol | null
 }
 
 export interface RemoteStatus {

@@ -15,6 +15,8 @@ import { CameraView, useCameraPermissions } from "expo-camera"
 import * as Linking from "expo-linking"
 import { useRouter } from "expo-router"
 import {
+  FlaskConical,
+  Info,
   Keyboard,
   Link2,
   LockKeyhole,
@@ -47,8 +49,10 @@ type Mode = "scan" | "manual"
 export default function PairScreen() {
   const router = useRouter()
   const pair = useSessionStore((store) => store.pair)
+  const startDemo = useSessionStore((store) => store.startDemo)
   const state = useSessionStore((store) => store.state)
   const storeError = useSessionStore((store) => store.error)
+  const notice = useSessionStore((store) => store.notice)
   const [mode, setMode] = useState<Mode>("scan")
   const [input, setInput] = useState("")
   const [host, setHost] = useState("")
@@ -92,8 +96,13 @@ export default function PairScreen() {
 
   const manualIncomplete = !input.trim() || (splitEntry && !host.trim())
 
+  const tryDemo = () => {
+    startDemo()
+    router.replace("/(tabs)")
+  }
+
   return (
-    <Screen edges={["top", "bottom"]}>
+    <Screen edges={["top", "bottom"]} testID="pair-screen">
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -113,6 +122,13 @@ export default function PairScreen() {
             </Text>
           </View>
 
+          {notice ? (
+            <View style={styles.notice} testID="pair-notice">
+              <Info size={17} color={colors.warning} />
+              <Text style={styles.noticeText}>{notice.message}</Text>
+            </View>
+          ) : null}
+
           <View style={styles.panel}>
             {/* Scan vs manual — the same two paths the desktop QR card offers. */}
             <View style={styles.modeSwitch}>
@@ -120,6 +136,7 @@ export default function PairScreen() {
                 active={mode === "scan"}
                 icon={<ScanLine size={14} color={modeColor(mode === "scan")} />}
                 label="Scan QR"
+                testID="pair-scan-tab"
                 onPress={() => setMode("scan")}
               />
               <ModeTab
@@ -128,6 +145,7 @@ export default function PairScreen() {
                   <Keyboard size={14} color={modeColor(mode === "manual")} />
                 }
                 label="Enter manually"
+                testID="pair-manual-tab"
                 onPress={() => setMode("manual")}
               />
             </View>
@@ -173,6 +191,7 @@ export default function PairScreen() {
                   <Link2 size={16} color={colors.textMuted} />
                   <TextInput
                     accessibilityLabel="Pairing link or code"
+                    testID="pair-input"
                     value={input}
                     onChangeText={setInput}
                     placeholder={
@@ -224,6 +243,7 @@ export default function PairScreen() {
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
+                  testID="pair-connect"
                   accessibilityState={{
                     disabled: pairing || manualIncomplete,
                   }}
@@ -246,8 +266,30 @@ export default function PairScreen() {
                 </Pressable>
               </View>
             )}
-            {storeError ? <Text style={styles.error}>{storeError}</Text> : null}
+            {storeError ? (
+              <Text style={styles.error} testID="pair-error">
+                {storeError}
+              </Text>
+            ) : null}
           </View>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityHint="Explore the app with sample chats and files. Nothing connects to a computer."
+            testID="pair-demo"
+            onPress={tryDemo}
+            style={({ pressed }) => [
+              styles.demoButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <FlaskConical size={16} color={colors.text} />
+            <Text style={styles.demoButtonText}>Try the demo</Text>
+          </Pressable>
+          <Text style={styles.demoHint}>
+            No desktop at hand? The demo shows the app with sample chats and
+            files, without connecting to anything.
+          </Text>
 
           <Text style={styles.footnote}>
             The code is single-use. Afterwards only a revocable session token is
@@ -328,17 +370,20 @@ function ModeTab({
   active,
   icon,
   label,
+  testID,
   onPress,
 }: {
   active: boolean
   icon: React.ReactNode
   label: string
+  testID?: string
   onPress: () => void
 }) {
   return (
     <Pressable
       accessibilityRole="tab"
       accessibilityState={{ selected: active }}
+      testID={testID}
       onPress={onPress}
       style={[styles.modeTab, active && styles.modeTabActive]}
     >
@@ -512,6 +557,46 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   disabled: { opacity: 0.38 },
+  notice: {
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "rgba(251,191,36,0.25)",
+    backgroundColor: "rgba(251,191,36,0.06)",
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.xs,
+  },
+  noticeText: {
+    flex: 1,
+    color: colors.textSecondary,
+    fontFamily: font.regular,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  demoButton: {
+    minHeight: 48,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+  },
+  demoButtonText: {
+    color: colors.text,
+    fontSize: 14,
+    fontFamily: font.semibold,
+  },
+  demoHint: {
+    color: colors.textMuted,
+    fontFamily: font.regular,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: "center",
+    marginTop: -spacing.sm,
+  },
   pressed: { opacity: 0.72, transform: [{ scale: 0.99 }] },
   footnote: {
     color: colors.textMuted,

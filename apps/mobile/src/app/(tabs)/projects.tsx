@@ -19,14 +19,17 @@ import {
 } from "lucide-react-native"
 import { ConnectionPill, Screen, StateView, TopBar } from "@/components/layout"
 import { colors, font, radius, spacing, type } from "@/design/theme"
+import { remoteErrorMessage } from "@/lib/remote-errors"
 import { useAppStore } from "@/store/app-store"
-import { useSessionStore } from "@/store/session-store"
+import { useReadOnly, useRemoteApi } from "@/transport/use-transport"
 import type { ProjectSummary } from "@/types/remote"
 
 export default function ProjectsScreen() {
   const router = useRouter()
-  const profile = useSessionStore((state) => state.profile)
+  const api = useRemoteApi()
+  const readOnly = useReadOnly()
   const projects = useAppStore((state) => state.projects)
+  const error = useAppStore((state) => state.projectsError)
   const threads = useAppStore((state) => state.threads)
   const loading = useAppStore((state) => state.loadingProjects)
   const refreshProjects = useAppStore((state) => state.refreshProjects)
@@ -44,20 +47,18 @@ export default function ProjectsScreen() {
   }, [threads])
 
   const startChat = async (project: ProjectSummary) => {
-    if (!profile) return
+    if (!api) return
     setCreating(project.path)
     try {
-      const thread = await createThread(profile, project)
+      const thread = await createThread(api, project)
       router.push({ pathname: "/chat/[id]", params: { id: thread.id } })
     } catch (error) {
-      Alert.alert(
-        "Could not create chat",
-        error instanceof Error ? error.message : "Unknown error"
-      )
+      Alert.alert("Could not create chat", remoteErrorMessage(error))
     } finally {
       setCreating(null)
     }
   }
+  const refresh = () => api && void refreshProjects(api).catch(() => undefined)
 
   return (
     <Screen>
@@ -74,9 +75,7 @@ export default function ProjectsScreen() {
             refreshing={loading}
             tintColor={colors.mint}
             colors={[colors.mint]}
-            onRefresh={() =>
-              profile && void refreshProjects(profile).catch(() => undefined)
-            }
+            onRefresh={refresh}
           />
         }
         renderItem={({ item }) => {
@@ -151,37 +150,46 @@ export default function ProjectsScreen() {
                       + {projectThreads.length - 5} more threads
                     </Text>
                   ) : null}
-                  <Pressable
-                    accessibilityRole="button"
-                    disabled={creating !== null}
-                    onPress={() => void startChat(item)}
-                    style={({ pressed }) => [
-                      styles.create,
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    {creating === item.path ? (
-                      <ActivityIndicator color={colors.primaryForeground} />
-                    ) : (
-                      <Plus size={15} color={colors.primaryForeground} />
-                    )}
-                    <Text style={styles.createText}>New chat</Text>
-                  </Pressable>
+                  {readOnly ? null : (
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={creating !== null}
+                      onPress={() => void startChat(item)}
+                      style={({ pressed }) => [
+                        styles.create,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      {creating === item.path ? (
+                        <ActivityIndicator color={colors.primaryForeground} />
+                      ) : (
+                        <Plus size={15} color={colors.primaryForeground} />
+                      )}
+                      <Text style={styles.createText}>New chat</Text>
+                    </Pressable>
+                  )}
                 </View>
               ) : null}
             </View>
           )
         }}
         ListEmptyComponent={
-          <StateView
-            loading={loading}
-            title="No projects"
-            message="Open a project on the desktop; it will appear here automatically."
-            actionLabel="Refresh"
-            onAction={() =>
-              profile && void refreshProjects(profile).catch(() => undefined)
-            }
-          />
+          error ? (
+            <StateView
+              title="Projects unavailable"
+              message={error}
+              actionLabel="Try again"
+              onAction={refresh}
+            />
+          ) : (
+            <StateView
+              loading={loading}
+              title="No projects"
+              message="Open a project on the desktop; it will appear here automatically."
+              actionLabel="Refresh"
+              onAction={refresh}
+            />
+          )
         }
       />
     </Screen>

@@ -9,6 +9,7 @@
 import { memo, useState } from "react"
 import { readBrowserElementAttachment } from "@betterc0de/schema"
 import { Pressable, StyleSheet, Text, View } from "react-native"
+import { formatTime } from "@/lib/format"
 import {
   Brain,
   ChevronDown,
@@ -226,15 +227,6 @@ function MetaBadges({ message }: { message: ChatMessage }) {
       )}
     </View>
   )
-}
-
-function formatTime(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ""
-  return date.toLocaleTimeString("en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-  })
 }
 
 const styles = StyleSheet.create({

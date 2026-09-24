@@ -85,6 +85,7 @@ export function ChatComposer({
           <TextInput
             ref={inputRef}
             accessibilityLabel="Message"
+            testID="chat-input"
             value={value}
             onChangeText={onChange}
             placeholder="Message the desktop agent…"
@@ -162,6 +163,7 @@ export function ChatComposer({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={showStop ? "Stop response" : "Send message"}
+              testID={showStop ? "chat-stop" : "chat-send"}
               accessibilityState={{ disabled: showStop ? false : !canSend }}
               disabled={showStop ? false : !canSend}
               onPress={showStop ? onStop : onSend}

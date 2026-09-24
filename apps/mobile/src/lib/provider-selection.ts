@@ -10,29 +10,25 @@ import {
 } from "@betterc0de/schema/model-selection"
 
 export function modelOptions(instances: ProviderInstance[]): ModelOption[] {
-  return instances
-    .filter(
-      (instance) =>
-        !isHiddenChatProvider(instance.instanceId, instance.driver) &&
-        instance.enabled &&
-        instance.installed &&
-        instance.configured &&
-        instance.status !== "disabled" &&
-        instance.status !== "error" &&
-        instance.availability !== "unavailable"
-    )
-    .sort(
-      (left, right) =>
-        chatProviderPriority(left.driver) - chatProviderPriority(right.driver)
-    )
-    .flatMap((instance) =>
-      [...instance.models]
-        .sort(
-          (left, right) =>
-            Number(right.slug === "gpt-6-astra") -
-            Number(left.slug === "gpt-6-astra")
-        )
-        .map((model) => ({
+  return (
+    instances
+      .filter(
+        (instance) =>
+          !isHiddenChatProvider(instance.instanceId, instance.driver) &&
+          instance.enabled &&
+          instance.installed &&
+          instance.configured &&
+          instance.status !== "disabled" &&
+          instance.status !== "error" &&
+          instance.availability !== "unavailable"
+      )
+      .sort(
+        (left, right) =>
+          chatProviderPriority(left.driver) - chatProviderPriority(right.driver)
+      )
+      // Models keep the provider's own order; the desktop does not promote any.
+      .flatMap((instance) =>
+        instance.models.map((model) => ({
           key: `${instance.instanceId}:${model.slug}`,
           providerKind: instance.driver,
           providerInstanceId: instance.instanceId,
@@ -41,7 +37,8 @@ export function modelOptions(instances: ProviderInstance[]): ModelOption[] {
           modelLabel: model.shortName || model.name || model.slug,
           capabilities: model.capabilities ?? null,
         }))
-    )
+      )
+  )
 }
 
 export function preferredModel(
