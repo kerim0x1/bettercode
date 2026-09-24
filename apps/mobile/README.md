@@ -174,8 +174,16 @@ against sample chats and files (see [Demo mode](#demo-mode)).
   (`src/editor/protocol.ts`), and every message from the page is checked.
   **Save** writes with the SHA-256 the file was read with; when the desktop
   answers that the file changed (409 `WORKSPACE_PATH_CHANGED`), the editor
-  offers Compare, Take desktop's and Overwrite. Unsaved edits are kept as a
-  draft (`src/lib/editor-drafts.ts`), which the pairing's end forgets.
+  offers Compare, Take desktop's and Overwrite. A save counts only the text
+  it sent as saved, and the next save is made over that text's own hash,
+  never over the file read again. Lines keep the file's line break
+  (`src/editor/line-breaks.ts`: CRLF stays CRLF; a file that mixes them gets
+  its most common one, as in the desktop's editor). Unsaved edits are kept
+  as a draft (`src/lib/editor-drafts.ts`) a second after a change and on
+  every way back (Back, Android's back; iOS's swipe back is off while edits
+  are unsaved); the pairing's end forgets them. When the system ends the
+  page's process, a new WebView starts it with the newest text the phone
+  has, and a page without text hands none to a save.
 - File navigation always starts from `worktreePath || projectPath`; client-side
   containment checks complement the backend workspace guards.
 - The interface is in English, like the desktop's; dates and sizes follow the
