@@ -47,6 +47,23 @@ runs:
         sudo apt-get update -qq
         sudo apt-get install -y -qq --no-install-recommends xvfb rpm
 
+    - name: Keep Windows Defender out of the work folders
+      if: runner.os == 'Windows'
+      shell: pwsh
+      # The runner is discarded after the job. Real-time scanning of the
+      # checkout and the temp folders made writes and process starts slow and
+      # uneven there: SQLite retries a write while a scanner holds the file,
+      # and a test file that takes 4 s took 127 s on one runner. A runner
+      # image without Defender only warns.
+      run: |
+        $folders = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:TEMP, (Join-Path $env:LOCALAPPDATA 'Temp'))
+        try {
+          Add-MpPreference -ExclusionPath $folders -ErrorAction Stop
+          Write-Host "Defender skips: $($folders -join ', ')"
+        } catch {
+          Write-Host "::warning::Defender exclusions not set: $($_.Exception.Message)"
+        }
+
     - name: Choose the format-check base revision
       shell: bash
       env:

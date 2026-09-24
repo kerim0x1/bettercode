@@ -85,6 +85,18 @@ test("macOS legs turn off Spotlight before release:check builds the DMG", () => 
   }
 })
 
+test("Windows legs keep Defender out of the checkout and the temp folders", () => {
+  const prepare = YAML.parse(fs.readFileSync(path.join(root, ".github", "actions", "prepare", "action.yml"), "utf8"))
+  const step = prepare.runs.steps.find((candidate) => String(candidate.run ?? "").includes("Add-MpPreference"))
+  assert.ok(step, "the prepare action excludes the work folders from Defender")
+  assert.equal(step.if, "runner.os == 'Windows'")
+  for (const folder of ["GITHUB_WORKSPACE", "RUNNER_TEMP", "env:TEMP", "LOCALAPPDATA"]) {
+    assert.match(step.run, new RegExp(folder), `it excludes ${folder}`)
+  }
+  // An image without Defender warns instead of failing the job.
+  assert.match(step.run, /::warning::/)
+})
+
 test("publishing waits for every platform, the Node compatibility leg and the phone app", () => {
   const release = YAML.parse(fs.readFileSync(path.join(root, ".github", "workflows", "release.yml"), "utf8"))
   assert.deepEqual(release.jobs.publish.needs.sort(), [
