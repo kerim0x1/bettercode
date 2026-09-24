@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest"
-import { describeRemoteClient } from "./remoteApi"
+import { describeRemoteClient, describeRemoteTerminals } from "./remoteApi"
+
+describe("describeRemoteTerminals", () => {
+  it("counts a device's open terminals, and says nothing when it has none", () => {
+    expect(describeRemoteTerminals(1)).toBe("1 terminal open")
+    expect(describeRemoteTerminals(3)).toBe("3 terminals open")
+    expect(describeRemoteTerminals(0)).toBeNull()
+    // A backend that predates the count sends none.
+    expect(describeRemoteTerminals(undefined)).toBeNull()
+  })
+})
 
 describe("describeRemoteClient", () => {
   it("names the phone app, its version and platform for the device list", () => {

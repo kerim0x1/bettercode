@@ -14,6 +14,19 @@ export interface RemoteSession {
   lastSeenAt: string
   expiresAt: string
   client?: RemoteSessionClient | null
+  /**
+   * The device's running terminals and shell commands; only the desktop's
+   * own list of devices has it.
+   */
+  terminals?: number
+}
+
+/** "2 terminals open", or `null` when the device runs none. */
+export function describeRemoteTerminals(
+  count: number | undefined
+): string | null {
+  if (!count || count < 1) return null
+  return `${count} terminal${count === 1 ? "" : "s"} open`
 }
 
 const CLIENT_NAMES: Record<string, string> = {
@@ -180,6 +193,15 @@ export function revokeRemoteSession(
   sessionId: string
 ): Promise<{ revoked: boolean }> {
   return invoke(`/remote/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+  })
+}
+
+/** Ends a device's terminals and shell commands; the device stays paired. */
+export function endRemoteSessionTerminals(
+  sessionId: string
+): Promise<{ ended: number }> {
+  return invoke(`/remote/sessions/${encodeURIComponent(sessionId)}/terminals`, {
     method: "DELETE",
   })
 }

@@ -18,6 +18,7 @@ import {
   Share2,
   ShieldCheck,
   Smartphone,
+  SquareTerminal,
   Trash2,
   TriangleAlert,
 } from "lucide-react"
@@ -32,6 +33,8 @@ import { TailscaleServeCard } from "@/components/remote/tailscale-serve-card"
 import {
   createRemotePairingLink,
   describeRemoteClient,
+  describeRemoteTerminals,
+  endRemoteSessionTerminals,
   getRemoteBootstrap,
   getRemoteStatus,
   getTailscaleStatus,
@@ -330,6 +333,27 @@ export function SettingsRemoteAccessSection() {
     }
   }
 
+  const endTerminals = async (session: RemoteSession) => {
+    setBusy(`terminals:${session.id}`)
+    try {
+      const { ended } = await endRemoteSessionTerminals(session.id)
+      await refresh()
+      toast.success(
+        ended > 0
+          ? `Closed ${ended} terminal${ended === 1 ? "" : "s"} on ${session.label}`
+          : `${session.label} has no open terminals`
+      )
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not close the device's terminals"
+      )
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const revokeOthers = async () => {
     setBusy("revoke-others")
     try {
@@ -592,31 +616,50 @@ export function SettingsRemoteAccessSection() {
           sessions.map((session) => {
             const current = session.id === currentSessionId
             const client = describeRemoteClient(session.client)
+            const terminals = describeRemoteTerminals(session.terminals)
             return (
               <SettingsRow
-                description={`${current ? "This browser · " : ""}${client ? `${client} · ` : ""}Last active ${formatDate(session.lastSeenAt)}`}
+                description={`${current ? "This browser · " : ""}${client ? `${client} · ` : ""}Last active ${formatDate(session.lastSeenAt)}${terminals ? ` · ${terminals}` : ""}`}
                 key={session.id}
                 label={session.label}
               >
-                <Button
-                  aria-label={
-                    current
-                      ? "Sign out this browser"
-                      : `Revoke ${session.label}`
-                  }
-                  disabled={busy !== null}
-                  onClick={() => void revoke(session)}
-                  size="icon-sm"
-                  variant="ghost"
-                >
-                  {busy === `revoke:${session.id}` ? (
-                    <LoaderCircle className="size-3.5 animate-spin" />
-                  ) : current ? (
-                    <LogOut className="size-3.5" />
-                  ) : (
-                    <Trash2 className="size-3.5 text-destructive" />
-                  )}
-                </Button>
+                <div className="flex shrink-0 items-center gap-1">
+                  {terminals && !remoteRuntime ? (
+                    <Button
+                      aria-label={`Close the terminals on ${session.label}`}
+                      disabled={busy !== null}
+                      onClick={() => void endTerminals(session)}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      {busy === `terminals:${session.id}` ? (
+                        <LoaderCircle className="mr-1.5 size-3.5 animate-spin" />
+                      ) : (
+                        <SquareTerminal className="mr-1.5 size-3.5" />
+                      )}
+                      Close terminals
+                    </Button>
+                  ) : null}
+                  <Button
+                    aria-label={
+                      current
+                        ? "Sign out this browser"
+                        : `Revoke ${session.label}`
+                    }
+                    disabled={busy !== null}
+                    onClick={() => void revoke(session)}
+                    size="icon-sm"
+                    variant="ghost"
+                  >
+                    {busy === `revoke:${session.id}` ? (
+                      <LoaderCircle className="size-3.5 animate-spin" />
+                    ) : current ? (
+                      <LogOut className="size-3.5" />
+                    ) : (
+                      <Trash2 className="size-3.5 text-destructive" />
+                    )}
+                  </Button>
+                </div>
               </SettingsRow>
             )
           })
