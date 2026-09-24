@@ -1,5 +1,6 @@
 import type { ReactNode } from "react"
 import {
+  KeyboardAvoidingView,
   Modal,
   Pressable,
   ScrollView,
@@ -35,14 +36,19 @@ export function DropdownSheet({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <View style={styles.backdropWrap}>
+      {/* A modal is a window of its own, which neither iOS nor Android (edge
+          to edge) shrinks for the keyboard: the sheet makes room itself, or
+          the keyboard covers a field in it (the model search). Where room is
+          short, the sheet shrinks, below the status bar, and its list
+          scrolls. */}
+      <KeyboardAvoidingView behavior="padding" style={styles.backdropWrap}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Close menu"
           style={styles.backdrop}
           onPress={onClose}
         />
-        <SafeAreaView edges={["bottom"]} style={styles.sheetSafe}>
+        <SafeAreaView edges={["top", "bottom"]} style={styles.sheetSafe}>
           <View style={styles.sheet}>
             <View style={styles.grabber} />
             {title ? <Text style={styles.title}>{title}</Text> : null}
@@ -55,7 +61,7 @@ export function DropdownSheet({
             </ScrollView>
           </View>
         </SafeAreaView>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   )
 }
@@ -119,11 +125,12 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: colors.overlay,
   },
-  sheetSafe: { backgroundColor: colors.transparent },
+  sheetSafe: { flexShrink: 1, backgroundColor: colors.transparent },
   sheet: {
     marginHorizontal: spacing.xs,
     marginBottom: spacing.xs,
     maxHeight: 480,
+    flexShrink: 1,
     borderRadius: radius.xl,
     borderWidth: 1,
     borderColor: colors.border,
@@ -147,7 +154,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingTop: spacing.xs,
   },
-  scroll: { flexGrow: 0 },
+  scroll: { flexGrow: 0, flexShrink: 1 },
   scrollContent: {
     paddingHorizontal: spacing.xs,
     paddingTop: spacing.xs,
