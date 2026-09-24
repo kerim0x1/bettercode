@@ -49,6 +49,21 @@ function reserveRemoteProviderTurn(
   })
 }
 
+/**
+ * Text generation runs a provider CLI in the caller's folder. A paired
+ * device may only name a registered workspace, as for every other route
+ * that works in a folder; the desktop's own requests keep their folder.
+ */
+async function textGenerationCwd(
+  state: AppState,
+  c: Context,
+  cwd: string | null | undefined
+): Promise<string | null> {
+  if (!cwd || requestIdentity(c, state.config, state)?.kind !== "remote")
+    return cwd ?? null
+  return resolveApprovedWorkspaceRoot(state, cwd)
+}
+
 export function registerChatRoutes(api: Hono, state: AppState): void {
   api.post("/chat/goal", (c) =>
     handleHttpContract(
@@ -171,7 +186,11 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
     parseAndHandle(
       c,
       chatGenerateCommitMessageSchema,
-      async (body) => state.chatHelpers.generateCommitMessage(body),
+      async (body) =>
+        state.chatHelpers.generateCommitMessage({
+          ...body,
+          cwd: await textGenerationCwd(state, c, body.cwd),
+        }),
       { operation: "chat text-generation commit-message" }
     )
   )
@@ -180,7 +199,11 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
     parseAndHandle(
       c,
       chatGeneratePrContentSchema,
-      async (body) => state.chatHelpers.generatePrContent(body),
+      async (body) =>
+        state.chatHelpers.generatePrContent({
+          ...body,
+          cwd: await textGenerationCwd(state, c, body.cwd),
+        }),
       { operation: "chat text-generation pr-content" }
     )
   )
@@ -189,7 +212,11 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
     parseAndHandle(
       c,
       chatGenerateBranchNameSchema,
-      async (body) => state.chatHelpers.generateBranchName(body),
+      async (body) =>
+        state.chatHelpers.generateBranchName({
+          ...body,
+          cwd: await textGenerationCwd(state, c, body.cwd),
+        }),
       { operation: "chat text-generation branch-name" }
     )
   )
@@ -198,7 +225,11 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
     parseAndHandle(
       c,
       chatGenerateThreadContextSummarySchema,
-      async (body) => state.chatHelpers.generateThreadContextSummary(body),
+      async (body) =>
+        state.chatHelpers.generateThreadContextSummary({
+          ...body,
+          cwd: await textGenerationCwd(state, c, body.cwd),
+        }),
       { operation: "chat text-generation thread-context-summary" }
     )
   )
@@ -207,7 +238,11 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
     parseAndHandle(
       c,
       chatGenerateSkillContentSchema,
-      async (body) => state.chatHelpers.generateSkillContent(body),
+      async (body) =>
+        state.chatHelpers.generateSkillContent({
+          ...body,
+          cwd: await textGenerationCwd(state, c, body.cwd),
+        }),
       { operation: "chat text-generation skill-content" }
     )
   )

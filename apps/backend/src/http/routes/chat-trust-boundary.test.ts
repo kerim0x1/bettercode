@@ -48,6 +48,70 @@ describe("chat send workspace and permission trust boundary", () => {
     expect((await read(outside, "desktop-secret")).status).toBe(200)
   })
 
+  it("confines a paired device's text generation to registered workspaces", async () => {
+    const registered = await temporaryDirectory("generation-registered")
+    const outside = await temporaryDirectory("generation-outside")
+    const generate = vi.fn(async () => ({}))
+    const app = chatApp({
+      projects: [registered],
+      threadProjectPath: registered,
+      startTurn: vi.fn(),
+      chatHelpers: {
+        generateCommitMessage: generate,
+        generatePrContent: generate,
+        generateBranchName: generate,
+        generateThreadContextSummary: generate,
+        generateSkillContent: generate,
+      },
+    })
+    const generateIn = (route: string, cwd: string, token: string) =>
+      app.request(`/chat/text-generation/${route}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          cwd,
+          baseBranch: "main",
+          headBranch: "feature",
+          message: "Add a flag",
+          transcript: "user: add a flag",
+          name: "Style",
+          requirements: "Use tabs",
+        }),
+      })
+    const cwdOfLastCall = () =>
+      (generate.mock.lastCall as unknown as [{ cwd: string | null }])[0].cwd
+
+    for (const route of [
+      "commit-message",
+      "pr-content",
+      "branch-name",
+      "thread-context-summary",
+      "skill-content",
+    ]) {
+      generate.mockClear()
+      const denied = await generateIn(route, outside, "remote-secret")
+      expect(denied.status, route).toBe(403)
+      expect(await denied.json(), route).toMatchObject({
+        code: "workspace_not_registered",
+      })
+      expect(generate, route).not.toHaveBeenCalled()
+
+      expect(
+        (await generateIn(route, registered, "remote-secret")).status
+      ).toBe(200)
+      expect(cwdOfLastCall(), route).toBe(await fs.realpath(registered))
+
+      // The desktop's own requests keep their folder, as before.
+      expect((await generateIn(route, outside, "desktop-secret")).status).toBe(
+        200
+      )
+      expect(cwdOfLastCall(), route).toBe(outside)
+    }
+  })
+
   it("rejects an unregistered caller-selected workspace before dispatch", async () => {
     const registered = await temporaryDirectory("registered")
     const outside = await temporaryDirectory("outside")
@@ -298,6 +362,7 @@ function chatApp(input: {
   readonly worktree?: ReturnType<typeof registeredWorktree>
   readonly startTurn: ReturnType<typeof vi.fn>
   readonly agentPermissions?: Record<string, unknown>
+  readonly chatHelpers?: Record<string, unknown>
 }): Hono {
   const app = new Hono()
   const worktree = input.worktree ?? null
@@ -344,6 +409,7 @@ function chatApp(input: {
     ...(input.agentPermissions
       ? { agentPermissions: input.agentPermissions }
       : {}),
+    ...(input.chatHelpers ? { chatHelpers: input.chatHelpers } : {}),
   } as unknown as AppState)
   return app
 }
