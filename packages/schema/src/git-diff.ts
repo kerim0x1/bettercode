@@ -178,7 +178,7 @@ export function buildSplitDiffLines(lines: DiffLine[]): SplitDiffLine[] {
   const result: SplitDiffLine[] = []
   let index = 0
   while (index < lines.length) {
-    const line = lines[index]
+    const line = lines[index]!
     if (line.type === "header" || line.type === "context") {
       result.push({ left: line, right: line })
       index += 1
