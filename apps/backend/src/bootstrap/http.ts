@@ -105,7 +105,7 @@ export function createTransport(
     },
   })
   hub.setRpcHandler(createWsRpcHandler(state, config, terminals))
-  return { hub }
+  return { hub, terminals }
 }
 
 /**
@@ -115,12 +115,14 @@ export function createTransport(
 export function buildHttpApp(
   root: BootRoot,
   state: AppState,
-  hub: WsHub
+  hub: WsHub,
+  terminals: RemoteTerminalChannel
 ): HttpApp {
   const { options, config } = root
   const app = buildApp(config, state, {
     wsClientCount: () => hub.clientCount(),
     webRoot: resolveWebRoot(options.webRoot),
+    remoteTerminals: terminals,
   })
   return app
 }

@@ -556,6 +556,38 @@ describe("the terminal for paired devices", () => {
     expect(pty.sessions.get(second)?.closed).toBe(false)
   })
 
+  it("tells only that device when the desktop ends its terminals", async () => {
+    const terminals = channel()
+    const phone = connection()
+    const tablet = connection()
+    const first = await openOne(terminals, phone)
+    const second = await openOne(terminals, phone)
+    const other = await openOne(terminals, tablet, device("tablet-1"))
+
+    terminals.endedOnDesktop("phone-1")
+    expect(phone.frames.slice(-2)).toEqual([
+      {
+        channel: "terminal.closed",
+        data: { terminalId: first, reason: "ended_on_desktop" },
+      },
+      {
+        channel: "terminal.closed",
+        data: { terminalId: second, reason: "ended_on_desktop" },
+      },
+    ])
+    expect(terminals.count("phone-1")).toBe(0)
+    expect(
+      tablet.frames.some((frame) => frame.channel === "terminal.closed")
+    ).toBe(false)
+    await expect(
+      call(terminals, TERMINAL_METHODS.list, {}, device("tablet-1"))
+    ).resolves.toMatchObject({ terminals: [{ terminalId: other }] })
+    // The desktop's route ends the processes, with the device's other
+    // shells: the channel does not kill them a second time.
+    expect(pty.sessions.get(first)?.closed).toBe(false)
+    expect(pty.sessions.get(second)?.closed).toBe(false)
+  })
+
   it("forgets the terminals of a revoked session", async () => {
     const terminals = channel()
     const phone = connection()

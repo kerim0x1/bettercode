@@ -44,6 +44,7 @@ import {
   registerRemotePublicRoutes,
   registerRemoteRoutes,
   resolveRequestIdentity,
+  type RemoteRoutesOptions,
 } from "../remote/http"
 import { API_BODY_LIMIT_BYTES } from "../remote/protocol"
 import { registerRemoteWebRoutes } from "../remote/web"
@@ -77,7 +78,11 @@ function identityRateLimitKey(state: AppState, config: ServerConfig) {
   }
 }
 
-function buildApiRoutes(state: AppState, config: ServerConfig): Hono {
+function buildApiRoutes(
+  state: AppState,
+  config: ServerConfig,
+  remote: RemoteRoutesOptions
+): Hono {
   const api = new Hono()
   const keyForIdentity = identityRateLimitKey(state, config)
   // Every accepted call is an outbound request carrying a user secret to a
@@ -102,7 +107,7 @@ function buildApiRoutes(state: AppState, config: ServerConfig): Hono {
       }
     )
   )
-  registerRemoteRoutes(api, config, state)
+  registerRemoteRoutes(api, config, state, remote)
   registerRuntimeRoutes(api, state)
   registerSettingsRoutes(api, state)
   registerThemesRoutes(api, config)
@@ -124,7 +129,11 @@ function buildApiRoutes(state: AppState, config: ServerConfig): Hono {
 export function buildApp(
   config: ServerConfig,
   state: AppState,
-  opts?: { wsClientCount?: () => number; webRoot?: string }
+  opts?: {
+    wsClientCount?: () => number
+    webRoot?: string
+    remoteTerminals?: RemoteRoutesOptions["remoteTerminals"]
+  }
 ): Hono {
   if (!config.authToken) throw new Error("buildApp: authToken must be set")
   const app = new Hono()
@@ -387,7 +396,10 @@ export function buildApp(
   // unversioned `/api` path on 404 — that silently masked contract drift
   // and has been removed (see src/services/backend/runtime.ts).  All
   // current and future surfaces live under `/api/v1`.
-  app.route("/api/v1", buildApiRoutes(state, config))
+  app.route(
+    "/api/v1",
+    buildApiRoutes(state, config, { remoteTerminals: opts?.remoteTerminals })
+  )
   registerRemoteWebRoutes(app, config, opts?.webRoot)
   return app
 }

@@ -9,6 +9,7 @@ import type http from "node:http"
 import type { ServerConfig } from "../config"
 import type { AppState } from "../appState"
 import type { WsHub } from "../ws/server"
+import type { RemoteTerminalChannel } from "../ws/terminalChannel"
 import type { ShutdownStep } from "../shutdown"
 import type { AdmissionGate } from "../lifecycle/AdmissionGate"
 import type { Db } from "../persistence/db"
@@ -176,6 +177,8 @@ export interface ProvidersContext {
 
 export interface TransportContext {
   readonly hub: WsHub
+  /** Paired devices' terminals over the WebSocket. */
+  readonly terminals: RemoteTerminalChannel
 }
 
 export interface RecoveryContext {

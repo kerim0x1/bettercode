@@ -193,6 +193,21 @@ export class RemoteTerminalChannel {
   }
 
   /**
+   * Someone ended a device's terminals on the desktop (Settings → Remote
+   * Access): that device hears why, and its terminals are forgotten here.
+   * The caller ends their processes, with the shell routes' processes of
+   * the same device (remote/http.ts), for the same reason `grantRevoked`
+   * leaves them to the grant's teardown.
+   */
+  endedOnDesktop(sessionId: string): void {
+    for (const terminal of [...this.terminals.values()]) {
+      if (terminal.sessionId !== sessionId) continue
+      this.tell(terminal, "ended_on_desktop")
+      this.forget(terminal)
+    }
+  }
+
+  /**
    * Revoked sessions: their connections are closed already and their
    * processes end with the session (bootstrap/settings.ts); only the
    * records go.

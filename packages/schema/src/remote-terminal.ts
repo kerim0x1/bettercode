@@ -141,6 +141,8 @@ export const terminalClosedReasonSchema = z
     "detached",
     /** The desktop no longer allows terminals from paired devices. */
     "grant_revoked",
+    /** Someone ended the device's terminals on the desktop. */
+    "ended_on_desktop",
   ])
   // A reason a newer desktop added reads as a plain close.
   .catch("closed")

@@ -15,8 +15,18 @@ import { deleteCookie, setCookie } from "hono/cookie"
 import type { AppState } from "../appState"
 import type { ServerConfig } from "../config"
 import { createRateLimiter } from "../http/middleware/rateLimit"
+import { logger } from "../observability/logger"
 import { readCookie } from "../security/cookie"
 import { constantTimeEqual } from "../security/token"
+import {
+  activeShellSessionCountForOwner,
+  closeShellSessionsForOwner,
+} from "../services/shell"
+import {
+  activeTerminalPtySessionCount,
+  shutdownTerminalPtySessionsForOwner,
+} from "../services/terminalPty"
+import type { RemoteTerminalChannel } from "../ws/terminalChannel"
 import {
   REMOTE_SESSION_COOKIE,
   type RemoteAccessService,
@@ -981,11 +991,29 @@ async function handlePairing(
   })
 }
 
+/**
+ * A paired device's running terminals: its PTYs and its shell commands,
+ * whichever way it opened them (the WebSocket or the shell routes).
+ */
+function runningRemoteTerminals(sessionId: string): number {
+  const ownerId = `remote:${sessionId}`
+  return (
+    activeTerminalPtySessionCount(ownerId) +
+    activeShellSessionCountForOwner(ownerId)
+  )
+}
+
+export interface RemoteRoutesOptions {
+  /** Tells a device why its terminals over the WebSocket end. */
+  readonly remoteTerminals?: Pick<RemoteTerminalChannel, "endedOnDesktop">
+}
+
 /** Authenticated remote-management routes mounted under `/api/v1`. */
 export function registerRemoteRoutes(
   api: Hono,
   config: ServerConfig,
-  state: AppState
+  state: AppState,
+  options: RemoteRoutesOptions = {}
 ): void {
   api.get("/remote/status", async (c) => {
     const service = remoteService(state)
@@ -1116,8 +1144,52 @@ export function registerRemoteRoutes(
     const identity = requestIdentity(c, config, state)
     return c.json({
       currentSessionId: identity?.session?.id ?? null,
-      sessions: service.listSessions(),
+      sessions: service.listSessions().map((session) => ({
+        ...session,
+        terminals: runningRemoteTerminals(session.id),
+      })),
     })
+  })
+
+  // Ends a device's terminals and the commands it runs, over the WebSocket
+  // and the shell routes alike; the device stays paired.
+  api.delete("/remote/sessions/:sessionId/terminals", async (c) => {
+    if (!isLocalOwnerRequest(c, config, state)) {
+      return c.json(
+        { error: "remote sessions can only be managed by the desktop host" },
+        403
+      )
+    }
+    const sessionId = c.req.param("sessionId")
+    if (!sessionId || sessionId.length > 100) {
+      return c.json({ error: "invalid session id" }, 400)
+    }
+    const ownerId = `remote:${sessionId}`
+    const running = runningRemoteTerminals(sessionId)
+    options.remoteTerminals?.endedOnDesktop(sessionId)
+    const results = await Promise.allSettled([
+      shutdownTerminalPtySessionsForOwner(ownerId),
+      closeShellSessionsForOwner(ownerId),
+    ])
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : []
+    )
+    // Who and how many: never what the terminals showed.
+    logger.info(
+      { sessionId, terminals: running, failed: failures.length > 0 },
+      "remote terminals ended on the desktop"
+    )
+    if (failures.length > 0) {
+      logger.error(
+        { err: failures[0], sessionId },
+        "a paired device's terminals could not all be ended"
+      )
+      return c.json(
+        { error: "Some of this device's terminals could not be ended." },
+        500
+      )
+    }
+    return c.json({ ended: running })
   })
 
   api.delete("/remote/sessions/:sessionId", async (c) => {

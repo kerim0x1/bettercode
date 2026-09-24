@@ -8,6 +8,12 @@ import type { ServerConfig } from "../config"
 import { buildApp } from "../http/router"
 import { openDatabase } from "../persistence/db"
 import { runMigrations } from "../persistence/migrations"
+import {
+  openTerminalPtySession,
+  readTerminalPtySession,
+  shutdownTerminalPtySessionsForOwner,
+} from "../services/terminalPty"
+import type { RemoteRoutesOptions } from "./http"
 import { RemoteAccessService } from "./service"
 import type { TailscaleRemoteAccess, TailscaleRemoteState } from "./tailscale"
 import { stopAllToolOutputArchiveStores } from "../services/tool-output-archive-store"
@@ -25,6 +31,7 @@ function fixture(
     trustLoopbackProxyHeaders?: boolean
     tailscaleServe?: boolean
     tailscale?: TailscaleRemoteAccess
+    remoteTerminals?: RemoteRoutesOptions["remoteTerminals"]
   } = {}
 ) {
   const directory = fs.mkdtempSync(
@@ -78,7 +85,9 @@ function fixture(
     providerRegistry: { all: () => [] },
     threads: { persistUserMessageForTurn: vi.fn() },
   } as unknown as AppState
-  const app = buildApp(config, state)
+  const app = buildApp(config, state, {
+    remoteTerminals: options.remoteTerminals,
+  })
   cleanups.push(async () => {
     await stopAllToolOutputArchiveStores()
     await remoteAccess.close()
@@ -229,6 +238,84 @@ describe("remote access HTTP flow", () => {
       body: JSON.stringify({ credential: grant.credential }),
     })
     expect(replayResponse.status).toBe(401)
+  })
+
+  it("shows a device's running terminals, and only the desktop ends them", async () => {
+    const endedOnDesktop = vi.fn()
+    const { app } = fixture({ remoteTerminals: { endedOnDesktop } })
+    const grantResponse = await app.request("/api/v1/remote/pairing-links", {
+      method: "POST",
+      headers: desktopHeaders(),
+      body: "{}",
+    })
+    const grant = (await grantResponse.json()) as { credential: string }
+    const pairResponse = await app.request("/api/v1/remote/mobile/pair", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ credential: grant.credential, label: "Pixel" }),
+    })
+    const { sessionToken } = (await pairResponse.json()) as {
+      sessionToken: string
+    }
+    const devices = async () => {
+      const response = await app.request("/api/v1/remote/sessions", {
+        headers: desktopHeaders(),
+      })
+      const body = (await response.json()) as {
+        sessions: Array<{ id: string; terminals: number }>
+      }
+      return body.sessions
+    }
+    const [device] = await devices()
+    expect(device).toMatchObject({ terminals: 0 })
+    const sessionId = device!.id
+
+    // The device's terminal: a program that runs until it is ended.
+    const ownerId = `remote:${sessionId}`
+    cleanups.push(async () => {
+      await shutdownTerminalPtySessionsForOwner(ownerId)
+    })
+    const terminal = openTerminalPtySession({
+      ownerId,
+      cwd: os.tmpdir(),
+      command: process.execPath,
+      args: ["-e", "setInterval(() => {}, 1000)"],
+    })
+    expect(await devices()).toEqual([
+      expect.objectContaining({ id: sessionId, terminals: 1 }),
+    ])
+
+    const fromDevice = await app.request(
+      `/api/v1/remote/sessions/${sessionId}/terminals`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      }
+    )
+    expect(fromDevice.status).toBe(403)
+    expect(endedOnDesktop).not.toHaveBeenCalled()
+    expect(readTerminalPtySession(terminal.sessionId, 0, ownerId)?.status).toBe(
+      "running"
+    )
+
+    const fromDesktop = await app.request(
+      `/api/v1/remote/sessions/${sessionId}/terminals`,
+      { method: "DELETE", headers: desktopHeaders() }
+    )
+    expect(fromDesktop.status).toBe(200)
+    expect(await fromDesktop.json()).toEqual({ ended: 1 })
+    expect(endedOnDesktop).toHaveBeenCalledWith(sessionId)
+    // The shutdown drops a terminal only once it exited (one still running
+    // fails the request instead), so gone means ended.
+    expect(readTerminalPtySession(terminal.sessionId, 0, ownerId)).toBeNull()
+    // Only the terminals went: the device stays paired.
+    expect(await devices()).toEqual([
+      expect.objectContaining({ id: sessionId, terminals: 0 }),
+    ])
+    const stillPaired = await app.request("/api/v1/runtime/health", {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    })
+    expect(stillPaired.status).toBe(200)
   })
 
   it("keeps access administration and listener settings owner-only", async () => {

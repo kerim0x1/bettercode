@@ -77,7 +77,7 @@ export async function startNodeBackend(
     const settingsCtx = loadSettingsAndRemote(root, persistence)
     const providersCtx = wireProviders(root, persistence, settingsCtx)
     const { state } = providersCtx
-    const { hub } = createTransport(root, settingsCtx, state)
+    const { hub, terminals } = createTransport(root, settingsCtx, state)
     const recovery = recoverProviderRuntime(
       root,
       persistence,
@@ -92,7 +92,7 @@ export async function startNodeBackend(
       settingsCtx,
       providersCtx
     )
-    const app = buildHttpApp(root, state, hub)
+    const app = buildHttpApp(root, state, hub, terminals)
     const timers = startTimers(root, persistence, settingsCtx, providersCtx)
     startupCleanupObserver?.(root.startupCleanup)
     return await bindAndPublish(root, app, {
