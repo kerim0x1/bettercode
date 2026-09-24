@@ -1,0 +1,50 @@
+# A terminal in the demo: open it from a chat's menu, type in it (xterm.js
+# in the app's WebView) and read the answer. The only check of the WebView
+# and the terminal's page on a device; the screen tests use a stand-in for
+# the page. The page's text is read through xterm's screen reader tree.
+appId: com.betterc0de.remote
+name: The terminal runs what is typed in the demo
+tags:
+  - demo
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: pair-screen
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: pair-demo
+    direction: DOWN
+- tapOn:
+    id: pair-demo
+- extendedWaitUntil:
+    visible:
+      id: chats-screen
+    timeout: 20000
+- scrollUntilVisible:
+    element:
+      id: thread-row-demo-dark-mode
+    direction: DOWN
+- tapOn:
+    id: thread-row-demo-dark-mode
+- tapOn:
+    id: chat-actions
+- tapOn:
+    id: chat-terminal
+
+# The pretend shell greets, then waits at its prompt.
+- extendedWaitUntil:
+    visible: ".*it runs nothing.*"
+    timeout: 30000
+- tapOn:
+    id: terminal-view
+- inputText: whoami
+- pressKey: Enter
+# The answer is a row of its own: the greeting mentions the demo too.
+- extendedWaitUntil:
+    visible: demo
+    timeout: 20000
+- assertVisible:
+    id: terminal-keys
