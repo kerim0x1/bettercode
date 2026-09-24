@@ -33,6 +33,7 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 
 ### Added
 
+- Contributor entry points for coding agents, a brand/UI/theme contribution guide, and a fast CI check that keeps desktop light, dark, built-in, and imported theme tokens in sync.
 - `npm run release:check`: one command from a clean `npm ci` through lint, type-checks, all test suites, the production build, packaging, a launch of the packaged app, the installers, and an install → launch → uninstall test of the installers on a clean machine.
 - `npm run mobile:check`, part of the `release:check` build step: checks the phone app's configuration (identifiers, versions, network policy, Android ABIs), that its native dependencies match the Expo SDK without duplicates, and that the Android, iOS and web bundles build.
 - The phone app has its own icons and splash screen, rendered from the desktop logo (`npm run mobile:icons`).

@@ -92,6 +92,7 @@ Follow the [getting-started guide](GETTING_STARTED.md) for a walkthrough without
 | [Getting started](GETTING_STARTED.md) | Installation, provider setup, your first task, and troubleshooting. |
 | [How BetterC0de works](PRODUCT_GUIDE.md) | Workspace concepts, everyday workflows, and diagnostic data. |
 | [Brand guide](BRAND.md) | The name, logo, visual direction, and reusable product descriptions. |
+| [Contributing](CONTRIBUTING.md) | Setup, code conventions, CI, and the UI/theme contribution guide. |
 
 ## Build from source
 

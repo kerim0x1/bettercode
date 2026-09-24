@@ -2,6 +2,8 @@
 
 Thanks for helping improve BetterC0de. Start with the [installation and setup guide](INSTALL.md), the [development guide](docs/development/README.md) and the [architecture overview](docs/architecture/overview.md).
 
+If you use a coding agent, give it [AGENTS.md](AGENTS.md) as its entry point before it edits files. Read the [CI guide](docs/development/ci.md), [brand guide](BRAND.md), and [UI and theme guide](docs/design-system.md) yourself when the change touches those areas. The guidance applies to human and agent contributions alike.
+
 ## Before you start
 
 Search the [issues](https://github.com/kerim0x1/bettercode/issues) for existing reports. For a substantial feature or architectural change, describe the problem and proposed approach in an issue before implementing it. Small, focused fixes can go straight to a pull request.
@@ -57,7 +59,7 @@ Fix failing tests at their cause. Do not skip, delete or loosen a test to get a 
 
 ## Pull requests
 
-Explain the problem, the resulting behavior, and how you checked it. Include screenshots for visible UI changes and note any platform you could not test. Avoid unrelated formatting changes or dependency upgrades.
+Explain the problem, the resulting behavior, and how you checked it. Include screenshots for visible UI changes and note any platform you could not test. For UI changes, review default dark, white, system, and imported themes as applicable. The fast `npm run check:contributor-contract` job checks shared theme token compatibility on every push and pull request. Avoid unrelated formatting changes or dependency upgrades.
 
 Keep discussion respectful and focused on the work. For suspected vulnerabilities, follow [SECURITY.md](SECURITY.md) instead of opening a public issue with exploit details.
 

@@ -1,11 +1,11 @@
 import { Platform } from "react-native"
 
 /**
- * 1:1 port of the desktop app's "Default Dark" theme (shadcn neutral scale,
+ * Mobile adaptation of the desktop app's "Default Dark" theme (shadcn neutral scale,
  * see apps/ui/src/lib/appearance-store.ts). The legacy mint-terminal palette
  * was replaced: the accent is now the desktop's near-white primary, success
  * states use the same emerald as the desktop's check marks, and every surface
- * maps onto a desktop CSS variable.
+ * has a corresponding semantic role in the desktop theme.
  */
 export const colors = {
   canvas: "#0A0A0A", // --background
@@ -79,4 +79,3 @@ export const font = {
 } as const
 
 export const minTouchTarget = 44
-

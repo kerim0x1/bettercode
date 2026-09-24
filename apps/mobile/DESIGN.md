@@ -3,7 +3,7 @@
 ## Direction
 
 The app is a focused command surface for a running BetterC0de desktop host,
-not a miniature desktop IDE. Its visual language is a 1:1 port of the desktop
+not a miniature desktop IDE. Its visual language is adapted from the desktop
 app's "Default Dark" theme (shadcn neutral scale) and the AI-Elements chat
 design: near-black canvas, quiet white-alpha borders, a near-white primary
 accent, and emerald reserved for success/live states. Information is dense
@@ -12,7 +12,11 @@ points.
 
 ## Tokens
 
-Source of truth: desktop `apps/ui/src/lib/appearance-store.ts` (Default Dark).
+Source of truth for mobile values: `src/design/theme.ts`. The desktop reference is
+`apps/ui/src/lib/appearance-store.ts` (Default Dark); mobile colors are an
+adaptation rather than an exact rendering of the desktop's OKLCH tokens. See
+the repository [UI and theme guide](../../docs/design-system.md) before changing
+shared visual language.
 
 - Canvas `#0A0A0A` (--background); surface `#171717` (--card/--sidebar);
   active surface `#262626` (--secondary/--muted).

@@ -45,6 +45,10 @@ Keep the presentation calm, precise, and focused on the work. Use a dark base, w
 
 These are presentation guidelines for this documentation set, rather than a complete application theme specification. Keep text contrast readable on each background.
 
+### In-product UI
+
+The product interface follows the [UI and theme guide](docs/design-system.md). Use its semantic color tokens and shared components rather than placing the brand palette above the user's light, dark, system, or imported theme. For application icons and installer art, start from the existing [favicon](apps/ui/public/favicon.svg), [desktop icons](apps/shell/build/icon.png), and [mobile icon generation](apps/mobile/README.md); do not recolor or redraw the mark independently for a feature.
+
 For Markdown, rely on the reader's native typography. Use short paragraphs, descriptive headings, generous spacing, and tables where they make comparisons clearer. Let the logo and writing carry the identity.
 
 ## Voice
