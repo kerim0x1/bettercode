@@ -5,6 +5,7 @@ import { serve } from "@hono/node-server"
 import { buildApp } from "../http/router"
 import { WsHub } from "../ws/server"
 import { createWsRpcHandler } from "../ws/rpc"
+import { RemoteTerminalChannel } from "../ws/terminalChannel"
 import { logger } from "../observability/logger"
 import { describeRemoteProtocol } from "../remote/protocol"
 import { REMOTE_SESSION_COOKIE } from "../remote/service"
@@ -69,12 +70,30 @@ export function createTransport(
     name: "WebSocket hub",
     run: () => hub.close(),
   })
-  // Paired devices learn about a changed terminal grant without reconnecting.
+  // Terminals for paired devices over the WebSocket (ws/terminalChannel.ts).
+  const terminals = new RemoteTerminalChannel({
+    state,
+    terminalGranted: () => settings.get().remote_access_allow_terminal === true,
+  })
+  const stopForgettingRevokedTerminals =
+    remoteAccess.subscribeToSessionRevocations((sessionIds) =>
+      terminals.forgetSessions(sessionIds)
+    )
+  startupCleanup.push({
+    name: "remote terminals",
+    run: () => {
+      stopForgettingRevokedTerminals()
+      terminals.dispose()
+    },
+  })
+  // Paired devices learn about a changed terminal grant without reconnecting;
+  // a grant taken away ends their terminals, and each device hears why.
   let terminalAllowed = settings.get().remote_access_allow_terminal === true
   const refreshProtocolOnSettingsChange = (next: Settings) => {
     const allowed = next.remote_access_allow_terminal === true
     if (allowed === terminalAllowed) return
     terminalAllowed = allowed
+    if (!allowed) terminals.endAll("grant_revoked")
     hub.refreshProtocol()
   }
   settings.on("change", refreshProtocolOnSettingsChange)
@@ -84,7 +103,7 @@ export function createTransport(
       settings.off("change", refreshProtocolOnSettingsChange)
     },
   })
-  hub.setRpcHandler(createWsRpcHandler(state, config))
+  hub.setRpcHandler(createWsRpcHandler(state, config, terminals))
   return { hub }
 }
 

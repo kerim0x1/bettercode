@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { WS_METHODS } from "@betterc0de/schema"
+import { TERMINAL_METHODS } from "@betterc0de/schema/remote-terminal"
 import type { AppState } from "../appState"
 import type { ServerConfig } from "../config"
 import {
@@ -8,6 +9,8 @@ import {
   RPC_REQUESTS_TOTAL,
 } from "../observability/metrics"
 import { createWsRpcHandler } from "./rpc"
+import type { WsConnection } from "./server"
+import { RemoteTerminalChannel } from "./terminalChannel"
 
 const LOCAL_PRINCIPAL = { kind: "local" as const }
 
@@ -304,5 +307,41 @@ describe("createWsRpcHandler", () => {
         }),
       ])
     )
+  })
+
+  it("gives the terminal's methods to the terminal, which says itself who gets one", async () => {
+    const state = makeState() as unknown as AppState
+    const terminals = new RemoteTerminalChannel({
+      state,
+      terminalGranted: () => true,
+    })
+    const handler = createWsRpcHandler(state, makeConfig(), terminals)
+    const connection: WsConnection = {
+      send: () => undefined,
+      bufferedAmount: () => 0,
+      isOpen: () => true,
+      onClose: () => () => undefined,
+    }
+    const remote = (accessLevel: "full" | "read_only") => ({
+      kind: "remote" as const,
+      sessionId: "phone-1",
+      accessLevel,
+      expiresAt: Date.now() + 60_000,
+    })
+
+    await expect(
+      handler(TERMINAL_METHODS.list, {}, LOCAL_PRINCIPAL, connection)
+    ).rejects.toMatchObject({ code: "remote_terminal_only" })
+    // Not the general read-only refusal: the terminal's own reason.
+    await expect(
+      handler(TERMINAL_METHODS.list, {}, remote("read_only"), connection)
+    ).rejects.toMatchObject({ code: "remote_terminal_disabled" })
+    await expect(
+      handler(TERMINAL_METHODS.list, {}, remote("full"), connection)
+    ).resolves.toEqual({ terminals: [] })
+    // Without a socket there is no terminal to speak of.
+    await expect(
+      handler(TERMINAL_METHODS.list, {}, remote("full"))
+    ).rejects.toThrow("Unknown RPC method")
   })
 })

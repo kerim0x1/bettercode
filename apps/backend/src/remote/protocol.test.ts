@@ -161,6 +161,7 @@ describe("protocol block", () => {
           REMOTE_FEATURES.workspaceWriteIfMatch,
           REMOTE_FEATURES.threadsRename,
           REMOTE_FEATURES.preparedTurns,
+          REMOTE_FEATURES.terminal,
         ],
       },
     })

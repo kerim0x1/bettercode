@@ -17,6 +17,7 @@ const FEATURES: readonly string[] = [
   REMOTE_FEATURES.workspaceWriteIfMatch,
   REMOTE_FEATURES.threadsRename,
   REMOTE_FEATURES.preparedTurns,
+  REMOTE_FEATURES.terminal,
 ]
 
 const backendVersion = readBackendVersion()

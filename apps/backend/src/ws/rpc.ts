@@ -1,4 +1,5 @@
 import { WS_METHODS, asRecord } from "@betterc0de/schema"
+import { TERMINAL_METHODS } from "@betterc0de/schema/remote-terminal"
 import type { AppState } from "../appState"
 import type { ServerConfig } from "../config"
 import {
@@ -12,8 +13,12 @@ import {
   type ThreadActivityCursor,
 } from "../persistence/projections"
 import type { RpcHandler } from "./server"
+import { RemoteTerminalChannel } from "./terminalChannel"
 
-const KNOWN_WS_METHODS = new Set<string>(Object.values(WS_METHODS))
+const KNOWN_WS_METHODS = new Set<string>([
+  ...Object.values(WS_METHODS),
+  ...Object.values(TERMINAL_METHODS),
+])
 const READ_ONLY_REMOTE_WS_METHODS = new Set<string>([
   WS_METHODS.providersListInstances,
   WS_METHODS.providersModelsForInstance,
@@ -123,14 +128,28 @@ function toThreadActivityWire(
 
 export function createWsRpcHandler(
   state: AppState,
-  config: ServerConfig
+  config: ServerConfig,
+  terminals?: RemoteTerminalChannel
 ): RpcHandler {
-  return async (method, params, principal) => {
+  return async (method, params, principal, connection) => {
     if (state.taintedRef?.() || state.drainingRef?.()) {
       throw Object.assign(new Error("Backend is shutting down"), {
         statusCode: 503,
         code: "SHUTTING_DOWN",
       })
+    }
+    // Before the read-only gate: the terminal says itself why a device gets
+    // none. Called without awaiting anything first, so a device's writes
+    // reach it in the order they came in.
+    if (terminals && connection && RemoteTerminalChannel.handles(method)) {
+      return observeAsync(
+        {
+          counterName: RPC_REQUESTS_TOTAL,
+          timerName: RPC_REQUEST_DURATION_MS,
+          attributes: { method },
+        },
+        () => terminals.handle(method, params, principal, connection)
+      )
     }
     if (
       principal.kind === "remote" &&
