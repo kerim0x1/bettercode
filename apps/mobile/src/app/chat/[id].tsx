@@ -521,6 +521,7 @@ export default function ChatScreen() {
         <IconButton
           icon={FolderTree}
           label="Show files"
+          testID="chat-files"
           onPress={() =>
             router.push({
               pathname: "/chat/[id]/files",
