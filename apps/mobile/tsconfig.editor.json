@@ -1,0 +1,17 @@
+// The code editor runs in the app's WebView, a browser page: it gets the
+// DOM's types and none of React Native's (editor/editor.ts).
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "types": []
+  },
+  "include": ["editor/**/*.ts"]
+}

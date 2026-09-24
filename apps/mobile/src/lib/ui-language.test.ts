@@ -27,10 +27,18 @@ function withoutComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
 }
 
+// The code editor's page is CodeMirror, built from its packages into one
+// line by scripts/build-mobile-editor.mjs: not the app's text. The editor's
+// own code (editor/) is scanned instead.
+const GENERATED = path.join(APP_ROOT, "src", "editor", "editor-html.ts")
+
 describe("interface language", () => {
   it("has no German text in the app", () => {
     const files = [
-      ...sourceFiles(path.join(APP_ROOT, "src")),
+      ...sourceFiles(path.join(APP_ROOT, "src")).filter(
+        (file) => file !== GENERATED
+      ),
+      ...sourceFiles(path.join(APP_ROOT, "editor")),
       path.join(APP_ROOT, "app.config.ts"),
     ]
     expect(files.length).toBeGreaterThan(20)
