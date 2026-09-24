@@ -60,6 +60,7 @@ export default function RootLayout() {
           <Stack.Screen name="chat/[id]/files" />
           <Stack.Screen name="chat/[id]/file" />
           <Stack.Screen name="chat/[id]/edit" />
+          <Stack.Screen name="chat/[id]/terminal" />
           <Stack.Screen name="chat/[id]/changes" />
           <Stack.Screen name="chat/[id]/diff" />
           <Stack.Screen name="git/index" />

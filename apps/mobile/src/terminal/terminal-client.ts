@@ -111,6 +111,18 @@ export class TerminalClient {
   }
 
   /**
+   * Takes up a terminal that is still running on the desktop (the screen
+   * was left and opened again): from its first output the desktop still
+   * keeps.
+   */
+  adopt(summary: TerminalSummary): Promise<TerminalSummary> {
+    this.terminalId = summary.terminalId
+    this.nextInputSeq = summary.nextInputSeq
+    this.lastSeq = 0
+    return this.attach()
+  }
+
+  /**
    * Takes the terminal up again on a new connection: output after what was
    * shown, and the input the desktop has not applied, sent again.
    */

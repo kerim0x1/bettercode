@@ -10,6 +10,10 @@ import { useComposerSettings } from "@/store/composer-settings-store"
 import { startQueueRunner } from "@/store/queue-runner"
 import { useQueueStore } from "@/store/queue-store"
 import { useSessionStore } from "@/store/session-store"
+import {
+  deliverTerminalFrame,
+  setTerminalChannel,
+} from "@/terminal/terminal-link"
 import type { RemoteApi, RemoteChannel } from "@/transport/types"
 import { useEffect, useRef } from "react"
 import { AppState } from "react-native"
@@ -102,6 +106,8 @@ export function AppRuntime() {
         })
       },
       onFrame: (frame) => {
+        // The terminal's frames are the terminal screen's, not the chats'.
+        if (deliverTerminalFrame(frame)) return
         if (isReplayGapFrame(frame)) {
           void reconcileHydratedState(api)
           return
@@ -128,6 +134,7 @@ export function AppRuntime() {
       },
     })
     channelRef.current = channel
+    setTerminalChannel(channel)
     channel.start()
     const stopQueue = startQueueRunner(api)
 
@@ -146,6 +153,7 @@ export function AppRuntime() {
       clearInterval(healthTimer)
       subscription.remove()
       channel.stop()
+      setTerminalChannel(null)
       if (channelRef.current === channel) channelRef.current = null
     }
   }, [check, markAppUpdateRequired, setProtocol, setSocketState, transport])

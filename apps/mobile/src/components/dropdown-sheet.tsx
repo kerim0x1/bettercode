@@ -67,6 +67,7 @@ export function DropdownRow({
   active = false,
   destructive = false,
   onPress,
+  testID,
 }: {
   icon?: ReactNode
   label: string
@@ -74,11 +75,13 @@ export function DropdownRow({
   active?: boolean
   destructive?: boolean
   onPress: () => void
+  testID?: string
 }) {
   return (
     <Pressable
       accessibilityRole="menuitem"
       accessibilityState={{ selected: active }}
+      testID={testID}
       onPress={onPress}
       style={({ pressed }) => [
         styles.row,

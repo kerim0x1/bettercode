@@ -36,6 +36,7 @@ import {
   Info,
   MoreHorizontal,
   Pencil,
+  SquareTerminal,
   Trash2,
   WifiOff,
   X,
@@ -166,6 +167,7 @@ export default function ChatScreen() {
   const restoreCheckpoint = useAppStore((state) => state.restoreCheckpoint)
   const deleteThread = useAppStore((state) => state.deleteThread)
   const canRename = useFeature(REMOTE_FEATURES.threadsRename)
+  const hasTerminal = useFeature(REMOTE_FEATURES.terminal)
   const [draft, setDraft] = useState("")
   const [photos, setPhotos] = useState<PreparedPhoto[]>([])
   const [preparingPhotos, setPreparingPhotos] = useState(false)
@@ -849,6 +851,20 @@ export default function ChatScreen() {
         onClose={() => setActionsOpen(false)}
         title="Chat"
       >
+        {hasTerminal ? (
+          <DropdownRow
+            icon={<SquareTerminal size={15} color={colors.textSecondary} />}
+            label="Terminal"
+            testID="chat-terminal"
+            onPress={() => {
+              setActionsOpen(false)
+              router.push({
+                pathname: "/chat/[id]/terminal",
+                params: { id: threadId },
+              })
+            }}
+          />
+        ) : null}
         {canRename ? (
           <DropdownRow
             icon={<Pencil size={15} color={colors.textSecondary} />}
