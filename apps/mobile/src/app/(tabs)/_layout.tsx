@@ -58,6 +58,8 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: "Chats",
+          // iOS names a tab "Chats, tab, 1 of 3"; tests find it by id.
+          tabBarButtonTestID: "tab-chats",
           tabBarIcon: ({ color, focused }) => (
             <TabIcon icon={MessagesSquare} color={color} focused={focused} />
           ),
@@ -67,6 +69,7 @@ export default function TabsLayout() {
         name="projects"
         options={{
           title: "Projects",
+          tabBarButtonTestID: "tab-projects",
           tabBarIcon: ({ color, focused }) => (
             <TabIcon icon={FolderGit2} color={color} focused={focused} />
           ),
@@ -76,6 +79,7 @@ export default function TabsLayout() {
         name="settings"
         options={{
           title: "Host",
+          tabBarButtonTestID: "tab-host",
           tabBarIcon: ({ color, focused }) => (
             <TabIcon icon={MonitorSmartphone} color={color} focused={focused} />
           ),

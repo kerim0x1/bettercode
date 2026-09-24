@@ -70,7 +70,9 @@ tags:
 - assertNotVisible:
     id: request-approve
 - tapOn: Back
-- tapOn: Host
+# By id: iOS reads the tab as "Host, tab, 3 of 3".
+- tapOn:
+    id: tab-host
 - scrollUntilVisible:
     element:
       id: exit-demo
