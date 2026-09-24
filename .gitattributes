@@ -16,6 +16,7 @@
 *.md text eol=lf
 *.sh text eol=lf
 *.plist text eol=lf
+*.gradle text eol=lf
 
 # Git hooks run under sh on every OS, including Git for Windows; a CRLF in a
 # hook makes sh read `node\r` as the command name.
