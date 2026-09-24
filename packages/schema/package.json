@@ -116,6 +116,11 @@
       "types": "./src/git-commit-message.ts",
       "import": "./src/git-commit-message.ts",
       "default": "./dist/git-commit-message.js"
+    },
+    "./remote-terminal": {
+      "types": "./src/remote-terminal.ts",
+      "import": "./src/remote-terminal.ts",
+      "default": "./dist/remote-terminal.js"
     }
   },
   "scripts": {
@@ -142,6 +147,9 @@
       ],
       "remote-protocol": [
         "dist/remote-protocol.d.ts"
+      ],
+      "remote-terminal": [
+        "dist/remote-terminal.d.ts"
       ],
       "prompt-context": [
         "dist/prompt-context.d.ts"

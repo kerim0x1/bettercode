@@ -51,6 +51,11 @@ export const REMOTE_FEATURES = {
    * instruction the desktop builds for its own messages.
    */
   preparedTurns: "chat.preparedTurns",
+  /**
+   * A terminal over the WebSocket (`remote-terminal.ts`), for a device the
+   * desktop allows one (`capabilities.terminalGranted`).
+   */
+  terminal: "terminal.ws",
 } as const
 export type RemoteFeature =
   (typeof REMOTE_FEATURES)[keyof typeof REMOTE_FEATURES]
