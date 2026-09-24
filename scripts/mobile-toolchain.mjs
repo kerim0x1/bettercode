@@ -329,13 +329,17 @@ export function iosMaestroEnv(env = process.env) {
   }
 }
 
-/** Arguments that run every flow on one device and keep a JUnit report and the debug output. */
-export function maestroTestArgs(device, flowsDir, outputDir) {
+/**
+ * Arguments that run every flow on one device and keep a JUnit report and the debug output.
+ * `excludeTags` leaves out the flows with those tags.
+ */
+export function maestroTestArgs(device, flowsDir, outputDir, { excludeTags = [] } = {}) {
   return [
     "--device",
     device,
     "test",
     flowsDir,
+    ...(excludeTags.length > 0 ? ["--exclude-tags", excludeTags.join(",")] : []),
     "--format",
     "JUNIT",
     "--output",

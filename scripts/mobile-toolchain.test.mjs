@@ -229,6 +229,10 @@ test("runs every flow on one device and keeps a report", () => {
   assert.deepEqual(args.slice(0, 4), ["--device", "emulator-5554", "test", "flows"])
   assert.deepEqual(args.slice(4, 6), ["--format", "JUNIT"])
   assert.equal(args.includes(path.join("out", "maestro-junit.xml")), true)
+  assert.equal(args.includes("--exclude-tags"), false)
+
+  const withoutLinks = maestroTestArgs("sim", "flows", "out", { excludeTags: ["android-only"] })
+  assert.deepEqual(withoutLinks.slice(0, 6), ["--device", "sim", "test", "flows", "--exclude-tags", "android-only"])
 })
 
 /** A Maestro output folder: its JUnit report, and each flow's commands.json by flow name. */

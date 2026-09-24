@@ -127,7 +127,7 @@ The flows in `apps/mobile/maestro/flows` run against the demo mode, so they need
 
 - `pairing-input.yaml`: a bare pairing code is refused before anything is sent.
 - `demo-chat.yaml`: the demo from the pairing screen through a streamed, approved reply to **Exit demo**.
-- `demo-link.yaml`: `betterc0de://demo` opens the demo. This checks the scheme the native project registers.
+- `demo-link.yaml`: `betterc0de://demo` opens the demo. This checks the scheme the native project registers. Android only: on iOS the system asks "Open in …?" first, which Maestro cannot handle reliably on iOS 26 (it left the question up over later flows, and a tap on it crashed its driver). The iOS build checks the registered scheme in the app's Info.plist instead.
 - `demo-git.yaml`: source control from a project: a file and one of a README's two changes staged, a generated message, a commit and a push.
 - `demo-files.yaml`: a new file in a chat's files, then a search of the files' text that opens a match at its line.
 - `demo-editor.yaml`: a file in the code editor, an edit and a save. It is the only check that the WebView and the editor's page (`npm run mobile:pages`) work on a device; the screen tests use a stand-in for the page.
@@ -137,7 +137,7 @@ They find elements by `testID`, which Maestro sees as the element's id on both p
 
 Two things in the flows are the device's rather than the app's:
 
-- **iOS asks before a link opens an app** ("Open in “BetterC0de Remote”?"). Maestro does not always see that question, since iOS shows it and not the app. The link flow taps **Open** by its text, and where it sits on the screen when the pairing screen still shows afterwards.
+- **iOS asks before a link opens an app** ("Open in “BetterC0de Remote”?"). The question is the system's, and Maestro cannot handle it reliably on iOS 26, so the link flow runs on Android only (see above).
 - **The Android emulator can drop adb for a moment.** In CI its adbd sometimes closes the connection just after Maestro clears the app's data, and the next command fails with "device offline". `e2e` runs a flow that failed that way once more, and says so in the log. A flow that failed on anything else fails the run. Maestro's JUnit report calls that failure "Unknown error"; the cause is in the flow's `commands.json`.
 
 Choosing photos needs the system's photo picker or camera, which the flows do not drive. The screen tests (`src/__tests__/chat-photos.test.tsx`) cover photos with the picker replaced, and the helpers that size and encode them have their own tests.

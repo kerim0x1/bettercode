@@ -213,7 +213,14 @@ export async function e2e({ app, env = process.env }) {
     const jdk = findJdk({ env })
     const maestro = await ensureMaestro({ log: (line) => process.stdout.write(`${line}\n`) })
     fs.mkdirSync(E2E_OUTPUT_DIR, { recursive: true })
-    run(maestro, maestroTestArgs(udid, FLOWS_DIR, E2E_OUTPUT_DIR), {
+    // The link flow runs on Android only. On iOS it depends on the system's
+    // "Open in …?" question, which Maestro cannot handle reliably on iOS 26:
+    // the question stayed up over every later flow once, and a tap on it
+    // crashed the XCUITest driver once. The build's verification
+    // (checkInfoPlist) makes sure the app registers the betterc0de://
+    // scheme; what the app does with the link is the same code as on
+    // Android, where the flow runs.
+    run(maestro, maestroTestArgs(udid, FLOWS_DIR, E2E_OUTPUT_DIR, { excludeTags: ["android-only"] }), {
       env: { ...env, ...(jdk.home ? { JAVA_HOME: jdk.home } : {}), ...iosMaestroEnv(env) },
       label: "maestro",
     })
