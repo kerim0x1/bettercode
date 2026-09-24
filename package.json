@@ -20,6 +20,7 @@
     "mobile:web": "npm run web --workspace @betterc0de/mobile",
     "mobile:build:ios": "npm run build:ios:dev --workspace @betterc0de/mobile",
     "mobile:build:ios:preview": "npm run build:ios:preview --workspace @betterc0de/mobile",
+    "mobile:icons": "node scripts/generate-mobile-icons.mjs",
     "typecheck:mobile": "npm run typecheck --workspace @betterc0de/mobile",
     "test:mobile": "npm run test --workspace @betterc0de/mobile",
     "build": "npm run build:backend && npm run build:frontend",
