@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import {
-  ChevronRightIcon,
-  RefreshCwIcon,
-} from "lucide-react"
+import { ChevronRightIcon, RefreshCwIcon } from "lucide-react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { FileAddIcon, FolderAddIcon } from "@hugeicons/core-free-icons"
 import { cn } from "@/lib/utils"
 import { getFolderIconUrl } from "@/lib/file-icons"
 import { useConfirm } from "@/components/dialogs/confirm-provider"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import {
   Tooltip,
   TooltipContent,
@@ -35,7 +36,11 @@ import {
 } from "@/components/file-tree/file-tree-node"
 import { useVisibilityInterval } from "@/hooks/use-visibility-interval"
 import { useFileTreeDragDrop } from "@/hooks/use-file-tree-drag-drop"
-import { type FileTreeMove, resolveFileTreeMove, fileTreeMoveError } from "@/lib/file-tree-move"
+import {
+  type FileTreeMove,
+  resolveFileTreeMove,
+  fileTreeMoveError,
+} from "@/lib/file-tree-move"
 import {
   editorPathAncestors,
   isAbsoluteEditorPath,
@@ -255,16 +260,24 @@ export function ProjectFileTree({
     const requestedProjectPath = projectPath
     return Promise.all([
       searchEntriesDetailed(projectPath, ""),
-      completeRootListing ? listDirectoryFs(projectPath, { showHidden: true }) : Promise.resolve(null),
+      completeRootListing
+        ? listDirectoryFs(projectPath, { showHidden: true })
+        : Promise.resolve(null),
     ])
       .then(([data, root]) => {
         if (activeProjectPathRef.current !== requestedProjectPath) return
-        const indexed = new Map(data.entries.map((entry) => [entry.path, entry]))
+        const indexed = new Map(
+          data.entries.map((entry) => [entry.path, entry])
+        )
         // A capped recursive scan can miss entire root folders. Keep every
         // root reachable in the editor; expansion loads its children on demand.
         for (const entry of root?.entries ?? []) {
           if (entry.name === ".git" || entry.name === "node_modules") continue
-          indexed.set(entry.name, { path: entry.name, name: entry.name, is_dir: entry.isDir })
+          indexed.set(entry.name, {
+            path: entry.name,
+            name: entry.name,
+            is_dir: entry.isDir,
+          })
         }
         setEntries(buildTree([...indexed.values()]))
         setTotalCount(indexed.size)
@@ -372,9 +385,7 @@ export function ProjectFileTree({
         setEntries((current) =>
           mergeProjectTreeChildren(current, entryPath, children)
         )
-        setLoadedDirectoryPaths((current) =>
-          new Set(current).add(entryPath)
-        )
+        setLoadedDirectoryPaths((current) => new Set(current).add(entryPath))
       } catch {
         if (activeProjectPathRef.current === requestedProjectPath) {
           setFailedDirectoryPaths((current) => new Set(current).add(entryPath))
@@ -409,12 +420,7 @@ export function ProjectFileTree({
         void loadDirectory(entryPath)
       }
     },
-    [
-      expandedPaths,
-      loadDirectory,
-      loadedDirectoryPaths,
-      loadingDirectoryPaths,
-    ]
+    [expandedPaths, loadDirectory, loadedDirectoryPaths, loadingDirectoryPaths]
   )
 
   const relativeTreeEntryPath = useCallback(
@@ -422,57 +428,98 @@ export function ProjectFileTree({
     [projectPath]
   )
 
-  const expandDropDirectory = useCallback((directory: string) => {
-    setOpen(true)
-    if (!directory) return
-    expandPathSet([...editorPathAncestors(directory), directory])
-    if (!loadedDirectoryPaths.has(directory) && !loadingDirectoryPaths.has(directory)) {
-      void loadDirectory(directory)
-    }
-  }, [setOpen, expandPathSet, loadedDirectoryPaths, loadingDirectoryPaths, loadDirectory])
-
-  const moveEntry = useCallback(async (move: FileTreeMove) => {
-    if (moveInProgress.current) return
-    const directory = move.toRelativePath.split("/").slice(0, -1).join("/")
-    const validMove = resolveFileTreeMove(move.fromRelativePath, directory)
-    if (!validMove || validMove.toRelativePath !== move.toRelativePath) return
-    moveInProgress.current = true
-    setMoving(true)
-    setMoveError(null)
-    const root = projectPath
-    try {
-      await moveWorkspacePath(root, move.fromRelativePath, move.toRelativePath)
-      useEditorStore.getState().handlePathMoved(
-        resolveWorkspaceFilePath(root, move.fromRelativePath),
-        resolveWorkspaceFilePath(root, move.toRelativePath)
-      )
-      if (activeProjectPathRef.current !== root) return
-      setExpandedPaths((current) => new Set([
-        ...Array.from(current, (path) => rebaseEditorPath(path, move.fromRelativePath, move.toRelativePath) ?? path),
-        ...editorPathAncestors(move.toRelativePath),
-      ]))
-      setLoadedDirectoryPaths(new Set())
-      setFailedDirectoryPaths(new Set())
+  const expandDropDirectory = useCallback(
+    (directory: string) => {
       setOpen(true)
-      await refreshTree()
-      if (activeProjectPathRef.current !== root) return
-      if (directory) await loadDirectory(directory)
-      flashRevealedPath(move.toRelativePath)
-      scrollFileIntoView(move.toRelativePath)
-    } catch (error) {
-      if (activeProjectPathRef.current === root) {
-        setMoveError(fileTreeMoveError(error))
+      if (!directory) return
+      expandPathSet([...editorPathAncestors(directory), directory])
+      if (
+        !loadedDirectoryPaths.has(directory) &&
+        !loadingDirectoryPaths.has(directory)
+      ) {
+        void loadDirectory(directory)
       }
-    } finally {
-      moveInProgress.current = false
-      setMoving(false)
-    }
-  }, [projectPath, setOpen, refreshTree, loadDirectory, flashRevealedPath, scrollFileIntoView])
+    },
+    [
+      setOpen,
+      expandPathSet,
+      loadedDirectoryPaths,
+      loadingDirectoryPaths,
+      loadDirectory,
+    ]
+  )
+
+  const moveEntry = useCallback(
+    async (move: FileTreeMove) => {
+      if (moveInProgress.current) return
+      const directory = move.toRelativePath.split("/").slice(0, -1).join("/")
+      const validMove = resolveFileTreeMove(move.fromRelativePath, directory)
+      if (!validMove || validMove.toRelativePath !== move.toRelativePath) return
+      moveInProgress.current = true
+      setMoving(true)
+      setMoveError(null)
+      const root = projectPath
+      try {
+        await moveWorkspacePath(
+          root,
+          move.fromRelativePath,
+          move.toRelativePath
+        )
+        useEditorStore
+          .getState()
+          .handlePathMoved(
+            resolveWorkspaceFilePath(root, move.fromRelativePath),
+            resolveWorkspaceFilePath(root, move.toRelativePath)
+          )
+        if (activeProjectPathRef.current !== root) return
+        setExpandedPaths(
+          (current) =>
+            new Set([
+              ...Array.from(
+                current,
+                (path) =>
+                  rebaseEditorPath(
+                    path,
+                    move.fromRelativePath,
+                    move.toRelativePath
+                  ) ?? path
+              ),
+              ...editorPathAncestors(move.toRelativePath),
+            ])
+        )
+        setLoadedDirectoryPaths(new Set())
+        setFailedDirectoryPaths(new Set())
+        setOpen(true)
+        await refreshTree()
+        if (activeProjectPathRef.current !== root) return
+        if (directory) await loadDirectory(directory)
+        flashRevealedPath(move.toRelativePath)
+        scrollFileIntoView(move.toRelativePath)
+      } catch (error) {
+        if (activeProjectPathRef.current === root) {
+          setMoveError(fileTreeMoveError(error))
+        }
+      } finally {
+        moveInProgress.current = false
+        setMoving(false)
+      }
+    },
+    [
+      projectPath,
+      setOpen,
+      refreshTree,
+      loadDirectory,
+      flashRevealedPath,
+      scrollFileIntoView,
+    ]
+  )
 
   const { dragState, dragHandlers } = useFileTreeDragDrop({
     projectPath,
     busy: moving || creating !== null || renaming !== null,
-    onMove: (move) => { void moveEntry(move) },
+    onMove: (move) => {
+      void moveEntry(move)
+    },
     onExpand: expandDropDirectory,
   })
 
@@ -505,11 +552,14 @@ export function ProjectFileTree({
     [creating, refreshTree, onFileSelect, resolveTreeEntryPath]
   )
 
-  const startCreate = useCallback((parent: string, type: "file" | "folder") => {
-    setOpen(true)
-    setCreating({ parent, type })
-    setExpandedPaths((prev) => new Set(prev).add(parent))
-  }, [setOpen])
+  const startCreate = useCallback(
+    (parent: string, type: "file" | "folder") => {
+      setOpen(true)
+      setCreating({ parent, type })
+      setExpandedPaths((prev) => new Set(prev).add(parent))
+    },
+    [setOpen]
+  )
 
   const commitRename = useCallback(
     async (oldPath: string, newName: string) => {
@@ -667,14 +717,33 @@ export function ProjectFileTree({
 
   if (!projectPath || (!loaded && !completeRootListing)) return null
 
-  const folderName = projectPath.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || "Project"
+  const folderName =
+    projectPath
+      .replace(/[/\\]+$/, "")
+      .split(/[/\\]/)
+      .pop() || "Project"
   const countLabel = fileTreeCountLabel(totalCount, truncation)
 
   return (
-    <Collapsible open={isOpen} onOpenChange={setOpen} data-project-file-tree aria-busy={moving} {...dragHandlers}>
+    <Collapsible
+      open={isOpen}
+      onOpenChange={setOpen}
+      data-project-file-tree
+      aria-busy={moving}
+      {...dragHandlers}
+    >
       <div
-        data-file-tree-drop-target={dragState.targetDirectory === "" && !dragState.insertion ? "true" : undefined}
-        className={cn("sticky top-0 z-10 flex min-h-10 items-center rounded-md bg-sidebar", dragState.targetDirectory === "" && !dragState.insertion && "ring-1 ring-inset ring-sidebar-ring bg-sidebar-accent")}
+        data-file-tree-drop-target={
+          dragState.targetDirectory === "" && !dragState.insertion
+            ? "true"
+            : undefined
+        }
+        className={cn(
+          "sticky top-0 z-10 flex min-h-10 items-center rounded-md bg-sidebar",
+          dragState.targetDirectory === "" &&
+            !dragState.insertion &&
+            "bg-sidebar-accent ring-1 ring-sidebar-ring ring-inset"
+        )}
       >
         <CollapsibleTrigger
           type="button"
@@ -763,8 +832,16 @@ export function ProjectFileTree({
           </Tooltip>
         </div>
       </div>
-      {moving && <p role="status" className="px-2 py-1 text-xs text-muted-foreground">Moving…</p>}
-      {moveError && <p role="alert" className="px-2 py-2 text-xs text-destructive">{moveError}</p>}
+      {moving && (
+        <p role="status" className="px-2 py-1 text-xs text-muted-foreground">
+          Moving…
+        </p>
+      )}
+      {moveError && (
+        <p role="alert" className="px-2 py-2 text-xs text-destructive">
+          {moveError}
+        </p>
+      )}
       <CollapsibleContent>
         {!loaded ? (
           <p role="status" className="px-3 py-4 text-xs text-muted-foreground">

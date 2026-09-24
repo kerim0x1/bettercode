@@ -171,17 +171,29 @@ describe("remote terminal capabilities", () => {
     expect(remoteShellCapabilityError(readOnly).message).toBe(readOnly.message)
     // Other 403s carry their own code and their own message.
     for (const other of [
-      new HttpError("workspace root is not registered", 403, "/shell/capability", {
-        code: "workspace_not_registered",
-      }),
-      new HttpError("Shell capabilities require trusted desktop IPC.", 403, "/shell/capability", {
-        code: "desktop_only",
-      }),
+      new HttpError(
+        "workspace root is not registered",
+        403,
+        "/shell/capability",
+        {
+          code: "workspace_not_registered",
+        }
+      ),
+      new HttpError(
+        "Shell capabilities require trusted desktop IPC.",
+        403,
+        "/shell/capability",
+        {
+          code: "desktop_only",
+        }
+      ),
       new HttpError("Forbidden", 403, "/shell/capability"),
       new HttpError("service draining", 503, "/shell/capability", {
         code: "remote_terminal_disabled",
       }),
-      new Error("Terminal access from paired devices is disabled on the desktop host."),
+      new Error(
+        "Terminal access from paired devices is disabled on the desktop host."
+      ),
     ]) {
       expect(isRemoteTerminalSwitchOffError(other), other.message).toBe(false)
       expect(remoteShellCapabilityError(other).message).toBe(other.message)
@@ -191,9 +203,14 @@ describe("remote terminal capabilities", () => {
   it("passes other capability failures through unchanged", async () => {
     runtime.isRemoteRuntime.mockReturnValue(true)
     runtime.httpInvoke.mockRejectedValueOnce(
-      new HttpError("workspace root is not registered", 403, "/shell/capability", {
-        code: "workspace_not_registered",
-      })
+      new HttpError(
+        "workspace root is not registered",
+        403,
+        "/shell/capability",
+        {
+          code: "workspace_not_registered",
+        }
+      )
     )
     await expect(terminalOpen({ cwd: "/elsewhere" })).rejects.toThrow(
       /^workspace root is not registered$/
@@ -395,7 +412,11 @@ describe("workspace search results", () => {
         truncated: true,
         truncatedReason: "deadline",
       })
-    ).toEqual({ entries: [entry], truncated: true, truncatedReason: "deadline" })
+    ).toEqual({
+      entries: [entry],
+      truncated: true,
+      truncatedReason: "deadline",
+    })
     expect(
       unwrapContentSearchResponse({
         results: [hit],
@@ -479,9 +500,11 @@ describe("workspace search results", () => {
       truncated: true,
       truncatedReason: "limit",
     })
-    await expect(
-      searchContentDetailed("/repo", "needle", 1)
-    ).resolves.toEqual({ results: [hit], truncated: true, truncatedReason: "limit" })
+    await expect(searchContentDetailed("/repo", "needle", 1)).resolves.toEqual({
+      results: [hit],
+      truncated: true,
+      truncatedReason: "limit",
+    })
     await expect(searchContent("/repo", "needle", 1)).resolves.toEqual([hit])
     expect(runtime.invoke).toHaveBeenCalledTimes(2)
     for (const call of runtime.invoke.mock.calls) {
