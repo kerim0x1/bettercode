@@ -24,6 +24,7 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 - **Phone app: signing out.** When the desktop could not be reached, signing out forgot the pairing on the phone and left the session active on the desktop. The app now keeps the pairing and offers to forget it on the phone only.
 - **Phone app: a message sent again arrived twice.** After a send timed out, sending the text again made a second message with a new id. Retry now resends the same message, which the desktop recognises. The app also waits as long as the desktop does (up to 210 s) for a message whose chat is first compacted, instead of giving up after 20 s.
 - **A chat's worktree mode is recorded where the worktree is made.** Creating, resetting or removing a chat's worktree left its env mode as the client that asked had last written it; a chat given a worktree by another client could read as local. The desktop's backend now sets it together with the worktree's path and branch.
+- **Phone app on Android: the keyboard no longer covers the message box.** The app draws edge to edge on Android, where the window no longer shrinks for the keyboard, and only iOS moved the message box and the pairing form above it: on Android the keyboard covered Send and Connect.
 - **Phone app: smaller fixes.** File search keeps the desktop's ranking. A reply ends when its own turn ends, not by comparing the phone's clock with the desktop's. After a reconnect the app checks the session at once instead of keeping the composer disabled for up to a minute.
 
 ### Added
