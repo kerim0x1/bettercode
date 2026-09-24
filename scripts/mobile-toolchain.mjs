@@ -313,6 +313,22 @@ export const MAESTRO_ENV = {
   MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: "true",
 }
 
+/**
+ * How long Maestro waits for its iOS driver, an XCTest runner that
+ * xcodebuild starts on the simulator. On a busy CI runner the driver took
+ * 132 s to come up, past Maestro's own limit of about two minutes. A limit
+ * set in the environment wins.
+ */
+export const IOS_DRIVER_STARTUP_TIMEOUT_MS = 300_000
+
+/** Maestro's environment for the flows on the iOS simulator. */
+export function iosMaestroEnv(env = process.env) {
+  return {
+    ...MAESTRO_ENV,
+    MAESTRO_DRIVER_STARTUP_TIMEOUT: env.MAESTRO_DRIVER_STARTUP_TIMEOUT?.trim() || String(IOS_DRIVER_STARTUP_TIMEOUT_MS),
+  }
+}
+
 /** Arguments that run every flow on one device and keep a JUnit report and the debug output. */
 export function maestroTestArgs(device, flowsDir, outputDir) {
   return [
