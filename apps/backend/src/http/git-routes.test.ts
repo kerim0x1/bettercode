@@ -236,6 +236,27 @@ describe("git branch and worktree routes", () => {
     expect(runGit(cwd, ["diff", "--cached"])).toBe("")
   })
 
+  it("answers a commit of nothing in the desktop's words", async () => {
+    const cwd = createRepo(tempDirs)
+    const app = buildApp(makeConfig(), makeState(undefined, [cwd]))
+
+    const response = await app.request("/api/v1/git/commit", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ cwd, message: "Nothing changed" }),
+    })
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({
+      error:
+        "Nothing to commit — stage changes first or modify a tracked file.",
+      code: "git_nothing_to_commit",
+    })
+  })
+
   it("renames branches and manages worktrees through the HTTP API", async () => {
     const cwd = createRepo(tempDirs)
     const worktreeParent = fs.mkdtempSync(

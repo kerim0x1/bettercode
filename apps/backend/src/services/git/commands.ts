@@ -43,12 +43,13 @@ const NO_COMMIT_PATTERNS = [
   /no changes added to commit/i,
 ] as const
 
+// A nominal HttpError: the route shows its words, where a plain error with
+// a status would read "git commit failed".
 function nothingToCommit(): Error {
-  return Object.assign(
-    new Error(
-      "Nothing to commit — stage changes first or modify a tracked file."
-    ),
-    { statusCode: 400 }
+  return new HttpError(
+    400,
+    "Nothing to commit — stage changes first or modify a tracked file.",
+    "git_nothing_to_commit"
   )
 }
 

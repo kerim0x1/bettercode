@@ -399,6 +399,7 @@ describe("git checkpoint refs", () => {
     const cwd = createRepo()
     await expect(commit(cwd, "nothing changed")).rejects.toMatchObject({
       statusCode: 400,
+      code: "git_nothing_to_commit",
       message:
         "Nothing to commit — stage changes first or modify a tracked file.",
     })
