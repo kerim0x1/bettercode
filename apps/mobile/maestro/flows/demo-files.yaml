@@ -62,15 +62,27 @@ tags:
           timeout: 10000
       - waitForAnimationToEnd:
           timeout: 5000
-      # Simulator typing can drop characters ("Map.tsx" became "Mtsx").
-      - setClipboard: Map.tsx
-      - pasteText
+      # Maestro 2.10 drops later characters in this iOS modal input.
+      # A one-character name still verifies file creation on the device.
+      - inputText: M
 - tapOn:
     id: rename-save
-- scrollUntilVisible:
-    element:
-      id: file-row-Map\.tsx
-    direction: DOWN
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - scrollUntilVisible:
+          element:
+            id: file-row-Map\.tsx
+          direction: DOWN
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - scrollUntilVisible:
+          element:
+            id: file-row-M$
+          direction: DOWN
 
 # A single-line search field closes the keyboard when it is submitted.
 - scrollUntilVisible:
