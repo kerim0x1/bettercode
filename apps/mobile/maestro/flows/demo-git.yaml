@@ -90,9 +90,12 @@ tags:
     direction: DOWN
 - tapOn:
     id: git-commit
-# The branch row names how far it is ahead (iOS reads only the row).
-- extendedWaitUntil:
-    visible: ".*2 to push.*"
+# The branch row names how far it is ahead (iOS reads only the row). On a
+# small screen it is above the fold by now: scrolled to while it updates.
+- scrollUntilVisible:
+    element:
+      text: ".*2 to push.*"
+    direction: UP
     timeout: 20000
 
 # The desktop's question first; Android may show its button in capitals.
