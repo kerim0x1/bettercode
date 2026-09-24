@@ -46,5 +46,11 @@ tags:
 - extendedWaitUntil:
     visible: demo
     timeout: 20000
-- assertVisible:
-    id: terminal-keys
+# The key row sits above the keyboard (where there is one: CI's emulator
+# shows none), and a key from it reaches the shell.
+- tapOn:
+    id: terminal-key-dash
+- pressKey: Enter
+- extendedWaitUntil:
+    visible: ".*command not found: -.*"
+    timeout: 20000

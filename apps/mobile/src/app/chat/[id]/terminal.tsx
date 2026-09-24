@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import {
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native"
+import { KeyboardAvoidingView, StyleSheet, Text, View } from "react-native"
 import { useLocalSearchParams, useRouter } from "expo-router"
 import { ArrowLeft, Power } from "lucide-react-native"
 import { REMOTE_FEATURES } from "@betterc0de/schema/remote-protocol"
@@ -314,10 +308,9 @@ export default function TerminalScreen() {
       {!available ? (
         <StateView title="No terminal here" message={unavailable} />
       ) : (
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.body}
-        >
+        // Padding on Android too: the app is edge to edge, so the window no
+        // longer shrinks for the keyboard, which would cover the key row.
+        <KeyboardAvoidingView behavior="padding" style={styles.body}>
           {problem || phase === "exited" ? (
             <View style={styles.banner} testID="terminal-ended">
               {problem ? (
