@@ -21,6 +21,11 @@ import { RemoteSocket } from "@/transport/live/socket"
 import type { ChannelState, RemoteApi } from "@/transport/types"
 import { CLIENT, startTestDesktop, type TestDesktop } from "./support/desktop"
 
+// A socket connects, and the desktop pushes its frames, over real network
+// calls: a failed connect retries after 1.4 s, past vi.waitFor's 1 s default,
+// and a CI runner can be several times slower than a workstation.
+const SOCKET_WAIT = { timeout: 10_000, interval: 50 }
+
 // The phone app's own network client (src/transport/live) against a real
 // desktop backend: pairing, the protocol block, paging, files, the live
 // socket, the update gate and revocation.
@@ -324,22 +329,31 @@ describe("the phone app against a real desktop", () => {
   it("keeps the live socket's protocol current and stops it when the phone signs out", async () => {
     const { paired, api } = await desktop.pairPhone()
     const live = openSocket(paired.sessionToken)
-    await vi.waitFor(() => expect(live.states).toContain("live"))
+    await vi.waitFor(() => expect(live.states).toContain("live"), SOCKET_WAIT)
     expect(live.protocols.at(-1)).toMatchObject({
       capabilities: { terminalGranted: false },
     })
 
     await desktop.setSettings({ remote_access_allow_terminal: true })
-    await vi.waitFor(() =>
-      expect(live.protocols.at(-1)?.capabilities?.terminalGranted).toBe(true)
+    await vi.waitFor(
+      () =>
+        expect(live.protocols.at(-1)?.capabilities?.terminalGranted).toBe(true),
+      SOCKET_WAIT
     )
     await desktop.setSettings({ remote_access_allow_terminal: false })
-    await vi.waitFor(() =>
-      expect(live.protocols.at(-1)?.capabilities?.terminalGranted).toBe(false)
+    await vi.waitFor(
+      () =>
+        expect(live.protocols.at(-1)?.capabilities?.terminalGranted).toBe(
+          false
+        ),
+      SOCKET_WAIT
     )
 
     expect(await api.logout()).toEqual({ loggedOut: true })
-    await vi.waitFor(() => expect(live.events.unauthorized).toBe(1))
+    await vi.waitFor(
+      () => expect(live.events.unauthorized).toBe(1),
+      SOCKET_WAIT
+    )
     expect(live.events.updateRequired).toBe(0)
     expect(await api.bootstrap()).toMatchObject({ authenticated: false })
     live.socket.stop()
@@ -348,9 +362,12 @@ describe("the phone app against a real desktop", () => {
   it("closes the socket of a phone the desktop revokes", async () => {
     const { paired } = await desktop.pairPhone()
     const live = openSocket(paired.sessionToken)
-    await vi.waitFor(() => expect(live.states).toContain("live"))
+    await vi.waitFor(() => expect(live.states).toContain("live"), SOCKET_WAIT)
     await desktop.asDesktop("DELETE", `/remote/sessions/${paired.session.id}`)
-    await vi.waitFor(() => expect(live.events.unauthorized).toBe(1))
+    await vi.waitFor(
+      () => expect(live.events.unauthorized).toBe(1),
+      SOCKET_WAIT
+    )
     live.socket.stop()
   })
 
@@ -388,7 +405,10 @@ describe("the phone app against a real desktop", () => {
     })
 
     const live = openSocket(paired.sessionToken, OUTDATED_CLIENT)
-    await vi.waitFor(() => expect(live.events.updateRequired).toBe(1))
+    await vi.waitFor(
+      () => expect(live.events.updateRequired).toBe(1),
+      SOCKET_WAIT
+    )
     expect(live.events.unauthorized).toBe(0)
     expect(live.states).not.toContain("live")
     live.socket.stop()
