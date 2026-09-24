@@ -80,101 +80,280 @@ describe("buildApp HTTP metrics", () => {
   it("enables model-selected delegation in an ordinary chat without creating a team chat or exposing instructions in history", async () => {
     const createThread = vi.fn()
     const persistUserMessageForTurn = vi.fn()
-    const startTurn = vi.fn(() => ({ turnId: "orchestration-admission", completion: Promise.resolve() }))
+    const startTurn = vi.fn(() => ({
+      turnId: "orchestration-admission",
+      completion: Promise.resolve(),
+    }))
     const orchestrator = new OrchestratorService({
       settings: () => ({ orchestrator_enabled: true, orchestrator_team: null }),
-      allowed: () => true, load: () => null, persist: () => {}, createThread,
+      allowed: () => true,
+      load: () => null,
+      persist: () => {},
+      createThread,
       modelCatalog: async () => [
-        { id: "astra", name: "Astra", role: "Assigned by main", providerKind: "codex", providerInstanceId: "openai-account", modelId: "gpt-6-astra" },
-        { id: "sol", name: "Sol", role: "Assigned by main", providerKind: "codex", providerInstanceId: "openai-account", modelId: "gpt-6-sol" },
+        {
+          id: "astra",
+          name: "Astra",
+          role: "Assigned by main",
+          providerKind: "codex",
+          providerInstanceId: "openai-account",
+          modelId: "gpt-6-astra",
+        },
+        {
+          id: "sol",
+          name: "Sol",
+          role: "Assigned by main",
+          providerKind: "codex",
+          providerInstanceId: "openai-account",
+          modelId: "gpt-6-sol",
+        },
       ],
-      readContextSource: source => ({ source, title: "Source", body: "Plan", truncated: false }),
-      dispatch: async () => {}, interrupt: async () => {}, reportError: () => {},
+      readContextSource: (source) => ({
+        source,
+        title: "Source",
+        body: "Plan",
+        truncated: false,
+      }),
+      dispatch: async () => {},
+      interrupt: async () => {},
+      reportError: () => {},
     })
     const config = makeConfig()
     const app = buildApp(config, {
-      ...makeState(), config, orchestrator,
+      ...makeState(),
+      config,
+      orchestrator,
       threads: { persistUserMessageForTurn },
       providerHub: { has: () => true, startTurn },
       providerSessionBindings: { getLatestForThreadProvider: () => null },
       projectProjections: { listAll: () => [{ path: process.cwd() }] },
-      worktreeRegistry: { listAll: () => [] }, threadActivities: { upsert: vi.fn() },
+      worktreeRegistry: { listAll: () => [] },
+      threadActivities: { upsert: vi.fn() },
     } as unknown as AppState)
     try {
-      const send = (orchestration: unknown) => app.request("/api/v1/chat/send", {
-        method: "POST", headers: { Authorization: "Bearer secret", "Content-Type": "application/json" },
-        body: JSON.stringify({ threadId: "ordinary-chat", providerKind: "claude", providerInstanceId: "claude-main", modelId: "fable", message: "Implement the plan", chatMode: "agent", projectPath: process.cwd(), orchestration }),
-      })
-      expect((await send({ enabled: true, providers: ["other"] })).status).toBe(400)
-      expect((await send({ enabled: true, providers: ["codex"], models: [] })).status).toBe(400)
+      const send = (orchestration: unknown) =>
+        app.request("/api/v1/chat/send", {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer secret",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            threadId: "ordinary-chat",
+            providerKind: "claude",
+            providerInstanceId: "claude-main",
+            modelId: "fable",
+            message: "Implement the plan",
+            chatMode: "agent",
+            projectPath: process.cwd(),
+            orchestration,
+          }),
+        })
+      expect((await send({ enabled: true, providers: ["other"] })).status).toBe(
+        400
+      )
+      expect(
+        (await send({ enabled: true, providers: ["codex"], models: [] })).status
+      ).toBe(400)
       expect(startTurn).not.toHaveBeenCalled()
-      const models = [{ providerKind: "codex", providerInstanceId: "openai-account", modelId: "gpt-6-astra" }]
-      const response = await send({ enabled: true, providers: ["codex"], models })
+      const models = [
+        {
+          providerKind: "codex",
+          providerInstanceId: "openai-account",
+          modelId: "gpt-6-astra",
+        },
+      ]
+      const response = await send({
+        enabled: true,
+        providers: ["codex"],
+        models,
+      })
       expect(response.status, await response.clone().text()).toBe(200)
       expect(createThread).not.toHaveBeenCalled()
-      expect(orchestrator.status("ordinary-chat")?.selectedModels).toEqual(models)
-      expect(orchestrator.availableModels("ordinary-chat").models.map(model => model.modelId)).toEqual(["gpt-6-astra"])
-      expect(orchestrator.status("ordinary-chat")).toMatchObject({ mode: "chat", allowedProviders: ["codex"], team: { main: { modelId: "fable" } } })
-      expect(startTurn).toHaveBeenCalledWith("claude", expect.objectContaining({ threadId: "ordinary-chat", message: expect.stringContaining("spawn_agent") }), expect.any(Object))
-      expect(persistUserMessageForTurn).toHaveBeenCalledWith(expect.objectContaining({ message: expect.objectContaining({ content: "Implement the plan" }) }))
-    } finally { await orchestrator.close() }
+      expect(orchestrator.status("ordinary-chat")?.selectedModels).toEqual(
+        models
+      )
+      expect(
+        orchestrator
+          .availableModels("ordinary-chat")
+          .models.map((model) => model.modelId)
+      ).toEqual(["gpt-6-astra"])
+      expect(orchestrator.status("ordinary-chat")).toMatchObject({
+        mode: "chat",
+        allowedProviders: ["codex"],
+        team: { main: { modelId: "fable" } },
+      })
+      expect(startTurn).toHaveBeenCalledWith(
+        "claude",
+        expect.objectContaining({
+          threadId: "ordinary-chat",
+          message: expect.stringContaining("spawn_agent"),
+        }),
+        expect.any(Object)
+      )
+      expect(persistUserMessageForTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.objectContaining({ content: "Implement the plan" }),
+        })
+      )
+    } finally {
+      await orchestrator.close()
+    }
   })
 
   it("exposes validated team start/status/stop only behind desktop authentication", async () => {
     const config = makeConfig()
     const orchestrator = new OrchestratorService({
       modelCatalog: async () => [],
-      readContextSource: source => ({ source, title: "Source", body: "Approved context", truncated: false }),
-      settings: () => ({ orchestrator_enabled: true, orchestrator_team: {
-        main: { providerKind: "claude", providerInstanceId: "claude", modelId: "fable-test" },
-        members: [{ id: "builder", name: "Builder", role: "Implement", providerKind: "codex", providerInstanceId: "codex", modelId: "astra-test" }], maxConcurrent: 2, maxTasks: 12,
-      } }), allowed: () => true, load: () => null, persist: () => {}, createThread: () => {}, dispatch: async () => {}, interrupt: async () => {}, reportError: () => {},
+      readContextSource: (source) => ({
+        source,
+        title: "Source",
+        body: "Approved context",
+        truncated: false,
+      }),
+      settings: () => ({
+        orchestrator_enabled: true,
+        orchestrator_team: {
+          main: {
+            providerKind: "claude",
+            providerInstanceId: "claude",
+            modelId: "fable-test",
+          },
+          members: [
+            {
+              id: "builder",
+              name: "Builder",
+              role: "Implement",
+              providerKind: "codex",
+              providerInstanceId: "codex",
+              modelId: "astra-test",
+            },
+          ],
+          maxConcurrent: 2,
+          maxTasks: 12,
+        },
+      }),
+      allowed: () => true,
+      load: () => null,
+      persist: () => {},
+      createThread: () => {},
+      dispatch: async () => {},
+      interrupt: async () => {},
+      reportError: () => {},
     })
-    const app = buildApp(config, { ...makeState(), config, orchestrator, projectProjections: { listAll: () => [{ path: process.cwd() }] }, worktreeRegistry: { listAll: () => [] }, providerSessionBindings: { get: () => null } } as unknown as AppState)
-    const request = (route: string, body: unknown, authenticated = true) => app.request(`/api/v1/orchestrator/${route}`, { method: "POST", headers: { "Content-Type": "application/json", ...(authenticated ? { Authorization: "Bearer secret" } : {}) }, body: JSON.stringify(body) })
+    const app = buildApp(config, {
+      ...makeState(),
+      config,
+      orchestrator,
+      projectProjections: { listAll: () => [{ path: process.cwd() }] },
+      worktreeRegistry: { listAll: () => [] },
+      providerSessionBindings: { get: () => null },
+    } as unknown as AppState)
+    const request = (route: string, body: unknown, authenticated = true) =>
+      app.request(`/api/v1/orchestrator/${route}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(authenticated ? { Authorization: "Bearer secret" } : {}),
+        },
+        body: JSON.stringify(body),
+      })
     try {
-      expect((await request("start", { projectPath: process.cwd() }, false)).status).toBe(401)
+      expect(
+        (await request("start", { projectPath: process.cwd() }, false)).status
+      ).toBe(401)
       expect((await request("start", { projectPath: 42 })).status).toBe(400)
       const started = await request("start", { projectPath: process.cwd() })
       expect(started.status, await started.clone().text()).toBe(200)
-      const team = await started.json() as { threadId: string }
-      const grantBody = { threadId: team.threadId, requestId: "context", recipient: { kind: "member", memberId: "builder" }, content: { kind: "thread", threadId: "source" } }
-      expect((await request("context/grant", grantBody, false)).status).toBe(401)
-      expect((await request("context/grant", { ...grantBody, recipient: { kind: "member", memberId: "missing" } })).status).toBe(400)
+      const team = (await started.json()) as { threadId: string }
+      const grantBody = {
+        threadId: team.threadId,
+        requestId: "context",
+        recipient: { kind: "member", memberId: "builder" },
+        content: { kind: "thread", threadId: "source" },
+      }
+      expect((await request("context/grant", grantBody, false)).status).toBe(
+        401
+      )
+      expect(
+        (
+          await request("context/grant", {
+            ...grantBody,
+            recipient: { kind: "member", memberId: "missing" },
+          })
+        ).status
+      ).toBe(400)
       const grant = await request("context/grant", grantBody)
       expect(grant.status).toBe(200)
-      const context = await grant.json() as { id: string }
-      expect(await (await request("context/read", { threadId: team.threadId, contextId: context.id })).json()).toMatchObject({ body: "Approved context" })
+      const context = (await grant.json()) as { id: string }
+      expect(
+        await (
+          await request("context/read", {
+            threadId: team.threadId,
+            contextId: context.id,
+          })
+        ).json()
+      ).toMatchObject({ body: "Approved context" })
       const status = await request("status", { threadId: team.threadId })
-      expect(await status.json()).toMatchObject({ threadId: team.threadId, status: "ready", jobs: [], context: [{ body: "", readBy: [] }] })
-      expect((await request("context/remove", { threadId: team.threadId, contextId: context.id })).status).toBe(200)
-      expect((await request("context/read", { threadId: team.threadId, contextId: context.id })).status).toBe(404)
+      expect(await status.json()).toMatchObject({
+        threadId: team.threadId,
+        status: "ready",
+        jobs: [],
+        context: [{ body: "", readBy: [] }],
+      })
+      expect(
+        (
+          await request("context/remove", {
+            threadId: team.threadId,
+            contextId: context.id,
+          })
+        ).status
+      ).toBe(200)
+      expect(
+        (
+          await request("context/read", {
+            threadId: team.threadId,
+            contextId: context.id,
+          })
+        ).status
+      ).toBe(404)
       const stopped = await request("stop", { threadId: team.threadId })
       expect(await stopped.json()).toMatchObject({ status: "stopped" })
-    } finally { await orchestrator.close() }
+    } finally {
+      await orchestrator.close()
+    }
   })
 
-  it.each(["drainingRef", "taintedRef"] as const)("keeps CORS headers during %s without admitting work", async (flag) => {
-    const app = buildApp(makeConfig(), { ...makeState(), [flag]: () => true })
-    const origin = "http://localhost:5174"
-    const preflight = await app.request("/api/v1/ws-port", {
-      method: "OPTIONS",
-      headers: { Origin: origin, "Access-Control-Request-Headers": "authorization,content-type" },
-    })
-    expect(preflight.status).toBe(204)
-    expect(preflight.headers.get("Access-Control-Allow-Origin")).toBe(origin)
-    const response = await app.request("/api/v1/ws-port", {
-      headers: { Origin: origin, Authorization: "Bearer secret" },
-    })
-    expect(response.status).toBe(503)
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(origin)
-    expect(await response.json()).toEqual({ error: "service draining" })
-    const untrusted = await app.request("/api/v1/ws-port", {
-      headers: { Origin: "https://untrusted.example", Authorization: "Bearer secret" },
-    })
-    expect(untrusted.status).toBe(403)
-    expect(untrusted.headers.get("Access-Control-Allow-Origin")).toBeNull()
-  })
+  it.each(["drainingRef", "taintedRef"] as const)(
+    "keeps CORS headers during %s without admitting work",
+    async (flag) => {
+      const app = buildApp(makeConfig(), { ...makeState(), [flag]: () => true })
+      const origin = "http://localhost:5174"
+      const preflight = await app.request("/api/v1/ws-port", {
+        method: "OPTIONS",
+        headers: {
+          Origin: origin,
+          "Access-Control-Request-Headers": "authorization,content-type",
+        },
+      })
+      expect(preflight.status).toBe(204)
+      expect(preflight.headers.get("Access-Control-Allow-Origin")).toBe(origin)
+      const response = await app.request("/api/v1/ws-port", {
+        headers: { Origin: origin, Authorization: "Bearer secret" },
+      })
+      expect(response.status).toBe(503)
+      expect(response.headers.get("Access-Control-Allow-Origin")).toBe(origin)
+      expect(await response.json()).toEqual({ error: "service draining" })
+      const untrusted = await app.request("/api/v1/ws-port", {
+        headers: {
+          Origin: "https://untrusted.example",
+          Authorization: "Bearer secret",
+        },
+      })
+      expect(untrusted.status).toBe(403)
+      expect(untrusted.headers.get("Access-Control-Allow-Origin")).toBeNull()
+    }
+  )
 
   beforeEach(() => {
     backendMetrics.reset()
@@ -816,7 +995,9 @@ describe("buildApp HTTP metrics", () => {
       threadActivities: { upsert },
     } as unknown as AppState)
     const broadcast = vi.fn()
-    const unregisterBroadcaster = registerThreadActivityBroadcaster({ broadcast })
+    const unregisterBroadcaster = registerThreadActivityBroadcaster({
+      broadcast,
+    })
 
     let response: Response
     try {
@@ -1939,7 +2120,10 @@ describe("buildApp HTTP metrics", () => {
     const app = buildApp(makeConfig(), {
       ...makeState(),
       // No transcript in this routing fixture; provider handoff reads it before admission.
-      threads: { persistUserMessageForTurn: vi.fn(), listMessages: vi.fn(() => []) },
+      threads: {
+        persistUserMessageForTurn: vi.fn(),
+        listMessages: vi.fn(() => []),
+      },
       providerHub: {
         has: vi.fn(() => true),
         startTurn,
@@ -2348,7 +2532,11 @@ describe("buildApp HTTP metrics", () => {
     const turn2BaseRef = checkpointRefForThreadTurn("thread-1", 2)
     const turn2Ref = checkpointRefForThreadTurn("thread-1", 3)
     vi.mocked(git.isRepo).mockResolvedValue({ is_repo: true })
-    vi.mocked(git.restoreCheckpoint).mockResolvedValue({ restored: true, safetyRef: null, preview: null })
+    vi.mocked(git.restoreCheckpoint).mockResolvedValue({
+      restored: true,
+      safetyRef: null,
+      preview: null,
+    })
     vi.mocked(git.restoreCheckpoint).mockClear()
     vi.mocked(git.deleteCheckpointRefs).mockResolvedValue()
     vi.mocked(git.deleteCheckpointRefs).mockClear()
@@ -2477,7 +2665,11 @@ describe("buildApp HTTP metrics", () => {
     }))
     const rollbackConversation = vi.fn().mockResolvedValue(true)
     vi.mocked(git.isRepo).mockResolvedValue({ is_repo: true })
-    vi.mocked(git.restoreCheckpoint).mockResolvedValue({ restored: true, safetyRef: null, preview: null })
+    vi.mocked(git.restoreCheckpoint).mockResolvedValue({
+      restored: true,
+      safetyRef: null,
+      preview: null,
+    })
     vi.mocked(git.restoreCheckpoint).mockClear()
     vi.mocked(git.deleteCheckpointRefs).mockResolvedValue()
     vi.mocked(git.deleteCheckpointRefs).mockClear()
@@ -2571,7 +2763,11 @@ describe("buildApp HTTP metrics", () => {
     const deleteOperation = vi.fn()
     const cleanupFailure = new Error("checkpoint namespace is locked")
     vi.mocked(git.isRepo).mockResolvedValue({ is_repo: true })
-    vi.mocked(git.restoreCheckpoint).mockResolvedValue({ restored: true, safetyRef: null, preview: null })
+    vi.mocked(git.restoreCheckpoint).mockResolvedValue({
+      restored: true,
+      safetyRef: null,
+      preview: null,
+    })
     vi.mocked(git.restoreCheckpoint).mockClear()
     vi.mocked(git.deleteCheckpointRefs).mockRejectedValue(cleanupFailure)
     vi.mocked(git.deleteCheckpointRefs).mockClear()
@@ -2670,7 +2866,11 @@ describe("buildApp HTTP metrics", () => {
       throw new Error("cleanup database is read-only")
     })
     vi.mocked(git.isRepo).mockResolvedValue({ is_repo: true })
-    vi.mocked(git.restoreCheckpoint).mockResolvedValue({ restored: true, safetyRef: null, preview: null })
+    vi.mocked(git.restoreCheckpoint).mockResolvedValue({
+      restored: true,
+      safetyRef: null,
+      preview: null,
+    })
     vi.mocked(git.restoreCheckpoint).mockClear()
     vi.mocked(git.deleteCheckpointRefs).mockRejectedValue(
       new Error("checkpoint namespace is locked")
@@ -2750,7 +2950,11 @@ describe("buildApp HTTP metrics", () => {
   it("fails turn-zero revert safely when the retained baseline ref is missing", async () => {
     const baselineRef = checkpointRefForThreadTurn("thread-zero", 0)
     vi.mocked(git.isRepo).mockResolvedValue({ is_repo: true })
-    vi.mocked(git.restoreCheckpoint).mockResolvedValue({ restored: false, safetyRef: null, preview: null })
+    vi.mocked(git.restoreCheckpoint).mockResolvedValue({
+      restored: false,
+      safetyRef: null,
+      preview: null,
+    })
     vi.mocked(git.restoreCheckpoint).mockClear()
     const rollbackConversation = vi.fn()
     const truncateAfterTurnCount = vi.fn()
@@ -2810,7 +3014,11 @@ describe("buildApp HTTP metrics", () => {
 
   it("queues the exclusive revert barrier before journaling and waits for overlapping mutations", async () => {
     vi.mocked(git.isRepo).mockResolvedValue({ is_repo: true })
-    vi.mocked(git.restoreCheckpoint).mockResolvedValue({ restored: false, safetyRef: null, preview: null })
+    vi.mocked(git.restoreCheckpoint).mockResolvedValue({
+      restored: false,
+      safetyRef: null,
+      preview: null,
+    })
     const begin = vi.fn((input) => ({ ...input, phase: "prepared" as const }))
     const app = buildApp(makeConfig(), {
       ...makeState(),
@@ -3106,7 +3314,11 @@ describe("buildApp HTTP metrics", () => {
     const turn1Ref = checkpointRefForThreadTurn("thread-1", 1)
     const turn2Ref = checkpointRefForThreadTurn("thread-1", 3)
     vi.mocked(git.isRepo).mockResolvedValue({ is_repo: true })
-    vi.mocked(git.restoreCheckpoint).mockResolvedValue({ restored: true, safetyRef: null, preview: null })
+    vi.mocked(git.restoreCheckpoint).mockResolvedValue({
+      restored: true,
+      safetyRef: null,
+      preview: null,
+    })
     vi.mocked(git.deleteCheckpointRefs).mockResolvedValue()
     vi.mocked(git.deleteCheckpointRefs).mockClear()
     const rollbackConversation = vi.fn().mockResolvedValue(true)
@@ -3178,7 +3390,11 @@ describe("buildApp HTTP metrics", () => {
     const turn1Ref = checkpointRefForThreadTurn("thread-1", 1)
     const turn2Ref = checkpointRefForThreadTurn("thread-1", 3)
     vi.mocked(git.isRepo).mockResolvedValue({ is_repo: true })
-    vi.mocked(git.restoreCheckpoint).mockResolvedValue({ restored: true, safetyRef: null, preview: null })
+    vi.mocked(git.restoreCheckpoint).mockResolvedValue({
+      restored: true,
+      safetyRef: null,
+      preview: null,
+    })
     vi.mocked(git.restoreCheckpoint).mockClear()
     vi.mocked(git.deleteCheckpointRefs).mockResolvedValue()
     vi.mocked(git.deleteCheckpointRefs).mockClear()
@@ -3261,7 +3477,11 @@ describe("buildApp HTTP metrics", () => {
     const turn1Ref = checkpointRefForThreadTurn("thread-compensation", 1)
     const turn2Ref = checkpointRefForThreadTurn("thread-compensation", 2)
     vi.mocked(git.isRepo).mockResolvedValue({ is_repo: true })
-    vi.mocked(git.restoreCheckpoint).mockResolvedValue({ restored: true, safetyRef: null, preview: null })
+    vi.mocked(git.restoreCheckpoint).mockResolvedValue({
+      restored: true,
+      safetyRef: null,
+      preview: null,
+    })
     vi.mocked(git.restoreCheckpoint).mockClear()
     const rollbackConversation = vi.fn().mockResolvedValue(false)
     const stopSession = vi
@@ -3429,14 +3649,14 @@ describe("thread recovery fencing and pagination", () => {
     const listThreadsPage = vi
       .fn()
       .mockReturnValueOnce({
-          items: [thread("thread-c"), thread("thread-b")],
+        items: [thread("thread-c"), thread("thread-b")],
         next: {
           updatedAt: "2026-01-01T00:00:03.000Z",
           threadId: "thread-b",
         },
       })
       .mockReturnValueOnce({
-          items: [thread("thread-a")],
+        items: [thread("thread-a")],
         next: null,
       })
     const app = buildApp(makeConfig(), {
@@ -3611,7 +3831,9 @@ describe("bootstrap rate limiting", () => {
       const probe = probeFrom(buildApp(makeConfig(), makeState()))
 
       for (let index = 0; index < 30; index += 1) {
-        expect((await probe("device-a")).status, `device-a #${index}`).not.toBe(429)
+        expect((await probe("device-a")).status, `device-a #${index}`).not.toBe(
+          429
+        )
       }
       expect((await probe("device-a")).status).toBe(429)
       // Another device behind the same address is unaffected, and so is an
@@ -3646,7 +3868,9 @@ describe("bootstrap rate limiting", () => {
   it("classifies loopback by the forwarded client only behind a trusted proxy", async () => {
     vi.useFakeTimers({ toFake: ["Date"] })
     try {
-      const loopbackPeer = { incoming: { socket: { remoteAddress: "127.0.0.1" } } }
+      const loopbackPeer = {
+        incoming: { socket: { remoteAddress: "127.0.0.1" } },
+      }
       const loopbackUrl = "http://127.0.0.1:3773/api/v1/remote/bootstrap"
       const forwarded = { "X-Forwarded-For": "203.0.113.9" }
 
@@ -3686,7 +3910,9 @@ describe("bootstrap rate limiting", () => {
       for (let index = 0; index < 600; index += 1) {
         await rebound.request(reboundUrl, {}, loopbackPeer)
       }
-      expect((await rebound.request(reboundUrl, {}, loopbackPeer)).status).toBe(429)
+      expect((await rebound.request(reboundUrl, {}, loopbackPeer)).status).toBe(
+        429
+      )
 
       // A remote TCP peer cannot become loopback by naming localhost.
       const hostOnly = buildApp(makeConfig(), makeState())

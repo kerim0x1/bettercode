@@ -143,14 +143,25 @@ export const workspaceContextArtifactSchema = z.object({
   cwd: z.string().min(1).max(MAX_PATH_LEN),
   targetPath: z.string().max(MAX_PATH_LEN).default("."),
   threadId: z.string().trim().min(1).max(256).optional(),
-  pendingMessageCharacters: z.number().int().nonnegative().max(1_000_000).default(0),
+  pendingMessageCharacters: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(1_000_000)
+    .default(0),
   pendingAttachments: z
     .array(
       z.object({
         id: z.string().min(1).max(256),
         name: z.string().min(1).max(1_024),
         mediaType: z.string().max(256).nullable().default(null),
-        sizeBytes: z.number().int().nonnegative().max(MAX_WRITE_BYTES).nullable().default(null),
+        sizeBytes: z
+          .number()
+          .int()
+          .nonnegative()
+          .max(MAX_WRITE_BYTES)
+          .nullable()
+          .default(null),
       })
     )
     .max(64)

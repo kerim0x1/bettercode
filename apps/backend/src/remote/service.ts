@@ -445,9 +445,9 @@ export class RemoteAccessService {
       | Pick<RemoteSessionRow, "expires_at" | "revoked_at">
       | undefined
     return (
-      row !== undefined
-      && row.revoked_at === null
-      && Date.parse(row.expires_at) > now.getTime()
+      row !== undefined &&
+      row.revoked_at === null &&
+      Date.parse(row.expires_at) > now.getTime()
     )
   }
 
@@ -498,7 +498,9 @@ export class RemoteAccessService {
       clearTimeout(this.expirationTimer)
       this.expirationTimer = null
     }
-    const results = await Promise.allSettled(this.revocationSettlements.values())
+    const results = await Promise.allSettled(
+      this.revocationSettlements.values()
+    )
     this.revocationListeners.clear()
     const failures = results.flatMap((result) =>
       result.status === "rejected" ? [result.reason] : []
@@ -551,7 +553,11 @@ export class RemoteAccessService {
       now.getTime() - SESSION_AUDIT_RETENTION_MS
     ).toISOString()
     const cleanup = this.db.transaction(() => {
-      this.purgePairingGrantsStmt.run(pairingCutoff, pairingCutoff, pairingCutoff)
+      this.purgePairingGrantsStmt.run(
+        pairingCutoff,
+        pairingCutoff,
+        pairingCutoff
+      )
       this.purgeSessionsStmt.run(sessionCutoff, sessionCutoff)
     })
     cleanup()

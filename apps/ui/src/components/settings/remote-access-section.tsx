@@ -70,7 +70,8 @@ function formatDate(value: string): string {
 
 async function copyText(value: string, label: string): Promise<void> {
   try {
-    if (!await copyClipboardText(value)) throw new Error("Clipboard unavailable")
+    if (!(await copyClipboardText(value)))
+      throw new Error("Clipboard unavailable")
   } catch {
     try {
       const field = document.createElement("textarea")
@@ -118,9 +119,7 @@ export function SettingsRemoteAccessSection() {
   const [grant, setGrant] = useState<RemotePairingGrant | null>(null)
   const [customUrl, setCustomUrl] = useState(settings.remoteAccessCustomUrl)
   const [allowTerminal, setAllowTerminal] = useState(false)
-  const [tailscale, setTailscale] = useState<TailscaleRemoteStatus | null>(
-    null
-  )
+  const [tailscale, setTailscale] = useState<TailscaleRemoteStatus | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -234,7 +233,9 @@ export function SettingsRemoteAccessSection() {
       )
     } catch (cause) {
       const message =
-        cause instanceof Error ? cause.message : "Could not change Tailscale Serve"
+        cause instanceof Error
+          ? cause.message
+          : "Could not change Tailscale Serve"
       setError(message)
       toast.error(message)
     } finally {
@@ -644,15 +645,15 @@ export function SettingsRemoteAccessSection() {
 
       <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 text-xs leading-5 text-muted-foreground">
         <p className="flex items-center gap-2 font-medium text-foreground">
-          <TriangleAlert className="size-4 text-amber-500" /> Paired
-          devices can operate this host
+          <TriangleAlert className="size-4 text-amber-500" /> Paired devices can
+          operate this host
         </p>
         <p className="mt-1">
           A full session — HTTPS, this computer, your private network or your
-          tailnet — can read and operate chats and workspaces on this
-          computer. Pair only devices you control and revoke lost ones. Public
-          plaintext pairing, when explicitly enabled, is read-only and expires
-          in one hour. Never forward this port from a router without TLS.
+          tailnet — can read and operate chats and workspaces on this computer.
+          Pair only devices you control and revoke lost ones. Public plaintext
+          pairing, when explicitly enabled, is read-only and expires in one
+          hour. Never forward this port from a router without TLS.
         </p>
         {defaultLink ? (
           <a

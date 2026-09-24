@@ -34,20 +34,30 @@ export async function pairMobile(
   credential: string,
   label: string
 ): Promise<RemotePairResponse> {
-  return parseRemotePairResponse(await request<unknown>(baseUrl, null, "/remote/mobile/pair", {
-    method: "POST",
-    body: { credential, label },
-  }))
+  return parseRemotePairResponse(
+    await request<unknown>(baseUrl, null, "/remote/mobile/pair", {
+      method: "POST",
+      body: { credential, label },
+    })
+  )
 }
 
 export function remoteApi(profile: ConnectionProfile) {
   const call = <T>(path: string, options: RequestOptions = {}): Promise<T> =>
     request<T>(profile.baseUrl, profile.sessionToken, path, options)
-  const contract = <K extends HttpContractName>(name: K, options: { body?: HttpContractRequest<K>; id?: string } = {}) =>
-    requestHttpContract(name, ({ path, method, body }) => call<unknown>(path, { method, body }), options)
+  const contract = <K extends HttpContractName>(
+    name: K,
+    options: { body?: HttpContractRequest<K>; id?: string } = {}
+  ) =>
+    requestHttpContract(
+      name,
+      ({ path, method, body }) => call<unknown>(path, { method, body }),
+      options
+    )
 
   return {
-    bootstrap: async () => parseRemoteBootstrap(await call<unknown>("/remote/bootstrap")),
+    bootstrap: async () =>
+      parseRemoteBootstrap(await call<unknown>("/remote/bootstrap")),
     status: () => call<RemoteStatus>("/remote/status"),
     health: () => call<Record<string, unknown>>("/runtime/health"),
     logout: () =>
@@ -63,19 +73,17 @@ export function remoteApi(profile: ConnectionProfile) {
     createThread: (thread: ChatThread) =>
       contract("saveThread", { body: thread }),
     getSettings: () => contract("getSettings"),
-    updateSettings: (patch: Record<string, unknown>) => contract("updateSettings", { body: { patch } }),
+    updateSettings: (patch: Record<string, unknown>) =>
+      contract("updateSettings", { body: { patch } }),
     listProviderInstances: (cwd?: string | null) =>
       call<ProviderInstance[]>(
         `/providers/instances${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`
       ),
     goal: (body: Record<string, unknown>) => contract("chatGoal", { body }),
     sendMessage: (body: Record<string, unknown>) =>
-      contract(
-        "chatSend",
-        {
-          body,
-        }
-      ),
+      contract("chatSend", {
+        body,
+      }),
     interrupt: (body: {
       providerKind: string
       providerInstanceId?: string | null

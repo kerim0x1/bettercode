@@ -119,12 +119,16 @@ describe("RemoteAccessService", () => {
 
   it("fails closed on malformed persisted expiries without scheduling a hot loop", () => {
     const { db, service } = serviceFixture()
-    const issued = service.consumePairingCredential(service.issuePairingGrant().credential)!
+    const issued = service.consumePairingCredential(
+      service.issuePairingGrant().credential
+    )!
     const grant = service.issuePairingGrant()
-    db.prepare("UPDATE remote_pairing_grants SET expires_at = ? WHERE pairing_id = ?")
-      .run("not-a-date", grant.id)
-    db.prepare("UPDATE remote_access_sessions SET expires_at = ? WHERE session_id = ?")
-      .run("not-a-date", issued.id)
+    db.prepare(
+      "UPDATE remote_pairing_grants SET expires_at = ? WHERE pairing_id = ?"
+    ).run("not-a-date", grant.id)
+    db.prepare(
+      "UPDATE remote_access_sessions SET expires_at = ? WHERE session_id = ?"
+    ).run("not-a-date", issued.id)
     const schedule = vi.spyOn(globalThis, "setTimeout")
     try {
       expect(service.consumePairingCredential(grant.credential)).toBeNull()
@@ -132,7 +136,11 @@ describe("RemoteAccessService", () => {
       expect(service.isSessionActive(issued.id)).toBe(false)
       service.listSessions()
       expect(schedule).toHaveBeenCalled()
-      expect(schedule.mock.calls.every(([, delay]) => Number.isFinite(delay) && delay! >= 1_000)).toBe(true)
+      expect(
+        schedule.mock.calls.every(
+          ([, delay]) => Number.isFinite(delay) && delay! >= 1_000
+        )
+      ).toBe(true)
     } finally {
       schedule.mockRestore()
     }
@@ -246,7 +254,9 @@ describe("RemoteAccessService", () => {
     service.consumePairingCredential(service.issuePairingGrant().credential)
     expect(
       (
-        db.prepare("SELECT COUNT(*) AS count FROM remote_access_sessions").get() as {
+        db
+          .prepare("SELECT COUNT(*) AS count FROM remote_access_sessions")
+          .get() as {
           count: number
         }
       ).count
@@ -257,7 +267,9 @@ describe("RemoteAccessService", () => {
 
     expect(
       (
-        db.prepare("SELECT COUNT(*) AS count FROM remote_access_sessions").get() as {
+        db
+          .prepare("SELECT COUNT(*) AS count FROM remote_access_sessions")
+          .get() as {
           count: number
         }
       ).count

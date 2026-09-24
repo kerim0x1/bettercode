@@ -1,4 +1,12 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest"
 import fs from "node:fs"
 import http from "node:http"
 import os from "node:os"
@@ -16,7 +24,11 @@ import {
   listConfiguredAgentPermissionGrants,
   runWithAgentPermissionRuntimeContext,
 } from "./provider/agent-permission-runtime"
-import { captureCheckpoint, hasCheckpointRef, resumeGitProcessAdmissions } from "./services/git"
+import {
+  captureCheckpoint,
+  hasCheckpointRef,
+  resumeGitProcessAdmissions,
+} from "./services/git"
 import {
   __observeStartupCleanupForTests,
   startNodeBackend,
@@ -152,7 +164,8 @@ function recordTimersDuring<T>(run: () => Promise<T>): Promise<{
       // Only long-lived timers matter for the leak question; sub-second
       // one-shots fire and free themselves during the test's own awaits.
       const delay = typeof args[1] === "number" ? args[1] : 0
-      if (original === originalSetInterval || delay >= 1_000) timers.push(handle)
+      if (original === originalSetInterval || delay >= 1_000)
+        timers.push(handle)
       return handle
     }) as unknown as F
   globalThis.setInterval = track(originalSetInterval)
@@ -185,7 +198,11 @@ async function settledHandleCensus(
   maxTurns = 20
 ): Promise<HandleCensus> {
   let census = countHandles()
-  for (let turn = 0; turn < maxTurns && !handlesWithin(census, baseline); turn++) {
+  for (
+    let turn = 0;
+    turn < maxTurns && !handlesWithin(census, baseline);
+    turn++
+  ) {
     await new Promise<void>((resolve) => setImmediate(resolve))
     census = countHandles()
   }
@@ -204,7 +221,14 @@ function requestJson(
 ): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const request = http.request(
-      { host: "127.0.0.1", port, path: pathname, method: "GET", agent: false, headers },
+      {
+        host: "127.0.0.1",
+        port,
+        path: pathname,
+        method: "GET",
+        agent: false,
+        headers,
+      },
       (response) => {
         const chunks: Buffer[] = []
         response.on("data", (chunk: Buffer) => chunks.push(chunk))
@@ -298,7 +322,10 @@ describe("startNodeBackend", () => {
       })
     )
 
-    bindAgentPermissionRuntimeContext({ threadId: "leftover-context", workspacePath: dataDir })
+    bindAgentPermissionRuntimeContext({
+      threadId: "leftover-context",
+      workspacePath: dataDir,
+    })
     const firstStop = started.stop()
     // A second call shares the in-flight promise instead of tearing down twice.
     expect(started.stop()).toBe(firstStop)
@@ -307,10 +334,12 @@ describe("startNodeBackend", () => {
     expect(started.httpServer.listening).toBe(false)
     expect(started.state.db.open).toBe(false)
     expect(currentAgentPermissionRuntimeContext("leftover-context")).toBeNull()
-    expect(runWithAgentPermissionRuntimeContext(
-      { threadId: "post-stop", workspacePath: dataDir },
-      () => listConfiguredAgentPermissionGrants()
-    )).toEqual([])
+    expect(
+      runWithAgentPermissionRuntimeContext(
+        { threadId: "post-stop", workspacePath: dataDir },
+        () => listConfiguredAgentPermissionGrants()
+      )
+    ).toEqual([])
     await expect(started.stop()).resolves.toBeUndefined()
 
     const after = await settledHandleCensus(baseline)
@@ -322,7 +351,9 @@ describe("startNodeBackend", () => {
     // Every long-lived timer the boot created has been cleared, unref'd or
     // not — a scheduler that outlives `stop()` would fire against a closed
     // database and is exactly the leak the census cannot see.
-    expect(liveTimers(timers), "long-lived timers still armed after stop").toBe(0)
+    expect(liveTimers(timers), "long-lived timers still armed after stop").toBe(
+      0
+    )
   })
 
   it("recovers a failed large-diff checkpoint on startup and preserves it across another restart", async () => {
@@ -330,7 +361,10 @@ describe("startNodeBackend", () => {
     const cwd = path.join(tempRoot, "large-checkpoint-repo")
     fs.mkdirSync(cwd)
     execFileSync("git", ["init", cwd], { windowsHide: true, stdio: "pipe" })
-    execFileSync("git", ["config", "core.autocrlf", "false"], { cwd, windowsHide: true })
+    execFileSync("git", ["config", "core.autocrlf", "false"], {
+      cwd,
+      windowsHide: true,
+    })
     const filePath = path.join(cwd, "large.txt")
     fs.writeFileSync(filePath, "before\n")
     const threadId = "thread-large-checkpoint"
@@ -347,10 +381,12 @@ describe("startNodeBackend", () => {
     try {
       runMigrations(db)
       const now = new Date().toISOString()
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO projection_threads (thread_id, project_id, created_at, updated_at)
         VALUES (?, 'project-recovery', ?, ?)
-      `).run(threadId, now, now)
+      `
+      ).run(threadId, now, now)
       const slots = new CheckpointTurnSlotStore(db)
       const allocation = slots.allocate(threadId)
       slots.recordAdmission({
@@ -363,10 +399,18 @@ describe("startNodeBackend", () => {
         baseCheckpointRef,
         checkpointRef,
       })
-      slots.markAdmissionFailed(threadId, "turn:dispatch-large", new Error(
-        `Checkpoint turn 1 for thread '${threadId}' was not durably projected.`
-      ))
-      new CheckpointRefCleanupStore(db).retainBaseline({ threadId, cwd, checkpointRef: baseCheckpointRef })
+      slots.markAdmissionFailed(
+        threadId,
+        "turn:dispatch-large",
+        new Error(
+          `Checkpoint turn 1 for thread '${threadId}' was not durably projected.`
+        )
+      )
+      new CheckpointRefCleanupStore(db).retainBaseline({
+        threadId,
+        cwd,
+        checkpointRef: baseCheckpointRef,
+      })
     } finally {
       db.close()
     }
@@ -380,7 +424,9 @@ describe("startNodeBackend", () => {
         body: { status: "ok", db: "ok" },
       })
       expect(started.state.checkpointTurnSlots?.listAdmissions()).toEqual([])
-      expect(started.state.checkpointDiffs.listTurnDiffsByThread(threadId)).toEqual([
+      expect(
+        started.state.checkpointDiffs.listTurnDiffsByThread(threadId)
+      ).toEqual([
         expect.objectContaining({
           turn_index: 1,
           files_changed: 1,
@@ -388,11 +434,16 @@ describe("startNodeBackend", () => {
           deletions: 1,
         }),
       ])
-      const journals = started.state.db.prepare(`
+      const journals = started.state.db
+        .prepare(
+          `
         SELECT payload_json FROM orchestration_events
         WHERE stream_id = ? AND event_type = 'ProviderRuntime:turn.diff.updated'
-      `).all(threadId) as Array<{ payload_json: string }>
-      const diffEvent = journals.map((row) => JSON.parse(row.payload_json))
+      `
+        )
+        .all(threadId) as Array<{ payload_json: string }>
+      const diffEvent = journals
+        .map((row) => JSON.parse(row.payload_json))
         .find((event) => event.event_type === "turn.diff.updated")
       expect(diffEvent?.payload).toMatchObject({
         diffTruncated: true,
@@ -403,7 +454,9 @@ describe("startNodeBackend", () => {
       expect(diffEvent.payload.unifiedDiff).toBeUndefined()
       expect(journals).toHaveLength(1)
       expect(fs.readFileSync(filePath, "utf8")).toBe(content)
-      expect(await hasCheckpointRef({ cwd, checkpointRef: baseCheckpointRef })).toBe(true)
+      expect(
+        await hasCheckpointRef({ cwd, checkpointRef: baseCheckpointRef })
+      ).toBe(true)
       expect(await hasCheckpointRef({ cwd, checkpointRef })).toBe(true)
       await started.stop()
     }
@@ -435,15 +488,20 @@ describe("startNodeBackend", () => {
   })
 
   it("clears the startup heartbeat when reopening resource admission fails", async () => {
-    const failure = vi.spyOn(lifecycle, "reopenResourceAdmissions")
-      .mockImplementationOnce(() => { throw new Error("retained resources") })
+    const failure = vi
+      .spyOn(lifecycle, "reopenResourceAdmissions")
+      .mockImplementationOnce(() => {
+        throw new Error("retained resources")
+      })
     try {
       const { timers } = await recordTimersDuring(async () => {
-        await expect(startNodeBackend({
-          dataDir: makeDataDir("admission-refused"),
-          preferredPort: 0,
-          onStartupHeartbeat: vi.fn(),
-        })).rejects.toThrow("retained resources")
+        await expect(
+          startNodeBackend({
+            dataDir: makeDataDir("admission-refused"),
+            preferredPort: 0,
+            onStartupHeartbeat: vi.fn(),
+          })
+        ).rejects.toThrow("retained resources")
       })
       expect(timers.length).toBeGreaterThan(0)
       expect(liveTimers(timers)).toBe(0)
@@ -468,7 +526,8 @@ describe("startNodeBackend", () => {
         signal: controller.signal,
         onStartupHeartbeat: () => {
           heartbeats += 1
-          if (heartbeats === 1) controller.abort(new Error("cancelled mid-start"))
+          if (heartbeats === 1)
+            controller.abort(new Error("cancelled mid-start"))
         },
       })
     ).rejects.toThrow("cancelled mid-start")

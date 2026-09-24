@@ -1791,7 +1791,8 @@ export const MIGRATIONS: Migration[] = [
 ]
 
 /** Any statement that adds or removes an index, `CREATE UNIQUE INDEX` included. */
-export const INDEX_SHAPE_SQL = /\b(?:CREATE\s+(?:UNIQUE\s+)?INDEX|DROP\s+INDEX)\b/i
+export const INDEX_SHAPE_SQL =
+  /\b(?:CREATE\s+(?:UNIQUE\s+)?INDEX|DROP\s+INDEX)\b/i
 
 /**
  * Rows ANALYZE samples per index after an index migration. A full ANALYZE
@@ -1822,10 +1823,15 @@ export function runMigrations(
       }>
     ).map((r) => r.version)
   )
-  const latestSupported = migrations.reduce((latest, migration) => Math.max(latest, migration.version), 0)
+  const latestSupported = migrations.reduce(
+    (latest, migration) => Math.max(latest, migration.version),
+    0
+  )
   if ([...applied].some((version) => version > latestSupported)) {
     throw Object.assign(
-      new Error("Cannot open a newer database schema with this version of BetterC0de. Use the version that upgraded this profile or a newer release."),
+      new Error(
+        "Cannot open a newer database schema with this version of BetterC0de. Use the version that upgraded this profile or a newer release."
+      ),
       { code: "DATABASE_SCHEMA_TOO_NEW" }
     )
   }

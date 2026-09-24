@@ -19,7 +19,8 @@ async function startHub(options: WsHubOptions = {}) {
   hub.attach(server)
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
   const address = server.address()
-  if (!address || typeof address === "string") throw new Error("missing test port")
+  if (!address || typeof address === "string")
+    throw new Error("missing test port")
   cleanups.push(
     () =>
       new Promise<void>((resolve) => {
@@ -136,25 +137,46 @@ describe("rejectUpgrade", () => {
 describe("WsHub coalesced live delivery", () => {
   it("replays the same surviving snapshots with contiguous wire sequences", async () => {
     const { hub, url } = await startHub()
-    const headers = { Authorization: "Bearer secret", Origin: "http://localhost:5173" }
+    const headers = {
+      Authorization: "Bearer secret",
+      Origin: "http://localhost:5173",
+    }
     const ws = new WebSocket(url, { headers })
     const auth = await nextJson(ws)
     const replay = auth.replay as { journalId: string }
     const ready = nextJson(ws)
-    ws.send(JSON.stringify({ type: "provider_replay", journalId: replay.journalId, afterSequence: 0 }))
+    ws.send(
+      JSON.stringify({
+        type: "provider_replay",
+        journalId: replay.journalId,
+        afterSequence: 0,
+      })
+    )
     await ready
     const received = nextJsonMessages(ws, 2)
     for (let index = 0; index < 100; index++) {
       hub.broadcast({
         channel: "provider.runtimeEvent",
-        data: { event_type: "tool_call_delta", thread_id: "thread-1", payload: {
-          tool_id: "tool-1", turn_id: "turn-1", cumulative: true, output_delta: `output-${index}`,
-        } },
+        data: {
+          event_type: "tool_call_delta",
+          thread_id: "thread-1",
+          payload: {
+            tool_id: "tool-1",
+            turn_id: "turn-1",
+            cumulative: true,
+            output_delta: `output-${index}`,
+          },
+        },
       })
     }
-    hub.broadcast({ channel: "provider.runtimeEvent", data: {
-      event_type: "turn_completed", thread_id: "thread-1", payload: { turn_id: "turn-1" },
-    } })
+    hub.broadcast({
+      channel: "provider.runtimeEvent",
+      data: {
+        event_type: "turn_completed",
+        thread_id: "thread-1",
+        payload: { turn_id: "turn-1" },
+      },
+    })
     const frames = await received
     expect(frames).toMatchObject([
       { sequence: 1, data: { payload: { output_delta: "output-99" } } },
@@ -164,25 +186,46 @@ describe("WsHub coalesced live delivery", () => {
     await new Promise<void>((resolve) => ws.once("close", () => resolve()))
 
     const resumed = new WebSocket(url, { headers })
-    expect(await nextJson(resumed)).toMatchObject({ replay: { latestSequence: 2 } })
+    expect(await nextJson(resumed)).toMatchObject({
+      replay: { latestSequence: 2 },
+    })
     const catchUp = nextJsonMessages(resumed, 3)
-    resumed.send(JSON.stringify({ type: "provider_replay", journalId: replay.journalId, afterSequence: 0 }))
+    resumed.send(
+      JSON.stringify({
+        type: "provider_replay",
+        journalId: replay.journalId,
+        afterSequence: 0,
+      })
+    )
     expect(await catchUp).toEqual([
       ...frames,
-      expect.objectContaining({ type: "provider_replay_complete", latestSequence: 2 }),
+      expect.objectContaining({
+        type: "provider_replay_complete",
+        latestSequence: 2,
+      }),
     ])
     resumed.close()
   })
 
   it("includes already pending updates in the authentication replay boundary", async () => {
     const { hub, url } = await startHub()
-    hub.broadcast({ channel: "provider.runtimeEvent", data: {
-      event_type: "tool_call_delta", thread_id: "thread-1", payload: {
-        tool_id: "tool-1", cumulative: true, output_delta: "latest",
+    hub.broadcast({
+      channel: "provider.runtimeEvent",
+      data: {
+        event_type: "tool_call_delta",
+        thread_id: "thread-1",
+        payload: {
+          tool_id: "tool-1",
+          cumulative: true,
+          output_delta: "latest",
+        },
       },
-    } })
+    })
     const ws = new WebSocket(url, {
-      headers: { Authorization: "Bearer secret", Origin: "http://localhost:5173" },
+      headers: {
+        Authorization: "Bearer secret",
+        Origin: "http://localhost:5173",
+      },
     })
     expect(await nextJson(ws)).toMatchObject({ replay: { latestSequence: 1 } })
     ws.close()
@@ -320,19 +363,21 @@ describe("WsHub upgrade boundary", () => {
     hub.broadcast({ channel: "thread.activity", data: { id: "activity-1" } })
 
     expect(send).not.toHaveBeenCalled()
-    expect(close).toHaveBeenCalledWith(1013, "client backpressure limit exceeded")
+    expect(close).toHaveBeenCalledWith(
+      1013,
+      "client backpressure limit exceeded"
+    )
   })
 
   it("limits concurrent RPC work per authenticated client", async () => {
     const { hub, url } = await startHub({ maxRpcInFlight: 1 })
     let resolveFirst!: (value: unknown) => void
-    hub.setRpcHandler(
-      (method) =>
-        method === "slow"
-          ? new Promise((resolve) => {
-              resolveFirst = resolve
-            })
-          : "unexpected"
+    hub.setRpcHandler((method) =>
+      method === "slow"
+        ? new Promise((resolve) => {
+            resolveFirst = resolve
+          })
+        : "unexpected"
     )
     const ws = new WebSocket(url, {
       headers: {
@@ -429,9 +474,7 @@ describe("WsHub upgrade boundary", () => {
   })
 
   it("closes connected remote clients immediately when their session is revoked", async () => {
-    let revoke:
-      | ((sessionIds: readonly string[]) => void)
-      | undefined
+    let revoke: ((sessionIds: readonly string[]) => void) | undefined
     const unsubscribe = vi.fn()
     const { url } = await startHub({
       authenticateToken: () => ({
@@ -589,25 +632,32 @@ describe("WsHub upgrade boundary", () => {
   it.each<WsHubOptions>([
     { trustProxyHeaders: true },
     { trustLoopbackProxyHeaders: () => true },
-  ])("checks a forwarded client's transport even with a loopback Host (%j)", async (options) => {
-    const { url } = await startHub(options)
-    const headers = {
-      Authorization: "Bearer secret",
-      "X-Forwarded-For": "203.0.113.9",
-    }
-    await expect(rejectedUpgrade(url, headers)).resolves.toBe(426)
-    await expect(rejectedUpgrade(url, {
-      ...headers,
-      "X-Forwarded-Proto": "https, http",
-    })).resolves.toBe(426)
+  ])(
+    "checks a forwarded client's transport even with a loopback Host (%j)",
+    async (options) => {
+      const { url } = await startHub(options)
+      const headers = {
+        Authorization: "Bearer secret",
+        "X-Forwarded-For": "203.0.113.9",
+      }
+      await expect(rejectedUpgrade(url, headers)).resolves.toBe(426)
+      await expect(
+        rejectedUpgrade(url, {
+          ...headers,
+          "X-Forwarded-Proto": "https, http",
+        })
+      ).resolves.toBe(426)
 
-    const ws = new WebSocket(url, { headers: {
-      ...headers,
-      "X-Forwarded-Proto": "http, https",
-    } })
-    await expect(nextJson(ws)).resolves.toMatchObject({ type: "auth_ok" })
-    ws.close()
-  })
+      const ws = new WebSocket(url, {
+        headers: {
+          ...headers,
+          "X-Forwarded-Proto": "http, https",
+        },
+      })
+      await expect(nextJson(ws)).resolves.toMatchObject({ type: "auth_ok" })
+      ws.close()
+    }
+  )
 
   it("downgrades remote RPC access on an explicitly enabled plaintext host", async () => {
     const { hub, url } = await startHub({
@@ -762,7 +812,10 @@ describe("WsHub upgrade boundary", () => {
     const gap = nextJson(ws)
     hub.broadcast({
       channel: "provider.runtimeEvent",
-      data: { event_type: "tool_result", payload: { output: "x".repeat(1_000) } },
+      data: {
+        event_type: "tool_result",
+        payload: { output: "x".repeat(1_000) },
+      },
     })
 
     await expect(gap).resolves.toMatchObject({

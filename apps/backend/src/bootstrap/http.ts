@@ -94,7 +94,9 @@ export function webRootCandidates(
   ]
 }
 
-export function resolveWebRoot(explicit: string | undefined): string | undefined {
+export function resolveWebRoot(
+  explicit: string | undefined
+): string | undefined {
   const candidates = webRootCandidates(explicit)
   for (const candidate of candidates) {
     if (!candidate) continue

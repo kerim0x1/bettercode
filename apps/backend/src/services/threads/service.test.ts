@@ -116,60 +116,86 @@ describe("ThreadService.save protects runtime-authored rows", () => {
     })
   }
 
-  it.each(["runtime", "compaction"])("protects %s rows from incremental renderer rewrites", (owner) => {
-    const original = streamedAssistant({
-      extra: owner === "runtime"
-        ? { providerRuntimeSequence: 7, modelId: "runtime-model" }
-        : { compactedContext: true, compactionRequestId: "compact-1" },
-    })
-    svc.save(saveRequest([original]))
-    const rendererCopy = (overrides: Record<string, unknown> = {}) => parseThreadSaveMessage({
-      id: original.message_id,
-      turnId: original.turn_id,
-      role: original.role,
-      content: original.content,
-      createdAt: CREATED_AT,
-      modelId: "stale-model",
-      providerRuntimeSequence: 999,
-      extra: { providerRuntimeSequence: 999 },
-      ...overrides,
-    })
-    for (const override of [{ content: "stale text" }, { turnId: "other-turn" }, { role: "user" }]) {
-      expectProtected(() => svc.upsertMessage({
-        thread_id: "thread-1",
-        message: rendererCopy(override),
-      }))
+  it.each(["runtime", "compaction"])(
+    "protects %s rows from incremental renderer rewrites",
+    (owner) => {
+      const original = streamedAssistant({
+        extra:
+          owner === "runtime"
+            ? { providerRuntimeSequence: 7, modelId: "runtime-model" }
+            : { compactedContext: true, compactionRequestId: "compact-1" },
+      })
+      svc.save(saveRequest([original]))
+      const rendererCopy = (overrides: Record<string, unknown> = {}) =>
+        parseThreadSaveMessage({
+          id: original.message_id,
+          turnId: original.turn_id,
+          role: original.role,
+          content: original.content,
+          createdAt: CREATED_AT,
+          modelId: "stale-model",
+          providerRuntimeSequence: 999,
+          extra: { providerRuntimeSequence: 999 },
+          ...overrides,
+        })
+      for (const override of [
+        { content: "stale text" },
+        { turnId: "other-turn" },
+        { role: "user" },
+      ]) {
+        expectProtected(() =>
+          svc.upsertMessage({
+            thread_id: "thread-1",
+            message: rendererCopy(override),
+          })
+        )
+      }
+      svc.upsertMessage({ thread_id: "thread-1", message: rendererCopy() })
+      expect(svc.getMessage("thread-1", original.message_id)).toMatchObject({
+        content: original.content,
+        created_at: original.created_at,
+        extra: original.extra,
+      })
     }
-    svc.upsertMessage({ thread_id: "thread-1", message: rendererCopy() })
-    expect(svc.getMessage("thread-1", original.message_id)).toMatchObject({
-      content: original.content,
-      created_at: original.created_at,
-      extra: original.extra,
-    })
-  })
+  )
 
   it("accepts newer runtime snapshots while preserving their ordering", () => {
     svc.save(saveRequest([streamedAssistant()]))
-    svc.upsertMessage({ thread_id: "thread-1", message: streamedAssistant({
-      content: "finished answer", extra: { providerRuntimeSequence: 8 },
-    }) })
+    svc.upsertMessage({
+      thread_id: "thread-1",
+      message: streamedAssistant({
+        content: "finished answer",
+        extra: { providerRuntimeSequence: 8 },
+      }),
+    })
     svc.upsertMessage({ thread_id: "thread-1", message: streamedAssistant() })
     expect(svc.getMessage("thread-1", "assistant-1")).toMatchObject({
-      content: "finished answer", extra: { providerRuntimeSequence: 8 },
+      content: "finished answer",
+      extra: { providerRuntimeSequence: 8 },
     })
   })
 
-  it.each(["__proto__", "constructor", "toString"])("aggregates reserved model and tool name %s", (name) => {
-    svc.save(saveRequest([message("assistant-1", "assistant", "answer", {
-      extra: { modelId: name, toolCalls: [{ id: "tool-1", name, input: {} }] },
-    })]))
-    for (const stats of [svc.stats(), svc.stats()]) {
-      expect(Object.hasOwn(stats.modelUsage, name)).toBe(true)
-      expect(stats.modelUsage[name].messages).toBe(1)
-      expect(Object.hasOwn(stats.toolUsage, name)).toBe(true)
-      expect(stats.toolUsage[name]).toBe(1)
+  it.each(["__proto__", "constructor", "toString"])(
+    "aggregates reserved model and tool name %s",
+    (name) => {
+      svc.save(
+        saveRequest([
+          message("assistant-1", "assistant", "answer", {
+            extra: {
+              modelId: name,
+              toolCalls: [{ id: "tool-1", name, input: {} }],
+            },
+          }),
+        ])
+      )
+      for (const stats of [svc.stats(), svc.stats()]) {
+        expect(Object.hasOwn(stats.modelUsage, name)).toBe(true)
+        expect(stats.modelUsage[name].messages).toBe(1)
+        expect(Object.hasOwn(stats.toolUsage, name)).toBe(true)
+        expect(stats.toolUsage[name]).toBe(1)
+      }
     }
-  })
+  )
 
   // Regression: compaction checkpoints carry no runtime sequence and are not
   // dispatch rows, so a stale renderer snapshot that predated the `/compact`
@@ -399,9 +425,14 @@ describe("ThreadService.save protects runtime-authored rows", () => {
     svc.save(
       saveRequest([
         message("user-1", "user", "/help"),
-        message("assistant-help", "assistant", "Available commands: /help, /clear", {
-          extra: { modelId: "local-slash" },
-        }),
+        message(
+          "assistant-help",
+          "assistant",
+          "Available commands: /help, /clear",
+          {
+            extra: { modelId: "local-slash" },
+          }
+        ),
       ])
     )
     expect(svc.getMessage("thread-1", "assistant-help")).toMatchObject({
@@ -435,11 +466,13 @@ describe("ThreadService.save protects runtime-authored rows", () => {
       ])
     )
     const turnCount = () =>
-      (db
-        .prepare(
-          "SELECT turn_count FROM projection_threads WHERE thread_id = 'thread-1'"
-        )
-        .get() as { turn_count: number }).turn_count
+      (
+        db
+          .prepare(
+            "SELECT turn_count FROM projection_threads WHERE thread_id = 'thread-1'"
+          )
+          .get() as { turn_count: number }
+      ).turn_count
     expect(turnCount()).toBe(2)
 
     svc.truncateAfterMessage({
@@ -534,7 +567,10 @@ describe("ThreadService thread list query plan", () => {
     )
     const ids = (page: unknown[]) =>
       (page as Array<{ id: string }>).map((entry) => entry.id)
-    expect(ids(svc.listMessages("thread-1", { limit: 2 }))).toEqual(["m-2", "m-3"])
+    expect(ids(svc.listMessages("thread-1", { limit: 2 }))).toEqual([
+      "m-2",
+      "m-3",
+    ])
     expect(
       ids(svc.listMessages("thread-1", { limit: 2, beforeSequence: 2 }))
     ).toEqual(["m-0", "m-1"])
@@ -563,9 +599,27 @@ describe("ThreadService thread list query plan", () => {
          (thread_id, provider_instance_id, provider_kind, created_at, updated_at, status)
        VALUES (?, ?, ?, ?, ?, 'ready')`
     )
-    insertBinding.run("thread-a", "old-instance", "codex", CREATED_AT, "2026-01-01T00:00:01.000Z")
-    insertBinding.run("thread-a", "new-instance", "claude", CREATED_AT, "2026-01-01T00:00:02.000Z")
-    insertBinding.run("thread-c", "only-instance", "cursor", CREATED_AT, "2026-01-01T00:00:01.000Z")
+    insertBinding.run(
+      "thread-a",
+      "old-instance",
+      "codex",
+      CREATED_AT,
+      "2026-01-01T00:00:01.000Z"
+    )
+    insertBinding.run(
+      "thread-a",
+      "new-instance",
+      "claude",
+      CREATED_AT,
+      "2026-01-01T00:00:02.000Z"
+    )
+    insertBinding.run(
+      "thread-c",
+      "only-instance",
+      "cursor",
+      CREATED_AT,
+      "2026-01-01T00:00:01.000Z"
+    )
 
     const ids = (items: unknown[]) =>
       (items as Array<{ id: string }>).map((item) => item.id)
@@ -578,9 +632,12 @@ describe("ThreadService thread list query plan", () => {
       threadId: "thread-c",
     })
     expect(
-      (first.items as Array<{ id: string; session?: { providerKind?: string } | null }>).map(
-        (item) => [item.id, item.session?.providerKind ?? null]
-      )
+      (
+        first.items as Array<{
+          id: string
+          session?: { providerKind?: string } | null
+        }>
+      ).map((item) => [item.id, item.session?.providerKind ?? null])
     ).toEqual([
       ["thread-a", "claude"],
       ["thread-c", "cursor"],

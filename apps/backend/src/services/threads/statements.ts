@@ -65,7 +65,9 @@ const threadPageSql = (cursor: boolean) => `
  */
 export function prepareThreadStatements(db: Db) {
   return {
-    statsRevisionStmt: db.prepare("SELECT version FROM backend_read_revisions WHERE name = 'stats'"),
+    statsRevisionStmt: db.prepare(
+      "SELECT version FROM backend_read_revisions WHERE name = 'stats'"
+    ),
     upsertThreadStmt: db.prepare(`
       INSERT INTO projection_threads
         (thread_id, project_id, title, status, env_mode, created_at, updated_at, message_count, turn_count, project_path, codex_thread_id)
@@ -184,7 +186,9 @@ export function prepareThreadStatements(db: Db) {
     findRuntimeSequenceStmt: db.prepare(`
       SELECT thread_id, role, runtime_sequence FROM projection_message_usage WHERE message_id = ?
     `),
-    touchThreadStmt: db.prepare("UPDATE projection_threads SET updated_at = ? WHERE thread_id = ?"),
+    touchThreadStmt: db.prepare(
+      "UPDATE projection_threads SET updated_at = ? WHERE thread_id = ?"
+    ),
     findDispatchMessageStmt: db.prepare(`
       SELECT thread_id, turn_id, role, content_json, created_at
       FROM projection_messages

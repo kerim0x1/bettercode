@@ -169,7 +169,8 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
 
   api.post("/threads", (c) =>
     handleHttpContract(
-      c, "saveThread",
+      c,
+      "saveThread",
       async (parsed) => {
         // The schema validates structure; parseThreadSaveRequest does the
         // additional contract conversion to ThreadSaveRequest. zod has
@@ -179,7 +180,10 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
         // Registered roots are derived from saved threads, so a saved
         // project path *is* a registration. A paired device may work in
         // the workspaces the desktop opened, never open one of its own.
-        if (req.project_path && requestIdentity(c, state.config, state)?.kind === "remote") {
+        if (
+          req.project_path &&
+          requestIdentity(c, state.config, state)?.kind === "remote"
+        ) {
           await resolveApprovedWorkspaceRoot(state, req.project_path)
         }
         await withCheckpointRecoveryMutation(
@@ -207,7 +211,8 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
 
   api.patch("/threads/:id", (c) =>
     handleHttpContract(
-      c, "updateThread",
+      c,
+      "updateThread",
       async (parsed, ctx) => {
         const threadId = ctx.req.param("id")!
         const req = parseThreadMetaUpsertRequest(threadId, parsed)
@@ -226,7 +231,9 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
   )
 
   api.get("/threads/:id/messages", (c) =>
-    contractJson(c, "listMessages",
+    contractJson(
+      c,
+      "listMessages",
       state.threads.listMessages(c.req.param("id"), {
         limit: optionalQueryInteger(c.req.query("limit")),
         beforeSequence: optionalQueryInteger(c.req.query("beforeSequence")),
@@ -239,7 +246,8 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
       c,
       threadModelSwitchActivitySchema,
       async (body, context) => {
-        if (body.activityId.startsWith("orchestrator:")) throw new HttpError(400, "Reserved activity ID.")
+        if (body.activityId.startsWith("orchestrator:"))
+          throw new HttpError(400, "Reserved activity ID.")
         const threadId = context.req.param("id")
         // The activity id is client-chosen and the store upserts by id: an
         // id that already belongs to another thread must not be moved here.
@@ -327,7 +335,9 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
       c.header("X-Next-Cursor", encodeThreadActivityCursor(page.next))
       c.header("Access-Control-Expose-Headers", "X-Next-Cursor")
     }
-    return contractJson(c, "listActivities",
+    return contractJson(
+      c,
+      "listActivities",
       page.items.map((activity) => ({
         id: activity.activity_id,
         threadId: activity.thread_id,
@@ -412,7 +422,8 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
 
   api.post("/threads/:id/messages", (c) =>
     handleHttpContract(
-      c, "saveMessage",
+      c,
+      "saveMessage",
       async (parsed, ctx) => {
         const threadId = ctx.req.param("id")!
         const req = parseThreadMessageUpsertRequest(threadId, parsed)
@@ -636,8 +647,13 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
  * runs itself. A state without a database (unit tests) has nothing to
  * conflict with.
  */
-function activityThreadOwner(state: AppState, activityId: string): string | null {
-  const db = state.db as { prepare?: (sql: string) => { get: (...args: unknown[]) => unknown } } | undefined
+function activityThreadOwner(
+  state: AppState,
+  activityId: string
+): string | null {
+  const db = state.db as
+    | { prepare?: (sql: string) => { get: (...args: unknown[]) => unknown } }
+    | undefined
   if (!db || typeof db.prepare !== "function") return null
   const row = db
     .prepare(
