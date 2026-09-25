@@ -223,7 +223,9 @@ describe("git checkpoint refs", () => {
     ).toBeLessThanOrEqual(512 * 1024)
   })
 
-  it("restores a checkpoint and deletes checkpoint refs best-effort", async () => {
+  // Keep these Git scenarios separate: on a busy Windows runner their combined
+  // process time can exceed Vitest's deadline before cleanup can run safely.
+  it("restores a checkpoint and previews changed files", async () => {
     const cwd = createRepo()
     const ref = checkpointRefForThreadTurn("thread-restore", 0)
     await captureCheckpoint({ cwd, checkpointRef: ref })
@@ -242,6 +244,18 @@ describe("git checkpoint refs", () => {
     expect(restoreResult.safetyRef).toBeTruthy()
     expect(restoreResult.preview?.removed).toContain("scratch.txt")
     expect(restoreResult.preview?.modified).toContain("README.md")
+  })
+
+  it("undoes a checkpoint restore using its safety snapshot", async () => {
+    const cwd = createRepo()
+    const ref = checkpointRefForThreadTurn("thread-restore-undo", 0)
+    await captureCheckpoint({ cwd, checkpointRef: ref })
+    fs.writeFileSync(path.join(cwd, "README.md"), "changed\n", "utf8")
+    fs.writeFileSync(path.join(cwd, "scratch.txt"), "remove me\n", "utf8")
+
+    const restoreResult = await restoreCheckpoint({ cwd, checkpointRef: ref })
+    expect(restoreResult.restored).toBe(true)
+    expect(restoreResult.safetyRef).toBeTruthy()
 
     await expect(
       undoCheckpointRestore({ cwd, safetyRef: restoreResult.safetyRef! })
@@ -252,8 +266,13 @@ describe("git checkpoint refs", () => {
     expect(fs.readFileSync(path.join(cwd, "scratch.txt"), "utf8")).toBe(
       "remove me\n"
     )
+  })
 
-    // Put the checkpoint state back for the ref-deletion assertions below.
+  it("deletes checkpoint refs best-effort", async () => {
+    const cwd = createRepo()
+    const ref = checkpointRefForThreadTurn("thread-delete", 0)
+    await captureCheckpoint({ cwd, checkpointRef: ref })
+    fs.writeFileSync(path.join(cwd, "README.md"), "changed\n", "utf8")
     expect(
       (await restoreCheckpoint({ cwd, checkpointRef: ref })).restored
     ).toBe(true)
