@@ -453,7 +453,7 @@ describe("CodexAdapter", () => {
       })
       sessionAdapters.push(adapter)
       try {
-        expect((await adapter.availableModels())[0].slug).toBe("gpt-6-astra")
+        expect(await adapter.availableModels()).toEqual([])
         expect(modelRequests).toBe(maxRequests)
         expect(closeSpy).toHaveBeenCalledTimes(1)
       } finally {
