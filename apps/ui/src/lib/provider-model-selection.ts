@@ -3,7 +3,6 @@ import { coerceThinkingModeForModel } from "@/lib/model-capabilities"
 import {
   chatProviderPriority,
   isHiddenChatProvider,
-  normalizeModelSlug,
   resolveSelectableModel,
 } from "@betterc0de/schema/model-selection"
 
@@ -64,6 +63,7 @@ export function resolveProviderModelSelection(
 
   const preferred =
     providers.find((provider) => provider.id === selectedProviderId) ??
+    resolveLegacyApiProvider(providers, selectedProviderId) ??
     resolveLegacyClaudeTerminalProvider(providers, selectedProviderId)
   const locked = lockedProviderInstanceId
     ? providers.find(
@@ -140,7 +140,10 @@ export function resolveProviderModelThinkingSelection(
   return {
     ...selection,
     thinkingMode:
-      selection.provider?.modelsReady === false
+      selection.provider?.modelsReady === false ||
+      (selection.modelId &&
+        selection.provider?.modelsReady === true &&
+        !hasModel(selection.provider, selection.modelId))
         ? input.thinkingMode
         : coerceThinkingModeForModel(
             selection.provider,
@@ -182,6 +185,15 @@ function resolveLegacyClaudeTerminalProvider(
   )
 }
 
+function resolveLegacyApiProvider(
+  providers: ReadonlyArray<UiProvider>,
+  selectedProviderId: string
+): UiProvider | undefined {
+  if (selectedProviderId !== "anthropic" && selectedProviderId !== "claude-api")
+    return undefined
+  return providers.find((provider) => provider.id === "anthropic-api")
+}
+
 function resolveLockedProvider(
   preferred: UiProvider | undefined,
   locked: UiProvider | undefined,
@@ -219,18 +231,9 @@ function resolveModelForProvider(
     provider.models
   )
   if (resolved) return resolved
-  const normalized = normalizeModelSlug(
-    selectedModel,
-    provider.providerKind ?? provider.id
-  )
-  if (
-    normalized &&
-    (provider.modelsReady === false ||
-      (provider.models.length === 0 && normalized !== selectedModel))
-  ) {
-    return normalized
-  }
-  return provider.models[0]?.id ?? selectedModel
+  // Preserve a stored ID even after the catalog removes it. Sending requires
+  // the user to choose a current model explicitly.
+  return selectedModel || provider.models[0]?.id || ""
 }
 
 function hasModel(provider: UiProvider, modelId: string): boolean {

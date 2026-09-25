@@ -11,6 +11,7 @@ import { usePreferencesStore } from "@/lib/preferences-store"
 import type { UiProvider } from "@/lib/provider-types"
 import { useProviderStatus } from "@/hooks/use-provider-status"
 import { useProviderInstances } from "@/hooks/use-provider-instances"
+import { useApiModels } from "@/hooks/use-api-models"
 import type { ProviderInstanceSnapshot } from "@betterc0de/schema"
 import { isHiddenChatProvider } from "@betterc0de/schema/model-selection"
 import {
@@ -20,7 +21,7 @@ import {
 
 /**
  * Reactive list of UI providers — enabled plugin-provided providers first,
- * followed by the hard-coded builtins, with live `configured`/`authType`/
+ * followed by the built-in provider entries, with live `configured`/`authType`/
  * `setupHint` merged in from `/providers/status`.
  *
  * Plugins come first on purpose: if a plugin ships a provider with the same
@@ -35,10 +36,14 @@ import {
  * kind because the backend's OpenAI adapter is keyed `"openai"`). We try
  * both keys so the lookup matches regardless.
  */
-export function useProviders(cwd?: string | null): UiProvider[] {
+export function useProviders(
+  cwd?: string | null,
+  includeHidden = false
+): UiProvider[] {
   const pluginList = usePluginStore((s) => s.plugins)
   const { status } = useProviderStatus()
   const { instances } = useProviderInstances(cwd)
+  const apiModels = useApiModels()
   const hiddenProviders = usePreferencesStore((s) => s.hiddenProviders)
   const hiddenModels = usePreferencesStore((s) => s.hiddenModels)
   const [projectProviders, setProjectProviders] =
@@ -77,6 +82,9 @@ export function useProviders(cwd?: string | null): UiProvider[] {
         logo: p.manifest.icon || "",
         models: p.manifest.models,
       }))
+    const pluginProviderIds = new Set(
+      pluginProviders.map((provider) => provider.id)
+    )
     const baseSourceList: UiProvider[] = [
       ...pluginProviders,
       ...builtinProviders,
@@ -106,6 +114,15 @@ export function useProviders(cwd?: string | null): UiProvider[] {
           status.get(p.id) ||
           undefined
         const instance = instanceById.get(p.providerInstanceId ?? p.id)
+        const apiKind = pluginProviderIds.has(p.id)
+          ? null
+          : p.id === "openai-api"
+            ? "openai"
+            : p.id === "anthropic-api"
+              ? "anthropic"
+              : p.id === "grok"
+                ? "grok"
+                : null
         const withInstance = instance
           ? {
               ...p,
@@ -131,7 +148,26 @@ export function useProviders(cwd?: string | null): UiProvider[] {
               slashCommands: instance.slashCommands,
               environment: instance.snapshot.environment,
             }
-          : { ...p, modelsReady: p.providerInstanceId ? false : p.modelsReady }
+          : apiKind
+            ? {
+                ...p,
+                modelsReady: apiModels !== null,
+                models:
+                  apiModels
+                    ?.filter((model) => model.provider === apiKind)
+                    .map((model) => ({
+                      id: model.slug,
+                      name: model.name,
+                      context: model.context ?? "runtime",
+                      tier: model.tier ?? "Runtime",
+                      isCustom: model.isCustom,
+                      capabilities: model.capabilities,
+                    })) ?? [],
+              }
+            : {
+                ...p,
+                modelsReady: p.providerInstanceId ? false : p.modelsReady,
+              }
         if (!stat || instance) return withInstance
         return {
           ...withInstance,
@@ -148,12 +184,19 @@ export function useProviders(cwd?: string | null): UiProvider[] {
       .filter((provider) =>
         isProviderAllowedByProjectPolicy(provider, projectProviders)
       )
-      .filter((provider) => isProviderVisible(provider, hiddenProviderIds))
+      .filter(
+        (provider) =>
+          includeHidden || isProviderVisible(provider, hiddenProviderIds)
+      )
       .filter((provider) => !isBetterC0deProvider(provider))
-      .map((provider) => filterHiddenModels(provider, hiddenModelIds))
+      .map((provider) =>
+        includeHidden ? provider : filterHiddenModels(provider, hiddenModelIds)
+      )
   }, [
+    apiModels,
     hiddenModels,
     hiddenProviders,
+    includeHidden,
     instances,
     pluginList,
     projectProviders,
@@ -370,6 +413,10 @@ export function isProviderVisible(
 
 export function providerVisibilityKeys(provider: UiProvider): string[] {
   const keys = new Set([provider.id])
+  if (provider.id === "anthropic-api") {
+    keys.add("anthropic")
+    keys.add("claude-api")
+  }
   if (provider.providerInstanceId) keys.add(provider.providerInstanceId)
   if (provider.id === "claude-terminal") keys.add("claude")
   if (providerMatchesHiddenFamily(provider, "qwen")) {
@@ -489,11 +536,11 @@ function modelsFromInstance(
     tier: "Custom",
     isCustom: true,
   }))
-  // Keep curated models visible when runtime metadata is empty or temporarily
-  // unavailable. Runtime duplicates enrich those stable entries with live
-  // capabilities/catalog data, and genuinely new runtime models are appended.
+  // A completed CLI snapshot is authoritative, even when it is empty.
   return mergeModels(
-    mergeRuntimeModelMetadata(fallback, runtimeModels),
+    instance.models === undefined
+      ? fallback
+      : sortModelsForProviderInstance(runtimeModels),
     customModels
   )
 }

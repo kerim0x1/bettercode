@@ -136,7 +136,8 @@ HTTP and WebSocket handlers delegate into shared TypeScript services:
   `packages/schema/src/model-selection.ts`: Claude CLI, Codex, Cursor, Grok CLI,
   then other configured providers. The renderer resolver applies availability
   before fallback, preserves usable explicit choices and bound conversations,
-  and never uses retired Claude API or Claude Terminal picker entries. Pending
+  and excludes the retired Claude Terminal picker entry. Claude API is a
+  separate account-backed provider. Pending
   discovery must not persist a provisional fallback. The backend adapters and
   historical conversations remain intact.
 - Claude API-key path uses `@anthropic-ai/sdk` in-process (no subprocess).
@@ -159,16 +160,16 @@ the startup unwind. The phases live in `apps/backend/src/bootstrap/`, one
 plain function each, and only meet through the context types in
 `bootstrap/context.ts`:
 
-| Module | Phase | Builds |
-|---|---|---|
-| `lifecycle.ts` | 0 | config, bearer token, cleanup ledger, admission gate, taint machinery, resource-admission reopen, startup abort listener |
-| `persistence.ts` | 1 | SQLite open + migrations, event store, projections, session bindings, agent permission policy |
-| `settings.ts` | 2 | settings, logging, remote access + revoked-session cleanup, transcript recovery replay, OAuth store |
-| `providers.ts` | 3 | legacy adapters + registry, `ProviderHub`, settings-change listener, checkpoint reactor, `AppState` |
-| `http.ts` | 4, 7, 9 | `WsHub` + RPC handler; the Hono app; port bind and runtime error listener |
-| `recovery.ts` | 5 | runtime journal spool replay, ingestion, journal replay, checkpoint/worktree recovery |
-| `schedulers.ts` | 6, 8 | thread retention; transcript recovery timer, provider session reaper, vacuum |
-| `shutdown.ts` | — | the graceful `stop()` drain and the startup unwind |
+| Module           | Phase   | Builds                                                                                                                   |
+| ---------------- | ------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `lifecycle.ts`   | 0       | config, bearer token, cleanup ledger, admission gate, taint machinery, resource-admission reopen, startup abort listener |
+| `persistence.ts` | 1       | SQLite open + migrations, event store, projections, session bindings, agent permission policy                            |
+| `settings.ts`    | 2       | settings, logging, remote access + revoked-session cleanup, transcript recovery replay, OAuth store                      |
+| `providers.ts`   | 3       | legacy adapters + registry, `ProviderHub`, settings-change listener, checkpoint reactor, `AppState`                      |
+| `http.ts`        | 4, 7, 9 | `WsHub` + RPC handler; the Hono app; port bind and runtime error listener                                                |
+| `recovery.ts`    | 5       | runtime journal spool replay, ingestion, journal replay, checkpoint/worktree recovery                                    |
+| `schedulers.ts`  | 6, 8    | thread retention; transcript recovery timer, provider session reaper, vacuum                                             |
+| `shutdown.ts`    | —       | the graceful `stop()` drain and the startup unwind                                                                       |
 
 Two rules keep this honest, both pinned by
 `bootstrap/bootstrap.structure.test.ts`: no phase module imports another

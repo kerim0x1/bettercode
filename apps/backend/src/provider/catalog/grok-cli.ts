@@ -1,4 +1,4 @@
-import type { ProviderDefinition } from "./types";
+import type { ProviderDefinition } from "./types"
 
 /**
  * Grok CLI — xAI's local `grok` binary ("Grok Build"). Uses the user's
@@ -15,9 +15,10 @@ import type { ProviderDefinition } from "./types";
 export const grokCli: ProviderDefinition = {
   id: "grok-cli",
   name: "Grok CLI",
-  description: "xAI's local `grok` binary (Grok Build) — uses your CLI login or XAI_API_KEY.",
+  description:
+    "xAI's local `grok` binary (Grok Build) — uses your CLI login or XAI_API_KEY.",
   // Used only when the CLI's ACP session doesn't advertise a model picker.
-  defaultModels: ["grok-4.6", "grok-4.5"],
+  defaultModels: [],
   enabledByDefault: true,
   docsUrl: "https://x.ai/cli",
   authMethods: [
@@ -26,8 +27,9 @@ export const grokCli: ProviderDefinition = {
       label: "Grok CLI",
       command: "grok",
       versionArgs: ["--version"],
-      installHint: "npm i -g @xai-official/grok  (or: irm https://x.ai/cli/install.ps1 | iex)",
+      installHint:
+        "npm i -g @xai-official/grok  (or: irm https://x.ai/cli/install.ps1 | iex)",
       loginCommand: "grok login",
     },
   ],
-};
+}

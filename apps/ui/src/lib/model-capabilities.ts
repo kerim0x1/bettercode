@@ -17,41 +17,64 @@ export interface ModelThinkingOption {
 
 export function getProviderModel(
   provider: ProviderCapabilitySource | null | undefined,
-  modelId: string | null | undefined,
+  modelId: string | null | undefined
 ): UiProviderModel | undefined {
   if (!provider || !modelId) return undefined
   return provider.models?.find((model) => model.id === modelId)
 }
 
-export function supportsProviderFastMode(provider: ProviderCapabilitySource | null | undefined): boolean {
-  const providerKey = (provider?.providerKind ?? provider?.id ?? "").toLowerCase()
+export function supportsProviderFastMode(
+  provider: ProviderCapabilitySource | null | undefined
+): boolean {
+  const providerKey = (
+    provider?.providerKind ??
+    provider?.id ??
+    ""
+  ).toLowerCase()
   return providerKey === "claude"
 }
 
 export function supportsModelBooleanOption(
   provider: ProviderCapabilitySource | null | undefined,
   modelId: string | null | undefined,
-  optionId: string,
+  optionId: string
 ): boolean {
-  return modelBooleanOption({
-    providerKind: getProviderKey(provider), modelId: modelId ?? "",
-    capabilities: getProviderModel(provider, modelId)?.capabilities,
-  }, optionId)
+  return modelBooleanOption(
+    {
+      providerKind: getProviderKey(provider),
+      modelId: modelId ?? "",
+      capabilities: getProviderModel(provider, modelId)?.capabilities,
+    },
+    optionId
+  )
 }
 
-export function supportsProviderContextWindow(provider: ProviderCapabilitySource | null | undefined): boolean {
-  const providerKey = (provider?.providerKind ?? provider?.id ?? "").toLowerCase()
-  return providerKey === "claude" || providerKey === "anthropic" || providerKey === "anthropic_cli"
+export function supportsProviderContextWindow(
+  provider: ProviderCapabilitySource | null | undefined
+): boolean {
+  const providerKey = (
+    provider?.providerKind ??
+    provider?.id ??
+    ""
+  ).toLowerCase()
+  return (
+    providerKey === "claude" ||
+    providerKey === "anthropic" ||
+    providerKey === "anthropic_cli"
+  )
 }
 
 export function supportsModelSelectOption(
   provider: ProviderCapabilitySource | null | undefined,
   modelId: string | null | undefined,
-  optionId: string,
+  optionId: string
 ): boolean {
-  const descriptors = getProviderModel(provider, modelId)?.capabilities?.optionDescriptors
+  const descriptors = getProviderModel(provider, modelId)?.capabilities
+    ?.optionDescriptors
   if (descriptors && descriptors.length > 0) {
-    return descriptors.some((descriptor) => descriptor.type === "select" && descriptor.id === optionId)
+    return descriptors.some(
+      (descriptor) => descriptor.type === "select" && descriptor.id === optionId
+    )
   }
   return (
     optionId === "contextWindow" &&
@@ -63,14 +86,14 @@ export function supportsModelSelectOption(
 
 export function supportsModelContextWindow(
   provider: ProviderCapabilitySource | null | undefined,
-  modelId: string | null | undefined,
+  modelId: string | null | undefined
 ): boolean {
   return supportsModelSelectOption(provider, modelId, "contextWindow")
 }
 
 export function supportsModelAttachments(
   provider: ProviderCapabilitySource | null | undefined,
-  modelId: string | null | undefined,
+  modelId: string | null | undefined
 ): boolean {
   const model = getProviderModel(provider, modelId)
   if (typeof model?.capabilities?.attachment === "boolean") {
@@ -91,22 +114,26 @@ export function supportsModelAttachments(
 export function getModelSelectDescriptor(
   provider: ProviderCapabilitySource | null | undefined,
   modelId: string | null | undefined,
-  optionIds: string | ReadonlyArray<string>,
+  optionIds: string | ReadonlyArray<string>
 ): Extract<ProviderOptionDescriptor, { type: "select" }> | undefined {
   const ids = typeof optionIds === "string" ? [optionIds] : optionIds
-  const descriptors = getProviderModel(provider, modelId)?.capabilities?.optionDescriptors
+  const descriptors = getProviderModel(provider, modelId)?.capabilities
+    ?.optionDescriptors
   return descriptors?.find(
-    (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
-      descriptor.type === "select" && ids.includes(descriptor.id),
+    (
+      descriptor
+    ): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
+      descriptor.type === "select" && ids.includes(descriptor.id)
   )
 }
 
 export function getModelThinkingOptions(
   provider: ProviderCapabilitySource | null | undefined,
-  modelId: string | null | undefined,
+  modelId: string | null | undefined
 ): ReadonlyArray<ModelThinkingOption> {
   return modelThinkingOptions({
-    providerKind: getProviderKey(provider), modelId: modelId ?? "",
+    providerKind: getProviderKey(provider),
+    modelId: modelId ?? "",
     capabilities: getProviderModel(provider, modelId)?.capabilities,
   })
 }
@@ -114,13 +141,15 @@ export function getModelThinkingOptions(
 export function getThinkingModeLabel(
   provider: ProviderCapabilitySource | null | undefined,
   modelId: string | null | undefined,
-  thinkingMode: string | null,
+  thinkingMode: string | null
 ): string | null {
   if (!thinkingMode) return null
   const normalized = normalizeThinkingModeValue(thinkingMode)
   return (
     getModelThinkingOptions(provider, modelId).find((option) =>
-      option.mode ? normalizeThinkingModeValue(option.mode) === normalized : false,
+      option.mode
+        ? normalizeThinkingModeValue(option.mode) === normalized
+        : false
     )?.label ?? thinkingMode
   )
 }
@@ -128,15 +157,16 @@ export function getThinkingModeLabel(
 export function coerceThinkingModeForModel(
   provider: ProviderCapabilitySource | null | undefined,
   modelId: string | null | undefined,
-  thinkingMode: string | null,
+  thinkingMode: string | null
 ): string | null {
+  if (modelId === "claude-opus-5-5" && !thinkingMode) return "Medium"
   const providerKey = getProviderKey(provider)
   const normalized = normalizeThinkingMode(
     provider
       ? { id: provider.id, providerKind: provider.providerKind }
       : undefined,
     modelId ?? "",
-    thinkingMode,
+    thinkingMode
   )
   if (!normalized) return normalized
 
@@ -244,26 +274,32 @@ export function coerceThinkingModeForModel(
 
 export function isThinkingModeOptionActive(
   thinkingMode: string | null,
-  optionMode: string | null,
+  optionMode: string | null
 ): boolean {
-  if (thinkingMode === null || optionMode === null) return thinkingMode === optionMode
-  return normalizeThinkingModeValue(thinkingMode) === normalizeThinkingModeValue(optionMode)
+  if (thinkingMode === null || optionMode === null)
+    return thinkingMode === optionMode
+  return (
+    normalizeThinkingModeValue(thinkingMode) ===
+    normalizeThinkingModeValue(optionMode)
+  )
 }
 
 export function supportsModelFastMode(
   provider: ProviderCapabilitySource | null | undefined,
-  modelId: string | null | undefined,
+  modelId: string | null | undefined
 ): boolean {
   return supportsModelBooleanOption(provider, modelId, "fastMode")
 }
 
-function getProviderKey(provider: ProviderCapabilitySource | null | undefined): string {
+function getProviderKey(
+  provider: ProviderCapabilitySource | null | undefined
+): string {
   return (provider?.providerKind ?? provider?.id ?? "").toLowerCase()
 }
 
 function firstSupportedThinkingMode(
   supportedModes: ReadonlyMap<string, string>,
-  candidates: ReadonlyArray<string>,
+  candidates: ReadonlyArray<string>
 ): string | undefined {
   for (const candidate of candidates) {
     const mode = supportedModes.get(candidate)

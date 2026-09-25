@@ -12,13 +12,8 @@ import type {
 import { logger } from "../../observability/logger"
 import { cancelPendingApprovals, normalizeLevel } from "../permissions"
 import { normalizeAnthropicModelId } from "./anthropicModelIds"
+import { ApiModelCatalog } from "./apiModelCatalog"
 import {
-  getDiscoveredAnthropicModels,
-  scheduleAnthropicModelDiscovery,
-  selectNewAnthropicModels,
-} from "./anthropicModelDiscovery"
-import {
-  anthropicModelDisplayName,
   anthropicRequiresExplicitThinkingDisplay,
   parseAnthropicModelId,
 } from "@betterc0de/schema"
@@ -137,28 +132,16 @@ function buildClaudeUserContent(
   ]
 }
 
-/**
- * Reviewed release order for the API provider. Anything newer that Anthropic
- * publishes is appended automatically by model discovery, so this list only
- * needs touching to change an existing entry.
- */
-const CURATED_ANTHROPIC_API_MODEL_SLUGS: ReadonlyArray<string> = [
-  "claude-fable-5-1",
-  "claude-fable-5",
-  "claude-opus-5",
-  "claude-sonnet-5",
-  "claude-opus-4-8",
-  "claude-haiku-4-5-20251001",
-]
-
 export class ClaudeApiAdapter extends BaseProviderAdapter {
   private client: Anthropic | null = null
   private apiKey: string | null = null
   private abortControllers = new Map<string, AbortController>()
+  private forceCatalogRefresh = false
 
   constructor(
     apiKey: string | null,
-    private readonly agentTools: DirectMcpAdapterOptions = {}
+    private readonly agentTools: DirectMcpAdapterOptions = {},
+    private readonly modelCatalog = new ApiModelCatalog()
   ) {
     super()
     this.setApiKey(apiKey)
@@ -175,6 +158,8 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
    * unaffected — only NEW `sendMessage` calls see the swap.
    */
   setApiKey(apiKey: string | null): void {
+    if (this.apiKey !== (apiKey?.trim() || null))
+      this.forceCatalogRefresh = true
     this.client = apiKey ? new Anthropic({ apiKey }) : null
     this.apiKey = apiKey?.trim() || null
   }
@@ -186,27 +171,12 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
     return "Claude (API)"
   }
   availableModels(): ModelDefinition[] {
-    // Kick the background refresh, then answer from what is already cached.
-    // This call sits on the provider-list path, which must stay synchronous
-    // and fast; newly discovered models land on the next poll.
-    scheduleAnthropicModelDiscovery(this.apiKey)
-    const curated = CURATED_ANTHROPIC_API_MODEL_SLUGS.map((slug) => ({
-      slug,
-      name: anthropicModelDisplayName(slug) ?? slug,
-      provider: "anthropic" as const,
-    }))
-    const discovered = selectNewAnthropicModels(
-      CURATED_ANTHROPIC_API_MODEL_SLUGS,
-      getDiscoveredAnthropicModels(this.apiKey)
-    )
-    return [
-      ...curated,
-      ...discovered.map((model) => ({
-        slug: model.id,
-        name: model.displayName ?? anthropicModelDisplayName(model.id) ?? model.id,
-        provider: "anthropic" as const,
-      })),
-    ]
+    return []
+  }
+  async discoverModels(force = false): Promise<ModelDefinition[]> {
+    const refresh = force || this.forceCatalogRefresh
+    this.forceCatalogRefresh = false
+    return this.modelCatalog.list("anthropic", this.apiKey, refresh)
   }
   isConfigured(): boolean {
     return this.client !== null
@@ -295,11 +265,14 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
       // `display:"summarized"` because these generations default to "omitted"
       // (empty thinking blocks, so the UI would show no reasoning at all).
       // Depth comes from `output_config.effort` instead of a token budget.
+      const alwaysOnThinking = model === "claude-opus-5-5"
       const adaptiveEffort = modelCapabilities.adaptiveThinking
-        ? mapReasoningToAdaptiveEffort(input.reasoning_effort)
+        ? (mapReasoningToAdaptiveEffort(input.reasoning_effort) ??
+          (alwaysOnThinking ? "medium" : null))
         : null
       const thinking =
-        modelCapabilities.adaptiveThinking && adaptiveEffort
+        modelCapabilities.adaptiveThinking &&
+        (adaptiveEffort || alwaysOnThinking)
           ? { type: "adaptive" as const, display: "summarized" as const }
           : thinkingBudget >= 1_024 && modelCapabilities.manualThinking
             ? { type: "enabled" as const, budget_tokens: thinkingBudget }
@@ -580,7 +553,10 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
           | CacheableContentBlock
           | undefined
         if (lastToolResult) {
-          if (cachedToolResultBlock && cachedToolResultBlock !== lastToolResult) {
+          if (
+            cachedToolResultBlock &&
+            cachedToolResultBlock !== lastToolResult
+          ) {
             delete cachedToolResultBlock.cache_control
           }
           lastToolResult.cache_control = { type: "ephemeral" }

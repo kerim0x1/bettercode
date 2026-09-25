@@ -30,7 +30,7 @@ function provider(
 }
 
 describe("resolveProviderModelSelection", () => {
-  it("prefers Claude CLI over list order and a matching API model for a missing selection", () => {
+  it("keeps an explicitly selected Claude API provider", () => {
     const api = provider({ id: "anthropic", configured: true })
     const codex = provider({ id: "codex", configured: true })
     const claude = provider({ id: "claude", configured: true })
@@ -40,10 +40,32 @@ describe("resolveProviderModelSelection", () => {
         selectedProviderId: "anthropic",
         selectedModel: "anthropic-default",
       })
-    ).toEqual({ provider: claude, modelId: "claude-default" })
+    ).toEqual({ provider: api, modelId: "anthropic-default" })
   })
 
-  it.each(["anthropic", "anthropic-api", "claude-api", "claude-terminal"])(
+  it("maps a stored Claude API provider ID to the visible API entry", () => {
+    const api = provider({
+      id: "anthropic-api",
+      providerKind: "anthropic",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context: "1M",
+          tier: "Flagship",
+        },
+      ],
+    })
+    expect(
+      resolveProviderModelSelection({
+        providers: [api],
+        selectedProviderId: "anthropic",
+        selectedModel: "claude-opus-5-5",
+      })
+    ).toEqual({ provider: api, modelId: "claude-opus-5-5" })
+  })
+
+  it.each(["claude-terminal"])(
     "migrates %s to Claude CLI and retains a compatible model",
     (id) => {
       const claude = provider({ id: "claude", providerInstanceId: "claude" })
@@ -84,7 +106,7 @@ describe("resolveProviderModelSelection", () => {
     ).toEqual({ provider: codex, modelId: "codex-default" })
   })
 
-  it("tries Cursor, Grok CLI, then other configured providers without choosing Claude API", () => {
+  it("tries Cursor, Grok CLI, then configured API providers", () => {
     const api = provider({ id: "anthropic", configured: true })
     const openai = provider({ id: "openai", configured: true })
     const grok = provider({
@@ -101,15 +123,15 @@ describe("resolveProviderModelSelection", () => {
     expect(resolveDefaultProvider([api, openai, grok, codex, claude])).toBe(
       grok
     )
-    expect(resolveDefaultProvider([api, openai, codex, claude])).toBe(openai)
-    expect(resolveDefaultProvider([api, codex, claude])).toBeUndefined()
+    expect(resolveDefaultProvider([api, openai, codex, claude])).toBe(api)
+    expect(resolveDefaultProvider([api, codex, claude])).toBe(api)
     expect(
       resolveProviderModelSelection({
         providers: [api],
         selectedProviderId: "anthropic",
         selectedModel: "anthropic-default",
       }).provider
-    ).toBeUndefined()
+    ).toBe(api)
   })
 
   it("waits for Claude's startup probe and preserves an explicit valid Codex choice", () => {
@@ -220,7 +242,7 @@ describe("resolveProviderModelSelection", () => {
         ...input,
         providers: [{ ...codex, modelsReady: true }],
       }).modelId
-    ).toBe("gpt-5.6-sol")
+    ).toBe("gpt-6-astra")
   })
 
   it("does not downgrade a stored reasoning level before model capabilities arrive", () => {
@@ -264,7 +286,7 @@ describe("resolveProviderModelSelection", () => {
     })
   })
 
-  it("falls back to the selected provider's first model when the persisted model is stale", () => {
+  it("keeps a retired model ID until the user chooses a replacement", () => {
     const codex = provider({
       id: "codex",
       providerKind: "codex",
@@ -282,7 +304,7 @@ describe("resolveProviderModelSelection", () => {
       })
     ).toEqual({
       provider: codex,
-      modelId: "gpt-5.5",
+      modelId: "gpt-4.1",
     })
   })
 

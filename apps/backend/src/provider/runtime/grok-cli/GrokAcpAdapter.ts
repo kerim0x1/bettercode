@@ -5,7 +5,6 @@ import {
 } from "../acp/AcpAdapterBase"
 import {
   buildGrokDiscoveredModelsFromConfigOptions,
-  defaultGrokModels,
   type GrokAcpRuntimeSettings,
 } from "./GrokAcpSupport"
 import {
@@ -14,10 +13,12 @@ import {
   type GrokAcpRuntimeOptions,
 } from "./GrokAcpRuntime"
 import { resolveGrokBinaryAsync } from "./GrokBinaryResolution"
+import { buildGrokModelsFromSessionModelState } from "./GrokModelCache"
 import {
-  buildGrokModelsFromSessionModelState,
-  readGrokModelCache,
-} from "./GrokModelCache"
+  grokAccountModels,
+  grokModelAccountIdentity,
+  saveGrokAccountModels,
+} from "./GrokAccountModels"
 
 /**
  * xAI Grok Build CLI provider — drives `grok agent stdio` over the Agent
@@ -31,9 +32,10 @@ import {
 
 export const GROK_ACP_PENDING_REQUEST_TIMEOUT_MS = 5 * 60 * 1000
 
-export interface GrokAcpAdapterOptions
-  extends AcpAdapterOptions<GrokAcpRuntimeSettings> {
+export interface GrokAcpAdapterOptions extends AcpAdapterOptions<GrokAcpRuntimeSettings> {
   readonly runtimeFactory?: GrokAcpRuntimeFactory
+  readonly modelCacheDir?: string
+  readonly modelHomeDir?: string
 }
 
 export type GrokAcpRuntimeFactory = (
@@ -108,8 +110,7 @@ export const GROK_PROFILE: AcpProviderProfile<
     // runtime must only ever receive a verified absolute path.
     const binaryPath = options.runtimeFactory
       ? options.binaryPath?.trim() || "grok"
-      : ((await resolveGrokBinaryAsync(options.binaryPath))?.binaryPath ??
-        null)
+      : ((await resolveGrokBinaryAsync(options.binaryPath))?.binaryPath ?? null)
     if (!binaryPath) {
       throw new Error(
         "xAI Grok CLI not found. Install it via `irm https://x.ai/cli/install.ps1 | iex` — a `grok` command from another package on PATH is deliberately not used."
@@ -119,24 +120,24 @@ export const GROK_PROFILE: AcpProviderProfile<
   },
   runtimeProfile: GROK_RUNTIME_PROFILE,
   models: {
-    // The CLI keeps its own refreshed model list on disk. Preferring it over
-    // the compiled-in list is what stops the picker from offering models xAI
-    // has retired (Grok Build 0.1 / 4.3) while hiding the current ones, and it
-    // costs a file read rather than a process spawn.
-    fallback: () => {
-      const cached = readGrokModelCache()
-      return cached.length > 0 ? cached : defaultGrokModels()
-    },
+    // Restore only this login's last successful ACP snapshot. A CLI cache
+    // written after the current login can seed the first snapshot.
+    fallback: (options) => grokAccountModels(options),
+    cacheIdentity: (options) => grokModelAccountIdentity(options),
+    onLiveModels: (options, models) => saveGrokAccountModels(options, models),
     // Grok reports its inventory in the typed `models` field; only fall
     // back to the config-option scan for agents that use that instead.
     fromStarted: (started) => {
       const advertised = buildGrokModelsFromSessionModelState(
         started.sessionSetupResult?.models
       )
-      return advertised.length > 0
+      return Array.isArray(started.sessionSetupResult?.models?.availableModels)
         ? advertised
         : buildGrokDiscoveredModelsFromConfigOptions(started.configOptions)
     },
+    isEmptyAuthoritative: (started) =>
+      Array.isArray(started.sessionSetupResult?.models?.availableModels) &&
+      started.sessionSetupResult?.models?.availableModels?.length === 0,
     unconfiguredCheckedAt: "probe-start",
   },
   // Read-only enforcement happens here rather than in the session mode:

@@ -1,10 +1,8 @@
-import type { ProviderModel } from "@betterc0de/schema"
-
 // The ACP config-option heuristics (effort/context/fast/thinking matching,
 // discovered-model extraction, capability descriptors) are protocol-generic —
 // they operate purely on the `configOptions` payload of `session/new` — so we
 // import them from the Cursor support module instead of duplicating ~400
-// lines. Grok-specific pieces (spawn shape, curated fallback models) live
+// lines. Grok-specific pieces (spawn shape and model cache) live
 // here. If Cursor ever needs cursor-only behavior in those helpers, fork them
 // into this file at that point.
 export {
@@ -43,34 +41,4 @@ export function buildGrokAcpSpawnInput(
     cwd,
     ...(environment ? { env: environment } : {}),
   }
-}
-
-/**
- * Last-resort fallback, used only when the CLI is missing AND it has never
- * written its own `~/.grok/models_cache.json` (see `GrokModelCache`). That
- * cache and live `session/new` discovery both take precedence, so this list
- * is what a machine with no Grok install at all sees.
- *
- * Kept deliberately short: a stale entry here is worse than a missing one,
- * because it offers a model xAI has already retired.
- */
-export function defaultGrokModels(): ReadonlyArray<ProviderModel> {
-  return [
-    {
-      slug: "grok-4.6",
-      name: "Grok 4.6",
-      shortName: "Grok 4.6",
-      context: "500K",
-      tier: "Flagship",
-      capabilities: { optionDescriptors: [] },
-    },
-    {
-      slug: "grok-4.5",
-      name: "Grok 4.5",
-      shortName: "Grok 4.5",
-      context: "500K",
-      tier: "Flagship",
-      capabilities: { optionDescriptors: [] },
-    },
-  ]
 }

@@ -1,4 +1,4 @@
-import type { ProviderDefinition } from "./types";
+import type { ProviderDefinition } from "./types"
 
 /**
  * Codex CLI — OpenAI's local `codex` binary. Uses the user's existing
@@ -13,11 +13,12 @@ import type { ProviderDefinition } from "./types";
 export const codexCli: ProviderDefinition = {
   id: "codex",
   name: "Codex CLI",
-  description: "OpenAI's local `codex` binary — uses your CLI login (ChatGPT or API key).",
+  description:
+    "OpenAI's local `codex` binary — uses your CLI login (ChatGPT or API key).",
   // Used only when the local app-server cannot provide `model/list` metadata.
   // A successful live probe remains authoritative.
   // Only 5.5+ — older models removed 2026-07-21 per user request.
-  defaultModels: ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"],
+  defaultModels: [],
   enabledByDefault: true,
   docsUrl: "https://github.com/openai/codex",
   authMethods: [
@@ -30,4 +31,4 @@ export const codexCli: ProviderDefinition = {
       loginCommand: "codex login",
     },
   ],
-};
+}

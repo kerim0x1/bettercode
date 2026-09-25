@@ -1,4 +1,5 @@
 import OpenAI from "openai"
+import { ApiModelCatalog } from "./apiModelCatalog"
 import { randomUUID } from "node:crypto"
 import type {
   ChatCompletionChunk,
@@ -99,27 +100,30 @@ function buildOpenAiUserContent(
 /**
  * Maps the renderer's abstract reasoning knob to the OpenAI-compatible
  * `reasoning_effort` param. xAI's Grok ladder includes "xhigh" (grok-4.6);
- * other endpoints top out at "high", so anything above steps down there.
+ * OpenAI and xAI accept extended levels on models that advertise them.
  * `null` means the user chose no reasoning — the param is omitted entirely.
  */
 function mapCompatReasoningEffort(
   effort: string | null | undefined,
   providerKind: string
-): "minimal" | "low" | "medium" | "high" | "xhigh" | null {
+): "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null {
   if (!effort) return null
   const key = effort.toLowerCase().replace(/[\s_-]+/g, "")
-  if (key === "off" || key === "none" || key === "noreasoning") return null
+  if (key === "none" || key === "noreasoning")
+    return providerKind === "openai" ? "none" : null
+  if (key === "off") return null
   if (key === "minimal") return "minimal"
   if (key === "low" || key === "medium" || key === "high") return key
-  if (
-    key === "xhigh" ||
-    key === "extrahigh" ||
-    key === "max" ||
-    key === "ultra" ||
-    key === "ultrathink"
-  ) {
-    return providerKind === "grok" ? "xhigh" : "high"
-  }
+  if (key === "xhigh" || key === "extrahigh")
+    return providerKind === "openai" || providerKind === "grok"
+      ? "xhigh"
+      : "high"
+  if (key === "max" || key === "ultra" || key === "ultrathink")
+    return providerKind === "openai"
+      ? "max"
+      : providerKind === "grok"
+        ? "xhigh"
+        : "high"
   return null
 }
 
@@ -169,6 +173,8 @@ function isToolsUnsupportedError(err: unknown): boolean {
 
 export class OpenAiCompatAdapter extends BaseProviderAdapter {
   private client: OpenAI | null = null
+  private apiKey: string | null = null
+  private forceCatalogRefresh = false
   private readonly abortControllers = new Map<string, AbortController>()
   // Tracks the baseURL currently bound to `this.client`. For LM Studio this
   // can differ from `config.baseUrl` after the per-request probe finds the
@@ -178,7 +184,8 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
   constructor(
     private readonly config: OpenAiCompatConfig,
     apiKey: string | null,
-    private readonly agentTools: DirectMcpAdapterOptions = {}
+    private readonly agentTools: DirectMcpAdapterOptions = {},
+    private readonly modelCatalog = new ApiModelCatalog()
   ) {
     super()
     this.setApiKey(apiKey)
@@ -198,6 +205,8 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
    * still produces a working client pointed at the local server.
    */
   setApiKey(apiKey: string | null): void {
+    if (this.apiKey !== apiKey) this.forceCatalogRefresh = true
+    this.apiKey = apiKey
     if (apiKey || this.config.providerKind === "lmstudio") {
       this.client = new OpenAI({
         apiKey: apiKey ?? "lm-studio",
@@ -218,6 +227,13 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
   }
   availableModels(): ModelDefinition[] {
     return this.config.defaultModels
+  }
+  async discoverModels(force = false): Promise<ModelDefinition[]> {
+    const kind = this.config.providerKind
+    if (kind !== "openai" && kind !== "grok") return this.availableModels()
+    const refresh = force || this.forceCatalogRefresh
+    this.forceCatalogRefresh = false
+    return this.modelCatalog.list(kind, this.apiKey, refresh)
   }
   isConfigured(): boolean {
     return this.client !== null
@@ -352,20 +368,22 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
               "Model rejected reasoning_effort; retrying without it"
             )
             reasoningEnabled = false
-            stream = await client.chat.completions.create(
-              requestParams(),
-              { signal: controller.signal }
-            )
-          } else if (turn === 0 && toolsEnabled && isToolsUnsupportedError(err)) {
+            stream = await client.chat.completions.create(requestParams(), {
+              signal: controller.signal,
+            })
+          } else if (
+            turn === 0 &&
+            toolsEnabled &&
+            isToolsUnsupportedError(err)
+          ) {
             logger.warn(
               { provider: this.config.providerKind },
               "Model rejected the tools param; retrying as plain chat"
             )
             toolsEnabled = false
-            stream = await client.chat.completions.create(
-              requestParams(),
-              { signal: controller.signal }
-            )
+            stream = await client.chat.completions.create(requestParams(), {
+              signal: controller.signal,
+            })
           } else {
             throw err
           }

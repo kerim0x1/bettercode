@@ -1,5 +1,6 @@
 import { invoke } from "./runtime"
 import type {
+  ModelCapabilities,
   ProviderInstanceSnapshot,
   ProviderModel,
 } from "@betterc0de/schema"
@@ -26,7 +27,23 @@ export interface ProviderStatus {
 
 export const listProviders = () => invoke<string[]>("/providers")
 
-export const listModels = () => invoke<unknown[]>("/models")
+export interface ApiModel {
+  slug: string
+  name: string
+  provider: string
+  context?: string
+  tier?: string
+  isCustom?: boolean
+  capabilities?: ModelCapabilities | null
+}
+
+export const listModels = () => invoke<ApiModel[]>("/models")
+
+export const refreshModels = () =>
+  invoke<ApiModel[]>("/providers/refresh-models", {
+    method: "POST",
+    body: {},
+  })
 
 export const getProviderStatus = () =>
   invoke<ProviderStatus[]>("/providers/status")

@@ -1,11 +1,11 @@
-import type { ProviderDefinition } from "./types";
+import type { ProviderDefinition } from "./types"
 
 export const anthropic: ProviderDefinition = {
   id: "anthropic",
   name: "Claude API",
   description: "Anthropic's Claude family — Fable, Opus, Sonnet, Haiku.",
-  // Bare names resolve to the newest release via BARE_NAME_TO_LATEST.
-  defaultModels: ["fable", "opus", "sonnet", "haiku"],
+  // The configured account's model API provides the selectable inventory.
+  defaultModels: [],
   enabledByDefault: true,
   docsUrl: "https://console.anthropic.com/settings/keys",
   authMethods: [
@@ -19,4 +19,4 @@ export const anthropic: ProviderDefinition = {
       cliConfig: [{ cli: "claude", field: "api_key" }],
     },
   ],
-};
+}

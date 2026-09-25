@@ -35,7 +35,7 @@ describe("normalizeFavoriteKeysForProviders", () => {
     ).toEqual(["codex::gpt-5.5", "claude::claude-opus-4-7"])
   })
 
-  it("dedupes, drops missing models, and preserves unknown provider keys", () => {
+  it("dedupes and preserves temporarily missing models and providers", () => {
     const index = buildFavoriteProviderIndex([provider("codex", ["gpt-5.5"])])
 
     expect(
@@ -48,7 +48,20 @@ describe("normalizeFavoriteKeysForProviders", () => {
         ],
         index
       )
-    ).toEqual(["codex::gpt-5.5", "disabled-provider::future-model"])
+    ).toEqual([
+      "codex::gpt-5.5",
+      "codex::missing",
+      "disabled-provider::future-model",
+    ])
+  })
+
+  it("moves old Claude API favorites to its visible provider entry", () => {
+    const index = buildFavoriteProviderIndex([
+      provider("anthropic-api", ["claude-opus-5-5"]),
+    ])
+    expect(
+      normalizeFavoriteKeysForProviders(["anthropic::claude-opus-5-5"], index)
+    ).toEqual(["anthropic-api::claude-opus-5-5"])
   })
 })
 
@@ -57,8 +70,8 @@ describe("favoriteProvidersSignature", () => {
     expect(favoriteProvidersSignature([provider("codex", ["gpt-5.5"])])).toBe(
       favoriteProvidersSignature([provider("codex", ["gpt-5.5"])])
     )
-    expect(favoriteProvidersSignature([provider("codex", ["gpt-5.5"])])).not.toBe(
-      favoriteProvidersSignature([provider("codex", ["gpt-5.4"])])
-    )
+    expect(
+      favoriteProvidersSignature([provider("codex", ["gpt-5.5"])])
+    ).not.toBe(favoriteProvidersSignature([provider("codex", ["gpt-5.4"])]))
   })
 })

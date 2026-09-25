@@ -115,6 +115,7 @@ const PROVIDER_VISIBILITY_DEFAULTS_VERSION = 12
 export const DEFAULT_HIDDEN_PROVIDERS = ["or-qwen", "or-deepseek"] as const
 
 const PROVIDER_ACTIVATION_ALIASES: Record<string, readonly string[]> = {
+  "anthropic-api": ["anthropic-api", "anthropic", "claude-api"],
   "or-qwen": ["or-qwen", "qwen"],
   qwen: ["or-qwen", "qwen"],
   "or-deepseek": ["or-deepseek", "deepseek"],

@@ -103,6 +103,9 @@ export function normalizeThinkingMode(
 
   if (isCodexFamily) {
     if (providerKind === "codex") return thinkingMode
+    // The model descriptor decides whether direct OpenAI accepts max.
+    if (providerKind === "openai" && normalizedEffort === "max")
+      return thinkingMode
     if (
       normalizedEffort === "max" ||
       normalizedEffort === "ultra" ||

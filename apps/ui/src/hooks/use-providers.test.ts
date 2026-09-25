@@ -23,7 +23,7 @@ function provider(
 }
 
 describe("provider visibility", () => {
-  it.each(["anthropic", "anthropic-api", "claude-api", "claude-terminal"])(
+  it.each(["claude-terminal"])(
     "does not restore the retired %s picker entry through plugins or settings",
     (id) => {
       expect(builtinProviders.some((entry) => entry.id === id)).toBe(false)
@@ -42,6 +42,15 @@ describe("provider visibility", () => {
       ).toBe(true)
     }
   )
+
+  it("shows Claude API as a separate provider", () => {
+    expect(builtinProviders.some((entry) => entry.id === "anthropic-api")).toBe(
+      true
+    )
+    expect(
+      isProviderVisible(provider({ id: "anthropic-api" }), new Set())
+    ).toBe(true)
+  })
 
   it("hides Qwen and DeepSeek provider families from the model dropdown by default", () => {
     const hidden = new Set(["or-qwen", "or-deepseek"])
@@ -304,26 +313,25 @@ describe("runtime provider model metadata", () => {
       )
     ).toBe(false)
   })
-  it("keeps the Codex picker usable when live model metadata is unavailable", () => {
+  it("starts CLI providers without stale bundled model IDs", () => {
     const codex = builtinProviders.find((provider) => provider.id === "codex")
-
-    expect(codex?.models.map((model) => model.id)).toEqual([
-      "gpt-6-astra",
-      "gpt-5.6-sol",
-      "gpt-5.6-terra",
-      "gpt-5.6-luna",
-      "gpt-5.5",
-    ])
+    expect(codex?.models).toEqual([])
+    expect(
+      builtinProviders.find((provider) => provider.id === "claude")?.models
+    ).toEqual([])
+    expect(
+      builtinProviders.find((provider) => provider.id === "grok-cli")?.models
+    ).toEqual([])
   })
 
-  it("keeps Astra first without a live entry and enriches it when metadata arrives", () => {
+  it("offers only live models and keeps their capabilities", () => {
     const fallback = builtinProviders.find(
       (provider) => provider.id === "codex"
     )!.models
     const available = mergeRuntimeModelMetadata(fallback, [
       { id: "gpt-5.6-sol", name: "Sol", context: "runtime", tier: "Runtime" },
     ])
-    expect(available[0].id).toBe("gpt-6-astra")
+    expect(available.map((model) => model.id)).toEqual(["gpt-5.6-sol"])
     const capabilities = {
       optionDescriptors: [
         {

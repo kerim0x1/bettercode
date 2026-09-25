@@ -7,8 +7,8 @@ describe("normalizeThinkingMode", () => {
       normalizeThinkingMode(
         { id: "claude", providerKind: "claude" },
         "claude-opus-4-7",
-        null,
-      ),
+        null
+      )
     ).toBeNull()
   })
 
@@ -18,8 +18,8 @@ describe("normalizeThinkingMode", () => {
         normalizeThinkingMode(
           { id: "lmstudio", providerKind: "lmstudio" },
           "qwen-coder",
-          "Ultra Think",
-        ),
+          "Ultra Think"
+        )
       ).toBeNull()
     })
   })
@@ -33,33 +33,42 @@ describe("normalizeThinkingMode", () => {
     it.each([
       ["claude (CLI builtin)", { id: "claude", providerKind: "claude" }],
       ["anthropic (Claude API builtin)", { id: "anthropic" }],
-      ["anthropic_cli (backend ClaudeAgent kind)", { id: "claude", providerKind: "anthropic_cli" }],
+      [
+        "anthropic_cli (backend ClaudeAgent kind)",
+        { id: "claude", providerKind: "anthropic_cli" },
+      ],
     ])("%s preserves Ultra Think", (_label, provider) => {
       expect(
-        normalizeThinkingMode(provider, "claude-opus-4-7", "Ultra Think"),
+        normalizeThinkingMode(provider, "claude-opus-4-7", "Ultra Think")
       ).toBe("Ultra Think")
     })
 
     it.each([
       ["claude (CLI builtin)", { id: "claude", providerKind: "claude" }],
       ["anthropic (Claude API builtin)", { id: "anthropic" }],
-      ["anthropic_cli (backend ClaudeAgent kind)", { id: "claude", providerKind: "anthropic_cli" }],
+      [
+        "anthropic_cli (backend ClaudeAgent kind)",
+        { id: "claude", providerKind: "anthropic_cli" },
+      ],
     ])("%s preserves xHigh", (_label, provider) => {
-      expect(
-        normalizeThinkingMode(provider, "claude-opus-4-7", "xHigh"),
-      ).toBe("xHigh")
+      expect(normalizeThinkingMode(provider, "claude-opus-4-7", "xHigh")).toBe(
+        "xHigh"
+      )
     })
 
     it.each([
       ["claude (CLI builtin)", { id: "claude", providerKind: "claude" }],
       ["anthropic (Claude API builtin)", { id: "anthropic" }],
-      ["anthropic_cli (backend ClaudeAgent kind)", { id: "claude", providerKind: "anthropic_cli" }],
+      [
+        "anthropic_cli (backend ClaudeAgent kind)",
+        { id: "claude", providerKind: "anthropic_cli" },
+      ],
     ])("%s preserves descriptor-native max efforts", (_label, provider) => {
+      expect(normalizeThinkingMode(provider, "claude-opus-4-7", "max")).toBe(
+        "max"
+      )
       expect(
-        normalizeThinkingMode(provider, "claude-opus-4-7", "max"),
-      ).toBe("max")
-      expect(
-        normalizeThinkingMode(provider, "claude-opus-4-7", "ultrathink"),
+        normalizeThinkingMode(provider, "claude-opus-4-7", "ultrathink")
       ).toBe("ultrathink")
     })
   })
@@ -70,8 +79,8 @@ describe("normalizeThinkingMode", () => {
         normalizeThinkingMode(
           { id: "openai-api", providerKind: "openai" },
           "gpt-5.4",
-          "Ultra Think",
-        ),
+          "Ultra Think"
+        )
       ).toBe("Ultra Think")
     })
     it("codex CLI passes Ultra Think (matched by model id, not providerKind)", () => {
@@ -79,8 +88,8 @@ describe("normalizeThinkingMode", () => {
         normalizeThinkingMode(
           { id: "codex", providerKind: "codex" },
           "gpt-5.3-codex",
-          "Ultra Think",
-        ),
+          "Ultra Think"
+        )
       ).toBe("Ultra Think")
     })
     it("preserves Codex CLI values but caps direct OpenAI fallbacks", () => {
@@ -88,16 +97,25 @@ describe("normalizeThinkingMode", () => {
         normalizeThinkingMode(
           { id: "codex", providerKind: "codex" },
           "gpt-5.5",
-          "max",
-        ),
+          "max"
+        )
       ).toBe("max")
       expect(
         normalizeThinkingMode(
           { id: "openai-api", providerKind: "openai" },
           "gpt-5.5",
-          "ultrathink",
-        ),
+          "ultrathink"
+        )
       ).toBe("xHigh")
+    })
+    it("preserves a direct OpenAI max value for model capability validation", () => {
+      expect(
+        normalizeThinkingMode(
+          { id: "openai-api", providerKind: "openai" },
+          "gpt-5.6-sol",
+          "max"
+        )
+      ).toBe("max")
     })
   })
 
@@ -109,10 +127,10 @@ describe("normalizeThinkingMode", () => {
           normalizeThinkingMode(
             { id: kind, providerKind: kind },
             "some-model",
-            "Ultra Think",
-          ),
+            "Ultra Think"
+          )
         ).toBe("High")
-      },
+      }
     )
     it.each(["openrouter", "grok", "google", "deepseek"])(
       "%s downgrades xHigh to High",
@@ -121,10 +139,10 @@ describe("normalizeThinkingMode", () => {
           normalizeThinkingMode(
             { id: kind, providerKind: kind },
             "some-model",
-            "xHigh",
-          ),
+            "xHigh"
+          )
         ).toBe("High")
-      },
+      }
     )
     it.each(["openrouter", "grok", "google", "deepseek"])(
       "%s preserves Low / Medium / High",
@@ -133,10 +151,10 @@ describe("normalizeThinkingMode", () => {
           normalizeThinkingMode(
             { id: kind, providerKind: kind },
             "some-model",
-            "High",
-          ),
+            "High"
+          )
         ).toBe("High")
-      },
+      }
     )
     it.each(["openrouter", "grok", "google", "deepseek"])(
       "%s downgrades Claude-native max efforts to High",
@@ -145,17 +163,17 @@ describe("normalizeThinkingMode", () => {
           normalizeThinkingMode(
             { id: kind, providerKind: kind },
             "some-model",
-            "ultrathink",
-          ),
+            "ultrathink"
+          )
         ).toBe("High")
         expect(
           normalizeThinkingMode(
             { id: kind, providerKind: kind },
             "some-model",
-            "max",
-          ),
+            "max"
+          )
         ).toBe("High")
-      },
+      }
     )
   })
 
@@ -165,8 +183,8 @@ describe("normalizeThinkingMode", () => {
         normalizeThinkingMode(
           { id: "or-anthropic", providerKind: "or-anthropic" },
           "claude-opus-4-7",
-          "Ultra Think",
-        ),
+          "Ultra Think"
+        )
       ).toBe("High")
     })
   })
@@ -177,26 +195,76 @@ describe("normalizeThinkingMode", () => {
 
   describe("No Reasoning (effort: none) — gpt-5.5 exclusive per OpenAI docs", () => {
     it("passes through on gpt-5.5 (Codex CLI / OpenAI)", () => {
-      expect(normalizeThinkingMode({ id: "codex", providerKind: "codex" }, "gpt-5.5", "No Reasoning")).toBe("No Reasoning")
-      expect(normalizeThinkingMode({ id: "openai-api", providerKind: "openai" }, "gpt-5.5", "No Reasoning")).toBe("No Reasoning")
+      expect(
+        normalizeThinkingMode(
+          { id: "codex", providerKind: "codex" },
+          "gpt-5.5",
+          "No Reasoning"
+        )
+      ).toBe("No Reasoning")
+      expect(
+        normalizeThinkingMode(
+          { id: "openai-api", providerKind: "openai" },
+          "gpt-5.5",
+          "No Reasoning"
+        )
+      ).toBe("No Reasoning")
     })
 
     it("preserves Codex values for later live-capability validation", () => {
-      expect(normalizeThinkingMode({ id: "codex", providerKind: "codex" }, "gpt-5.4", "No Reasoning")).toBe("No Reasoning")
-      expect(normalizeThinkingMode({ id: "codex", providerKind: "codex" }, "gpt-5.3-codex", "No Reasoning")).toBe("No Reasoning")
-      expect(normalizeThinkingMode({ id: "codex", providerKind: "codex" }, "gpt-5.1-codex-mini", "No Reasoning")).toBe("No Reasoning")
+      expect(
+        normalizeThinkingMode(
+          { id: "codex", providerKind: "codex" },
+          "gpt-5.4",
+          "No Reasoning"
+        )
+      ).toBe("No Reasoning")
+      expect(
+        normalizeThinkingMode(
+          { id: "codex", providerKind: "codex" },
+          "gpt-5.3-codex",
+          "No Reasoning"
+        )
+      ).toBe("No Reasoning")
+      expect(
+        normalizeThinkingMode(
+          { id: "codex", providerKind: "codex" },
+          "gpt-5.1-codex-mini",
+          "No Reasoning"
+        )
+      ).toBe("No Reasoning")
     })
 
     it("downgrades to 'Low' on non-Codex providers regardless of model", () => {
-      expect(normalizeThinkingMode({ id: "claude", providerKind: "claude" }, "claude-opus-4-7", "No Reasoning")).toBe("Low")
-      expect(normalizeThinkingMode({ id: "grok", providerKind: "grok" }, "grok-3-beta", "No Reasoning")).toBe("Low")
+      expect(
+        normalizeThinkingMode(
+          { id: "claude", providerKind: "claude" },
+          "claude-opus-4-7",
+          "No Reasoning"
+        )
+      ).toBe("Low")
+      expect(
+        normalizeThinkingMode(
+          { id: "grok", providerKind: "grok" },
+          "grok-3-beta",
+          "No Reasoning"
+        )
+      ).toBe("Low")
     })
   })
 
   describe("xHigh fix — passes through to wire (was silently downgraded)", () => {
     it("Codex/GPT/Claude preserve xHigh", () => {
-      expect(normalizeThinkingMode({ id: "codex", providerKind: "codex" }, "gpt-5.5", "xHigh")).toBe("xHigh")
-      expect(normalizeThinkingMode({ id: "anthropic" }, "claude-opus-4-7", "xHigh")).toBe("xHigh")
+      expect(
+        normalizeThinkingMode(
+          { id: "codex", providerKind: "codex" },
+          "gpt-5.5",
+          "xHigh"
+        )
+      ).toBe("xHigh")
+      expect(
+        normalizeThinkingMode({ id: "anthropic" }, "claude-opus-4-7", "xHigh")
+      ).toBe("xHigh")
     })
   })
 
@@ -206,7 +274,9 @@ describe("normalizeThinkingMode", () => {
     it("preserves values and leaves support decisions to model metadata", () => {
       expect(normalizeThinkingMode(codex, "any-model", "max")).toBe("max")
       expect(normalizeThinkingMode(codex, "any-model", "ultra")).toBe("ultra")
-      expect(normalizeThinkingMode(codex, "any-model", "Ultra Think")).toBe("Ultra Think")
+      expect(normalizeThinkingMode(codex, "any-model", "Ultra Think")).toBe(
+        "Ultra Think"
+      )
     })
   })
 })

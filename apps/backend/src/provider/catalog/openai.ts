@@ -1,4 +1,4 @@
-import type { ProviderDefinition } from "./types";
+import type { ProviderDefinition } from "./types"
 
 /**
  * OpenAI / ChatGPT.  Two auth surfaces:
@@ -12,7 +12,7 @@ export const openai: ProviderDefinition = {
   id: "openai",
   name: "OpenAI / ChatGPT",
   description: "GPT-5 family via API key OR ChatGPT Pro/Plus OAuth.",
-  defaultModels: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
+  defaultModels: [],
   enabledByDefault: true,
   docsUrl: "https://platform.openai.com/api-keys",
   authMethods: [
@@ -28,4 +28,4 @@ export const openai: ProviderDefinition = {
       handler: "codex-oauth",
     },
   ],
-};
+}

@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events"
 import { randomUUID } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
+import { CliModelSnapshot, cliAccountIdentity } from "../CliModelSnapshot"
 import {
   type ApprovalRequestId,
   type ProviderAdapterShape,
@@ -51,6 +52,7 @@ import { isCodexCliAuthenticatedAsync } from "../../../cli/detect"
 import type { EventNdjsonLogger } from "../EventNdjsonLogger"
 
 export interface CodexAdapterOptions {
+  readonly modelCacheDir?: string
   readonly resolveOrchestratorServer?: import("../../../services/orchestrator/mcp").OrchestratorServerResolver
   readonly resolveCodeSearchServer?: import("../../../services/code-search/contracts").CodeSearchServerResolver
   readonly providerInstanceId: string
@@ -158,60 +160,8 @@ function isCollaborationModeObject(
 /** Reserved selector value; never sent to the Codex app-server. */
 export const CODEX_CLI_DEFAULT_MODEL_ID = "__codex_cli_default__"
 
-const DEFAULT_CODEX_MODELS: ReadonlyArray<ProviderModel> = [
-  // Static entries keep model selection usable while the CLI is unavailable
-  // or its metadata probe is restarting. Capabilities intentionally remain
-  // null; only a successful live `model/list` response may define them.
-  // Only 5.5+ is listed — everything older was removed 2026-07-21 per user
-  // request; older slugs still work when supplied as custom models or by a
-  // live `model/list` response. The reserved CODEX_CLI_DEFAULT_MODEL_ID
-  // selector is no longer offered either — `nativeCodexModelId` still
-  // translates persisted selections of it to "no explicit model".
-  // Keep Astra available at the top during metadata outages.
-  {
-    slug: "gpt-6-astra",
-    name: "GPT-6-Astra",
-    context: "runtime",
-    tier: "Flagship",
-    isCustom: false,
-    capabilities: null,
-  },
-  {
-    slug: "gpt-5.6-sol",
-    name: "GPT 5.6 Sol",
-    context: "1M",
-    tier: "Flagship",
-    isCustom: false,
-    capabilities: null,
-  },
-  {
-    slug: "gpt-5.6-terra",
-    name: "GPT 5.6 Terra",
-    context: "1M",
-    tier: "Flagship",
-    isCustom: false,
-    capabilities: null,
-  },
-  {
-    slug: "gpt-5.6-luna",
-    name: "GPT 5.6 Luna",
-    context: "1M",
-    tier: "Flagship",
-    isCustom: false,
-    capabilities: null,
-  },
-  {
-    slug: "gpt-5.5",
-    name: "GPT 5.5",
-    context: "400K",
-    tier: "Flagship",
-    isCustom: false,
-    capabilities: null,
-  },
-]
-
 const PROVIDER_METADATA_CACHE_TTL_MS = 30_000
-const PROVIDER_MODELS_CACHE_TTL_MS = 5 * 60_000
+const PROVIDER_MODELS_CACHE_TTL_MS = 15 * 60_000
 const MAX_CODEX_MODEL_PAGES = 100
 
 export function nativeCodexModelId(
@@ -367,6 +317,8 @@ export class CodexAdapter implements ProviderAdapterShape {
   private startupInProgress = false
   private readonly bus = new EventEmitter()
   private lastKnownModels: ReadonlyArray<ProviderModel> | null = null
+  private lastKnownAccount: string | null = null
+  private readonly modelSnapshot: CliModelSnapshot
   private modelsCache: {
     readonly checkedAt: number
     readonly models: ReadonlyArray<ProviderModel>
@@ -392,7 +344,9 @@ export class CodexAdapter implements ProviderAdapterShape {
     Promise<ReadonlyArray<ProviderSkill>>
   >()
 
-  constructor(private readonly options: CodexAdapterOptions) {}
+  constructor(private readonly options: CodexAdapterOptions) {
+    this.modelSnapshot = new CliModelSnapshot(options.modelCacheDir)
+  }
 
   isConfigured(): boolean {
     // The bounded async status probe verifies executable and authentication.
@@ -505,6 +459,17 @@ export class CodexAdapter implements ProviderAdapterShape {
   async availableModels(
     input: { readonly force?: boolean } = {}
   ): Promise<ReadonlyArray<ProviderModel>> {
+    const account = this.modelAccountIdentity()
+    if (this.lastKnownAccount !== account) {
+      this.lastKnownAccount = account
+      this.lastKnownModels = this.modelSnapshot.read(
+        "codex",
+        this.options.providerInstanceId,
+        account
+      )
+      this.modelsCache = null
+      this.modelsInFlight = null
+    }
     const now = Date.now()
     if (
       !input.force &&
@@ -525,8 +490,9 @@ export class CodexAdapter implements ProviderAdapterShape {
     ReadonlyArray<ProviderModel>
   > {
     const now = Date.now()
+    const accountAtStart = this.modelAccountIdentity()
     const fallbackModels = mergeCustomModels(
-      this.lastKnownModels ?? DEFAULT_CODEX_MODELS,
+      this.lastKnownModels ?? [],
       this.options.customModels ?? []
     )
     if (!this.isConfigured()) {
@@ -535,15 +501,25 @@ export class CodexAdapter implements ProviderAdapterShape {
     }
     try {
       const liveModels = await this.fetchModels()
+      if (this.modelAccountIdentity() !== accountAtStart)
+        return this.modelsForCurrentAccount()
       // Refresh invalidates the TTL cache, not the last successful catalog.
       // A failed probe must not discard models or their reasoning options.
-      if (liveModels.length > 0) this.lastKnownModels = liveModels
-      const models =
-        liveModels.length > 0
-          ? mergeCustomModels(liveModels, this.options.customModels ?? [])
-          : fallbackModels
+      this.lastKnownModels = liveModels
+      this.modelSnapshot.write(
+        "codex",
+        this.options.providerInstanceId,
+        this.modelAccountIdentity(),
+        liveModels
+      )
+      const models = mergeCustomModels(
+        liveModels,
+        this.options.customModels ?? []
+      )
       this.modelsCache = { checkedAt: Date.now(), models }
     } catch {
+      if (this.modelAccountIdentity() !== accountAtStart)
+        return this.modelsForCurrentAccount()
       this.modelsCache = { checkedAt: Date.now(), models: fallbackModels }
     }
     return this.modelsCache.models
@@ -556,6 +532,26 @@ export class CodexAdapter implements ProviderAdapterShape {
       return
     }
     this.skillsCache.delete(normalizeCwd(input.cwd))
+  }
+
+  private modelAccountIdentity(): string | null {
+    const layout = this.resolveHomeLayout()
+    return cliAccountIdentity(
+      "codex",
+      layout.authHome ?? layout.sharedHome,
+      this.statusCache?.status.auth.email
+    )
+  }
+
+  private modelsForCurrentAccount(): ReadonlyArray<ProviderModel> {
+    return mergeCustomModels(
+      this.modelSnapshot.read(
+        "codex",
+        this.options.providerInstanceId,
+        this.modelAccountIdentity()
+      ) ?? [],
+      this.options.customModels ?? []
+    )
   }
 
   async availableSkills(

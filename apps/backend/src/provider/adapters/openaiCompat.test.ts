@@ -26,7 +26,7 @@ vi.mock("../agent-loop/tool-executor", () => ({
   executeTool: vi.fn(async () => ({ output: "FILE CONTENTS" })),
 }))
 vi.mock("../../constants", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../../constants")>(),
+  ...(await importOriginal<typeof import("../../constants")>()),
   probeLmStudioBaseUrl: vi.fn(async () => null),
 }))
 
@@ -86,27 +86,57 @@ function baseInput(
 beforeEach(() => vi.clearAllMocks())
 
 describe("OpenAiCompatAdapter agent loop", () => {
-  it.each(["plan", "ask"])("blocks an unadvertised mutation in %s mode even with bypass", async (chatMode) => {
-    createMock
-      .mockReturnValueOnce(stream(toolCallTurn("write", "Write", '{"path":"a","content":"x"}')))
-      .mockReturnValueOnce(stream(textTurn("done")))
-    const adapter = new OpenAiCompatAdapter(
-      { providerKind: "openai", displayName: "OpenAI", defaultModels: [] },
-      "sk-test"
-    )
-    const events: ProviderRuntimeEvent[] = []
-    adapter.subscribeEvents().on("event", (event: ProviderRuntimeEvent) => events.push(event))
+  it.each(["none", "xhigh", "max"])(
+    "passes OpenAI %s reasoning through to chat completions",
+    async (effort) => {
+      createMock.mockReturnValueOnce(stream(textTurn("done")))
+      const adapter = new OpenAiCompatAdapter(
+        { providerKind: "openai", displayName: "OpenAI", defaultModels: [] },
+        "sk-test"
+      )
+      await adapter.sendMessage(
+        baseInput({ model_id: "gpt-5.6-sol", reasoning_effort: effort })
+      )
+      expect(createMock.mock.calls[0][0]).toMatchObject({
+        reasoning_effort: effort,
+      })
+    }
+  )
+  it.each(["plan", "ask"])(
+    "blocks an unadvertised mutation in %s mode even with bypass",
+    async (chatMode) => {
+      createMock
+        .mockReturnValueOnce(
+          stream(toolCallTurn("write", "Write", '{"path":"a","content":"x"}'))
+        )
+        .mockReturnValueOnce(stream(textTurn("done")))
+      const adapter = new OpenAiCompatAdapter(
+        { providerKind: "openai", displayName: "OpenAI", defaultModels: [] },
+        "sk-test"
+      )
+      const events: ProviderRuntimeEvent[] = []
+      adapter
+        .subscribeEvents()
+        .on("event", (event: ProviderRuntimeEvent) => events.push(event))
 
-    await adapter.sendMessage(baseInput({ chat_mode: chatMode, permission_level: "bypass" }))
-    expect(executeTool).not.toHaveBeenCalled()
-    expect(events.find((event) => event.event_type === "tool.denied")?.payload).toMatchObject({ toolName: "Write" })
-  })
+      await adapter.sendMessage(
+        baseInput({ chat_mode: chatMode, permission_level: "bypass" })
+      )
+      expect(executeTool).not.toHaveBeenCalled()
+      expect(
+        events.find((event) => event.event_type === "tool.denied")?.payload
+      ).toMatchObject({ toolName: "Write" })
+    }
+  )
 
   it("does not start a turn after interruption during the LM Studio probe", async () => {
     let finishProbe: (url: string | null) => void = () => undefined
-    vi.mocked(probeLmStudioBaseUrl).mockImplementationOnce(() => new Promise((resolve) => {
-      finishProbe = resolve
-    }))
+    vi.mocked(probeLmStudioBaseUrl).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishProbe = resolve
+        })
+    )
     const adapter = new OpenAiCompatAdapter(
       { providerKind: "lmstudio", displayName: "LM Studio", defaultModels: [] },
       null
@@ -137,7 +167,9 @@ describe("OpenAiCompatAdapter agent loop", () => {
     await expect(adapter.sendMessage(baseInput())).resolves.toBeUndefined()
     expect(createMock).toHaveBeenCalledTimes(2)
     expect(adapter.isConfigured()).toBe(false)
-    await expect(adapter.sendMessage(baseInput())).rejects.toThrow("not configured")
+    await expect(adapter.sendMessage(baseInput())).rejects.toThrow(
+      "not configured"
+    )
   })
 
   it("executes a tool then loops back to a final answer", async () => {
@@ -398,14 +430,16 @@ describe("OpenAiCompatAdapter agent loop", () => {
       content: [{ type: "text", text: "MCP RESULT" }],
     }))
     createMock
-      .mockImplementationOnce((request: {
-        tools?: Array<{ function: { name: string } }>
-      }) => {
-        const mcpName = request.tools
-          ?.map((tool) => tool.function.name)
-          .find((name) => name.startsWith("mcp__"))
-        return stream(toolCallTurn("mcp_call", mcpName ?? "", '{"query":"x"}'))
-      })
+      .mockImplementationOnce(
+        (request: { tools?: Array<{ function: { name: string } }> }) => {
+          const mcpName = request.tools
+            ?.map((tool) => tool.function.name)
+            .find((name) => name.startsWith("mcp__"))
+          return stream(
+            toolCallTurn("mcp_call", mcpName ?? "", '{"query":"x"}')
+          )
+        }
+      )
       .mockReturnValueOnce(stream(textTurn("done")))
 
     const adapter = new OpenAiCompatAdapter(

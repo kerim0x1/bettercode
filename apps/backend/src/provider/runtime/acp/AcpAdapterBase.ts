@@ -75,7 +75,7 @@ import {
  */
 
 const ACP_RESUME_VERSION = 1 as const
-const METADATA_CACHE_TTL_MS = 5 * 60 * 1000
+const METADATA_CACHE_TTL_MS = 15 * 60 * 1000
 const ACP_PLAN_MODE_ALIASES = ["plan", "architect"]
 const ACP_IMPLEMENT_MODE_ALIASES = [
   "code",
@@ -207,8 +207,16 @@ export interface AcpProviderProfile<
   readonly models: {
     /** Base list used when the probe is skipped or fails (before custom-model merge). */
     readonly fallback: (options: TOptions) => ReadonlyArray<ProviderModel>
-    /** Live inventory read off a started probe session; empty = use fallback. */
+    /** Live inventory read off a started probe session; empty usually uses fallback. */
     readonly fromStarted: (started: AcpStarted) => ReadonlyArray<ProviderModel>
+    /** Some agents explicitly advertise an empty model list. */
+    readonly isEmptyAuthoritative?: (started: AcpStarted) => boolean
+    /** Namespace a cached list by the account selected in the CLI. */
+    readonly cacheIdentity?: (options: TOptions) => string | null
+    readonly onLiveModels?: (
+      options: TOptions,
+      models: ReadonlyArray<ProviderModel>
+    ) => void
     /**
      * Which timestamp the cache gets when `isConfigured()` is false:
      * `"probe-start"` = the `Date.now()` captured on entry to
@@ -289,8 +297,7 @@ interface MetadataCache<T> {
 export class AcpAdapterBase<
   TSettings extends AcpRuntimeSettings,
   TOptions extends AcpAdapterOptions<TSettings>,
-> implements ProviderAdapterShape
-{
+> implements ProviderAdapterShape {
   readonly provider: ProviderKind
   readonly displayName: string
   readonly capabilities = CAPABILITIES
@@ -303,6 +310,7 @@ export class AcpAdapterBase<
   >()
   private startupInProgress = false
   private modelsCache: MetadataCache<ReadonlyArray<ProviderModel>> | null = null
+  private modelsCacheIdentity: string | null = null
   // In-flight dedup: concurrent cold-cache callers (several listInstances
   // at app start) must share ONE probe child instead of spawning one each.
   private modelsInFlight: Promise<ReadonlyArray<ProviderModel>> | null = null
@@ -321,6 +329,12 @@ export class AcpAdapterBase<
 
   async availableModels(): Promise<ReadonlyArray<ProviderModel>> {
     const now = Date.now()
+    const identity = this.profile.models.cacheIdentity?.(this.options) ?? null
+    if (identity !== this.modelsCacheIdentity) {
+      this.modelsCacheIdentity = identity
+      this.modelsCache = null
+      this.modelsInFlight = null
+    }
     if (
       this.modelsCache &&
       now - this.modelsCache.checkedAt < METADATA_CACHE_TTL_MS
@@ -328,7 +342,7 @@ export class AcpAdapterBase<
       return this.modelsCache.value
     }
     if (this.modelsInFlight) return this.modelsInFlight
-    const probe = this.fetchAvailableModels(now).finally(() => {
+    const probe = this.fetchAvailableModels(now, identity).finally(() => {
       if (this.modelsInFlight === probe) this.modelsInFlight = null
     })
     this.modelsInFlight = probe
@@ -336,20 +350,22 @@ export class AcpAdapterBase<
   }
 
   private async fetchAvailableModels(
-    startedAt: number
+    startedAt: number,
+    identity: string | null
   ): Promise<ReadonlyArray<ProviderModel>> {
     const fallback = mergeAcpCustomModels(
       this.profile.models.fallback(this.options),
       this.options.customModels ?? []
     )
     if (!this.isConfigured()) {
-      this.modelsCache = {
-        checkedAt:
-          this.profile.models.unconfiguredCheckedAt === "probe-start"
-            ? startedAt
-            : Date.now(),
-        value: fallback,
-      }
+      if (identity === this.modelsCacheIdentity)
+        this.modelsCache = {
+          checkedAt:
+            this.profile.models.unconfiguredCheckedAt === "probe-start"
+              ? startedAt
+              : Date.now(),
+          value: fallback,
+        }
       return fallback
     }
 
@@ -364,16 +380,24 @@ export class AcpAdapterBase<
         const started = await runtime.start()
         const live = this.profile.models.fromStarted(started)
         const models =
-          live.length > 0
+          live.length > 0 || this.profile.models.isEmptyAuthoritative?.(started)
             ? mergeAcpCustomModels(live, this.options.customModels ?? [])
             : fallback
-        this.modelsCache = { checkedAt: Date.now(), value: models }
+        if (identity === this.modelsCacheIdentity) {
+          this.modelsCache = { checkedAt: Date.now(), value: models }
+          if (
+            live.length > 0 ||
+            this.profile.models.isEmptyAuthoritative?.(started)
+          )
+            this.profile.models.onLiveModels?.(this.options, live)
+        }
         return models
       } finally {
         await this.closeTrackedRuntime(runtime)
       }
     } catch {
-      this.modelsCache = { checkedAt: Date.now(), value: fallback }
+      if (identity === this.modelsCacheIdentity)
+        this.modelsCache = { checkedAt: Date.now(), value: fallback }
       return fallback
     }
   }
@@ -430,9 +454,23 @@ export class AcpAdapterBase<
 
     const cwd = normalizeCwd(input.cwd)
     const resumeSessionId = readAcpResumeSessionId(input.resumeCursor)
-    const configuredServers = (await this.resolveSessionMcpServers(cwd)).filter(server => server.name !== "betterc0de_orchestrator")
+    const configuredServers = (await this.resolveSessionMcpServers(cwd)).filter(
+      (server) => server.name !== "betterc0de_orchestrator"
+    )
     const teamServer = await this.options.resolveOrchestratorServer?.(cwd, key)
-    const mcpServers: ReadonlyArray<AcpMcpServer> = teamServer ? [...configuredServers, { name: "betterc0de_orchestrator", type: "http", url: teamServer.url, headers: Object.entries(teamServer.headers).map(([name, value]) => ({ name, value })) }] : configuredServers
+    const mcpServers: ReadonlyArray<AcpMcpServer> = teamServer
+      ? [
+          ...configuredServers,
+          {
+            name: "betterc0de_orchestrator",
+            type: "http",
+            url: teamServer.url,
+            headers: Object.entries(teamServer.headers).map(
+              ([name, value]) => ({ name, value })
+            ),
+          },
+        ]
+      : configuredServers
     const runtime = await this.createRuntime(
       cwd,
       resumeSessionId,
@@ -569,7 +607,9 @@ export class AcpAdapterBase<
           },
         })
       } catch (error) {
-        pendingApprovals.get(requestId)?.resolve({ kind: "tool_approval", decision: "deny" })
+        pendingApprovals
+          .get(requestId)
+          ?.resolve({ kind: "tool_approval", decision: "deny" })
         throw error
       }
       const decision = await decisionPromise
@@ -703,10 +743,15 @@ export class AcpAdapterBase<
     }))
   }
 
-  async needsSessionConfigurationRefresh(input: { threadId: ThreadId; cwd?: string | null }): Promise<boolean> {
+  async needsSessionConfigurationRefresh(input: {
+    threadId: ThreadId
+    cwd?: string | null
+  }): Promise<boolean> {
     const context = this.sessions.get(input.threadId)
     if (!context || !this.options.resolveOrchestratorServer) return false
-    const server = input.cwd ? await this.options.resolveOrchestratorServer(input.cwd, input.threadId) : null
+    const server = input.cwd
+      ? await this.options.resolveOrchestratorServer(input.cwd, input.threadId)
+      : null
     return context.orchestrationConfig !== JSON.stringify(server ?? null)
   }
 
@@ -730,7 +775,8 @@ export class AcpAdapterBase<
 
     const turnId = randomUUID() as TurnId
     const modelSelection = this.modelSelectionForInstance(input.modelSelection)
-    const runtimeMode = runtimeModeForAcpTurn(input) ?? context.session.runtimeMode ?? null
+    const runtimeMode =
+      runtimeModeForAcpTurn(input) ?? context.session.runtimeMode ?? null
     // Install the current ceiling before configuration can invoke callbacks.
     context.permissionRuntimeMode = runtimeMode
     await this.applySessionConfiguration({
@@ -1218,7 +1264,9 @@ export class AcpAdapterBase<
 
   private updateSession(
     context: SessionContext,
-    patch: Partial<Pick<ProviderSession, "status" | "activeTurnId" | "runtimeMode">>
+    patch: Partial<
+      Pick<ProviderSession, "status" | "activeTurnId" | "runtimeMode">
+    >
   ): void {
     context.session = {
       ...context.session,
@@ -1480,7 +1528,10 @@ function findModeByAliases(
   return undefined
 }
 
-function findModeByExactAliases(modes: ReadonlyArray<AcpMode>, aliases: ReadonlyArray<string>): AcpMode | undefined {
+function findModeByExactAliases(
+  modes: ReadonlyArray<AcpMode>,
+  aliases: ReadonlyArray<string>
+): AcpMode | undefined {
   const priorities = new Map<string, number>()
   aliases.forEach((alias, index) => {
     const key = alias.toLowerCase()
@@ -1489,8 +1540,14 @@ function findModeByExactAliases(modes: ReadonlyArray<AcpMode>, aliases: Readonly
   let chosen: AcpMode | undefined
   let best = Infinity
   for (const mode of modes) {
-    const rank = Math.min(priorities.get(mode.id.toLowerCase()) ?? Infinity, priorities.get(mode.name.toLowerCase()) ?? Infinity)
-    if (rank < best) { best = rank; chosen = mode }
+    const rank = Math.min(
+      priorities.get(mode.id.toLowerCase()) ?? Infinity,
+      priorities.get(mode.name.toLowerCase()) ?? Infinity
+    )
+    if (rank < best) {
+      best = rank
+      chosen = mode
+    }
   }
   return chosen
 }
@@ -1651,13 +1708,18 @@ function normalizeProviderRuntimeMode(
   if (typeof value !== "string") return null
   const trimmed = value.trim().toLowerCase()
   switch (trimmed) {
-    case "bypass": return "full-access"
+    case "bypass":
+      return "full-access"
     case "full":
-    case "allow-edits": return "auto-accept-edits"
-    case "read": return "read-only"
+    case "allow-edits":
+      return "auto-accept-edits"
+    case "read":
+      return "read-only"
     case "ask":
-    case "ask-on-edit": return "approval-required"
-    default: return trimmed.length > 0 ? trimmed : null
+    case "ask-on-edit":
+      return "approval-required"
+    default:
+      return trimmed.length > 0 ? trimmed : null
   }
 }
 
@@ -1665,10 +1727,14 @@ function runtimeModeForAcpTurn(
   input: Pick<ProviderSendTurnInput, "chatMode" | "permissionLevel">
 ): string | null {
   switch (input.chatMode?.trim().toLowerCase()) {
-    case "plan": return "plan"
-    case "ask": return "read-only"
-    case "security": return "security"
-    default: return normalizeProviderRuntimeMode(input.permissionLevel)
+    case "plan":
+      return "plan"
+    case "ask":
+      return "read-only"
+    case "security":
+      return "security"
+    default:
+      return normalizeProviderRuntimeMode(input.permissionLevel)
   }
 }
 

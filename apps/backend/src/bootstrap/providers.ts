@@ -8,6 +8,7 @@ import { ProviderService } from "../provider/service"
 import { ThreadTurnCoordinator } from "../provider/threadTurnCoordinator"
 import type { ProviderRuntimeEvent } from "../provider/types"
 import { ClaudeApiAdapter } from "../provider/adapters/claudeApi"
+import { ApiModelCatalog } from "../provider/adapters/apiModelCatalog"
 import { ClaudeAgentAdapter } from "../provider/adapters/claudeAgent"
 import {
   makeGrokAdapter,
@@ -136,55 +137,98 @@ export function wireProviders(
   const codeSearch = new CodeSearchHarness({
     settings: () => settings.get(),
     isWorkspaceAllowed: (cwd) => {
-      try { return agentPermissions.getWorkspaceTrust(cwd).state === "trusted" }
-      catch { return false }
+      try {
+        return agentPermissions.getWorkspaceTrust(cwd).state === "trusted"
+      } catch {
+        return false
+      }
     },
   })
-  startupCleanup.push({ name: "code search harness", run: () => codeSearch.close() })
+  startupCleanup.push({
+    name: "code search harness",
+    run: () => codeSearch.close(),
+  })
   const orchestrator: OrchestratorService = new OrchestratorService({
-    modelCatalog: (cwd, providers) => orchestrationModelCatalog(providerHub, cwd, providers),
+    modelCatalog: (cwd, providers) =>
+      orchestrationModelCatalog(providerHub, cwd, providers),
     readContextSource: createContextSourceReader(db),
     settings: () => settings.get(),
-    allowed: cwd => agentPermissions.getWorkspaceTrust(cwd).state === "trusted",
-    load: threadId => threadActivities.payloadById(threadId, `orchestrator:${threadId}`),
-    persist: session => threadActivities.upsert({
-      activity_id: `orchestrator:${session.threadId}`, thread_id: session.threadId, turn_id: null,
-      kind: "orchestrator.session", tone: "info", summary: "Orchestrator team", payload: session, created_at: session.createdAt,
-    }),
-    createThread: input => {
+    allowed: (cwd) =>
+      agentPermissions.getWorkspaceTrust(cwd).state === "trusted",
+    load: (threadId) =>
+      threadActivities.payloadById(threadId, `orchestrator:${threadId}`),
+    persist: (session) =>
+      threadActivities.upsert({
+        activity_id: `orchestrator:${session.threadId}`,
+        thread_id: session.threadId,
+        turn_id: null,
+        kind: "orchestrator.session",
+        tone: "info",
+        summary: "Orchestrator team",
+        payload: session,
+        created_at: session.createdAt,
+      }),
+    createThread: (input) => {
       const now = new Date().toISOString()
-      threads.upsertThreadMeta({ thread_id: input.id, title: input.title, project_name: path.basename(input.projectPath), project_path: input.projectPath,
-        parent_thread_id: input.parentThreadId ?? null, codex_thread_id: null, created_at: now, updated_at: now })
+      threads.upsertThreadMeta({
+        thread_id: input.id,
+        title: input.title,
+        project_name: path.basename(input.projectPath),
+        project_path: input.projectPath,
+        parent_thread_id: input.parentThreadId ?? null,
+        codex_thread_id: null,
+        created_at: now,
+        updated_at: now,
+      })
     },
-    dispatch: body => dispatchChatTurn(state, body, () => null),
-    interrupt: (threadId, providerKind, providerInstanceId) => interruptChatTurn(state, { threadId, providerKind, providerInstanceId }),
-    reportError: error => logger.error({ err: error }, "Orchestrator operation failed"),
+    dispatch: (body) => dispatchChatTurn(state, body, () => null),
+    interrupt: (threadId, providerKind, providerInstanceId) =>
+      interruptChatTurn(state, { threadId, providerKind, providerInstanceId }),
+    reportError: (error) =>
+      logger.error({ err: error }, "Orchestrator operation failed"),
   })
   const orchestratorHarness = new OrchestratorMcpHarness(orchestrator)
-  startupCleanup.push({ name: "orchestrator service", run: () => orchestrator.close() })
-  startupCleanup.push({ name: "orchestrator harness", run: () => orchestratorHarness.close() })
-  const configuredMcpServers = createPortableMcpServerResolver(mcpResolverOptions)
+  startupCleanup.push({
+    name: "orchestrator service",
+    run: () => orchestrator.close(),
+  })
+  startupCleanup.push({
+    name: "orchestrator harness",
+    run: () => orchestratorHarness.close(),
+  })
+  const configuredMcpServers =
+    createPortableMcpServerResolver(mcpResolverOptions)
   const directAgentTools = {
-    mcpServerResolver: withCodeSearchServer(configuredMcpServers, codeSearch.resolveServer),
+    mcpServerResolver: withCodeSearchServer(
+      configuredMcpServers,
+      codeSearch.resolveServer
+    ),
   }
   const acpMcpServerResolver = async (cwd: string) =>
     portableMcpServersToAcp(await directAgentTools.mcpServerResolver(cwd))
   let remoteAccessWasEnabled = currentSettings.remote_access_enabled === true
 
   const anthropicKey = resolveAnthropicKey(currentSettings)
+  const apiModelCatalog = new ApiModelCatalog(
+    path.join(config.dataDir, "api-model-catalog")
+  )
   providerRegistry.register(
-    new ClaudeApiAdapter(anthropicKey?.key ?? null, directAgentTools)
+    new ClaudeApiAdapter(
+      anthropicKey?.key ?? null,
+      directAgentTools,
+      apiModelCatalog
+    )
   )
   providerRegistry.register(new ClaudeAgentAdapter())
 
   const openaiKey = resolveOpenAiKey(currentSettings)
   providerRegistry.register(
-    makeOpenAiAdapter(openaiKey?.key ?? null, directAgentTools)
+    makeOpenAiAdapter(openaiKey?.key ?? null, directAgentTools, apiModelCatalog)
   )
 
   const grokKey = resolveGrokKey(currentSettings)
   providerRegistry.register(
-    makeGrokAdapter(grokKey?.key ?? null, directAgentTools)
+    makeGrokAdapter(grokKey?.key ?? null, directAgentTools, apiModelCatalog)
   )
 
   const openrouterKey = resolveOpenRouterKey(currentSettings)
@@ -219,6 +263,7 @@ export function wireProviders(
     })
   }
   const providerInstanceManager = new ProviderInstanceManager({
+    modelCacheDir: path.join(config.dataDir, "cli-model-catalog"),
     clientInfo: {
       name: "BetterC0de",
       title: "BetterC0de",
@@ -234,10 +279,7 @@ export function wireProviders(
       providerInstanceId,
       continuationKey,
     }) => {
-      const binding = providerSessionBindings.get(
-        threadId,
-        providerInstanceId
-      )
+      const binding = providerSessionBindings.get(threadId, providerInstanceId)
       if (binding) {
         return isProviderSessionContinuationCompatible(binding, {
           providerKind,
@@ -266,10 +308,7 @@ export function wireProviders(
       providerInstanceId,
       continuationKey,
     }) => {
-      const binding = providerSessionBindings.get(
-        threadId,
-        providerInstanceId
-      )
+      const binding = providerSessionBindings.get(threadId, providerInstanceId)
       return isProviderSessionContinuationCompatible(binding, {
         providerKind,
         continuationKey,

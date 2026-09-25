@@ -31,7 +31,7 @@ const PROVIDER_KIND_ALIASES: Record<string, ProviderKind> = {
 export function parseProviderKind(raw: string): ProviderKind | null {
   const normalized = raw.trim().toLowerCase()
   return Object.hasOwn(PROVIDER_KIND_ALIASES, normalized)
-    ? PROVIDER_KIND_ALIASES[normalized] ?? null
+    ? (PROVIDER_KIND_ALIASES[normalized] ?? null)
     : null
 }
 
@@ -110,6 +110,9 @@ export interface ModelDefinition {
   slug: string
   name: string
   provider: ProviderKind
+  context?: string
+  tier?: string
+  isCustom?: boolean
   // Mirrored but not strictly used by the initial renderer wiring; kept for
   // future parity with rust-backend/src/provider/models.rs.
   capabilities?: Record<string, unknown>

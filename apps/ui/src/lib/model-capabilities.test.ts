@@ -13,6 +13,72 @@ import {
 import type { UiProvider } from "@/lib/provider-types"
 
 describe("model capabilities", () => {
+  it("keeps OpenAI's advertised none and max effort levels", () => {
+    const provider: UiProvider = {
+      id: "openai-api",
+      name: "OpenAI API",
+      logo: "",
+      providerKind: "openai",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          context: "1.05M",
+          tier: "Runtime",
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "reasoningEffort",
+                label: "Reasoning",
+                type: "select",
+                options: [
+                  { id: "none", label: "None" },
+                  { id: "medium", label: "Medium" },
+                  { id: "xhigh", label: "xHigh" },
+                  { id: "max", label: "Max" },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    }
+    expect(getModelThinkingOptions(provider, "gpt-5.6-sol")).toEqual([
+      { mode: "No Reasoning", label: "None" },
+      { mode: "Medium", label: "Medium" },
+      { mode: "xHigh", label: "xHigh" },
+      { mode: "max", label: "Max" },
+    ])
+    expect(coerceThinkingModeForModel(provider, "gpt-5.6-sol", "max")).toBe(
+      "max"
+    )
+  })
+
+  it("keeps Opus 5.5 adaptive thinking on at medium by default", () => {
+    const provider: UiProvider = {
+      id: "anthropic-api",
+      name: "Claude API",
+      logo: "",
+      providerKind: "anthropic",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context: "1M",
+          tier: "Flagship",
+        },
+      ],
+    }
+    expect(
+      getModelThinkingOptions(provider, "claude-opus-5-5")
+    ).not.toContainEqual({
+      mode: null,
+      label: "Off",
+    })
+    expect(coerceThinkingModeForModel(provider, "claude-opus-5-5", null)).toBe(
+      "Medium"
+    )
+  })
   it("orders Grok's descending runtime efforts from low to high without changing their values or labels", () => {
     const options = [
       { id: "xhigh", label: "Extra High Effort" },
@@ -20,10 +86,30 @@ describe("model capabilities", () => {
       { id: "medium", label: "Medium Effort" },
       { id: "low", label: "Low Effort" },
     ]
-    const provider: UiProvider = { id: "grok-cli", providerKind: "grok_cli", name: "Grok CLI", logo: "", models: [{
-      id: "grok-4.6", name: "Grok 4.6", context: "500k", tier: "Flagship",
-      capabilities: { optionDescriptors: [{ id: "reasoningEffort", label: "Effort", type: "select", options }] },
-    }] }
+    const provider: UiProvider = {
+      id: "grok-cli",
+      providerKind: "grok_cli",
+      name: "Grok CLI",
+      logo: "",
+      models: [
+        {
+          id: "grok-4.6",
+          name: "Grok 4.6",
+          context: "500k",
+          tier: "Flagship",
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "reasoningEffort",
+                label: "Effort",
+                type: "select",
+                options,
+              },
+            ],
+          },
+        },
+      ],
+    }
     expect(getModelThinkingOptions(provider, "grok-4.6")).toEqual([
       { mode: null, label: "Off" },
       { mode: "Low", label: "Low Effort" },
@@ -31,8 +117,15 @@ describe("model capabilities", () => {
       { mode: "High", label: "High Effort" },
       { mode: "xHigh", label: "Extra High Effort" },
     ])
-    expect(options.map(option => option.id)).toEqual(["xhigh", "high", "medium", "low"])
-    expect(coerceThinkingModeForModel(provider, "grok-4.6", "High")).toBe("High")
+    expect(options.map((option) => option.id)).toEqual([
+      "xhigh",
+      "high",
+      "medium",
+      "low",
+    ])
+    expect(coerceThinkingModeForModel(provider, "grok-4.6", "High")).toBe(
+      "High"
+    )
   })
   it("uses model option descriptors when they are present", () => {
     const provider: UiProvider = {
@@ -345,9 +438,7 @@ describe("model capabilities", () => {
       ],
     }
 
-    expect(
-      getModelThinkingOptions(provider, "__codex_cli_default__")
-    ).toEqual([
+    expect(getModelThinkingOptions(provider, "__codex_cli_default__")).toEqual([
       { mode: null, label: "Off" },
       { mode: "Low", label: "Low" },
       { mode: "Medium", label: "Medium" },

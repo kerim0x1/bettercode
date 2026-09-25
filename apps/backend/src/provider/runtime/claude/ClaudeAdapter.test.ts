@@ -3,14 +3,22 @@ import os from "node:os"
 import path from "node:path"
 import { describe, expect, it, vi, beforeEach } from "vitest"
 import type { ProviderRuntimeEvent, ThreadId } from "../contracts"
-import { ClaudeAdapter } from "./ClaudeAdapter"
+import {
+  ClaudeAdapter,
+  buildClaudeModelsFromInitialization,
+} from "./ClaudeAdapter"
 
 const queryMock = vi.hoisted(() => vi.fn())
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: queryMock,
   tool: vi.fn(
-    (name: string, description: string, inputSchema: unknown, handler: unknown) => ({
+    (
+      name: string,
+      description: string,
+      inputSchema: unknown,
+      handler: unknown
+    ) => ({
       name,
       description,
       inputSchema,
@@ -86,6 +94,30 @@ function makeFakeClaudeBinary(version = "2.1.111") {
 }
 
 describe("ClaudeAdapter provider metadata", () => {
+  it("uses the SDK account's exact model list and Opus 5.5 effort options", () => {
+    const models = buildClaudeModelsFromInitialization([
+      {
+        value: "claude-opus-5-5",
+        displayName: "Claude Opus 5.5",
+        supportsAdaptiveThinking: true,
+        supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+      },
+      { value: "claude-sonnet-5", displayName: "Claude Sonnet 5" },
+    ])
+    expect(models.map((model) => model.slug)).toEqual([
+      "claude-opus-5-5",
+      "claude-sonnet-5",
+    ])
+    expect(models[0]?.context).toBe("1M")
+    expect(models[0]?.capabilities?.optionDescriptors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "effort",
+          currentValue: "medium",
+        }),
+      ])
+    )
+  })
   beforeEach(() => {
     queryMock.mockReset()
   })
@@ -93,11 +125,15 @@ describe("ClaudeAdapter provider metadata", () => {
   it("retains a failed SDK metadata cleanup and retries it before spawning again", async () => {
     const query = makeInitializingQuery([])
     const failure = new Error("metadata close failed")
-    query.close.mockImplementation(() => { throw failure })
+    query.close.mockImplementation(() => {
+      throw failure
+    })
     queryMock.mockReturnValue(query)
     const adapter = new ClaudeAdapter({ binaryPath: process.execPath })
     await expect(adapter.availableSlashCommands()).rejects.toBe(failure)
-    await expect(adapter.availableSlashCommands({ force: true })).rejects.toBe(failure)
+    await expect(adapter.availableSlashCommands({ force: true })).rejects.toBe(
+      failure
+    )
     expect(queryMock).toHaveBeenCalledOnce()
     await expect(adapter.stopAll()).rejects.toThrow("Failed to stop all Claude")
     query.close.mockImplementation(() => {})
@@ -108,17 +144,28 @@ describe("ClaudeAdapter provider metadata", () => {
   it("drains SDK metadata work and fences new probes during stopAll", async () => {
     let release!: () => void
     const query = makeInitializingQuery([])
-    query.initializationResult.mockImplementation(() => new Promise((resolve) => { release = () => resolve({ commands: [] }) }))
+    query.initializationResult.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ commands: [] })
+        })
+    )
     queryMock.mockReturnValue(query)
     const adapter = new ClaudeAdapter({ binaryPath: process.execPath })
     const pending = adapter.availableSlashCommands()
-    await vi.waitFor(() => expect(query.initializationResult).toHaveBeenCalledOnce())
+    await vi.waitFor(() =>
+      expect(query.initializationResult).toHaveBeenCalledOnce()
+    )
     let stopped = false
-    const stopping = adapter.stopAll().then(() => { stopped = true })
+    const stopping = adapter.stopAll().then(() => {
+      stopped = true
+    })
     try {
       await Promise.resolve()
       expect(stopped).toBe(false)
-      await expect(adapter.availableSlashCommands({ force: true })).rejects.toThrow("stopping")
+      await expect(
+        adapter.availableSlashCommands({ force: true })
+      ).rejects.toThrow("stopping")
     } finally {
       release()
       await Promise.all([pending, stopping])
@@ -129,9 +176,8 @@ describe("ClaudeAdapter provider metadata", () => {
 
   it("aggregates stopAll failures after attempting every session", async () => {
     const adapter = new ClaudeAdapter()
-    const sessions = (
-      adapter as unknown as { sessions: Map<string, unknown> }
-    ).sessions
+    const sessions = (adapter as unknown as { sessions: Map<string, unknown> })
+      .sessions
     sessions.set("thread-stop-a", {})
     sessions.set("thread-stop-b", {})
     const failure = new Error("stop failed")
@@ -202,7 +248,9 @@ describe("ClaudeAdapter provider metadata", () => {
     expect(queryMock.mock.calls[0]?.[0]?.options).not.toHaveProperty(
       "allowedTools"
     )
-    await expect(adapter.availableSlashCommands({ cwd: repoPath })).resolves.toEqual([
+    await expect(
+      adapter.availableSlashCommands({ cwd: repoPath })
+    ).resolves.toEqual([
       {
         name: "review",
         description: "Review changes",
@@ -254,14 +302,16 @@ describe("ClaudeAdapter provider metadata", () => {
       binaryPath: fake.binaryPath,
     })
 
-    await expect(adapter.probeStatus({ cwd: fake.dir })).resolves.toMatchObject({
-      configured: true,
-      installed: true,
-      version: "2.1.100",
-      status: "ready",
-      message:
-        "Claude Code v2.1.100 is too old for Claude Opus 4.7. Upgrade to v2.1.111 or newer to access it.",
-    })
+    await expect(adapter.probeStatus({ cwd: fake.dir })).resolves.toMatchObject(
+      {
+        configured: true,
+        installed: true,
+        version: "2.1.100",
+        status: "ready",
+        message:
+          "Claude Code v2.1.100 is too old for Claude Opus 4.7. Upgrade to v2.1.111 or newer to access it.",
+      }
+    )
     const gatedSlugs = (await adapter.availableModels()).map(
       (model) => model.slug
     )
@@ -307,7 +357,9 @@ describe("ClaudeAdapter provider metadata", () => {
       environment: [{ name: "ANTHROPIC_API_KEY", value: "test-key" }],
     })
 
-    await expect(adapter.availableSlashCommands({ cwd: repoPath })).resolves.toEqual([
+    await expect(
+      adapter.availableSlashCommands({ cwd: repoPath })
+    ).resolves.toEqual([
       {
         name: "fix",
         description: "Fix a focused issue",
@@ -465,59 +517,114 @@ describe("ClaudeAdapter plan mode", () => {
     queryMock.mockReset()
   })
 
-  it.each(["AskUserQuestion", "ExitPlanMode", "Bash"])("registers %s before publishing its request", async (tool) => {
-    queryMock.mockReturnValueOnce(makeQuery([{ type: "result", subtype: "success" }]))
-    const adapter = new ClaudeAdapter()
-    const threadId = `immediate-${tool}` as ThreadId
-    let response: Promise<void> | undefined
-    adapter.subscribe((event) => {
-      if (event.type !== "request.opened") return
-      const decision = tool === "AskUserQuestion"
-        ? { kind: "user_input" as const, answers: { scope: "workspace" } }
-        : tool === "ExitPlanMode" ? { kind: "plan_approval" as const, decision: "approve" as const }
-          : { kind: "tool_approval" as const, decision: "approve" as const }
-      response = adapter.respondToRequest(threadId, event.requestId as never, decision)
-      void response.catch(() => {})
-    })
-    await adapter.sendTurn({ threadId, message: "hello", modelId: "claude-opus-4-7", history: [], permissionLevel: "default" })
-    try {
-      const result = queryMock.mock.calls[0]?.[0]?.options.canUseTool(tool, { plan: "# Plan", questions: [{ id: "scope", question: "Scope?" }] })
-      await expect(response).resolves.toBeUndefined()
-      await expect(result).resolves.toMatchObject({ behavior: "allow" })
-    } finally {
-      await adapter.stopAll()
+  it.each(["AskUserQuestion", "ExitPlanMode", "Bash"])(
+    "registers %s before publishing its request",
+    async (tool) => {
+      queryMock.mockReturnValueOnce(
+        makeQuery([{ type: "result", subtype: "success" }])
+      )
+      const adapter = new ClaudeAdapter()
+      const threadId = `immediate-${tool}` as ThreadId
+      let response: Promise<void> | undefined
+      adapter.subscribe((event) => {
+        if (event.type !== "request.opened") return
+        const decision =
+          tool === "AskUserQuestion"
+            ? { kind: "user_input" as const, answers: { scope: "workspace" } }
+            : tool === "ExitPlanMode"
+              ? { kind: "plan_approval" as const, decision: "approve" as const }
+              : { kind: "tool_approval" as const, decision: "approve" as const }
+        response = adapter.respondToRequest(
+          threadId,
+          event.requestId as never,
+          decision
+        )
+        void response.catch(() => {})
+      })
+      await adapter.sendTurn({
+        threadId,
+        message: "hello",
+        modelId: "claude-opus-4-7",
+        history: [],
+        permissionLevel: "default",
+      })
+      try {
+        const result = queryMock.mock.calls[0]?.[0]?.options.canUseTool(tool, {
+          plan: "# Plan",
+          questions: [{ id: "scope", question: "Scope?" }],
+        })
+        await expect(response).resolves.toBeUndefined()
+        await expect(result).resolves.toMatchObject({ behavior: "allow" })
+      } finally {
+        await adapter.stopAll()
+      }
     }
-  })
+  )
 
-  it.each(["AskUserQuestion", "ExitPlanMode", "Bash"])("cancels %s without a late resolution when stopped from its request event", async (tool) => {
-    queryMock.mockReturnValueOnce(makeQuery([{ type: "result", subtype: "success" }]))
-    const adapter = new ClaudeAdapter()
-    const threadId = `cancel-${tool}` as ThreadId
-    const events: ProviderRuntimeEvent[] = []
-    let stop: Promise<void> | undefined
-    adapter.subscribe((event) => {
-      events.push(event)
-      if (event.type === "request.opened") stop = adapter.stopSession(threadId)
-    })
-    await adapter.sendTurn({ threadId, message: "hello", modelId: "claude-opus-4-7", history: [], permissionLevel: "default" })
-    const result = queryMock.mock.calls[0]?.[0]?.options.canUseTool(tool, { plan: "# Plan", questions: [{ id: "scope", question: "Scope?" }] })
-    await stop
-    await expect(result).resolves.toMatchObject({ behavior: "deny" })
-    expect(events.some((event) => event.type === "request.resolved")).toBe(false)
-  })
+  it.each(["AskUserQuestion", "ExitPlanMode", "Bash"])(
+    "cancels %s without a late resolution when stopped from its request event",
+    async (tool) => {
+      queryMock.mockReturnValueOnce(
+        makeQuery([{ type: "result", subtype: "success" }])
+      )
+      const adapter = new ClaudeAdapter()
+      const threadId = `cancel-${tool}` as ThreadId
+      const events: ProviderRuntimeEvent[] = []
+      let stop: Promise<void> | undefined
+      adapter.subscribe((event) => {
+        events.push(event)
+        if (event.type === "request.opened")
+          stop = adapter.stopSession(threadId)
+      })
+      await adapter.sendTurn({
+        threadId,
+        message: "hello",
+        modelId: "claude-opus-4-7",
+        history: [],
+        permissionLevel: "default",
+      })
+      const result = queryMock.mock.calls[0]?.[0]?.options.canUseTool(tool, {
+        plan: "# Plan",
+        questions: [{ id: "scope", question: "Scope?" }],
+      })
+      await stop
+      await expect(result).resolves.toMatchObject({ behavior: "deny" })
+      expect(events.some((event) => event.type === "request.resolved")).toBe(
+        false
+      )
+    }
+  )
 
   it("does not start an SDK query after stop during asynchronous turn preparation", async () => {
     const repoPath = makeTempDir("betterc0de-claude-stop-startup-")
     let release!: () => void
     let entered!: () => void
-    const started = new Promise<void>((resolve) => { entered = resolve })
-    const gate = new Promise<void>((resolve) => { release = resolve })
-    const adapter = new ClaudeAdapter({ resolveCodeSearchServer: async () => { entered(); await gate; return null } })
-    queryMock.mockReturnValueOnce(makeQuery([{ type: "result", subtype: "success" }]))
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const adapter = new ClaudeAdapter({
+      resolveCodeSearchServer: async () => {
+        entered()
+        await gate
+        return null
+      },
+    })
+    queryMock.mockReturnValueOnce(
+      makeQuery([{ type: "result", subtype: "success" }])
+    )
     const threadId = "stop-startup" as ThreadId
     const events: ProviderRuntimeEvent[] = []
     adapter.subscribe((event) => events.push(event))
-    const turn = adapter.sendTurn({ threadId, message: "hello", modelId: "claude-opus-4-7", history: [], projectPath: repoPath })
+    const turn = adapter.sendTurn({
+      threadId,
+      message: "hello",
+      modelId: "claude-opus-4-7",
+      history: [],
+      projectPath: repoPath,
+    })
     try {
       await started
       await adapter.stopSession(threadId)
@@ -535,87 +642,173 @@ describe("ClaudeAdapter plan mode", () => {
 
   it("gives only the selected coordinator its team tools alongside code search", async () => {
     const repoPath = makeTempDir("betterc0de-claude-orchestrator-")
-    const descriptor = { type: "http" as const, url: "http://127.0.0.1:12345/mcp", headers: { Authorization: "Bearer team" } }
-    const resolver = vi.fn(async (_cwd: string, id: string) => id === "main" ? descriptor : null)
-    const adapter = new ClaudeAdapter({ resolveOrchestratorServer: resolver, resolveCodeSearchServer: async () => descriptor })
+    const descriptor = {
+      type: "http" as const,
+      url: "http://127.0.0.1:12345/mcp",
+      headers: { Authorization: "Bearer team" },
+    }
+    const resolver = vi.fn(async (_cwd: string, id: string) =>
+      id === "main" ? descriptor : null
+    )
+    const adapter = new ClaudeAdapter({
+      resolveOrchestratorServer: resolver,
+      resolveCodeSearchServer: async () => descriptor,
+    })
     try {
       for (const id of ["main", "worker"]) {
-        queryMock.mockReturnValueOnce(makeQuery([{ type: "result", subtype: "success" }]))
-        await adapter.sendTurn({ threadId: id, message: "Work", modelId: "claude-opus-4-7", history: [], projectPath: repoPath })
+        queryMock.mockReturnValueOnce(
+          makeQuery([{ type: "result", subtype: "success" }])
+        )
+        await adapter.sendTurn({
+          threadId: id,
+          message: "Work",
+          modelId: "claude-opus-4-7",
+          history: [],
+          projectPath: repoPath,
+        })
         const servers = queryMock.mock.calls.at(-1)?.[0]?.options?.mcpServers
         expect(servers.betterc0de_code_search).toEqual(descriptor)
-        if (id === "main") expect(servers.betterc0de_orchestrator).toEqual(descriptor)
+        if (id === "main")
+          expect(servers.betterc0de_orchestrator).toEqual(descriptor)
         else expect(servers).not.toHaveProperty("betterc0de_orchestrator")
         expect(resolver).toHaveBeenCalledWith(repoPath, id)
       }
-    } finally { await adapter.stopAll(); fs.rmSync(repoPath, { recursive: true, force: true }) }
-  })
-
-  it.each([true, false])("registers the workspace code-search service only when enabled (%s)", async (enabled) => {
-    const repoPath = makeTempDir("betterc0de-claude-code-search-")
-    const descriptor = { type: "http" as const, url: "http://127.0.0.1:12345/mcp", headers: { Authorization: "Bearer local-capability" } }
-    const resolver = vi.fn(async () => enabled ? descriptor : null)
-    const adapter = new ClaudeAdapter({ resolveCodeSearchServer: resolver })
-    queryMock.mockReturnValueOnce(makeQuery([{ type: "result", subtype: "success" }]))
-    try {
-      await adapter.sendTurn({ threadId: "code-search", message: "Find auth", modelId: "claude-opus-4-7", history: [], projectPath: repoPath })
-      expect(resolver).toHaveBeenCalledWith(repoPath)
-      const servers = queryMock.mock.calls[0]?.[0]?.options?.mcpServers
-      if (enabled) expect(servers.betterc0de_code_search).toEqual(descriptor)
-      else expect(servers).not.toHaveProperty("betterc0de_code_search")
     } finally {
       await adapter.stopAll()
       fs.rmSync(repoPath, { recursive: true, force: true })
     }
   })
 
-  it.each(["read-only", "bypass"])("enables implementation tools in the running query only after plan approval (%s)", async (permissionLevel) => {
-    const adapter = new ClaudeAdapter()
-    const threadId = "thread-live-plan" as ThreadId
-    const repoPath = makeTempDir("betterc0de-plan-rollover-")
-    const setPermissionMode = vi.fn().mockResolvedValue(undefined)
-    let planOpened!: (id: string) => void
-    let agentOpened!: (id: string) => void
-    const planRequest = new Promise<string>((resolve) => { planOpened = resolve })
-    const agentRequest = new Promise<string>((resolve) => { agentOpened = resolve })
-    const events: ProviderRuntimeEvent[] = []
-    adapter.subscribe((event) => {
-      events.push(event)
-      if (event.type === "request.opened" && event.kind === "plan_approval" && event.requestId) planOpened(event.requestId)
-      if (event.type === "request.opened" && event.kind === "tool_approval" && event.tool === "Agent" && event.requestId) agentOpened(event.requestId)
-    })
-    queryMock.mockImplementationOnce(({ options }) => ({
-      setPermissionMode,
-      interrupt: vi.fn(), close: vi.fn(),
-      async *[Symbol.asyncIterator]() {
-        for (const tool of ["Write", "Edit", "Agent"]) {
-          expect(options.tools).toContain(tool)
-          expect(options.disallowedTools ?? []).not.toContain(tool)
-          expect(await options.canUseTool(tool, {})).toMatchObject({ behavior: "deny" })
-        }
-        expect(await options.canUseTool("ExitPlanMode", { plan: "# Implement" })).toMatchObject({ behavior: "allow" })
-        expect(setPermissionMode).toHaveBeenCalledWith("acceptEdits")
-        for (const tool of ["Write", "Edit"]) {
-          expect(await options.canUseTool(tool, { file_path: path.join(repoPath, "main.ts"), content: "ok" })).toMatchObject({ behavior: "allow" })
-        }
-        // Agent execution is registered, but still needs its own approval
-        // under acceptEdits; it must not inherit unrestricted write access.
-        expect(await options.canUseTool("Agent", { prompt: "Review the change" })).toMatchObject({ behavior: "allow" })
-        yield { type: "result", subtype: "success" }
-      },
-    }))
-    const turn = adapter.sendTurn({ threadId, message: "Plan this", modelId: "claude-opus-4-7", history: [], chatMode: "plan", permissionLevel, projectPath: repoPath })
-    try {
-      await adapter.respondToRequest(threadId, await planRequest as never, { kind: "plan_approval", decision: "approve", permissionMode: "acceptEdits" })
-      await adapter.respondToRequest(threadId, await agentRequest as never, { kind: "tool_approval", decision: "approve" })
-      await turn
-      expect(events.filter((event) => event.type === "runtime.error")).toEqual([])
-      expect(events.filter((event) => event.type === "turn.completed")).toEqual([expect.objectContaining({ status: "completed" })])
-    } finally {
-      await adapter.stopAll()
-      fs.rmSync(repoPath, { recursive: true, force: true })
+  it.each([true, false])(
+    "registers the workspace code-search service only when enabled (%s)",
+    async (enabled) => {
+      const repoPath = makeTempDir("betterc0de-claude-code-search-")
+      const descriptor = {
+        type: "http" as const,
+        url: "http://127.0.0.1:12345/mcp",
+        headers: { Authorization: "Bearer local-capability" },
+      }
+      const resolver = vi.fn(async () => (enabled ? descriptor : null))
+      const adapter = new ClaudeAdapter({ resolveCodeSearchServer: resolver })
+      queryMock.mockReturnValueOnce(
+        makeQuery([{ type: "result", subtype: "success" }])
+      )
+      try {
+        await adapter.sendTurn({
+          threadId: "code-search",
+          message: "Find auth",
+          modelId: "claude-opus-4-7",
+          history: [],
+          projectPath: repoPath,
+        })
+        expect(resolver).toHaveBeenCalledWith(repoPath)
+        const servers = queryMock.mock.calls[0]?.[0]?.options?.mcpServers
+        if (enabled) expect(servers.betterc0de_code_search).toEqual(descriptor)
+        else expect(servers).not.toHaveProperty("betterc0de_code_search")
+      } finally {
+        await adapter.stopAll()
+        fs.rmSync(repoPath, { recursive: true, force: true })
+      }
     }
-  })
+  )
+
+  it.each(["read-only", "bypass"])(
+    "enables implementation tools in the running query only after plan approval (%s)",
+    async (permissionLevel) => {
+      const adapter = new ClaudeAdapter()
+      const threadId = "thread-live-plan" as ThreadId
+      const repoPath = makeTempDir("betterc0de-plan-rollover-")
+      const setPermissionMode = vi.fn().mockResolvedValue(undefined)
+      let planOpened!: (id: string) => void
+      let agentOpened!: (id: string) => void
+      const planRequest = new Promise<string>((resolve) => {
+        planOpened = resolve
+      })
+      const agentRequest = new Promise<string>((resolve) => {
+        agentOpened = resolve
+      })
+      const events: ProviderRuntimeEvent[] = []
+      adapter.subscribe((event) => {
+        events.push(event)
+        if (
+          event.type === "request.opened" &&
+          event.kind === "plan_approval" &&
+          event.requestId
+        )
+          planOpened(event.requestId)
+        if (
+          event.type === "request.opened" &&
+          event.kind === "tool_approval" &&
+          event.tool === "Agent" &&
+          event.requestId
+        )
+          agentOpened(event.requestId)
+      })
+      queryMock.mockImplementationOnce(({ options }) => ({
+        setPermissionMode,
+        interrupt: vi.fn(),
+        close: vi.fn(),
+        async *[Symbol.asyncIterator]() {
+          for (const tool of ["Write", "Edit", "Agent"]) {
+            expect(options.tools).toContain(tool)
+            expect(options.disallowedTools ?? []).not.toContain(tool)
+            expect(await options.canUseTool(tool, {})).toMatchObject({
+              behavior: "deny",
+            })
+          }
+          expect(
+            await options.canUseTool("ExitPlanMode", { plan: "# Implement" })
+          ).toMatchObject({ behavior: "allow" })
+          expect(setPermissionMode).toHaveBeenCalledWith("acceptEdits")
+          for (const tool of ["Write", "Edit"]) {
+            expect(
+              await options.canUseTool(tool, {
+                file_path: path.join(repoPath, "main.ts"),
+                content: "ok",
+              })
+            ).toMatchObject({ behavior: "allow" })
+          }
+          // Agent execution is registered, but still needs its own approval
+          // under acceptEdits; it must not inherit unrestricted write access.
+          expect(
+            await options.canUseTool("Agent", { prompt: "Review the change" })
+          ).toMatchObject({ behavior: "allow" })
+          yield { type: "result", subtype: "success" }
+        },
+      }))
+      const turn = adapter.sendTurn({
+        threadId,
+        message: "Plan this",
+        modelId: "claude-opus-4-7",
+        history: [],
+        chatMode: "plan",
+        permissionLevel,
+        projectPath: repoPath,
+      })
+      try {
+        await adapter.respondToRequest(threadId, (await planRequest) as never, {
+          kind: "plan_approval",
+          decision: "approve",
+          permissionMode: "acceptEdits",
+        })
+        await adapter.respondToRequest(
+          threadId,
+          (await agentRequest) as never,
+          { kind: "tool_approval", decision: "approve" }
+        )
+        await turn
+        expect(
+          events.filter((event) => event.type === "runtime.error")
+        ).toEqual([])
+        expect(
+          events.filter((event) => event.type === "turn.completed")
+        ).toEqual([expect.objectContaining({ status: "completed" })])
+      } finally {
+        await adapter.stopAll()
+        fs.rmSync(repoPath, { recursive: true, force: true })
+      }
+    }
+  )
 
   it("streams plan text as normal content and emits the proposed plan on completion", async () => {
     queryMock.mockReturnValueOnce(
@@ -1295,7 +1488,10 @@ describe("ClaudeAdapter plan mode", () => {
       }),
     ])
     await expect(adapter.listSessions()).resolves.toEqual([
-      expect.objectContaining({ threadId: "thread-wedged", activeTurnId: null }),
+      expect.objectContaining({
+        threadId: "thread-wedged",
+        activeTurnId: null,
+      }),
     ])
   })
 
@@ -1367,7 +1563,9 @@ describe("ClaudeAdapter plan mode", () => {
     try {
       let settled = false
       const interrupting = adapter
-        .interruptTurn("thread-budget" as ThreadId, { interruptBudgetMs: 1_000 })
+        .interruptTurn("thread-budget" as ThreadId, {
+          interruptBudgetMs: 1_000,
+        })
         .then(() => {
           settled = true
         })
@@ -1382,7 +1580,9 @@ describe("ClaudeAdapter plan mode", () => {
     }
     expect(hangingQuery.interrupt).toHaveBeenCalledOnce()
     expect(hangingQuery.close).toHaveBeenCalledOnce()
-    expect(events.filter((event) => event.type === "turn.aborted")).toHaveLength(1)
+    expect(
+      events.filter((event) => event.type === "turn.aborted")
+    ).toHaveLength(1)
   })
 
   it("does not end a turn after stopSession already tore the session down", async () => {
@@ -1412,7 +1612,11 @@ describe("ClaudeAdapter plan mode", () => {
       adapter as unknown as {
         sessions: Map<
           string,
-          { activeTurn: { forceCompleted: boolean } | null; query: unknown; sessionExited: boolean }
+          {
+            activeTurn: { forceCompleted: boolean } | null
+            query: unknown
+            sessionExited: boolean
+          }
         >
       }
     ).sessions
@@ -1435,7 +1639,9 @@ describe("ClaudeAdapter plan mode", () => {
       expect(ctx?.sessionExited).toBe(true)
       // stopSession's own ladder ended the turn once, before the session
       // was torn down.
-      expect(events.filter((event) => event.type === "turn.aborted")).toHaveLength(1)
+      expect(
+        events.filter((event) => event.type === "turn.aborted")
+      ).toHaveLength(1)
 
       // The slow ladder reaches its force-complete rung after the session is
       // gone: no second terminal event.
@@ -1444,7 +1650,9 @@ describe("ClaudeAdapter plan mode", () => {
     } finally {
       vi.useRealTimers()
     }
-    expect(events.filter((event) => event.type === "turn.aborted")).toHaveLength(1)
+    expect(
+      events.filter((event) => event.type === "turn.aborted")
+    ).toHaveLength(1)
 
     // And the guard itself, for a ladder that captured a turn stopSession
     // never reached: the force-complete is a no-op once the session exited.
@@ -1458,9 +1666,15 @@ describe("ClaudeAdapter plan mode", () => {
         ) => void
       }
     ).forceCompleteInterruptedTurn.bind(adapter)
-    const orphanTurn = { ...(activeTurn as object), forceCompleted: false, id: "orphan" }
+    const orphanTurn = {
+      ...(activeTurn as object),
+      forceCompleted: false,
+      id: "orphan",
+    }
     forceComplete(ctx, "thread-stopped", orphanTurn, null)
-    expect(events.filter((event) => event.type === "turn.aborted")).toHaveLength(1)
+    expect(
+      events.filter((event) => event.type === "turn.aborted")
+    ).toHaveLength(1)
     expect(orphanTurn.forceCompleted).toBe(true)
   })
 
@@ -1511,22 +1725,28 @@ describe("ClaudeAdapter plan mode", () => {
       vi.useRealTimers()
     }
     expect(ctx?.activeTurn).toBeNull()
-    expect(events.filter((event) => event.type === "turn.aborted")).toHaveLength(1)
+    expect(
+      events.filter((event) => event.type === "turn.aborted")
+    ).toHaveLength(1)
 
     // The loop finally unwinds: its finally must not emit a second terminal.
     releaseStream()
     await turn
-    expect(events.filter((event) => event.type === "turn.aborted")).toHaveLength(1)
-    expect(events.filter((event) => event.type === "turn.completed")).toEqual([])
+    expect(
+      events.filter((event) => event.type === "turn.aborted")
+    ).toHaveLength(1)
+    expect(events.filter((event) => event.type === "turn.completed")).toEqual(
+      []
+    )
   })
 
   it("names the real SDK load failure after the 'not installed' prefix", async () => {
     const adapter = new ClaudeAdapter()
     ;(adapter as unknown as { sdkLoadError: string | null }).sdkLoadError =
       "Cannot find module 'better_sqlite3.node'"
-    ;(
-      adapter as unknown as { loadSdk(): Promise<unknown> }
-    ).loadSdk = vi.fn(async () => null)
+    ;(adapter as unknown as { loadSdk(): Promise<unknown> }).loadSdk = vi.fn(
+      async () => null
+    )
     await expect(
       adapter.sendTurn({
         threadId: "thread-sdk-detail",
@@ -1540,7 +1760,12 @@ describe("ClaudeAdapter plan mode", () => {
   })
 
   it("caches a 'not installed' probe for the normal TTL and only failures briefly", async () => {
-    const adapter = new ClaudeAdapter({ binaryPath: path.join(makeTempDir("betterc0de-missing-claude-"), "claude.cmd") })
+    const adapter = new ClaudeAdapter({
+      binaryPath: path.join(
+        makeTempDir("betterc0de-missing-claude-"),
+        "claude.cmd"
+      ),
+    })
     const status = await adapter.probeStatus()
     expect(status).toMatchObject({ installed: false })
     const cache = (
@@ -1758,25 +1983,87 @@ describe("ClaudeAdapter stream event tools", () => {
     queryMock.mockReset()
   })
 
-  it.each(["error_during_execution", "error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries", "success"])("reports SDK error results as failed (%s)", async (subtype) => {
-    queryMock.mockReturnValueOnce(makeQuery([{ type: "result", subtype, is_error: true, errors: ["SDK limit reached"], usage: { input_tokens: 7, output_tokens: 3 } }]))
+  it.each([
+    "error_during_execution",
+    "error_max_turns",
+    "error_max_budget_usd",
+    "error_max_structured_output_retries",
+    "success",
+  ])("reports SDK error results as failed (%s)", async (subtype) => {
+    queryMock.mockReturnValueOnce(
+      makeQuery([
+        {
+          type: "result",
+          subtype,
+          is_error: true,
+          errors: ["SDK limit reached"],
+          usage: { input_tokens: 7, output_tokens: 3 },
+        },
+      ])
+    )
     const adapter = new ClaudeAdapter()
     const events: ProviderRuntimeEvent[] = []
     adapter.subscribe((event) => events.push(event))
-    await adapter.sendTurn({ threadId: "native-error", message: "hello", modelId: "claude-opus-4-7", history: [] })
-    expect(events.filter((event) => event.type === "turn.completed")).toEqual([expect.objectContaining({ status: "failed", error: "SDK limit reached" })])
-    expect((await adapter.readThread("native-error" as ThreadId)).turns).toEqual([])
+    await adapter.sendTurn({
+      threadId: "native-error",
+      message: "hello",
+      modelId: "claude-opus-4-7",
+      history: [],
+    })
+    expect(events.filter((event) => event.type === "turn.completed")).toEqual([
+      expect.objectContaining({ status: "failed", error: "SDK limit reached" }),
+    ])
+    expect(
+      (await adapter.readThread("native-error" as ThreadId)).turns
+    ).toEqual([])
     await adapter.stopAll()
   })
 
   it("projects the SDK result envelope's top-level usage including cache tokens", async () => {
-    queryMock.mockReturnValueOnce(makeQuery([{ type: "result", subtype: "success", result: "done", usage: { input_tokens: 7, output_tokens: 3, cache_read_input_tokens: 11, cache_creation_input_tokens: 2 }, total_cost_usd: 0.25, duration_ms: 120 }]))
+    queryMock.mockReturnValueOnce(
+      makeQuery([
+        {
+          type: "result",
+          subtype: "success",
+          result: "done",
+          usage: {
+            input_tokens: 7,
+            output_tokens: 3,
+            cache_read_input_tokens: 11,
+            cache_creation_input_tokens: 2,
+          },
+          total_cost_usd: 0.25,
+          duration_ms: 120,
+        },
+      ])
+    )
     const adapter = new ClaudeAdapter()
     const events: ProviderRuntimeEvent[] = []
     adapter.subscribe((event) => events.push(event))
-    await adapter.sendTurn({ threadId: "native-usage", message: "hello", modelId: "claude-opus-4-7", history: [] })
-    expect(events.find((event) => event.type === "token.usage")).toMatchObject({ usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10, cachedInputTokens: 13, cacheReadTokens: 11, cacheCreationTokens: 2, totalCostUsd: 0.25, durationMs: 120 } })
-    expect(events.find((event) => event.type === "turn.completed")).toMatchObject({ status: "completed", payload: { usage: { totalTokens: 10 } } })
+    await adapter.sendTurn({
+      threadId: "native-usage",
+      message: "hello",
+      modelId: "claude-opus-4-7",
+      history: [],
+    })
+    expect(events.find((event) => event.type === "token.usage")).toMatchObject({
+      usage: {
+        inputTokens: 7,
+        outputTokens: 3,
+        totalTokens: 10,
+        cachedInputTokens: 13,
+        cacheReadTokens: 11,
+        cacheCreationTokens: 2,
+        totalCostUsd: 0.25,
+        durationMs: 120,
+      },
+    })
+    expect(
+      events.find((event) => event.type === "turn.completed")
+    ).toMatchObject({
+      status: "completed",
+      payload: { usage: { totalTokens: 10 } },
+    })
     await adapter.stopAll()
   })
 

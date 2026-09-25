@@ -14,8 +14,16 @@ export interface ModelThinkingOption {
 // Provider descriptors are sets of supported values, not an ordered UI scale.
 // Grok advertises these in descending order; sliders must increase to the right.
 const EFFORT_ORDER: Readonly<Record<string, number>> = {
-  none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5,
-  max: 6, ultrathink: 7, ultra: 8, ultracode: 9,
+  none: 0,
+  minimal: 1,
+  low: 2,
+  medium: 3,
+  high: 4,
+  xhigh: 5,
+  max: 6,
+  ultrathink: 7,
+  ultra: 8,
+  ultracode: 9,
 }
 
 /** Shared by desktop and mobile; live descriptors take precedence over fallbacks. */
@@ -30,14 +38,22 @@ export function modelThinkingOptions(
   if (descriptor?.type !== "select" || descriptor.options.length === 0)
     return getFallbackThinkingOptions(input)
   return [
-    { mode: null, label: "Off" },
-    ...[...descriptor.options].sort((a, b) =>
-      (EFFORT_ORDER[normalizeThinkingModeValue(a.id)] ?? Number.MAX_SAFE_INTEGER) -
-      (EFFORT_ORDER[normalizeThinkingModeValue(b.id)] ?? Number.MAX_SAFE_INTEGER)
-    ).map((option) => ({
-      mode: effortIdToThinkingMode(option.id),
-      label: option.label,
-    })),
+    ...(input.modelId === "claude-opus-5-5" ||
+    descriptor.options.some((option) => option.id === "none")
+      ? []
+      : [{ mode: null, label: "Off" }]),
+    ...[...descriptor.options]
+      .sort(
+        (a, b) =>
+          (EFFORT_ORDER[normalizeThinkingModeValue(a.id)] ??
+            Number.MAX_SAFE_INTEGER) -
+          (EFFORT_ORDER[normalizeThinkingModeValue(b.id)] ??
+            Number.MAX_SAFE_INTEGER)
+      )
+      .map((option) => ({
+        mode: effortIdToThinkingMode(option.id),
+        label: option.label,
+      })),
   ]
 }
 
@@ -127,7 +143,7 @@ function getFallbackThinkingOptions(
     providerKind === "deepseek" ||
     providerKind.startsWith("or-")
   const options: ModelThinkingOption[] = [
-    { mode: null, label: "Off" },
+    ...(model === "claude-opus-5-5" ? [] : [{ mode: null, label: "Off" }]),
     { mode: "Low", label: "Low" },
     { mode: "Medium", label: "Medium" },
     { mode: "High", label: "High" },

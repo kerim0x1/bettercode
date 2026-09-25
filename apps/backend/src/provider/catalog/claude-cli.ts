@@ -1,4 +1,4 @@
-import type { ProviderDefinition } from "./types";
+import type { ProviderDefinition } from "./types"
 
 /**
  * Claude CLI — uses the locally-installed `claude` binary (Anthropic's
@@ -13,15 +13,9 @@ import type { ProviderDefinition } from "./types";
 export const claudeCli: ProviderDefinition = {
   id: "claude",
   name: "Claude CLI",
-  description: "Anthropic's local `claude` binary — uses your CLI login (no API key in BetterC0de).",
-  defaultModels: [
-    "claude-fable-5-1",
-    "claude-fable-5",
-    "claude-opus-5",
-    "claude-opus-4-8",
-    "claude-sonnet-5",
-    "claude-haiku-4-5-20251001",
-  ],
+  description:
+    "Anthropic's local `claude` binary — uses your CLI login (no API key in BetterC0de).",
+  defaultModels: [],
   enabledByDefault: true,
   docsUrl: "https://docs.anthropic.com/en/docs/claude-code/cli-reference",
   authMethods: [
@@ -34,4 +28,4 @@ export const claudeCli: ProviderDefinition = {
       loginCommand: "claude login",
     },
   ],
-};
+}

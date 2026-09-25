@@ -1,4 +1,4 @@
-import type { ProviderDefinition } from "./types";
+import type { ProviderDefinition } from "./types"
 
 export const grok: ProviderDefinition = {
   id: "grok",
@@ -6,7 +6,7 @@ export const grok: ProviderDefinition = {
   description: "xAI's Grok models.",
   // Mirrors xAI's own model metadata (see ~/.grok/models_cache.json — both
   // ship `supported_in_api: true` with a low…xhigh reasoning ladder on 4.6).
-  defaultModels: ["grok-4.6", "grok-4.5"],
+  defaultModels: [],
   enabledByDefault: true,
   docsUrl: "https://console.x.ai/api-keys",
   authMethods: [
@@ -17,4 +17,4 @@ export const grok: ProviderDefinition = {
       envVars: ["XAI_API_KEY"],
     },
   ],
-};
+}

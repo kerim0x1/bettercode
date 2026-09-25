@@ -91,14 +91,9 @@ export function isHiddenChatProvider(
 ): boolean {
   return identifiers.some((identifier) => {
     const key = identifier?.toLowerCase().replace(/[^a-z0-9]/g, "")
-    return (
-      key === "anthropic" ||
-      key === "anthropicapi" ||
-      key === "claudeapi" ||
-      Boolean(
-        key?.includes("claude") &&
-        (key.includes("terminal") || key.includes("pty"))
-      )
+    return Boolean(
+      key?.includes("claude") &&
+      (key.includes("terminal") || key.includes("pty"))
     )
   })
 }
@@ -385,10 +380,15 @@ export function isClaudeUltrathinkPrompt(
   return typeof text === "string" && /\bultrathink\b/i.test(text)
 }
 
-export function resolvePromptInjectedEffort(caps: ModelCapabilities | null | undefined, rawEffort: string | null | undefined): string | null {
+export function resolvePromptInjectedEffort(
+  caps: ModelCapabilities | null | undefined,
+  rawEffort: string | null | undefined
+): string | null {
   const effort = trimOrNull(rawEffort)
-  const allowed = getProviderOptionDescriptors({ caps }).some(option =>
-    option.type === "select" && option.promptInjectedValues?.some(value => value === effort),
+  const allowed = getProviderOptionDescriptors({ caps }).some(
+    (option) =>
+      option.type === "select" &&
+      option.promptInjectedValues?.some((value) => value === effort)
   )
   return allowed ? effort : null
 }
@@ -426,27 +426,41 @@ function cloneDescriptor(
   }
 }
 
-function withDescriptorCurrentValue(descriptor: ProviderOptionDescriptor, rawCurrentValue: string | boolean | undefined): ProviderOptionDescriptor {
+function withDescriptorCurrentValue(
+  descriptor: ProviderOptionDescriptor,
+  rawCurrentValue: string | boolean | undefined
+): ProviderOptionDescriptor {
   if (descriptor.type === "boolean") {
-    return typeof rawCurrentValue === "boolean" ? { ...descriptor, currentValue: rawCurrentValue } : descriptor
+    return typeof rawCurrentValue === "boolean"
+      ? { ...descriptor, currentValue: rawCurrentValue }
+      : descriptor
   }
   const next = { ...descriptor }
-  const selection = typeof rawCurrentValue === "string" ? rawCurrentValue : descriptor.currentValue
+  const selection =
+    typeof rawCurrentValue === "string"
+      ? rawCurrentValue
+      : descriptor.currentValue
   const current = resolveDescriptorChoiceValue(descriptor, selection)
   delete next.currentValue
   if (current) next.currentValue = current
   return next
 }
 
-function resolveDescriptorChoiceValue(descriptor: SelectProviderOptionDescriptor, raw: string | null | undefined): string | undefined {
+function resolveDescriptorChoiceValue(
+  descriptor: SelectProviderOptionDescriptor,
+  raw: string | null | undefined
+): string | undefined {
   const requested = raw?.trim()
-  const defaultChoice = () => descriptor.options.find(choice => choice.isDefault)?.id
+  const defaultChoice = () =>
+    descriptor.options.find((choice) => choice.isDefault)?.id
   const retained = () => descriptor.currentValue ?? defaultChoice()
   if (!requested) return retained()
   if (!descriptor.options.length) return requested
-  const available = descriptor.options.find(choice => choice.id === requested)
+  const available = descriptor.options.find((choice) => choice.id === requested)
   if (!available) return retained()
-  return descriptor.promptInjectedValues?.includes(available.id) ? defaultChoice() : available.id
+  return descriptor.promptInjectedValues?.includes(available.id)
+    ? defaultChoice()
+    : available.id
 }
 
 function trimOrNull(value: string | null | undefined): string | null {

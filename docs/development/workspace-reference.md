@@ -176,21 +176,30 @@ Artifacts land in `release/`.
 Install any of these and sign in once in a terminal; BetterC0de finds them on
 its own and shows their status under **Settings → Providers**:
 
-| CLI | Install | Sign in |
-| --- | --- | --- |
-| Claude Code | `npm i -g @anthropic-ai/claude-code` | `claude` |
-| OpenAI Codex | `npm i -g @openai/codex` | `codex login` |
+| CLI          | Install                                        | Sign in              |
+| ------------ | ---------------------------------------------- | -------------------- |
+| Claude Code  | `npm i -g @anthropic-ai/claude-code`           | `claude`             |
+| OpenAI Codex | `npm i -g @openai/codex`                       | `codex login`        |
 | Cursor Agent | `curl https://cursor.com/install -fsS \| bash` | `cursor-agent login` |
-| Grok | `npm i -g @xai-official/grok` | `grok login` |
+| Grok         | `npm i -g @xai-official/grok`                  | `grok login`         |
 
 The initial model selection uses **Claude CLI**, then **Codex**, **Cursor**, and
 **Grok CLI**, depending on availability. Other configured providers follow.
-An explicit usable model choice and existing conversation bindings are preserved.
-The retired Claude API entry is excluded from the model picker; old selections
-fall back to a CLI provider. Desktop and mobile use the same priority.
+An explicit model choice and existing conversation bindings are preserved.
+**Claude API** appears separately and becomes usable when an Anthropic API
+account is configured.
+Desktop and mobile use the same default provider priority.
 
-API-key providers (OpenAI, OpenRouter, LM Studio, and others) are
-configured in the same place.
+API-key providers (Claude API, OpenAI, xAI, OpenRouter, LM Studio, and others)
+are configured in the same place. Claude API, OpenAI, and xAI show models
+available to the configured account. Claude CLI reads its SDK initialization
+list, Codex uses `model/list`, and Grok uses ACP and its CLI cache. Catalogs
+refresh every 15 minutes. **Settings → Model Visibility → Refresh API models**
+starts a fresh API lookup, and provider-instance refresh updates a CLI. The last
+successful account-specific list is saved without credentials. If a first
+refresh fails, only explicitly added custom models are offered. A model
+withdrawn from an account remains named in an existing chat; choose another
+model before sending again.
 
 If a CLI is installed somewhere unusual, set its full path in
 **Settings → Providers**; the app never guesses at a bare command name that
@@ -554,9 +563,8 @@ the expensive CLI-boot happens only once. You'll see a new provider entry
 **Codex (CLI)** in the provider picker when it's available.
 
 Models and reasoning options come from the CLI's live catalog. A saved model
-selection is retained while that catalog loads. Astra stays first in the
-Codex model dropdown, including in the fallback catalog during a metadata outage.
-Failed refreshes preserve the last successful catalog and its reasoning options.
+selection is retained while that catalog loads. Failed refreshes preserve the
+last successful account-specific catalog and its reasoning options.
 Google and GLM are no longer offered as built-in provider groups.
 Changing the model in a chat
 pane also updates the selection used for its next message; changing reasoning

@@ -38,6 +38,7 @@ import type { ProviderRuntimeInstance } from "./ProviderHub"
 import type { EventNdjsonLogger } from "./EventNdjsonLogger"
 
 interface ProviderInstanceManagerOptions {
+  readonly modelCacheDir?: string
   readonly clientInfo: {
     readonly name: string
     readonly title: string
@@ -154,6 +155,7 @@ export class ProviderInstanceManager {
         readConfigString(config.config, "homePath")
       )
       const adapter = new CodexAdapter({
+        modelCacheDir: this.options.modelCacheDir,
         resolveCodeSearchServer: this.options.resolveCodeSearchServer,
         resolveOrchestratorServer: this.options.resolveOrchestratorServer,
         providerInstanceId: config.instanceId,
@@ -200,6 +202,7 @@ export class ProviderInstanceManager {
         readConfigString(config.config, "homePath")
       )
       const adapter = new ClaudeAdapter({
+        modelCacheDir: this.options.modelCacheDir,
         resolveCodeSearchServer: this.options.resolveCodeSearchServer,
         resolveOrchestratorServer: this.options.resolveOrchestratorServer,
         providerInstanceId: config.instanceId,
@@ -344,6 +347,7 @@ export class ProviderInstanceManager {
             env,
           }),
         adapter: new GrokAcpAdapter({
+          modelCacheDir: this.options.modelCacheDir,
           providerInstanceId: config.instanceId,
           continuationKey,
           binaryPath: configuredBinaryPath,

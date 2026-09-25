@@ -97,7 +97,8 @@ export function useAppShellBundles() {
     setThinkingMode,
     chatMode,
     setChatMode,
-    specialMode,    terminalOpen,
+    specialMode,
+    terminalOpen,
     setTerminalOpen,
     diffOpen,
     setDiffOpen,
@@ -409,13 +410,9 @@ export function useAppShellBundles() {
   const currentModelName =
     selectedProvider?.models.find((m) => m.id === resolvedSelectedModel)
       ?.name ??
-    providers
-      .find((p) => p.id === selectedProviderId)
-      ?.models.find((m) => m.id === resolvedSelectedModel)?.name ??
-    providers
-      .flatMap((p) => p.models)
-      .find((m) => m.id === resolvedSelectedModel)?.name ??
-    "Select model"
+    (selectedProvider?.modelsReady === true && resolvedSelectedModel
+      ? `${resolvedSelectedModel} (unavailable)`
+      : resolvedSelectedModel || "Select model")
 
   const isLmStudio = selectedProvider?.id === "lmstudio"
   const currentProvider = selectedProvider
@@ -433,7 +430,8 @@ export function useAppShellBundles() {
   )
 
   useGlobalShortcuts({
-    setChatMode,    onNewAgent: () => {
+    setChatMode,
+    onNewAgent: () => {
       setNewThreadModalPath("")
       setNewThreadModalOpen(true)
     },
@@ -779,7 +777,8 @@ export function useAppShellBundles() {
         autonomousMaxIterations,
         chatMode,
         setChatMode,
-        specialMode,        permissionLevel,
+        specialMode,
+        permissionLevel,
         setPermissionLevel,
         contextWindow,
         setContextWindow,

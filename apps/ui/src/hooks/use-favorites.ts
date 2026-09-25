@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import {
-  makeFavoriteKey,
-  parseFavoriteKey,
-} from "@/lib/favorites"
-import {
-  providerModelKey,
-  sortProviderModelItems,
-} from "@/lib/model-ordering"
+import { makeFavoriteKey, parseFavoriteKey } from "@/lib/favorites"
+import { providerModelKey, sortProviderModelItems } from "@/lib/model-ordering"
 import type { UiProvider } from "@/lib/provider-types"
 
 interface FavoriteProviderIndex {
@@ -15,13 +9,12 @@ interface FavoriteProviderIndex {
   readonly firstProviderIdByModelId: ReadonlyMap<string, string>
 }
 
-export function favoriteProvidersSignature(providers: ReadonlyArray<UiProvider>): string {
+export function favoriteProvidersSignature(
+  providers: ReadonlyArray<UiProvider>
+): string {
   return providers
     .map((provider) =>
-      [
-        provider.id,
-        ...provider.models.map((model) => model.id),
-      ].join("\u001f")
+      [provider.id, ...provider.models.map((model) => model.id)].join("\u001f")
     )
     .join("\u001e")
 }
@@ -69,6 +62,14 @@ export function normalizeFavoriteKeysForProviders(
       }
     }
     if (!parsed) continue
+    if (
+      (parsed.providerId === "anthropic" ||
+        parsed.providerId === "claude-api") &&
+      !providerIndex.providersById.has(parsed.providerId) &&
+      providerIndex.providersById.has("anthropic-api")
+    ) {
+      parsed = { ...parsed, providerId: "anthropic-api" }
+    }
     const provider = providerIndex.providersById.get(parsed.providerId)
     const modelExists = Boolean(
       providerIndex.providerModelIdsById
@@ -86,7 +87,16 @@ export function normalizeFavoriteKeysForProviders(
       }
       continue
     }
-    if (!modelExists) continue
+    // An account may temporarily stop advertising a model. Keep its favorite
+    // so it reappears if that model returns to the catalog.
+    if (!modelExists) {
+      const key = makeFavoriteKey(parsed.providerId, parsed.modelId)
+      if (!seen.has(key)) {
+        seen.add(key)
+        out.push(key)
+      }
+      continue
+    }
     const key = makeFavoriteKey(parsed.providerId, parsed.modelId)
     if (!seen.has(key)) {
       seen.add(key)
@@ -178,10 +188,10 @@ export function useFavorites(providers: UiProvider[]) {
   const favoriteEntries = useMemo(() => {
     const providerOrder = providers.map((provider) => provider.id)
     const modelOrderByProvider = new Map(
-      providers.map((provider) => [
-        provider.id,
-        provider.models.map((model) => model.id),
-      ] as const),
+      providers.map(
+        (provider) =>
+          [provider.id, provider.models.map((model) => model.id)] as const
+      )
     )
     const entries = favorites
       .map((key) => {
@@ -213,7 +223,9 @@ export function useFavorites(providers: UiProvider[]) {
     return sortProviderModelItems(entries, {
       favoriteModelKeys: favorites.map((key) => {
         const parsed = parseFavoriteKey(key)
-        return parsed ? providerModelKey(parsed.providerId, parsed.modelId) : key
+        return parsed
+          ? providerModelKey(parsed.providerId, parsed.modelId)
+          : key
       }),
       providerOrder,
       modelOrderByProvider,

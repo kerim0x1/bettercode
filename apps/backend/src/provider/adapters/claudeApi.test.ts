@@ -69,27 +69,58 @@ function baseInput(
 beforeEach(() => vi.clearAllMocks())
 
 describe("ClaudeApiAdapter agent loop", () => {
-  it.each(["plan", "ask"])("blocks an unadvertised mutation in %s mode even with bypass", async (chatMode) => {
-    streamMock
-      .mockReturnValueOnce(makeStream({
-        content: [{ type: "tool_use", id: "write", name: "Write", input: { path: "a", content: "x" } }],
-      }))
-      .mockReturnValueOnce(makeStream({ content: [{ type: "text", text: "done" }] }))
-    const adapter = new ClaudeApiAdapter("sk-test")
-    const events: ProviderRuntimeEvent[] = []
-    adapter.subscribeEvents().on("event", (event: ProviderRuntimeEvent) => events.push(event))
+  it.each(["plan", "ask"])(
+    "blocks an unadvertised mutation in %s mode even with bypass",
+    async (chatMode) => {
+      streamMock
+        .mockReturnValueOnce(
+          makeStream({
+            content: [
+              {
+                type: "tool_use",
+                id: "write",
+                name: "Write",
+                input: { path: "a", content: "x" },
+              },
+            ],
+          })
+        )
+        .mockReturnValueOnce(
+          makeStream({ content: [{ type: "text", text: "done" }] })
+        )
+      const adapter = new ClaudeApiAdapter("sk-test")
+      const events: ProviderRuntimeEvent[] = []
+      adapter
+        .subscribeEvents()
+        .on("event", (event: ProviderRuntimeEvent) => events.push(event))
 
-    await adapter.sendMessage(baseInput({ chat_mode: chatMode, permission_level: "bypass" }))
-    expect(executeTool).not.toHaveBeenCalled()
-    expect(events.find((event) => event.event_type === "tool.denied")?.payload).toMatchObject({ toolName: "Write" })
-  })
+      await adapter.sendMessage(
+        baseInput({ chat_mode: chatMode, permission_level: "bypass" })
+      )
+      expect(executeTool).not.toHaveBeenCalled()
+      expect(
+        events.find((event) => event.event_type === "tool.denied")?.payload
+      ).toMatchObject({ toolName: "Write" })
+    }
+  )
 
   it("keeps the turn client when the API key is cleared between tool calls", async () => {
     streamMock
-      .mockReturnValueOnce(makeStream({
-        content: [{ type: "tool_use", id: "read", name: "Read", input: { path: "a" } }],
-      }))
-      .mockReturnValueOnce(makeStream({ content: [{ type: "text", text: "done" }] }))
+      .mockReturnValueOnce(
+        makeStream({
+          content: [
+            {
+              type: "tool_use",
+              id: "read",
+              name: "Read",
+              input: { path: "a" },
+            },
+          ],
+        })
+      )
+      .mockReturnValueOnce(
+        makeStream({ content: [{ type: "text", text: "done" }] })
+      )
     const adapter = new ClaudeApiAdapter("sk-test")
     vi.mocked(executeTool).mockImplementationOnce(async () => {
       adapter.setApiKey(null)
@@ -99,7 +130,9 @@ describe("ClaudeApiAdapter agent loop", () => {
     await expect(adapter.sendMessage(baseInput())).resolves.toBeUndefined()
     expect(streamMock).toHaveBeenCalledTimes(2)
     expect(adapter.isConfigured()).toBe(false)
-    await expect(adapter.sendMessage(baseInput())).rejects.toThrow("not configured")
+    await expect(adapter.sendMessage(baseInput())).rejects.toThrow(
+      "not configured"
+    )
   })
 
   it("executes a tool_use then loops back to a final answer", async () => {
@@ -179,7 +212,12 @@ describe("ClaudeApiAdapter agent loop", () => {
       .mockReturnValueOnce(
         makeStream({
           content: [
-            { type: "tool_use", id: "tu_1", name: "Read", input: { path: "a" } },
+            {
+              type: "tool_use",
+              id: "tu_1",
+              name: "Read",
+              input: { path: "a" },
+            },
           ],
           usage: USAGE,
         })
@@ -367,24 +405,24 @@ describe("ClaudeApiAdapter agent loop", () => {
       content: [{ type: "text", text: "MCP RESULT" }],
     }))
     streamMock
-      .mockImplementationOnce((request: {
-        tools?: Array<{ name: string }>
-      }) => {
-        const mcpName = request.tools
-          ?.map((tool) => tool.name)
-          .find((name) => name.startsWith("mcp__"))
-        return makeStream({
-          content: [
-            {
-              type: "tool_use",
-              id: "mcp_use",
-              name: mcpName ?? "",
-              input: { query: "x" },
-            },
-          ],
-          usage: USAGE,
-        })
-      })
+      .mockImplementationOnce(
+        (request: { tools?: Array<{ name: string }> }) => {
+          const mcpName = request.tools
+            ?.map((tool) => tool.name)
+            .find((name) => name.startsWith("mcp__"))
+          return makeStream({
+            content: [
+              {
+                type: "tool_use",
+                id: "mcp_use",
+                name: mcpName ?? "",
+                input: { query: "x" },
+              },
+            ],
+            usage: USAGE,
+          })
+        }
+      )
       .mockReturnValueOnce(
         makeStream({
           content: [{ type: "text", text: "done" }],
@@ -585,6 +623,55 @@ describe("ClaudeApiAdapter agent loop", () => {
       max_tokens: 4_096,
     })
     expect(streamMock.mock.calls[1][0].thinking).toBeUndefined()
+  })
+
+  it("keeps Opus 5.5 thinking blocks intact through a tool continuation", async () => {
+    streamMock
+      .mockReturnValueOnce(
+        makeStream({
+          content: [
+            {
+              type: "thinking",
+              thinking: "checking",
+              signature: "signed-thinking",
+            },
+            {
+              type: "tool_use",
+              id: "read-1",
+              name: "Read",
+              input: { path: "a.txt" },
+            },
+          ],
+          usage: USAGE,
+        })
+      )
+      .mockReturnValueOnce(
+        makeStream({ content: [{ type: "text", text: "done" }], usage: USAGE })
+      )
+    const adapter = new ClaudeApiAdapter("sk-test")
+    await adapter.sendMessage(
+      baseInput({ model_id: "claude-opus-5-5", reasoning_effort: null })
+    )
+    expect(streamMock.mock.calls[0][0]).toMatchObject({
+      model: "claude-opus-5-5",
+      thinking: { type: "adaptive", display: "summarized" },
+      output_config: { effort: "medium" },
+    })
+    expect(streamMock.mock.calls[1][0].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "assistant",
+          content: expect.arrayContaining([
+            {
+              type: "thinking",
+              thinking: "checking",
+              signature: "signed-thinking",
+            },
+            expect.objectContaining({ type: "tool_use", id: "read-1" }),
+          ]),
+        }),
+      ])
+    )
   })
 
   it("replays durable tool history as tool_use + tool_result blocks", async () => {

@@ -3,7 +3,7 @@ import type { Hono } from "hono"
 import { z } from "zod"
 import type { AppState } from "../../appState"
 import { LM_STUDIO_BASE_CANDIDATES } from "../../constants"
-import { parseProviderKind } from "../../provider/types"
+import { parseProviderKind, type ModelDefinition } from "../../provider/types"
 import { providerRollbackConversationSchema } from "../validation"
 import { parseAndHandle } from "../routeHelpers"
 import type { ThreadId } from "../../provider/runtime/contracts"
@@ -65,7 +65,9 @@ const validateKeySchema = z.object({
 
 export function registerProvidersRoutes(api: Hono, state: AppState): void {
   api.get("/providers", (c) => c.json(state.providers.listProviders()))
-  api.get("/models", (c) => c.json(state.providers.listModels()))
+  api.get("/models", async (c) =>
+    c.json(withCustomApiModels(await state.providers.listModelsLive(), state))
+  )
   api.get("/providers/status", (c) => c.json(state.providers.getStatus()))
   api.get("/providers/instances", async (c) => {
     const cwd = await resolveProviderRequestCwd(state, c.req.query("cwd"))
@@ -85,7 +87,10 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
     )
   })
   api.post("/providers/instances/:id/refresh", async (c) => {
-    const params = parseInstanceRouteParams(c.req.param("id"), c.req.query("cwd"))
+    const params = parseInstanceRouteParams(
+      c.req.param("id"),
+      c.req.query("cwd")
+    )
     if (!params.ok) return c.json({ error: params.error }, 400)
     const instance = state.providerHub.getInstance(params.id)
     if (!instance) return c.json({ error: "provider instance not found" }, 404)
@@ -107,7 +112,10 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
     })
   })
   api.post("/providers/instances/:id/update", async (c) => {
-    const params = parseInstanceRouteParams(c.req.param("id"), c.req.query("cwd"))
+    const params = parseInstanceRouteParams(
+      c.req.param("id"),
+      c.req.query("cwd")
+    )
     if (!params.ok) return c.json({ error: params.error }, 400)
     const instance = state.providerHub.getInstance(params.id)
     if (!instance) return c.json({ error: "provider instance not found" }, 404)
@@ -138,10 +146,7 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
         sanitized.code === undefined
           ? { error: sanitized.message }
           : { error: sanitized.message, code: sanitized.code }
-      return c.json(
-        body,
-        sanitized.statusCode as 400 | 404 | 409 | 500 | 503
-      )
+      return c.json(body, sanitized.statusCode as 400 | 404 | 409 | 500 | 503)
     }
   })
   api.post("/providers/rollback-conversation", (c) =>
@@ -150,8 +155,9 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
       providerRollbackConversationSchema,
       async (body) => {
         if (body.numTurns === 0) return { rolledBack: false }
-        const latestBinding =
-          state.providerSessionBindings.getLatestForThread(body.threadId)
+        const latestBinding = state.providerSessionBindings.getLatestForThread(
+          body.threadId
+        )
         return withCheckpointRecoveryMutation(
           state,
           {
@@ -257,7 +263,10 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
       state.providers.refreshModels(kind)
     }
     // `force` when no specific kind — ensures every adapter is re-queried.
-    const models = state.providers.listModels(!rawKind)
+    const models = withCustomApiModels(
+      await state.providers.listModelsLive(true),
+      state
+    )
     return c.json(models)
   })
 
@@ -323,7 +332,11 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
     )
     if (!parsed.success) {
       return c.json(
-        { ok: false, valid: false, error: parsed.error.issues[0]?.message ?? "invalid request" },
+        {
+          ok: false,
+          valid: false,
+          error: parsed.error.issues[0]?.message ?? "invalid request",
+        },
         400
       )
     }
@@ -374,6 +387,29 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
   })
 }
 
+function withCustomApiModels(
+  models: ModelDefinition[],
+  state: AppState
+): ModelDefinition[] {
+  const providers = state.settings?.get().providers
+  if (!providers) return models
+  const result = [...models]
+  for (const kind of ["anthropic", "openai", "grok"] as const) {
+    const seen = new Set(
+      result
+        .filter((model) => model.provider === kind)
+        .map((model) => model.slug)
+    )
+    for (const raw of providers[kind]?.custom_models ?? []) {
+      const slug = raw.trim()
+      if (!slug || seen.has(slug)) continue
+      seen.add(slug)
+      result.push({ slug, name: slug, provider: kind, isCustom: true })
+    }
+  }
+  return result
+}
+
 function parseInstanceRouteParams(
   rawId: string | undefined,
   rawCwd: string | undefined
@@ -408,7 +444,7 @@ async function fetchLmStudioModels(): Promise<Array<{ id: string }> | null> {
       }
       const raw = await readBoundedResponseText(
         response,
-        LM_STUDIO_MODELS_MAX_BYTES,
+        LM_STUDIO_MODELS_MAX_BYTES
       )
       const parsed = JSON.parse(raw) as unknown
       if (!isRecord(parsed) || !Array.isArray(parsed.data)) continue
@@ -431,7 +467,7 @@ async function fetchLmStudioModels(): Promise<Array<{ id: string }> | null> {
 
 async function readBoundedResponseText(
   response: Response,
-  maxBytes: number,
+  maxBytes: number
 ): Promise<string> {
   const declaredLength = Number(response.headers.get("content-length"))
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {

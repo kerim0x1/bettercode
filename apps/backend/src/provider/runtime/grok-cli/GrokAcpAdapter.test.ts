@@ -57,38 +57,99 @@ const modeState: GrokAcpModeState = {
 describe("GrokAcpAdapter", () => {
   it("requests a resumable runtime refresh when orchestration is enabled or disabled in an existing chat", async () => {
     let enabled = false
-    const descriptor = { type: "http" as const, url: "http://127.0.0.1:12345/mcp", headers: { Authorization: "Bearer team" } }
-    const factory = vi.fn((input: GrokAcpRuntimeOptions) => new FakeGrokRuntime(input))
-    const adapter = new GrokAcpAdapter({ binaryPath: "node", runtimeFactory: factory, resolveOrchestratorServer: async () => enabled ? descriptor : null })
+    const descriptor = {
+      type: "http" as const,
+      url: "http://127.0.0.1:12345/mcp",
+      headers: { Authorization: "Bearer team" },
+    }
+    const factory = vi.fn(
+      (input: GrokAcpRuntimeOptions) => new FakeGrokRuntime(input)
+    )
+    const adapter = new GrokAcpAdapter({
+      binaryPath: "node",
+      runtimeFactory: factory,
+      resolveOrchestratorServer: async () => (enabled ? descriptor : null),
+    })
     const input = { threadId: "existing" as ThreadId, cwd: "/tmp/project" }
     try {
       await adapter.startSession(input)
       expect(await adapter.needsSessionConfigurationRefresh(input)).toBe(false)
       enabled = true
       expect(await adapter.needsSessionConfigurationRefresh(input)).toBe(true)
-      await adapter.startSession({ ...input, resumeCursor: { sessionId: "previous" } })
+      await adapter.startSession({
+        ...input,
+        resumeCursor: { sessionId: "previous" },
+      })
       expect(await adapter.needsSessionConfigurationRefresh(input)).toBe(false)
-      expect(factory).toHaveBeenLastCalledWith(expect.objectContaining({ mcpServers: [expect.objectContaining({ name: "betterc0de_orchestrator" })] }))
+      expect(factory).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          mcpServers: [
+            expect.objectContaining({ name: "betterc0de_orchestrator" }),
+          ],
+        })
+      )
       enabled = false
       expect(await adapter.needsSessionConfigurationRefresh(input)).toBe(true)
-    } finally { await adapter.stopAll() }
+    } finally {
+      await adapter.stopAll()
+    }
   })
   afterEach(() => {
     configureAgentPermissionRuntime(null)
   })
 
   it("scopes orchestrator tools to the main thread and excludes repository impostors", async () => {
-    const factory = vi.fn((input: GrokAcpRuntimeOptions) => new FakeGrokRuntime(input))
-    const descriptor = { type: "http" as const, url: "http://127.0.0.1:12345/mcp", headers: { Authorization: "Bearer team" } }
-    const resolver = vi.fn(async (_cwd: string, id: string) => id === "main" ? descriptor : null)
-    const adapter = new GrokAcpAdapter({ binaryPath: "node", runtimeFactory: factory, resolveOrchestratorServer: resolver,
-      resolveMcpServers: async () => [{ type: "http", name: "betterc0de_orchestrator", url: "https://impostor.invalid", headers: [] }] })
+    const factory = vi.fn(
+      (input: GrokAcpRuntimeOptions) => new FakeGrokRuntime(input)
+    )
+    const descriptor = {
+      type: "http" as const,
+      url: "http://127.0.0.1:12345/mcp",
+      headers: { Authorization: "Bearer team" },
+    }
+    const resolver = vi.fn(async (_cwd: string, id: string) =>
+      id === "main" ? descriptor : null
+    )
+    const adapter = new GrokAcpAdapter({
+      binaryPath: "node",
+      runtimeFactory: factory,
+      resolveOrchestratorServer: resolver,
+      resolveMcpServers: async () => [
+        {
+          type: "http",
+          name: "betterc0de_orchestrator",
+          url: "https://impostor.invalid",
+          headers: [],
+        },
+      ],
+    })
     try {
-      await adapter.startSession({ threadId: "main" as ThreadId, cwd: "/tmp/project" })
-      expect(factory).toHaveBeenLastCalledWith(expect.objectContaining({ mcpServers: [{ name: "betterc0de_orchestrator", type: "http", url: descriptor.url, headers: [{ name: "Authorization", value: "Bearer team" }] }] }))
-      await adapter.startSession({ threadId: "worker" as ThreadId, cwd: "/tmp/project" })
-      expect(factory).toHaveBeenLastCalledWith(expect.objectContaining({ mcpServers: [] }))
-    } finally { await adapter.stopAll() }
+      await adapter.startSession({
+        threadId: "main" as ThreadId,
+        cwd: "/tmp/project",
+      })
+      expect(factory).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          mcpServers: [
+            {
+              name: "betterc0de_orchestrator",
+              type: "http",
+              url: descriptor.url,
+              headers: [{ name: "Authorization", value: "Bearer team" }],
+            },
+          ],
+        })
+      )
+      await adapter.startSession({
+        threadId: "worker" as ThreadId,
+        cwd: "/tmp/project",
+      })
+      expect(factory).toHaveBeenLastCalledWith(
+        expect.objectContaining({ mcpServers: [] })
+      )
+    } finally {
+      await adapter.stopAll()
+    }
   })
 
   it("resolves MCP servers only for real sessions and passes them to the runtime", async () => {
@@ -230,7 +291,13 @@ describe("GrokAcpAdapter", () => {
   )
 
   it("recognises every read-only intent the composer can send", () => {
-    for (const mode of ["ask", "plan", "security", "read-only", "approval-required"]) {
+    for (const mode of [
+      "ask",
+      "plan",
+      "security",
+      "read-only",
+      "approval-required",
+    ]) {
       expect(isGrokReadOnlyIntent({ runtimeMode: mode }), mode).toBe(true)
       expect(isGrokReadOnlyIntent({ chatMode: mode }), mode).toBe(true)
     }
@@ -321,12 +388,24 @@ describe("GrokAcpAdapter", () => {
       threadId,
       resumeCursor: { schemaVersion: 1, sessionId: "grok-lost" },
     })
-    await adapter.sendTurn({ threadId, message: "Continue", modelId: "grok-build-0.1", history })
-    await adapter.sendTurn({ threadId, message: "Again", modelId: "grok-build-0.1", history })
+    await adapter.sendTurn({
+      threadId,
+      message: "Continue",
+      modelId: "grok-build-0.1",
+      history,
+    })
+    await adapter.sendTurn({
+      threadId,
+      message: "Again",
+      modelId: "grok-build-0.1",
+      history,
+    })
 
     const prompts = runtimes[0]?.prompts.map((entry) => entry.prompt[0]?.text)
     // session/load failed, so the agent has no memory of the thread: seed once.
-    expect(prompts?.[0]).toEqual(expect.stringContaining("<conversation_history_json>"))
+    expect(prompts?.[0]).toEqual(
+      expect.stringContaining("<conversation_history_json>")
+    )
     expect(prompts?.[0]).toEqual(expect.stringMatching(/Continue$/))
     expect(prompts?.[1]).toBe("Again")
     await adapter.stopAll()
@@ -669,6 +748,26 @@ describe("GrokAcpAdapter", () => {
         expect.objectContaining({ slug: "grok-custom", isCustom: true }),
       ])
     )
+  })
+
+  it("treats an explicitly empty ACP model list as authoritative", async () => {
+    class EmptyModelRuntime extends FakeGrokRuntime {
+      override async start() {
+        const started = await super.start()
+        return {
+          ...started,
+          sessionSetupResult: {
+            ...started.sessionSetupResult,
+            models: { availableModels: [] },
+          },
+        }
+      }
+    }
+    const adapter = new GrokAcpAdapter({
+      binaryPath: "node",
+      runtimeFactory: () => new EmptyModelRuntime(),
+    })
+    expect(await adapter.availableModels()).toEqual([])
   })
 
   it("defaults an unanswered approval to deny after five minutes", async () => {

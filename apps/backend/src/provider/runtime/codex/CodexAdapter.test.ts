@@ -974,7 +974,7 @@ describe("CodexAdapter", () => {
     }
   })
 
-  it("keeps Astra first in the fallback catalog without inventing capabilities", async () => {
+  it("offers no invented models before the CLI has returned a catalog", async () => {
     const adapter = new CodexAdapter({
       providerInstanceId: "codex",
       continuationKey: "codex",
@@ -986,14 +986,7 @@ describe("CodexAdapter", () => {
 
     const models = await adapter.availableModels()
 
-    expect(models.map((model) => model.slug)).toEqual([
-      "gpt-6-astra",
-      "gpt-5.6-sol",
-      "gpt-5.6-terra",
-      "gpt-5.6-luna",
-      "gpt-5.5",
-    ])
-    expect(models[0].capabilities).toBeNull()
+    expect(models).toEqual([])
     // The reserved selector is no longer offered in the fallback list, but
     // persisted selections of it must still translate to "no explicit model".
     expect(nativeCodexModelId(CODEX_CLI_DEFAULT_MODEL_ID)).toBeNull()

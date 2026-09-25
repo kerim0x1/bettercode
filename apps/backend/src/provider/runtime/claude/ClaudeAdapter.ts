@@ -113,6 +113,7 @@ import {
 } from "../../permissions"
 
 import { buildWindowsCmdArgs } from "../../../security/windowsCommandLine"
+import { CliModelSnapshot, cliAccountIdentity } from "../CliModelSnapshot"
 interface SdkQuery {
   [Symbol.asyncIterator](): AsyncIterator<unknown>
   initializationResult?: () => Promise<SdkInitializationResult>
@@ -124,6 +125,14 @@ interface SdkQuery {
 
 interface SdkInitializationResult {
   commands?: ReadonlyArray<ClaudeSlashCommand>
+  models?: ReadonlyArray<{
+    readonly value?: unknown
+    readonly displayName?: unknown
+    readonly supportsEffort?: unknown
+    readonly supportedEffortLevels?: unknown
+    readonly supportsAdaptiveThinking?: unknown
+    readonly supportsFastMode?: unknown
+  }>
   account?: {
     readonly email?: unknown
     readonly subscriptionType?: unknown
@@ -247,6 +256,7 @@ interface SdkModule extends SdkMcpCapableModule {
 }
 
 export interface ClaudeAdapterOptions {
+  readonly modelCacheDir?: string
   readonly resolveOrchestratorServer?: import("../../../services/orchestrator/mcp").OrchestratorServerResolver
   readonly resolveCodeSearchServer?: import("../../../services/code-search/contracts").CodeSearchServerResolver
   readonly providerInstanceId?: string
@@ -385,6 +395,7 @@ interface ClaudeCapabilitiesProbe {
   readonly subscriptionType?: string
   readonly tokenSource?: string
   readonly slashCommands: ReadonlyArray<ProviderSlashCommand>
+  readonly models: ReadonlyArray<ProviderModel>
 }
 
 interface ClaudeCommandProbeResult {
@@ -410,6 +421,7 @@ const CAPABILITIES: ProviderCapabilities = {
 const MAX_RETAINED_TURN_ITEMS = 500
 
 const PROVIDER_METADATA_CACHE_TTL_MS = 30_000
+const CLAUDE_MODEL_CACHE_TTL_MS = 15 * 60_000
 const CLAUDE_COMMAND_PROBE_TIMEOUT_MS = 8_000
 const CLAUDE_PENDING_REQUEST_TIMEOUT_MS = 5 * 60_000
 const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111"
@@ -502,29 +514,20 @@ function claudeCapabilities(
   return { optionDescriptors }
 }
 
-/**
- * Release order for the picker. Capabilities are *derived* from each slug by
- * the shared Anthropic taxonomy rather than spelled out here, so adding a
- * model is a one-line change and a model discovered at runtime is described
- * exactly like a curated one.
- */
-const CURATED_CLAUDE_MODEL_SLUGS: ReadonlyArray<string> = [
-  "claude-fable-5-1",
-  "claude-fable-5",
-  "claude-opus-5",
-  "claude-opus-4-8",
-  "claude-sonnet-5",
-  "claude-haiku-4-5-20251001",
-]
-
-function claudeEffortOptionsFor(
-  slug: string
-): ReadonlyArray<{
+function claudeEffortOptionsFor(slug: string): ReadonlyArray<{
   readonly id: string
   readonly label: string
   readonly isDefault?: boolean
 }> | null {
   const identity = parseAnthropicModelId(slug)
+  if (slug === "claude-opus-5-5")
+    return CLAUDE_OPUS_47_OPTIONS.filter(
+      (option) => option.id !== "ultracode"
+    ).map((option) => ({
+      id: option.id,
+      label: option.label,
+      ...(option.id === "medium" ? { isDefault: true } : {}),
+    }))
   // Haiku exposes a thinking toggle rather than an effort ladder.
   if (!identity || identity.family === "haiku") return null
   if (anthropicSupportsExtendedEffort(slug)) return CLAUDE_OPUS_47_OPTIONS
@@ -545,11 +548,12 @@ export function buildClaudeProviderModel(
   displayName?: string | null
 ): ProviderModel {
   const effortOptions = claudeEffortOptionsFor(slug)
+  const knownFamily = Boolean(parseAnthropicModelId(slug))
   return {
     slug,
     name: displayName?.trim() || anthropicModelDisplayName(slug) || slug,
-    context: anthropicContextLabel(slug),
-    tier: anthropicModelTier(slug) ?? "Flagship",
+    context: knownFamily ? anthropicContextLabel(slug) : "runtime",
+    tier: anthropicModelTier(slug) ?? "Runtime",
     isCustom: false,
     capabilities: claudeCapabilities({
       ...(effortOptions ? { effortOptions } : { supportsThinking: true }),
@@ -559,34 +563,64 @@ export function buildClaudeProviderModel(
   }
 }
 
-const MODELS: ReadonlyArray<ProviderModel> = CURATED_CLAUDE_MODEL_SLUGS.map(
-  (slug) => buildClaudeProviderModel(slug)
-)
+export function buildClaudeModelsFromInitialization(
+  models: SdkInitializationResult["models"]
+): ProviderModel[] {
+  const bySlug = new Map<string, ProviderModel>()
+  for (const info of models ?? []) {
+    const slug = nonEmptyString(info.value)
+    if (!slug || bySlug.has(slug)) continue
+    const model = buildClaudeProviderModel(
+      slug,
+      nonEmptyString(info.displayName)
+    )
+    const levels = Array.isArray(info.supportedEffortLevels)
+      ? info.supportedEffortLevels.filter(
+          (level): level is string =>
+            typeof level === "string" &&
+            ["low", "medium", "high", "xhigh", "max"].includes(level)
+        )
+      : null
+    const hasSdkCapabilities =
+      levels !== null ||
+      typeof info.supportsEffort === "boolean" ||
+      typeof info.supportsAdaptiveThinking === "boolean" ||
+      typeof info.supportsFastMode === "boolean"
+    const effortOptions =
+      levels !== null
+        ? levels.map((id) => ({
+            id,
+            label:
+              id === "xhigh" ? "Extra High" : id[0].toUpperCase() + id.slice(1),
+            ...(id === "medium" && slug === "claude-opus-5-5"
+              ? { isDefault: true }
+              : {}),
+          }))
+        : info.supportsEffort === false
+          ? []
+          : claudeEffortOptionsFor(slug)
+    const capabilities = hasSdkCapabilities
+      ? claudeCapabilities({
+          ...(effortOptions ? { effortOptions } : {}),
+          supportsThinking:
+            info.supportsAdaptiveThinking === true &&
+            (effortOptions?.length ?? 0) === 0,
+          supportsFastMode:
+            typeof info.supportsFastMode === "boolean"
+              ? info.supportsFastMode
+              : anthropicSupportsFastMode(slug),
+          supportsContextWindow: anthropicSupportsOneMillionContext(slug),
+        })
+      : model.capabilities
+    bySlug.set(slug, { ...model, capabilities })
+  }
+  return [...bySlug.values()]
+}
 
 function supportsClaudeOpus47(version: string | null | undefined): boolean {
   return version
     ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_4_7_VERSION) >= 0
     : false
-}
-
-/**
- * CLIs too old for Opus 4.7 cannot run any later generation either, so the
- * gate is expressed as "needs the 4.7-era binary" instead of a slug list that
- * every future release would have to be added to.
- */
-function requiresModernClaudeCli(slug: string): boolean {
-  const identity = parseAnthropicModelId(slug)
-  if (!identity || identity.family === "haiku") return false
-  if (identity.family === "fable" || identity.family === "mythos") return true
-  return identity.version === null || identity.version >= 4.7
-}
-
-export function getBuiltInClaudeModelsForVersion(
-  version: string | null | undefined
-): ReadonlyArray<ProviderModel> {
-  if (version === undefined) return MODELS
-  if (supportsClaudeOpus47(version)) return MODELS
-  return MODELS.filter((model) => !requiresModernClaudeCli(model.slug))
 }
 
 function formatClaudeOpus47UpgradeMessage(version: string | null): string {
@@ -598,8 +632,9 @@ export function claudeModelSupportsBooleanOption(
   modelId: string,
   optionId: string
 ): boolean {
-  const normalized = normalizeClaudeCapabilityModelId(modelId)
-  const model = MODELS.find((candidate) => candidate.slug === normalized)
+  const model = buildClaudeProviderModel(
+    normalizeClaudeCapabilityModelId(modelId)
+  )
   return Boolean(
     model?.capabilities?.optionDescriptors?.some(
       (descriptor) =>
@@ -652,10 +687,15 @@ export function resolveClaudeContextWindow(
   return null
 }
 
-function getClaudeModelCapabilities(modelId: string): ModelCapabilities {
+function getClaudeModelCapabilities(
+  modelId: string,
+  discoveredModels: ReadonlyArray<ProviderModel> | null
+): ModelCapabilities {
   const normalized = normalizeClaudeCapabilityModelId(modelId)
   return (
-    MODELS.find((candidate) => candidate.slug === normalized)?.capabilities ?? {
+    discoveredModels?.find((candidate) => candidate.slug === normalized)
+      ?.capabilities ??
+    buildClaudeProviderModel(normalized).capabilities ?? {
       optionDescriptors: [],
     }
   )
@@ -907,7 +947,9 @@ function resolveOptions(
 ): ResolvedOptions {
   const out: ResolvedOptions = {}
   if (supportsAdaptiveThinking(modelId)) {
-    out.effort = mapAdaptiveEffort(effort) ?? ADAPTIVE_EFFORT_DEFAULT
+    out.effort =
+      mapAdaptiveEffort(effort, modelId) ??
+      (modelId === "claude-opus-5-5" ? "medium" : ADAPTIVE_EFFORT_DEFAULT)
     if (requiresExplicitDisplaySummarized(modelId)) {
       out.thinking = { type: "adaptive", display: "summarized" }
     }
@@ -927,19 +969,18 @@ function resolveOptions(
   return out
 }
 
-function mapAdaptiveEffort(raw: string | null | undefined): string | undefined {
+function mapAdaptiveEffort(
+  raw: string | null | undefined,
+  modelId: string
+): string | undefined {
   if (!raw) return undefined
   const key = raw.toLowerCase().replace(/[\s_-]+/g, "")
   if (key === "low" || key === "medium" || key === "high") return key
   // Normalize Claude's Opus 4.7 `xhigh` capability to the SDK/CLI
   // `max` effort. `ultrathink` is still handled as a prompt-injected mode.
-  if (
-    key === "xhigh" ||
-    key === "extrahigh" ||
-    key === "max" ||
-    key === "ultra" ||
-    key === "ultrathink"
-  ) {
+  if (key === "xhigh" || key === "extrahigh")
+    return modelId === "claude-opus-5-5" ? "xhigh" : "max"
+  if (key === "max" || key === "ultra" || key === "ultrathink") {
     return "max"
   }
   return undefined
@@ -984,7 +1025,9 @@ function isClaudeMetadataCacheFresh(
 ): boolean {
   return (
     now - cache.checkedAt <
-    (cache.error ? PROVIDER_METADATA_ERROR_TTL_MS : PROVIDER_METADATA_CACHE_TTL_MS)
+    (cache.error
+      ? PROVIDER_METADATA_ERROR_TTL_MS
+      : PROVIDER_METADATA_CACHE_TTL_MS)
   )
 }
 
@@ -1594,6 +1637,14 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       readonly error?: true
     }
   >()
+  private modelsCache: {
+    readonly checkedAt: number
+    readonly models: ReadonlyArray<ProviderModel>
+  } | null = null
+  private modelsInFlight: Promise<ReadonlyArray<ProviderModel>> | null = null
+  private readonly modelSnapshot: CliModelSnapshot
+  private lastKnownModels: ReadonlyArray<ProviderModel> | null = null
+  private lastKnownAccount: string | null = null
   private statusCache: {
     readonly checkedAt: number
     readonly status: ClaudeProviderStatusProbe
@@ -1601,7 +1652,9 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     readonly error?: true
   } | null = null
 
-  constructor(private readonly options: ClaudeAdapterOptions = {}) {}
+  constructor(private readonly options: ClaudeAdapterOptions = {}) {
+    this.modelSnapshot = new CliModelSnapshot(options.modelCacheDir)
+  }
 
   isConfigured(): boolean {
     // Installation and authentication are verified by the bounded async
@@ -1615,9 +1668,9 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     return this.runMetadataWork(() => this.probeStatusUnderAdmission(input))
   }
 
-  private async probeStatusUnderAdmission(
-    input: { readonly cwd?: string | null }
-  ): Promise<ClaudeProviderStatusProbe> {
+  private async probeStatusUnderAdmission(input: {
+    readonly cwd?: string | null
+  }): Promise<ClaudeProviderStatusProbe> {
     if (this.statusCache && isClaudeMetadataCacheFresh(this.statusCache)) {
       return this.statusCache.status
     }
@@ -1640,7 +1693,9 @@ export class ClaudeAdapter implements ProviderAdapterShape {
         cwd: normalizeCwd(input.cwd),
         env: this.makeEnvironment(),
         timeoutMs: CLAUDE_COMMAND_PROBE_TIMEOUT_MS,
-        retainFailedCleanup: (child) => { this.metadataChildren.add(child) },
+        retainFailedCleanup: (child) => {
+          this.metadataChildren.add(child)
+        },
       })
       const version = parseClaudeCliVersion(
         `${versionProbe.stdout}\n${versionProbe.stderr}`
@@ -1716,13 +1771,43 @@ export class ClaudeAdapter implements ProviderAdapterShape {
   }
 
   async availableModels(): Promise<ReadonlyArray<ProviderModel>> {
-    return mergeCustomModels(
-      getBuiltInClaudeModelsForVersion(this.statusCache?.status.version),
-      this.options.customModels ?? []
+    const account = this.modelAccountIdentity()
+    if (this.lastKnownAccount !== account) {
+      this.lastKnownAccount = account
+      this.lastKnownModels = this.modelSnapshot.read(
+        "claude",
+        this.options.providerInstanceId ?? "claude",
+        account
+      )
+      this.modelsCache = null
+      this.modelsInFlight = null
+    }
+    if (
+      this.modelsCache &&
+      Date.now() - this.modelsCache.checkedAt < CLAUDE_MODEL_CACHE_TTL_MS
     )
+      return mergeCustomModels(
+        this.modelsCache.models,
+        this.options.customModels ?? []
+      )
+    if (this.modelsInFlight) return this.modelsInFlight
+    const probe = this.runMetadataWork(async () => {
+      const capabilities = await this.probeCapabilities(normalizeCwd(null))
+      if (capabilities) return capabilities.models
+      return this.lastKnownModels ?? []
+    })
+      .then((models) =>
+        mergeCustomModels(models, this.options.customModels ?? [])
+      )
+      .finally(() => {
+        this.modelsInFlight = null
+      })
+    this.modelsInFlight = probe
+    return probe
   }
 
   invalidateMetadata(input: { readonly cwd?: string | null } = {}): void {
+    this.modelsCache = null
     if (input.cwd === undefined) {
       this.skillsCache.clear()
       this.slashCommandsCache.clear()
@@ -1754,12 +1839,15 @@ export class ClaudeAdapter implements ProviderAdapterShape {
   availableSlashCommands(
     input: { readonly cwd?: string | null; readonly force?: boolean } = {}
   ): Promise<ReadonlyArray<ProviderSlashCommand>> {
-    return this.runMetadataWork(() => this.availableSlashCommandsUnderAdmission(input))
+    return this.runMetadataWork(() =>
+      this.availableSlashCommandsUnderAdmission(input)
+    )
   }
 
-  private async availableSlashCommandsUnderAdmission(
-    input: { readonly cwd?: string | null; readonly force?: boolean }
-  ): Promise<ReadonlyArray<ProviderSlashCommand>> {
+  private async availableSlashCommandsUnderAdmission(input: {
+    readonly cwd?: string | null
+    readonly force?: boolean
+  }): Promise<ReadonlyArray<ProviderSlashCommand>> {
     if (!this.isConfigured()) return []
     const cwd = normalizeCwd(input.cwd)
     const cached = this.slashCommandsCache.get(cwd)
@@ -1776,7 +1864,8 @@ export class ClaudeAdapter implements ProviderAdapterShape {
   }
 
   private runMetadataWork<T>(work: () => Promise<T>): Promise<T> {
-    if (this.metadataStopping) return Promise.reject(new Error("Claude metadata is stopping"))
+    if (this.metadataStopping)
+      return Promise.reject(new Error("Claude metadata is stopping"))
     const pending = (async () => {
       await this.retryMetadataCleanup()
       if (this.metadataStopping) throw new Error("Claude metadata is stopping")
@@ -1821,11 +1910,16 @@ export class ClaudeAdapter implements ProviderAdapterShape {
   private async closeMetadataChild(child: ChildProcess): Promise<void> {
     let pending = this.metadataChildCleanup.get(child)
     if (!pending) {
-      if (process.platform === "win32" && (child.exitCode != null || child.signalCode != null)) {
+      if (
+        process.platform === "win32" &&
+        (child.exitCode != null || child.signalCode != null)
+      ) {
         // The exited root can no longer safely identify descendants from the
         // failed attempt. Keep the resource quarantined instead of treating
         // the generic helper's already-exited fast path as confirmed cleanup.
-        throw new Error("Claude metadata descendant cleanup remains unconfirmed after the Windows root exited")
+        throw new Error(
+          "Claude metadata descendant cleanup remains unconfirmed after the Windows root exited"
+        )
       }
       pending = terminateProviderChildProcessTree(child).then(() => {
         this.metadataChildren.delete(child)
@@ -1843,12 +1937,19 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     // Only failed or timed-out cleanup remains after a probe settles. Active
     // queries are owned by their still-running probe and must not be closed here.
     const results = await Promise.allSettled([
-      ...Array.from(this.metadataQueries).filter((query) => this.failedMetadataQueries.has(query)).map((query) => this.closeMetadataQuery(query)),
-      ...Array.from(this.metadataChildren).map((child) => this.closeMetadataChild(child)),
+      ...Array.from(this.metadataQueries)
+        .filter((query) => this.failedMetadataQueries.has(query))
+        .map((query) => this.closeMetadataQuery(query)),
+      ...Array.from(this.metadataChildren).map((child) =>
+        this.closeMetadataChild(child)
+      ),
     ])
-    const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : [])
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : []
+    )
     if (failures.length === 1) throw failures[0]
-    if (failures.length > 0) throw new AggregateError(failures, "Claude metadata cleanup failed")
+    if (failures.length > 0)
+      throw new AggregateError(failures, "Claude metadata cleanup failed")
   }
 
   private cacheStatus(
@@ -1870,6 +1971,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     if (!sdk) return null
 
     const abort = new AbortController()
+    const accountAtStart = this.modelAccountIdentity()
     const claudeCodeBinaryPath = this.claudeBinaryPath()
     let query: SdkQuery | null = null
     try {
@@ -1900,6 +2002,21 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       const subscriptionType = nonEmptyString(account.subscriptionType)
       const tokenSource = nonEmptyString(account.tokenSource)
       const slashCommands = parseClaudeInitializationCommands(init.commands)
+      const models = buildClaudeModelsFromInitialization(init.models)
+      if (accountAtStart && this.modelAccountIdentity() !== accountAtStart)
+        return null
+      this.modelsCache = { checkedAt: Date.now(), models }
+      const accountIdentity = this.modelAccountIdentity(
+        nonEmptyString(init.account?.email)
+      )
+      this.lastKnownAccount = accountIdentity
+      this.lastKnownModels = models
+      this.modelSnapshot.write(
+        "claude",
+        this.options.providerInstanceId ?? "claude",
+        accountIdentity,
+        models
+      )
       this.slashCommandsCache.set(cwd, {
         checkedAt: Date.now(),
         commands: slashCommands,
@@ -1909,6 +2026,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
         ...(subscriptionType ? { subscriptionType } : {}),
         ...(tokenSource ? { tokenSource } : {}),
         slashCommands,
+        models,
       }
     } catch (error) {
       logger.warn({ err: error, cwd }, "claude capability probe failed")
@@ -1917,6 +2035,14 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       abort.abort()
       if (query) await this.finishMetadataQuery(query)
     }
+  }
+
+  private modelAccountIdentity(email?: string): string | null {
+    return cliAccountIdentity(
+      "claude",
+      this.claudeConfigDir(),
+      email ?? this.statusCache?.status.auth.email
+    )
   }
 
   hasSession(threadId: ThreadId): boolean {
@@ -2027,7 +2153,12 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     ctx.abort = loopAbort
 
     const sdk = await this.loadSdk()
-    if (loopAbort.signal.aborted || ctx.sessionExited || this.sessions.get(key) !== ctx) return
+    if (
+      loopAbort.signal.aborted ||
+      ctx.sessionExited ||
+      this.sessions.get(key) !== ctx
+    )
+      return
     if (!sdk) {
       // The prefix is what callers and tests key on; the real reason follows
       // it so a broken install reads as such instead of "not installed".
@@ -2048,12 +2179,18 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       ["effort", "reasoningEffort"],
       input.reasoningEffort
     )
-    const modelCapabilities = getClaudeModelCapabilities(modelId)
+    const modelCapabilities = getClaudeModelCapabilities(
+      modelId,
+      this.modelsCache?.models ?? this.lastKnownModels
+    )
     const resolvedEffort = resolveClaudeEffort(
       modelCapabilities,
       reasoningEffort
     )
-    const fastMode = claudeModelSupportsBooleanOption(modelId, "fastMode")
+    const fastMode = modelCapabilities.optionDescriptors?.some(
+      (descriptor) =>
+        descriptor.id === "fastMode" && descriptor.type === "boolean"
+    )
       ? resolveTurnBooleanOption(input, "fastMode", input.fastMode)
       : undefined
     const opts = resolveOptions(resolvedEffort, modelId, fastMode)
@@ -2116,9 +2253,18 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     // plan→implement rollover can still reach it via the approval gate), but
     // auto-allow + the system-prompt nudge apply only to agentish,
     // non-read-only turns.
-    const codeSearchServer = cwd ? await this.options.resolveCodeSearchServer?.(cwd) : null
-    const orchestratorServer = cwd ? await this.options.resolveOrchestratorServer?.(cwd, key) : null
-    if (loopAbort.signal.aborted || ctx.sessionExited || this.sessions.get(key) !== ctx) return
+    const codeSearchServer = cwd
+      ? await this.options.resolveCodeSearchServer?.(cwd)
+      : null
+    const orchestratorServer = cwd
+      ? await this.options.resolveOrchestratorServer?.(cwd, key)
+      : null
+    if (
+      loopAbort.signal.aborted ||
+      ctx.sessionExited ||
+      this.sessions.get(key) !== ctx
+    )
+      return
     const imagegenAdvertised =
       Boolean(cwd) &&
       effectiveGateLevel !== "read-only" &&
@@ -2147,7 +2293,10 @@ export class ClaudeAdapter implements ProviderAdapterShape {
         signal?: AbortSignal
       }
     ) => {
-      const cancelled = () => loopAbort.signal.aborted || ctx!.sessionExited || ctx!.abort !== loopAbort
+      const cancelled = () =>
+        loopAbort.signal.aborted ||
+        ctx!.sessionExited ||
+        ctx!.abort !== loopAbort
       const interrupted = { behavior: "deny" as const, message: "Interrupted" }
       if (cancelled()) return interrupted
       if (toolName === "AskUserQuestion") {
@@ -2158,14 +2307,15 @@ export class ClaudeAdapter implements ProviderAdapterShape {
           requestId,
           loopAbort.signal,
           {},
-          () => this.emitEvent({
-          ...eventBase(key),
-          type: "request.opened",
-          requestId,
-          kind: "user_input",
-          questions,
-          turnId,
-        })
+          () =>
+            this.emitEvent({
+              ...eventBase(key),
+              type: "request.opened",
+              requestId,
+              kind: "user_input",
+              questions,
+              turnId,
+            })
         )
         if (cancelled()) return interrupted
         this.emitEvent({
@@ -2209,23 +2359,25 @@ export class ClaudeAdapter implements ProviderAdapterShape {
         // (optionally switching to acceptEdits for same-turn implementation)
         // or sends it back with feedback.
         const requestId = randomUUID()
-        const resolution = await awaitPendingClaudeRequest<PlanApprovalResolution>(
-          ctx!.pendingPlanApprovals,
-          requestId,
-          loopAbort.signal,
-          { decision: "deny", message: "Interrupted or timed out" },
-          () => this.emitEvent({
-          ...eventBase(key),
-          type: "request.opened",
-          requestId,
-          kind: "plan_approval",
-          // Fall back to the plan text streamed earlier this session when
-          // the tool input arrived without a plan payload — the approval
-          // UI must never show an empty preview for a real plan.
-          planMarkdown: planMarkdown ?? ctx!.lastProposedPlanText ?? "",
-          turnId,
-        })
-        )
+        const resolution =
+          await awaitPendingClaudeRequest<PlanApprovalResolution>(
+            ctx!.pendingPlanApprovals,
+            requestId,
+            loopAbort.signal,
+            { decision: "deny", message: "Interrupted or timed out" },
+            () =>
+              this.emitEvent({
+                ...eventBase(key),
+                type: "request.opened",
+                requestId,
+                kind: "plan_approval",
+                // Fall back to the plan text streamed earlier this session when
+                // the tool input arrived without a plan payload — the approval
+                // UI must never show an empty preview for a real plan.
+                planMarkdown: planMarkdown ?? ctx!.lastProposedPlanText ?? "",
+                turnId,
+              })
+          )
         if (cancelled()) return interrupted
         this.emitEvent({
           ...eventBase(key),
@@ -2295,7 +2447,8 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       // it is not auto-allowed like a local read. It is the one always-available
       // tool that can carry workspace contents off the machine, so outside
       // bypass it goes to the approval gate where the user sees the URL.
-      const egressRequiresApproval = policyClass === "egress" && level !== "bypass"
+      const egressRequiresApproval =
+        policyClass === "egress" && level !== "bypass"
 
       // Plan mode: only read-only tools. Mutate / unknown are denied with a
       // structured message the SDK surfaces back to the model.
@@ -2331,7 +2484,8 @@ export class ClaudeAdapter implements ProviderAdapterShape {
           message: `BetterC0de project permission denied ${projectRule.permission}:${projectRule.pattern}.`,
         }
       }
-      const projectRuleRequiresApproval = projectRule?.action === "ask" || sessionRule === "ask"
+      const projectRuleRequiresApproval =
+        projectRule?.action === "ask" || sessionRule === "ask"
 
       // ── Turn ceiling ────────────────────────────────────────────────────
       // What the permission level alone auto-approves, before any session or
@@ -2411,28 +2565,30 @@ export class ClaudeAdapter implements ProviderAdapterShape {
 
       const requestId = randomUUID()
       const suggestions = parsePermissionSuggestions(opts?.suggestions)
-      const resolution = await awaitPendingClaudeRequest<ToolApprovalResolution>(
-        ctx!.pendingApprovals,
-        requestId,
-        loopAbort.signal,
-        { decision: "deny", message: "Interrupted or timed out" },
-        () => this.emitEvent({
-        ...eventBase(key),
-        type: "request.opened",
-        requestId,
-        kind: "tool_approval",
-        tool: toolName,
-        input: toolInput,
-        turnId,
-        ...(opts?.title ? { title: opts.title } : {}),
-        ...(opts?.description ? { description: opts.description } : {}),
-        ...(opts?.decisionReason
-          ? { decisionReason: opts.decisionReason }
-          : {}),
-        ...(opts?.blockedPath ? { blockedPath: opts.blockedPath } : {}),
-        ...(suggestions ? { suggestions } : {}),
-      })
-      )
+      const resolution =
+        await awaitPendingClaudeRequest<ToolApprovalResolution>(
+          ctx!.pendingApprovals,
+          requestId,
+          loopAbort.signal,
+          { decision: "deny", message: "Interrupted or timed out" },
+          () =>
+            this.emitEvent({
+              ...eventBase(key),
+              type: "request.opened",
+              requestId,
+              kind: "tool_approval",
+              tool: toolName,
+              input: toolInput,
+              turnId,
+              ...(opts?.title ? { title: opts.title } : {}),
+              ...(opts?.description ? { description: opts.description } : {}),
+              ...(opts?.decisionReason
+                ? { decisionReason: opts.decisionReason }
+                : {}),
+              ...(opts?.blockedPath ? { blockedPath: opts.blockedPath } : {}),
+              ...(suggestions ? { suggestions } : {}),
+            })
+        )
       if (cancelled()) return interrupted
       this.emitEvent({
         ...eventBase(key),
@@ -2512,8 +2668,12 @@ export class ClaudeAdapter implements ProviderAdapterShape {
         ...(cwd
           ? {
               mcpServers: {
-                ...(codeSearchServer ? { [CODE_SEARCH_SERVER]: codeSearchServer } : {}),
-                ...(orchestratorServer ? { betterc0de_orchestrator: orchestratorServer } : {}),
+                ...(codeSearchServer
+                  ? { [CODE_SEARCH_SERVER]: codeSearchServer }
+                  : {}),
+                ...(orchestratorServer
+                  ? { betterc0de_orchestrator: orchestratorServer }
+                  : {}),
                 [IMAGEGEN_MCP_SERVER_NAME]: buildImagegenMcpServer(sdk, {
                   workspaceDir: cwd,
                 }),
@@ -2778,7 +2938,9 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       Math.max(1, deadline - Date.now())
     const query = ctx.query
     const activeTurn = ctx.activeTurn
-    const interruptDeadline = deadlineAt(CLAUDE_INTERRUPT_RUNG_DEADLINES.interrupt)
+    const interruptDeadline = deadlineAt(
+      CLAUDE_INTERRUPT_RUNG_DEADLINES.interrupt
+    )
     if (query?.interrupt) {
       await withInterruptDeadline(
         () => query.interrupt?.(),
@@ -2816,10 +2978,17 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     // The SDK honours this controller by terminating its child process.
     const abortDeadline = deadlineAt(CLAUDE_INTERRUPT_RUNG_DEADLINES.abort)
     if (!activeTurn.abort.signal.aborted) activeTurn.abort.abort()
-    if (await settledWithin(activeTurn.settled, remainingUntil(abortDeadline))) {
+    if (
+      await settledWithin(activeTurn.settled, remainingUntil(abortDeadline))
+    ) {
       return
     }
-    this.forceCompleteInterruptedTurn(ctx, threadId as string, activeTurn, query)
+    this.forceCompleteInterruptedTurn(
+      ctx,
+      threadId as string,
+      activeTurn,
+      query
+    )
   }
 
   /**
@@ -3099,7 +3268,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     if (query?.setPermissionMode && ctx.activeTurn) {
       try {
         await query.setPermissionMode(
-          mode === "bypassPermissions" ? "default" : mode,
+          mode === "bypassPermissions" ? "default" : mode
         )
         return { applied: "live" }
       } catch {
@@ -3126,9 +3295,10 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     this.metadataStopping = true
     await Promise.allSettled([...this.metadataWork])
     const keys = Array.from(this.sessions.keys())
-    const results = await Promise.allSettled(
-      [...keys.map((k) => this.stopSession(k as ThreadId)), this.retryMetadataCleanup()]
-    )
+    const results = await Promise.allSettled([
+      ...keys.map((k) => this.stopSession(k as ThreadId)),
+      this.retryMetadataCleanup(),
+    ])
     const failures = results.flatMap((result) =>
       result.status === "rejected" ? [result.reason] : []
     )
@@ -3304,7 +3474,10 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       // dependency or a syntax error inside the package are others. Keep the
       // real reason so the surfaced error says so instead of guessing.
       this.sdkLoadError = error instanceof Error ? error.message : String(error)
-      logger.error({ err: error }, "failed to load @anthropic-ai/claude-agent-sdk")
+      logger.error(
+        { err: error },
+        "failed to load @anthropic-ai/claude-agent-sdk"
+      )
       return null
     }
   }
@@ -3744,11 +3917,8 @@ export class ClaudeAdapter implements ProviderAdapterShape {
                 summary: `task:${readString(record, "task_id", "taskId")}`,
               }
             : {}),
-        ...(readNumber(
-          record,
-          "elapsed_time_seconds",
-          "elapsedSeconds"
-        ) !== undefined
+        ...(readNumber(record, "elapsed_time_seconds", "elapsedSeconds") !==
+        undefined
           ? {
               elapsedSeconds: readNumber(
                 record,
@@ -3769,8 +3939,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     const record = asRecord(msg)
     const summary = readString(record, "summary")
     if (summary) {
-      const rawIds =
-        record.preceding_tool_use_ids ?? record.precedingToolUseIds
+      const rawIds = record.preceding_tool_use_ids ?? record.precedingToolUseIds
       const precedingToolUseIds = Array.isArray(rawIds)
         ? rawIds.filter(
             (entry): entry is string =>
@@ -3783,9 +3952,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
         turnId,
         payload: {
           summary,
-          ...(precedingToolUseIds.length > 0
-            ? { precedingToolUseIds }
-            : {}),
+          ...(precedingToolUseIds.length > 0 ? { precedingToolUseIds } : {}),
         },
       })
     }
@@ -3835,7 +4002,9 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     const usage =
       Object.keys(envelopeUsage).length > 0
         ? envelopeUsage
-        : Object.keys(messageUsage).length > 0 ? messageUsage : resultUsage
+        : Object.keys(messageUsage).length > 0
+          ? messageUsage
+          : resultUsage
     const totalCostUsd =
       readNumber(resultEnvelope, "total_cost_usd", "totalCostUsd") ??
       readNumber(resultRecord, "total_cost_usd", "totalCostUsd")
@@ -3857,8 +4026,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       | undefined
     if (Object.keys(usage).length > 0) {
       const input = readNumber(usage, "input_tokens", "inputTokens") ?? 0
-      const output =
-        readNumber(usage, "output_tokens", "outputTokens") ?? 0
+      const output = readNumber(usage, "output_tokens", "outputTokens") ?? 0
       const cacheRead =
         readNumber(
           usage,
@@ -3876,11 +4044,8 @@ export class ClaudeAdapter implements ProviderAdapterShape {
           "cacheCreationTokens"
         ) ?? 0
       const reasoning =
-        readNumber(
-          usage,
-          "reasoning_output_tokens",
-          "reasoningOutputTokens"
-        ) ?? 0
+        readNumber(usage, "reasoning_output_tokens", "reasoningOutputTokens") ??
+        0
       canonicalUsage = {
         inputTokens: input,
         outputTokens: output,
@@ -3919,9 +4084,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
                     cacheCreationTokens: cacheCreation,
                   }
                 : {}),
-              ...(reasoning > 0
-                ? { reasoningOutputTokens: reasoning }
-                : {}),
+              ...(reasoning > 0 ? { reasoningOutputTokens: reasoning } : {}),
               ...(totalCostUsd !== undefined ? { totalCostUsd } : {}),
               ...(durationMs !== undefined ? { durationMs } : {}),
             },
@@ -3930,9 +4093,17 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       }
     }
     const subtype = readString(resultEnvelope, "subtype") ?? ""
-    if (resultEnvelope.is_error === true || subtype === "error" || subtype === "failure" || subtype.startsWith("error_")) {
+    if (
+      resultEnvelope.is_error === true ||
+      subtype === "error" ||
+      subtype === "failure" ||
+      subtype.startsWith("error_")
+    ) {
       const errors = Array.isArray(resultEnvelope.errors)
-        ? resultEnvelope.errors.filter((error): error is string => typeof error === "string" && error.length > 0)
+        ? resultEnvelope.errors.filter(
+            (error): error is string =>
+              typeof error === "string" && error.length > 0
+          )
         : []
       const errMsg =
         (errors.length > 0 ? errors.join("\n") : undefined) ??
@@ -4017,7 +4188,9 @@ function dedupeProviderSkills(
   return [...byName.values()]
 }
 
-function parseClaudeInitializationCommands(commands: ReadonlyArray<ClaudeSlashCommand> | undefined): ReadonlyArray<ProviderSlashCommand> {
+function parseClaudeInitializationCommands(
+  commands: ReadonlyArray<ClaudeSlashCommand> | undefined
+): ReadonlyArray<ProviderSlashCommand> {
   const available: ProviderSlashCommand[] = []
   for (const source of commands ?? []) {
     const name = nonEmptyString(source.name)
@@ -4172,7 +4345,6 @@ function runClaudeCommandProbe(input: {
     child.on("close", onClose)
   })
 }
-
 
 function parseClaudeCliVersion(output: string): string | null {
   return output.match(/(\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?)/i)?.[1] ?? null
@@ -4344,7 +4516,6 @@ function awaitPendingClaudeRequest<T>(
     }
   })
 }
-
 
 function mergeCustomModels(
   base: ReadonlyArray<ProviderModel>,

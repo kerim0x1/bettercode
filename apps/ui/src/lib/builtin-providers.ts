@@ -2,9 +2,9 @@ import { assetUrl } from "@/lib/asset-url"
 import type { UiProvider } from "@/lib/provider-types"
 
 /**
- * Static list of built-in providers/models bundled with BetterC0de.
+ * Built-in provider entries. CLI and direct API models arrive at runtime.
  *
- * Plugin providers (e.g. Claude CLI, third-party adapters) are merged in on
+ * Plugin providers are merged in on
  * top of this list via the `useProviders` hook at runtime — this keeps the
  * plugin system decoupled from the core list while still letting the UI
  * show a single unified picker.
@@ -21,41 +21,7 @@ export const builtinProviders: UiProvider[] = [
     invertDark: true,
     providerKind: "codex",
     providerInstanceId: "codex",
-    models: [
-      // Keep model selection usable while the local metadata probe restarts.
-      // Live `model/list` metadata still supplies model capabilities.
-      // Only 5.5+ is listed — everything older was removed 2026-07-21 per
-      // user request; older slugs still work when typed as custom models.
-      // The reserved `__codex_cli_default__` selector was also dropped from
-      // the picker — already-persisted selections still resolve (the backend
-      // keeps translating it to "no explicit model").
-      // Astra stays first even while live metadata is unavailable.
-      {
-        id: "gpt-6-astra",
-        name: "GPT-6-Astra",
-        context: "runtime",
-        tier: "Flagship",
-      },
-      {
-        id: "gpt-5.6-sol",
-        name: "GPT 5.6 Sol",
-        context: "1M",
-        tier: "Flagship",
-      },
-      {
-        id: "gpt-5.6-terra",
-        name: "GPT 5.6 Terra",
-        context: "1M",
-        tier: "Flagship",
-      },
-      {
-        id: "gpt-5.6-luna",
-        name: "GPT 5.6 Luna",
-        context: "1M",
-        tier: "Flagship",
-      },
-      { id: "gpt-5.5", name: "GPT 5.5", context: "400K", tier: "Flagship" },
-    ],
+    models: [],
   },
   // Claude CLI — native backend builtin. Routes via /chat/send → ProviderHub
   // (chat.ts:38) → node-backend/src/provider/runtime/claude/ClaudeAdapter.ts.
@@ -68,44 +34,7 @@ export const builtinProviders: UiProvider[] = [
     logo: assetUrl("icons/providers/claude.svg"),
     providerKind: "claude",
     providerInstanceId: "claude",
-    models: [
-      {
-        id: "claude-fable-5-1",
-        name: "Fable 5.1",
-        context: "1M",
-        tier: "Flagship",
-      },
-      {
-        id: "claude-fable-5",
-        name: "Fable 5",
-        context: "1M",
-        tier: "Flagship",
-      },
-      {
-        id: "claude-opus-5",
-        name: "Opus 5",
-        context: "1M",
-        tier: "Flagship",
-      },
-      {
-        id: "claude-opus-4-8",
-        name: "Opus 4.8",
-        context: "1M",
-        tier: "Flagship",
-      },
-      {
-        id: "claude-sonnet-5",
-        name: "Sonnet 5",
-        context: "1M",
-        tier: "Balanced",
-      },
-      {
-        id: "claude-haiku-4-5-20251001",
-        name: "Haiku 4.5",
-        context: "200K",
-        tier: "Fast",
-      },
-    ],
+    models: [],
   },
   // Cursor Agent — BetterC0de treats Cursor as a first-party provider driver.
   // Models are discovered through ACP at runtime, so the built-in fallback
@@ -120,9 +49,8 @@ export const builtinProviders: UiProvider[] = [
   },
   // Grok CLI — xAI's local `grok` binary (Grok Build) driven over ACP
   // (`grok agent stdio`). providerKind "grok_cli" is distinct from the
-  // "grok" xAI API-key provider below. Curated fallback models; live models
-  // merge in from the runtime instance metadata when the CLI advertises a
-  // model picker.
+  // "grok" xAI API-key provider below. Its inventory comes from ACP and
+  // the CLI's own cache.
   {
     id: "grok-cli",
     name: "Grok CLI",
@@ -135,14 +63,7 @@ export const builtinProviders: UiProvider[] = [
     invertDark: true,
     providerKind: "grok_cli",
     providerInstanceId: "grok-cli",
-    // This curated list wins the merge in `use-providers`, so a stale entry
-    // here outranks whatever the CLI actually offers. Grok's real inventory
-    // comes from `~/.grok/models_cache.json` (see `GrokModelCache`); keep this
-    // to the current flagships only.
-    models: [
-      { id: "grok-4.6", name: "Grok 4.6", context: "500K", tier: "Flagship" },
-      { id: "grok-4.5", name: "Grok 4.5", context: "500K", tier: "Flagship" },
-    ],
+    models: [],
   },
   // BetterC0de compatibility inventory is discovered from runtime snapshots
   // or custom models, so the static list stays empty.
@@ -162,30 +83,14 @@ export const builtinProviders: UiProvider[] = [
     invertDark: true,
     providerKind: "openai",
     openaiTransport: "api",
-    models: [
-      { id: "gpt-5.4", name: "GPT 5.4", context: "256K", tier: "Flagship" },
-      {
-        id: "gpt-5.4-mini",
-        name: "GPT 5.4 Mini",
-        context: "256K",
-        tier: "Fast",
-      },
-      { id: "gpt-5.3-codex", name: "Codex 5.3", context: "1M", tier: "Coding" },
-      {
-        id: "gpt-5.3-codex-spark",
-        name: "Codex 5.3 Spark",
-        context: "512K",
-        tier: "Coding",
-      },
-      {
-        id: "gpt-5.2-codex",
-        name: "Codex 5.2",
-        context: "256K",
-        tier: "Coding",
-      },
-      { id: "gpt-5.2", name: "GPT 5.2", context: "256K", tier: "Balanced" },
-      { id: "o4-mini", name: "o4 Mini", context: "200K", tier: "Reasoning" },
-    ],
+    models: [],
+  },
+  {
+    id: "anthropic-api",
+    name: "Claude API",
+    logo: assetUrl("icons/providers/claude.svg"),
+    providerKind: "anthropic",
+    models: [],
   },
   // Google oAuth (Gemini) was removed from the builtin picker 2026-07-21 per
   // user request. The generic "google" providerKind heuristics elsewhere
@@ -197,13 +102,8 @@ export const builtinProviders: UiProvider[] = [
     name: "Grok",
     logo: assetUrl("icons/providers/grok.svg"),
     invertDark: true,
-    // Mirrors xAI's own model metadata (~/.grok/models_cache.json): both
-    // flagships are `supported_in_api: true` with 500K context, and the
-    // backend passes the reasoning selection through as `reasoning_effort`.
-    models: [
-      { id: "grok-4.6", name: "Grok 4.6", context: "500K", tier: "Flagship" },
-      { id: "grok-4.5", name: "Grok 4.5", context: "500K", tier: "Flagship" },
-    ],
+    // The backend lists this API account's language models and capabilities.
+    models: [],
   },
   // OpenRouter — its own picker entry: shows exactly the model ids the user
   // entered under Settings → Providers → OpenRouter → Custom models (merged
