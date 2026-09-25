@@ -255,6 +255,7 @@ export class ProviderInstanceManager {
         readConfigString(config.config, "homePath")
       )
       const adapter = new ClaudeTerminalAdapter({
+        modelCacheDir: this.options.modelCacheDir,
         providerInstanceId: config.instanceId,
         continuationKey,
         binaryPath,

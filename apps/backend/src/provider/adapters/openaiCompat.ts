@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto"
 import type {
   ChatCompletionChunk,
   ChatCompletionContentPart,
+  ChatCompletionCreateParamsStreaming,
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions"
@@ -335,14 +336,19 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
       )
       let reasoningEnabled = reasoningEffort !== null
 
-      const requestParams = () => ({
+      const requestParams = (): ChatCompletionCreateParamsStreaming => ({
         model: input.model_id,
         stream: true as const,
         stream_options: { include_usage: true },
         messages,
         ...(toolsEnabled ? { tools, tool_choice: "auto" as const } : {}),
         ...(reasoningEnabled && reasoningEffort
-          ? { reasoning_effort: reasoningEffort }
+          ? {
+              // The locked SDK types predate OpenAI's "max" effort, which the
+              // API accepts for newer models.
+              reasoning_effort:
+                reasoningEffort as ChatCompletionCreateParamsStreaming["reasoning_effort"],
+            }
           : {}),
       })
 

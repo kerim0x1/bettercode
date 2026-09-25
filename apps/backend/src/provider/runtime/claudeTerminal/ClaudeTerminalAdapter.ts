@@ -33,7 +33,7 @@ import {
 import { expandHomePath } from "../../../pathExpansion"
 import { sanitizedChildEnvironment } from "../../../security/childEnvironment"
 import {
-  getBuiltInClaudeModelsForVersion,
+  ClaudeAdapter,
   resolveClaudeRuntimeModelId,
 } from "../claude/ClaudeAdapter"
 import {
@@ -50,7 +50,10 @@ import {
   type ProjectToolFlag,
 } from "../../project-tool-policy"
 import type { ProjectPermissionRule } from "../../project-permission-rules"
-import { listProjectPermissions, listProjectTools } from "../../../services/workspace"
+import {
+  listProjectPermissions,
+  listProjectTools,
+} from "../../../services/workspace"
 import { prependProviderHistoryForFreshSession } from "../ProviderHistoryPrompt"
 import { withDispatchTurnId } from "../dispatchTurnId"
 import {
@@ -60,6 +63,7 @@ import {
 import { normalizeAgentPermissionToolName } from "../../agent-permission-policy"
 
 export interface ClaudeTerminalAdapterOptions {
+  readonly modelCacheDir?: string
   readonly providerInstanceId?: string
   readonly continuationKey?: string
   readonly binaryPath?: string | null
@@ -145,9 +149,19 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
   readonly capabilities = CAPABILITIES
   private readonly sessions = new Map<string, SessionContext>()
   private readonly bus = new EventEmitter()
+  private readonly modelCatalog: ClaudeAdapter
   private stoppingAll = false
 
-  constructor(readonly options: ClaudeTerminalAdapterOptions = {}) {}
+  constructor(readonly options: ClaudeTerminalAdapterOptions = {}) {
+    this.modelCatalog = new ClaudeAdapter({
+      modelCacheDir: options.modelCacheDir,
+      providerInstanceId: options.providerInstanceId,
+      binaryPath: options.binaryPath,
+      homePath: options.homePath,
+      environment: options.environment,
+      customModels: options.customModels,
+    })
+  }
 
   isConfigured(): boolean {
     // PTY support, executable discovery, and authentication are all checked by
@@ -181,7 +195,8 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: "Claude Terminal needs the native node-pty backend dependency. Rebuild or install backend dependencies and try again.",
+        message:
+          "Claude Terminal needs the native node-pty backend dependency. Rebuild or install backend dependencies and try again.",
       }
     }
     if (!status.claude.installed) {
@@ -201,7 +216,8 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
         version: status.claude.version,
         status: "warning",
         auth: { status: "unauthenticated" },
-        message: "Claude Terminal found Claude, but no Claude CLI credentials were detected.",
+        message:
+          "Claude Terminal found Claude, but no Claude CLI credentials were detected.",
       }
     }
     const cwd = await normalizeCwd(input.cwd)
@@ -220,11 +236,7 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
   }
 
   async availableModels(): Promise<ReadonlyArray<ProviderModel>> {
-    const version = (await detectCliAsync(this.claudeBinaryPath())).version
-    return mergeCustomModels(
-      getBuiltInClaudeModelsForVersion(version),
-      this.options.customModels ?? []
-    )
+    return this.modelCatalog.availableModels()
   }
 
   async availableSkills(): Promise<ReadonlyArray<ProviderSkill>> {
@@ -261,7 +273,8 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
     if (this.stoppingAll) throw new Error("Claude Terminal is stopping")
     const key = input.threadId as string
     const existing = this.sessions.get(key)
-    if (existing?.stopping) throw new Error("Claude Terminal session is stopping")
+    if (existing?.stopping)
+      throw new Error("Claude Terminal session is stopping")
     if (existing) return existing.session
 
     const now = Date.now()
@@ -270,9 +283,10 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
       resumeCursor?.sessionId ??
       this.options.getStoredProviderThreadId?.(key) ??
       null
-    const providerThreadId = storedProviderThreadId && isUuid(storedProviderThreadId)
-      ? storedProviderThreadId
-      : null
+    const providerThreadId =
+      storedProviderThreadId && isUuid(storedProviderThreadId)
+        ? storedProviderThreadId
+        : null
     const session: ProviderSession = {
       threadId: key,
       providerInstanceId: this.options.providerInstanceId ?? null,
@@ -330,7 +344,11 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
     if (ctx.pendingTurn || ctx.child || ctx.interruption) {
       await this.interruptTurn(threadId as ThreadId)
     }
-    if (this.sessions.get(threadId) !== ctx || ctx.stopping || this.stoppingAll) {
+    if (
+      this.sessions.get(threadId) !== ctx ||
+      ctx.stopping ||
+      this.stoppingAll
+    ) {
       throw new Error("Claude Terminal session is stopping")
     }
     if (ctx.pendingTurn || ctx.child) {
@@ -340,9 +358,13 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
     let finish!: () => void
     const admission: TerminalTurnAdmission = {
       cancellation: new AbortController(),
-      prepared: new Promise<void>((resolve) => { finishPreparation = resolve }),
+      prepared: new Promise<void>((resolve) => {
+        finishPreparation = resolve
+      }),
       finishPreparation: () => finishPreparation(),
-      done: new Promise<void>((resolve) => { finish = resolve }),
+      done: new Promise<void>((resolve) => {
+        finish = resolve
+      }),
       finish: () => finish(),
     }
     ctx.pendingTurn = admission
@@ -480,21 +502,26 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
         ...projectPermissionArgs.disallowedTools,
         ...durablePermissionArgs.disallowedTools,
       ]),
-      dangerouslySkipPermissions: shouldSkipPermissions(
-        input.permissionLevel,
-        chatMode
-      ) && !projectPolicyRequiresPermissionGate,
+      dangerouslySkipPermissions:
+        shouldSkipPermissions(input.permissionLevel, chatMode) &&
+        !projectPolicyRequiresPermissionGate,
     })
     const abortTail = new AbortController()
     const stopTail = () => abortTail.abort()
-    admission.cancellation.signal.addEventListener("abort", stopTail, { once: true })
+    admission.cancellation.signal.addEventListener("abort", stopTail, {
+      once: true,
+    })
     let tailError: unknown = null
     const tailPromise = tailClaudeSessionJsonl({
       path: sessionPath,
       startOffset,
       signal: abortTail.signal,
       onRecord: (message) => {
-        if (admission.cancellation.signal.aborted || ctx.activeTurnId !== turnId) return
+        if (
+          admission.cancellation.signal.aborted ||
+          ctx.activeTurnId !== turnId
+        )
+          return
         this.handleClaudeSessionRecord(ctx, {
           threadId,
           turnId,
@@ -525,14 +552,19 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
       abortTail.abort()
       await tailPromise
       if (tailError) throw tailError
-      if (!admission.cancellation.signal.aborted && ctx.activeTurnId === turnId) {
+      if (
+        !admission.cancellation.signal.aborted &&
+        ctx.activeTurnId === turnId
+      ) {
         if (exit.exitCode === 0) {
           if (isPlanMode && ctx.emittedPlanText.trim()) {
             this.emitEvent({
               ...eventBase(threadId, this.options.providerInstanceId),
               type: "turn.proposed.completed",
               turnId,
-              payload: { planMarkdown: normalizePlanMarkdown(ctx.emittedPlanText) },
+              payload: {
+                planMarkdown: normalizePlanMarkdown(ctx.emittedPlanText),
+              },
             })
           }
           this.emitEvent({
@@ -547,18 +579,17 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
                 : {}),
             },
           })
-          ctx.turns.push({ id: turnId, items: [{ type: "user", text: input.message }] })
+          ctx.turns.push({
+            id: turnId,
+            items: [{ type: "user", text: input.message }],
+          })
           this.setSessionRuntime(ctx, {
             status: "ready",
             activeTurnId: null,
           })
           this.persistSession(threadId, ctx)
         } else {
-          this.emitRuntimeError(
-            threadId,
-            turnId,
-            input.dispatchTurnId
-          )
+          this.emitRuntimeError(threadId, turnId, input.dispatchTurnId)
         }
       }
     } catch {
@@ -634,9 +665,7 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
     const exitPromise = child.waitForExit()
 
     try {
-      await Promise.resolve(
-        child.kill("SIGTERM")
-      )
+      await Promise.resolve(child.kill("SIGTERM"))
     } catch (error) {
       failures.push(error)
     }
@@ -658,9 +687,7 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
     if (exit.status !== "exited") {
       if (exit.status === "failed") failures.push(exit.error)
       try {
-        await Promise.resolve(
-          child.kill("SIGKILL")
-        )
+        await Promise.resolve(child.kill("SIGKILL"))
       } catch (error) {
         failures.push(error)
       }
@@ -708,7 +735,9 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
     _requestId: ApprovalRequestId,
     _decision: ProviderApprovalDecision
   ): Promise<void> {
-    throw new Error("Claude Terminal does not support BetterC0de approval UI yet.")
+    throw new Error(
+      "Claude Terminal does not support BetterC0de approval UI yet."
+    )
   }
 
   async stopSession(threadId: ThreadId): Promise<void> {
@@ -760,7 +789,11 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
     }
   ): void {
     const sessionId = readString(input.message, "session_id", "sessionId")
-    if (sessionId && isUuid(sessionId) && sessionId !== ctx.session.providerThreadId) {
+    if (
+      sessionId &&
+      isUuid(sessionId) &&
+      sessionId !== ctx.session.providerThreadId
+    ) {
       this.setSessionRuntime(ctx, { providerThreadId: sessionId })
       this.persistSession(input.threadId, ctx)
     }
@@ -773,9 +806,7 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
       isPlanMode: input.isPlanMode,
       ctx,
     })) {
-      this.emitEvent(
-        withDispatchTurnId(event, ctx.activeDispatchTurnId)
-      )
+      this.emitEvent(withDispatchTurnId(event, ctx.activeDispatchTurnId))
     }
   }
 
@@ -826,7 +857,9 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
     if (input.modelId) args.push("--model", input.modelId)
     if (input.effort) args.push("--effort", input.effort)
     const allowedTools = input.allowedTools.filter(claudeCliToolSpecIsAtomic)
-    const disallowedTools = input.disallowedTools.filter(claudeCliToolSpecIsAtomic)
+    const disallowedTools = input.disallowedTools.filter(
+      claudeCliToolSpecIsAtomic
+    )
     // A deny whose pattern contains a comma or an early ")" cannot be passed
     // through the CLI's comma splitter without becoming a different rule.
     // Drop the whole tool instead of shipping a deny the CLI will not enforce.
@@ -952,7 +985,9 @@ function translateClaudeTerminalMessage(input: {
         const text = readString(block, "text") ?? ""
         if (!text) continue
         const previous = input.ctx.assistantTextByKey.get(assistantKey) ?? ""
-        const delta = text.startsWith(previous) ? text.slice(previous.length) : text
+        const delta = text.startsWith(previous)
+          ? text.slice(previous.length)
+          : text
         input.ctx.assistantTextByKey.set(assistantKey, text)
         if (!delta) continue
         if (input.isPlanMode) {
@@ -990,20 +1025,35 @@ function translateClaudeTerminalMessage(input: {
       if (isClaudeToolBlockType(type)) {
         const toolId = readString(block, "id") ?? randomUUID()
         const toolName = readString(block, "name") ?? "unknown"
-        const tool: ActiveClaudeTerminalTool =
-          input.ctx.toolsById.get(toolId) ?? {
-            id: toolId,
-            name: toolName,
-            input: asRecord(block.input),
-            started: false,
-          }
+        const tool: ActiveClaudeTerminalTool = input.ctx.toolsById.get(
+          toolId
+        ) ?? {
+          id: toolId,
+          name: toolName,
+          input: asRecord(block.input),
+          started: false,
+        }
         tool.input = asRecord(block.input)
         input.ctx.toolsById.set(toolId, tool)
         if (!tool.started) {
           tool.started = true
-          out.push(makeToolStartedEvent(input.threadId, input.turnId, tool, input.providerInstanceId))
+          out.push(
+            makeToolStartedEvent(
+              input.threadId,
+              input.turnId,
+              tool,
+              input.providerInstanceId
+            )
+          )
         } else {
-          out.push(makeToolUpdatedEvent(input.threadId, input.turnId, tool, input.providerInstanceId))
+          out.push(
+            makeToolUpdatedEvent(
+              input.threadId,
+              input.turnId,
+              tool,
+              input.providerInstanceId
+            )
+          )
         }
         const plan = isTodoTool(tool.name)
           ? extractPlanStepsFromTodoInput(tool.input)
@@ -1027,7 +1077,8 @@ function translateClaudeTerminalMessage(input: {
     for (const blockValue of blocks) {
       const block = asRecord(blockValue)
       if (readString(block, "type") !== "tool_result") continue
-      const toolId = readString(block, "tool_use_id", "toolUseId") ?? randomUUID()
+      const toolId =
+        readString(block, "tool_use_id", "toolUseId") ?? randomUUID()
       const knownTool = input.ctx.toolsById.get(toolId)
       const toolName =
         readString(block, "name", "tool_name", "toolName") ??
@@ -1117,8 +1168,7 @@ function translateClaudeTerminalMessage(input: {
     }
     const usage = asRecord(input.message.usage)
     const inputTokens = readNumber(usage, "input_tokens", "inputTokens") ?? 0
-    const outputTokens =
-      readNumber(usage, "output_tokens", "outputTokens") ?? 0
+    const outputTokens = readNumber(usage, "output_tokens", "outputTokens") ?? 0
     if (inputTokens + outputTokens > 0) {
       out.push({
         ...eventBase(input.threadId, input.providerInstanceId),
@@ -1194,12 +1244,13 @@ async function resolveTurnSession(
 ): Promise<{ readonly sessionId: string; readonly resume: boolean }> {
   const existing = ctx.session.providerThreadId
   const resume = Boolean(
-    existing && isUuid(existing) &&
-    await claudeSessionFileExists({
+    existing &&
+    isUuid(existing) &&
+    (await claudeSessionFileExists({
       cwd,
       sessionId: existing,
       configDir,
-    })
+    }))
   )
   return {
     sessionId:
@@ -1213,7 +1264,8 @@ async function resolveTurnSession(
 }
 
 function readResumeCursor(cursor: unknown): ClaudeTerminalResumeCursor | null {
-  if (!cursor || typeof cursor !== "object" || Array.isArray(cursor)) return null
+  if (!cursor || typeof cursor !== "object" || Array.isArray(cursor))
+    return null
   const record = cursor as Record<string, unknown>
   const sessionId =
     typeof record.sessionId === "string"
@@ -1223,7 +1275,9 @@ function readResumeCursor(cursor: unknown): ClaudeTerminalResumeCursor | null {
         : undefined
   return {
     ...(sessionId && isUuid(sessionId) ? { sessionId } : {}),
-    ...(typeof record.turnCount === "number" && Number.isSafeInteger(record.turnCount) && record.turnCount >= 0
+    ...(typeof record.turnCount === "number" &&
+    Number.isSafeInteger(record.turnCount) &&
+    record.turnCount >= 0
       ? { turnCount: record.turnCount }
       : {}),
   }
@@ -1237,7 +1291,9 @@ function makeResumeCursor(
   return { sessionId: providerThreadId, turnCount }
 }
 
-function normalizeTerminalEffort(raw: string | null | undefined): string | undefined {
+function normalizeTerminalEffort(
+  raw: string | null | undefined
+): string | undefined {
   if (!raw) return undefined
   const key = raw.toLowerCase().replace(/[\s_-]+/g, "")
   if (key === "low" || key === "medium" || key === "high") return key
@@ -1296,8 +1352,7 @@ function claudeTerminalPermissionArgs(
   const disallowedTools: string[] = []
   for (const rule of rules) {
     if (rule.action !== "allow" && rule.action !== "deny") continue
-    const target =
-      rule.action === "allow" ? allowedTools : disallowedTools
+    const target = rule.action === "allow" ? allowedTools : disallowedTools
     const specs = claudeTerminalToolSpecs(rule.permission, rule.pattern)
     target.push(
       ...(rule.action === "allow"
@@ -1416,7 +1471,10 @@ function claudeTerminalToolSpecs(
 }
 
 function claudeTerminalToolNamesForPermission(permission: string): string[] {
-  const key = permission.trim().toLowerCase().replace(/[\s_.-]+/g, "")
+  const key = permission
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_.-]+/g, "")
   switch (key) {
     case "bash":
       return ["Bash"]
@@ -1480,11 +1538,11 @@ function normalizePlanMarkdown(text: string): string {
   return extractProposedPlanBlock(text) ?? text.trim()
 }
 
-async function normalizeCwd(
-  cwd: string | null | undefined
-): Promise<string> {
+async function normalizeCwd(cwd: string | null | undefined): Promise<string> {
   const trimmed = cwd?.trim()
-  const resolved = trimmed ? path.resolve(expandHomePath(trimmed)) : process.cwd()
+  const resolved = trimmed
+    ? path.resolve(expandHomePath(trimmed))
+    : process.cwd()
   try {
     return await fs.promises.realpath(resolved)
   } catch {
@@ -1510,7 +1568,8 @@ function claudeSessionFilePath(input: {
   readonly sessionId: string
   readonly configDir: string
 }): string {
-  if (!isUuid(input.sessionId)) throw new Error("Invalid Claude Terminal session ID")
+  if (!isUuid(input.sessionId))
+    throw new Error("Invalid Claude Terminal session ID")
   const projectDir = path.join(
     input.configDir,
     "projects",
@@ -1767,7 +1826,8 @@ function parseSkillMarkdownMetadata(content: string): {
     const value = stripYamlScalar(entry[2] ?? "")
     if (!value) continue
     if (key === "name") metadata.name = value
-    else if (key === "displayname" || key === "title") metadata.displayName = value
+    else if (key === "displayname" || key === "title")
+      metadata.displayName = value
     else if (key === "description") metadata.description = value
     else if (key === "shortdescription" || key === "summary") {
       metadata.shortDescription = value
@@ -1838,20 +1898,28 @@ function normalizeExactClaudeConfigDir(configDir: string): string {
 
 function normalizeClaudeHome(homePath: string): string {
   const normalized = path.normalize(path.resolve(expandHomePath(homePath)))
-  return path.basename(normalized) === ".claude" ? path.dirname(normalized) : normalized
+  return path.basename(normalized) === ".claude"
+    ? path.dirname(normalized)
+    : normalized
 }
 
 async function hasClaudeAuthAsync(
   configDir: string,
-  environment: ReadonlyArray<{ readonly name: string; readonly value: string }> = []
+  environment: ReadonlyArray<{
+    readonly name: string
+    readonly value: string
+  }> = []
 ): Promise<boolean> {
   const hasEnvironmentAuth = Boolean(
     process.env.ANTHROPIC_API_KEY?.trim() ||
-      process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim() ||
-      environment.find((item) =>
-        item.name === "ANTHROPIC_API_KEY" ||
-        item.name === "CLAUDE_CODE_OAUTH_TOKEN"
-      )?.value.trim()
+    process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim() ||
+    environment
+      .find(
+        (item) =>
+          item.name === "ANTHROPIC_API_KEY" ||
+          item.name === "CLAUDE_CODE_OAUTH_TOKEN"
+      )
+      ?.value.trim()
   )
   for (const name of ["credentials.json", "auth.json", ".credentials.json"]) {
     try {
@@ -1865,28 +1933,4 @@ async function hasClaudeAuthAsync(
   return configDir === claudeConfigDir(os.homedir())
     ? await isClaudeCliAuthenticatedAsync()
     : false
-}
-
-function mergeCustomModels(
-  base: ReadonlyArray<ProviderModel>,
-  customModels: ReadonlyArray<string>
-): ReadonlyArray<ProviderModel> {
-  const seen = new Set(base.map((model) => model.slug))
-  const out = [...base]
-  for (const raw of customModels) {
-    const slug = raw.trim()
-    if (!slug || seen.has(slug)) continue
-    seen.add(slug)
-    out.push({
-      slug,
-      name: slug,
-      context: "custom",
-      tier: "Custom",
-      isCustom: true,
-      capabilities: base.find((model) => model.capabilities)?.capabilities ?? {
-        optionDescriptors: [],
-      },
-    })
-  }
-  return out
 }
