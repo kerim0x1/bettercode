@@ -7,21 +7,17 @@ import {
 import { CodexAdapter } from "./codex/CodexAdapter"
 import {
   buildClaudeProviderModel,
-  ClaudeAdapter,
   claudeModelSupportsBooleanOption,
   resolveClaudeContextWindow,
   resolveClaudeRuntimeModelId,
 } from "./claude/ClaudeAdapter"
 
 describe("provider model capabilities", () => {
-  it("uses a neutral fallback until Codex reports live model capabilities", async () => {
+  it("offers only custom models until Codex reports its catalog", async () => {
     const adapter = new CodexAdapter({
       providerInstanceId: "codex",
       continuationKey: "codex",
-      binaryPath: path.join(
-        process.cwd(),
-        ".missing-codex-for-static-fallback"
-      ),
+      binaryPath: path.join(process.cwd(), ".missing-codex-for-model-catalog"),
       customModels: ["custom-codex"],
       clientInfo: { name: "test", title: "Test", version: "0.0.0" },
       getStoredProviderThreadId: () => null,
@@ -29,19 +25,15 @@ describe("provider model capabilities", () => {
     })
 
     const models = await adapter.availableModels()
-    const fallback = models.find((model) => model.slug === "gpt-5.5")
     const custom = models.find((model) => model.slug === "custom-codex")
-    expect(fallback?.capabilities).toBeNull()
+    expect(models.map((model) => model.slug)).toEqual(["custom-codex"])
     expect(custom?.isCustom).toBe(true)
     expect(custom?.capabilities).toBeNull()
   })
 
-  it("exposes BetterC0de Claude option descriptors on runtime models", async () => {
-    const models = await new ClaudeAdapter().availableModels()
-    const opus48 = models.find((model) => model.slug === "claude-opus-4-8")
-    const haiku = models.find(
-      (model) => model.slug === "claude-haiku-4-5-20251001"
-    )
+  it("derives Claude option descriptors for saved model IDs", () => {
+    const opus48 = buildClaudeProviderModel("claude-opus-4-8")
+    const haiku = buildClaudeProviderModel("claude-haiku-4-5-20251001")
     const opus48Effort = opus48?.capabilities?.optionDescriptors?.find(
       (descriptor) => descriptor.type === "select" && descriptor.id === "effort"
     )
@@ -57,8 +49,7 @@ describe("provider model capabilities", () => {
           descriptor.type === "select" && descriptor.id === "contextWindow"
       )
     ).toBe(true)
-    // fastMode was an Opus 4.5/4.6 affordance; those models left the curated
-    // picker, so the taxonomy-derived descriptor is asserted via the builder.
+    // Saved Opus 4.6 selections retain their model-specific option.
     const opus46 = buildClaudeProviderModel("claude-opus-4-6")
     expect(
       opus46.capabilities?.optionDescriptors?.some(
@@ -81,14 +72,13 @@ describe("provider model capabilities", () => {
     expect(
       claudeModelSupportsBooleanOption("claude-opus-4-8", "thinking")
     ).toBe(false)
-    // Opus 4.5/4.6 are no longer curated, so their fastMode toggle is gone —
-    // with or without a context-window suffix.
+    // The option also works with a saved context-window suffix.
     expect(
       claudeModelSupportsBooleanOption("claude-opus-4-6", "fastMode")
-    ).toBe(false)
+    ).toBe(true)
     expect(
       claudeModelSupportsBooleanOption("claude-opus-4-6-200k", "fastMode")
-    ).toBe(false)
+    ).toBe(true)
   })
 
   it("resolves Claude contextWindow from modelSelection before legacy model suffixes", () => {
