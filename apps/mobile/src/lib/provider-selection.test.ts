@@ -57,6 +57,7 @@ describe("provider selection", () => {
       "codex",
       "cursor",
       "grok_cli",
+      "anthropic",
       "openai",
     ])
     const thread: ChatThread = {
@@ -71,7 +72,14 @@ describe("provider selection", () => {
     expect(
       preferredModel(thread, [], modelOptions(catalog))?.providerKind
     ).toBe("claude")
-    for (const kind of ["claude", "codex", "cursor", "grok_cli", "openai"]) {
+    for (const kind of [
+      "claude",
+      "codex",
+      "cursor",
+      "grok_cli",
+      "anthropic",
+      "openai",
+    ]) {
       const options = modelOptions(catalog)
       expect(preferredModel(thread, [], options)?.providerKind).toBe(kind)
       catalog.find((entry) => entry.driver === kind)!.configured = false
