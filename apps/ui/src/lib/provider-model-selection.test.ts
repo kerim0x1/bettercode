@@ -416,11 +416,11 @@ describe("resolveProviderModelSelection", () => {
       })
     ).toEqual({
       provider: BetterC0de,
-      modelId: "openai/gpt-5",
+      modelId: "sonnet-4.6",
     })
   })
 
-  it("normalizes provider aliases even before runtime model discovery", () => {
+  it("keeps an alias until runtime model discovery can validate it", () => {
     const cursor = provider({
       id: "cursor",
       providerKind: "cursor",
@@ -436,11 +436,11 @@ describe("resolveProviderModelSelection", () => {
       })
     ).toEqual({
       provider: cursor,
-      modelId: "composer-2",
+      modelId: "composer",
     })
   })
 
-  it("uses a locked provider instance and resolves the model within that instance", () => {
+  it("keeps a saved model ID on a locked provider instance", () => {
     const defaultCodex = provider({
       id: "codex",
       providerKind: "codex",
@@ -467,7 +467,7 @@ describe("resolveProviderModelSelection", () => {
       })
     ).toEqual({
       provider: workCodex,
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5",
     })
   })
 
@@ -506,7 +506,7 @@ describe("resolveProviderModelSelection", () => {
     })
   })
 
-  it("uses a locked continuation provider from the same provider kind", () => {
+  it("keeps a saved model ID on a locked continuation provider", () => {
     const defaultCodex = provider({
       id: "codex",
       providerKind: "codex",
@@ -535,7 +535,7 @@ describe("resolveProviderModelSelection", () => {
       })
     ).toEqual({
       provider: workCodex,
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5",
     })
   })
 
@@ -575,7 +575,7 @@ describe("resolveProviderModelSelection", () => {
     })
   })
 
-  it("coerces GPT 5.5 Extra High to Claude Opus 4.7 Max when switching providers", () => {
+  it("preserves saved reasoning while a foreign model needs explicit replacement", () => {
     const codex = provider({
       id: "codex",
       providerKind: "codex",
@@ -624,8 +624,8 @@ describe("resolveProviderModelSelection", () => {
       })
     ).toEqual({
       provider: claude,
-      modelId: "claude-opus-4-7",
-      thinkingMode: "max",
+      modelId: "gpt-5.5",
+      thinkingMode: "xhigh",
     })
     expect(
       resolveProviderModelThinkingSelection({
@@ -636,8 +636,8 @@ describe("resolveProviderModelSelection", () => {
       })
     ).toEqual({
       provider: claude,
-      modelId: "claude-opus-4-7",
-      thinkingMode: "max",
+      modelId: "gpt-5.5",
+      thinkingMode: "Extra High",
     })
     expect(
       resolveProviderModelThinkingSelection({
@@ -648,12 +648,12 @@ describe("resolveProviderModelSelection", () => {
       })
     ).toEqual({
       provider: claude,
-      modelId: "claude-opus-4-7",
-      thinkingMode: "max",
+      modelId: "gpt-5.5",
+      thinkingMode: "ExtraHigh",
     })
   })
 
-  it("coerces GPT Ultra Think to Claude Opus 4.7 Ultrathink when switching providers", () => {
+  it("preserves Ultra Think on a saved model before replacement", () => {
     const codex = provider({
       id: "codex",
       providerKind: "codex",
@@ -702,12 +702,12 @@ describe("resolveProviderModelSelection", () => {
       })
     ).toEqual({
       provider: claude,
-      modelId: "claude-opus-4-7",
-      thinkingMode: "ultrathink",
+      modelId: "gpt-5.5",
+      thinkingMode: "Ultra Think",
     })
   })
 
-  it("coerces GPT Extra High to Claude CLI Max for short Opus 4.7 model ids", () => {
+  it("preserves reasoning on a saved model unavailable to Claude CLI", () => {
     const codex = provider({
       id: "codex",
       providerKind: "codex",
@@ -739,8 +739,8 @@ describe("resolveProviderModelSelection", () => {
       })
     ).toEqual({
       provider: claudeCli,
-      modelId: "opus-4-7",
-      thinkingMode: "max",
+      modelId: "gpt-5.5",
+      thinkingMode: "xHigh",
     })
     expect(
       resolveProviderModelThinkingSelection({
@@ -751,8 +751,8 @@ describe("resolveProviderModelSelection", () => {
       })
     ).toEqual({
       provider: claudeCli,
-      modelId: "opus-4-7",
-      thinkingMode: "max",
+      modelId: "gpt-5.5",
+      thinkingMode: "ExtraHigh",
     })
   })
 

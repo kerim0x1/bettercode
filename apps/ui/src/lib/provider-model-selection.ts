@@ -142,7 +142,7 @@ export function resolveProviderModelThinkingSelection(
     thinkingMode:
       selection.provider?.modelsReady === false ||
       (selection.modelId &&
-        selection.provider?.modelsReady === true &&
+        selection.provider &&
         !hasModel(selection.provider, selection.modelId))
         ? input.thinkingMode
         : coerceThinkingModeForModel(
