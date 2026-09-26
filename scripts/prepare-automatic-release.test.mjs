@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import test from "node:test"
@@ -217,4 +218,41 @@ test("automatic publishing waits for a successful push CI on this repository's m
   )
   assert.equal(workflow.permissions.contents, "write")
   assert.equal(workflow.permissions.actions, "write")
+})
+
+test("the checked-out repository can prepare release files without writing them", () => {
+  const root = path.resolve(import.meta.dirname, "..")
+  const manifests = Object.fromEntries(
+    MANIFEST_PATHS.map((manifestPath) => [
+      manifestPath,
+      JSON.parse(fs.readFileSync(path.join(root, manifestPath), "utf8")),
+    ])
+  )
+  const existingTags = execFileSync("git", ["tag", "--list", "v*"], {
+    cwd: root,
+    encoding: "utf8",
+  })
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+  const latestTag = latestReleaseTag(existingTags)
+  const previousChangelog = latestTag
+    ? execFileSync("git", ["show", latestTag + ":CHANGELOG.md"], {
+        cwd: root,
+        encoding: "utf8",
+      })
+    : null
+  const plan = planAutomaticRelease({
+    manifests,
+    lock: JSON.parse(
+      fs.readFileSync(path.join(root, "package-lock.json"), "utf8")
+    ),
+    changelog: fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8"),
+    existingTags,
+    previousChangelog,
+    date: "2026-09-26",
+  })
+  assert.ok(plan.tag.startsWith("v"))
+  assert.ok(plan.changelog.includes("## [" + plan.version + "]"))
+  assert.equal(plan.lock.version, plan.version)
 })
