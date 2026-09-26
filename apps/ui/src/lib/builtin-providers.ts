@@ -75,6 +75,23 @@ export const builtinProviders: UiProvider[] = [
     providerInstanceId: "betterc0de",
     models: [],
   },
+  // OpenCode CLI — the upstream `opencode` binary (BetterC0de's sibling
+  // protocol on the same OpenCode-family surface), driven through its
+  // headless `opencode serve` server. providerKind "opencode_cli" is kept
+  // distinct from the BetterC0de compatibility kind so a thread's provider
+  // stays stable across the two. Models are discovered at runtime from the
+  // CLI's v1/v2 inventory (slugs in the `opencode/model` format); the
+  // curated entry below only wins until the live metadata probe resolves.
+  {
+    id: "opencode-cli",
+    name: "OpenCode CLI",
+    // opencode ships no brand asset in this repo yet — the generic terminal
+    // glyph is the same fallback ProviderIcon uses for logo-less providers.
+    logo: "",
+    providerKind: "opencode_cli",
+    providerInstanceId: "opencode-cli",
+    models: [{ id: "opencode/big-pickle", name: "Big Pickle", context: "400K", tier: "Flagship" }],
+  },
   // OpenAI API (direct API key)
   {
     id: "openai-api",

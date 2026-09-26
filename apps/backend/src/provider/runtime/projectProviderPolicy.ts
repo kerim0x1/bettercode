@@ -116,7 +116,11 @@ function runtimeModelPolicyForProvider(
 
   const providerKeys = new Set(runtimeProviderProjectPolicyKeys(provider))
   let catalogProviderId = model.catalog?.providerId
-  if (!catalogProviderId && canonicalProviderKindAlias(provider.driver) === "betterc0de") {
+  const driverKind = canonicalProviderKindAlias(provider.driver)
+  if (
+    !catalogProviderId &&
+    (driverKind === "betterc0de" || driverKind === "opencode_cli")
+  ) {
     // Dispatch carries a provider/model slug without the catalog metadata
     // used by model listing. Both paths must apply the upstream policy.
     const slug = model.slug.trim()

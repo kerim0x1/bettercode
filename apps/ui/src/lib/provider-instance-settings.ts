@@ -5,6 +5,8 @@ export function normalizeProviderDriver(driver: unknown): string {
   const key = value.toLowerCase().replace(/[_-]+/g, "")
   if (["claude", "anthropiccli", "claudecli", "claudeagent"].includes(key)) return "claude"
   if (["betterc0de", "bettercode"].includes(key)) return "betterc0de"
+  if (key === "opencodecli") return "opencode-cli"
+  if (key === "opencode") return "betterc0de"
   if (key === "codexcli") return "codex"
   return value
 }

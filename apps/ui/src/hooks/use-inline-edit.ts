@@ -2,6 +2,7 @@ import { useCallback } from "react"
 import { useChatStore } from "@/lib/chat-store"
 import { sendChatMessage } from "@/services/backend"
 import { resolveProviderTarget } from "@/lib/resolve-provider-target"
+import { resolveDispatchModelId } from "@/lib/provider-model-selection"
 import { coerceThinkingModeForModel } from "@/lib/model-capabilities"
 import type { InlineEditRequest } from "@/components/monaco-editor-wrapper"
 import type { UiProvider } from "@/lib/provider-types"
@@ -99,12 +100,10 @@ export function useInlineEdit({
           selectedProvider,
           selectedModel
         )
-        const effectiveModel = (() => {
-          let m = selectedModel
-          if (target.providerKind !== "openrouter" && m.includes("/"))
-            m = m.split("/").pop()!
-          return m
-        })()
+        const effectiveModel = resolveDispatchModelId(
+          target.providerKind,
+          selectedModel
+        )
         await sendChatMessage(
           hiddenThreadId,
           prompt,

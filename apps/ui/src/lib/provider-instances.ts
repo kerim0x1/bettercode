@@ -69,6 +69,18 @@ export function normalizeProviderDriverKind(driver: string): string {
   ) {
     return "betterc0de"
   }
+  if (
+    compactKey === "opencodecli" ||
+    compactKey === "opencodeserver" ||
+    compactKey === "opencodeacp"
+  ) {
+    return "opencode-cli"
+  }
+  // Legacy BetterC0de compatibility alias — "open-code" compacts to
+  // "opencode" and predates the upstream opencode driver kind.
+  if (compactKey === "opencode") {
+    return "betterc0de"
+  }
   return value
 }
 

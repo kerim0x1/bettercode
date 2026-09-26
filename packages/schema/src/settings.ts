@@ -106,6 +106,13 @@ export const providerSettingsSchema = z.object({
     custom_models: [],
     hidden_models: [],
   }),
+  // OpenCode CLI — the local `opencode` binary (headless server); both the
+  // v1 and v2 HTTP surfaces are supported.
+  "opencode-cli": providerConfigSchema.default({
+    enabled: true,
+    custom_models: [],
+    hidden_models: [],
+  }),
   openrouter: providerConfigSchema.default({
     enabled: true,
     custom_models: [],

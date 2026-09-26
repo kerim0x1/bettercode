@@ -344,6 +344,33 @@ export async function isClaudeCliAuthenticatedAsync(): Promise<boolean> {
   return false;
 }
 
+/**
+ * opencode stores its `auth login` credentials in `auth.json` under its data
+ * home. opencode always uses `~/.local/share/opencode/` — including on
+ * Windows — unless XDG_DATA_HOME overrides it, so the legacy `~/.opencode`
+ * location and OPENCODE_API_KEY are the only other accepted states.
+ */
+export async function isOpencodeCliAuthenticatedAsync(): Promise<boolean> {
+  if (process.env.OPENCODE_API_KEY?.trim()) {
+    return true;
+  }
+  const dataHome = process.env.XDG_DATA_HOME?.trim()
+    ? path.join(process.env.XDG_DATA_HOME.trim(), "opencode")
+    : path.join(HOME, ".local", "share", "opencode");
+  for (const candidate of [
+    path.join(dataHome, "auth.json"),
+    path.join(HOME, ".opencode", "auth.json"),
+  ]) {
+    try {
+      await fs.promises.access(candidate);
+      return true;
+    } catch {
+      // Try the next candidate location.
+    }
+  }
+  return false;
+}
+
 export async function isCodexCliAuthenticatedAsync(): Promise<boolean> {
   try {
     await fs.promises.access(path.join(HOME, ".codex", "auth.json"));

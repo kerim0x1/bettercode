@@ -22,9 +22,10 @@ import { claudeCli } from "./claude-cli";
 import { codexCli } from "./codex-cli";
 import { grokCli } from "./grok-cli";
 import { cursorCli } from "./cursor-cli";
+import { opencodeCli } from "./opencode-cli";
 
 // Order shapes the Settings UI:
-//   1. CLI-backed (claude, codex, grok, cursor) — most common "I already have a CLI logged in"
+//   1. CLI-backed (claude, codex, grok, cursor, opencode) — most common "I already have a CLI logged in"
 //   2. API-key-only providers (anthropic, openai, grok)
 //   3. Aggregators (openrouter, deepseek)
 //   4. Local servers (lmstudio)
@@ -35,6 +36,7 @@ export const PROVIDERS: readonly ProviderDefinition[] = [
   codexCli,
   grokCli,
   cursorCli,
+  opencodeCli,
   anthropic,
   openai,
   grok,

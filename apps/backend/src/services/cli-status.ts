@@ -5,6 +5,7 @@ import {
   detectCodexCliAsync,
   isClaudeCliAuthenticatedAsync,
   isCodexCliAuthenticatedAsync,
+  isOpencodeCliAuthenticatedAsync,
 } from "../cli/detect"
 import {
   probeGrokProviderStatusAsync,
@@ -26,6 +27,7 @@ export interface CliStatusSnapshot {
     readonly codex: CliStatus
     readonly "grok-cli": CliStatus
     readonly cursor: CliStatus
+    readonly "opencode-cli": CliStatus
   }
   readonly adapters: Readonly<
     Record<string, { readonly configured: boolean; readonly name: string }>
@@ -35,6 +37,7 @@ export interface CliStatusSnapshot {
 export interface CliStatusReaderDependencies {
   readonly detectClaude: (refresh: boolean) => Promise<CliStatus>
   readonly detectCodex: (refresh: boolean) => Promise<CliStatus>
+  readonly detectOpencode: (refresh: boolean) => Promise<CliStatus>
   readonly probeGrok: () => Promise<GrokProviderStatusProbe>
   readonly resolveCursor: () => Promise<ResolvedCursorBinary | null>
   readonly now: () => number
@@ -72,6 +75,12 @@ export function createCliStatusReader(
       detectCodexCliAsync(null, {
         refresh,
         isAuthenticated: isCodexCliAuthenticatedAsync,
+        authType: "cli",
+      }),
+    detectOpencode: (refresh) =>
+      detectCliAsync("opencode", {
+        refresh,
+        isAuthenticated: isOpencodeCliAuthenticatedAsync,
         authType: "cli",
       }),
     probeGrok: () => probeGrokProviderStatusAsync({ env: process.env }),
@@ -136,9 +145,10 @@ async function probeCliStatus(
   dependencies: CliStatusReaderDependencies,
   refresh: boolean
 ): Promise<CliStatusSnapshot> {
-  const [claude, codex, grokProbe, cursorBinary] = await Promise.all([
+  const [claude, codex, opencode, grokProbe, cursorBinary] = await Promise.all([
     dependencies.detectClaude(refresh),
     dependencies.detectCodex(refresh),
+    dependencies.detectOpencode(refresh),
     dependencies.probeGrok(),
     dependencies.resolveCursor(),
   ])
@@ -164,11 +174,13 @@ async function probeCliStatus(
   return {
     claude,
     codex,
-    cli: { claude, codex, "grok-cli": grokCli, cursor },
+    cli: { claude, codex, "grok-cli": grokCli, cursor, "opencode-cli": opencode },
     adapters: snapshotAdapterConfiguration(registry, {
       anthropic_cli: claude,
       codex,
       "grok-cli": grokCli,
+      // Keyed by the adapter's providerKind, not the CLI slot id.
+      opencode_cli: opencode,
     }),
   }
 }

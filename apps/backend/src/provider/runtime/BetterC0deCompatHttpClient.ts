@@ -5,6 +5,13 @@ export interface BetterC0deCompatClientInput {
   readonly directory: string
   readonly serverUsername?: string
   readonly serverPassword?: string
+  /**
+   * Current `opencode` wraps v2 inventory payloads in a
+   * `{ location, data: [...] }` envelope instead of returning a bare array.
+   * When set, the v2 list calls unwrap that envelope so callers still see a
+   * plain array. Defaults to false (legacy BetterC0de compatibility).
+   */
+  readonly v2Envelope?: boolean
 }
 
 interface RoutingQuery extends Record<string, string | undefined> {
@@ -42,6 +49,10 @@ export function createBetterC0deCompatHttpClient<TClient = unknown>(
   const defaultRouting: RoutingQuery = {
     directory: input.directory,
   }
+  const unwrapV2 = <T>(payload: T | undefined): T | undefined =>
+    input.v2Envelope
+      ? (unwrapV2Envelope(payload) as T | undefined)
+      : payload
 
   const request = async <T = unknown>(
     options: RequestOptions
@@ -226,7 +237,9 @@ export function createBetterC0deCompatHttpClient<TClient = unknown>(
             method: "GET",
             path: "/api/model",
             query: locationQuery(parameters?.location, defaultRouting),
-          }),
+          }).then((result: CompatResult<unknown>) => ({
+            data: unwrapV2(result.data),
+          })),
       },
       provider: {
         list: (parameters?: {
@@ -236,7 +249,9 @@ export function createBetterC0deCompatHttpClient<TClient = unknown>(
             method: "GET",
             path: "/api/provider",
             query: locationQuery(parameters?.location, defaultRouting),
-          }),
+          }).then((result: CompatResult<unknown>) => ({
+            data: unwrapV2(result.data),
+          })),
       },
     },
     app: {
@@ -594,6 +609,23 @@ function locationQuery(
       ? { "location[workspace]": location?.workspace ?? fallback.workspace ?? "" }
       : {}),
   }
+}
+
+/**
+ * Current `opencode` wraps its v2 list payloads in `{ location, data }`.
+ * Older builds (and BetterC0de's compatibility CLI) return the array
+ * directly, so tolerate both.
+ */
+function unwrapV2Envelope(value: unknown): unknown {
+  if (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    "data" in value
+  ) {
+    return (value as { data: unknown }).data
+  }
+  return value
 }
 
 function requiredString(value: unknown, name: string): string {

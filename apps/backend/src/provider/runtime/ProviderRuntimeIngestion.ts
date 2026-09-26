@@ -76,6 +76,7 @@ type ProviderRuntimeLifecycleKind =
   | "cursor"
   | "betterc0de"
   | "BetterC0de"
+  | "opencode_cli"
   | "openai"
   | "anthropic"
   | "openrouter"

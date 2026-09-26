@@ -10,6 +10,8 @@ const HTTP_APPROVAL_KINDS = new Set([
   "codex_cli",
   "grok_cli",
   "grok-cli",
+  "opencode_cli",
+  "opencode-cli",
   "anthropic",
   "anthropic_cli",
   "betterc0de",

@@ -131,6 +131,7 @@ const HUB_PROVIDER_KINDS: ReadonlySet<string> = new Set([
   "cursor",
   "grok_cli",
   "betterc0de",
+  "opencode_cli",
 ])
 
 export function asHubProviderKind(raw: string): ProviderKind | null {

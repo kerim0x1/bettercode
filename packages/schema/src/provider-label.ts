@@ -25,6 +25,7 @@ const providerLabels: Record<string, string> = {
   openai: "OpenAI",
   BetterC0de: "BetterC0de",
   openrouter: "OpenRouter",
+  opencodecli: "OpenCode CLI",
 }
 
 export function formatProviderActivityLabel(
@@ -58,6 +59,13 @@ function inferProviderKind(providerInstanceId: string | undefined) {
   if (key.includes("betterc0de") || key.includes("bettercode"))
     return "betterc0de"
   if (key.includes("BetterC0de")) return "betterc0de"
+  // Must run before the bare "opencode" check — the upstream opener OpenCode
+  // CLI is a distinct kind from the BetterC0de compatibility driver, whose
+  // legacy "open-code" spelling compacts to the same key. ("opencodecli"
+  // also covers the new opencode-cli slot's instance ids.)
+  if (key.includes("opencodecli") || key.includes("opencodeserver"))
+    return "opencode_cli"
+  if (key.includes("opencode")) return "betterc0de"
   if (key.includes("openrouter")) return "openrouter"
   if (key.includes("lmstudio")) return "lmstudio"
   if (key.includes("openai")) return "openai"

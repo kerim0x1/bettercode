@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react"
 import { getThreadStream, useChatStore, useThreadById, useThreadActivities } from "@/lib/chat-store"
 import { useMessageQueueStore } from "@/lib/message-queue-store"
 import { useAppPreferences } from "@/hooks/use-app-preferences"
-import { resolveProviderModelThinkingSelection, latestProviderInstanceId, latestProviderContinuationKey } from "@/lib/provider-model-selection"
+import { resolveProviderModelThinkingSelection, latestProviderInstanceId, latestProviderContinuationKey, resolveDispatchModelId } from "@/lib/provider-model-selection"
 import { sendChatMessage } from "@/services/backend"
 import { resolveProviderTarget } from "@/lib/resolve-provider-target"
 import { coerceThinkingModeForModel } from "@/lib/model-capabilities"
@@ -128,9 +128,10 @@ export function useAutonomousLoop({ providers }: { providers: UiProvider[] }) {
         const currentThread = current.threads.find((t) => t.id === threadId)
         if (!currentThread || !current.autonomousMode || current.autonomousStatus !== "working" || current.autonomousThreadId !== threadId) return
         if (useMessageQueueStore.getState().messages.some(entry => entry.threadId === threadId)) return
-        const effectiveModel = target.providerKind !== "openrouter" && selectedModel.includes("/")
-          ? selectedModel.split("/").pop()!
-          : selectedModel
+        const effectiveModel = resolveDispatchModelId(
+          target.providerKind,
+          selectedModel
+        )
         current.addMessage(threadId, dispatchUserMessage)
         current.setStreamingModelId(threadId, selectedModel)
         current.appendStreamDelta(threadId, "")

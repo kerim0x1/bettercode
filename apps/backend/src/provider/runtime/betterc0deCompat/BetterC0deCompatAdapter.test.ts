@@ -506,12 +506,15 @@ describe("BetterC0deCompatAdapter", () => {
       runtimeMode: "read-only",
     })
 
-    expect(clientFactory).toHaveBeenCalledWith({
-      baseUrl: "http://127.0.0.1:4096",
-      directory: "/tmp/project",
-      serverUsername: "alice",
-      serverPassword: "secret",
-    })
+    expect(clientFactory).toHaveBeenCalledWith(
+      {
+        baseUrl: "http://127.0.0.1:4096",
+        directory: "/tmp/project",
+        serverUsername: "alice",
+        serverPassword: "secret",
+      },
+      expect.objectContaining({ providerKind: "betterc0de" })
+    )
     expect(client.session.create).toHaveBeenCalledWith(
       expect.objectContaining({
         title: "BetterC0de thread-1",

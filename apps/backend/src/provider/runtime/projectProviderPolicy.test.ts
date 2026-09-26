@@ -113,4 +113,30 @@ describe("runtime provider project policy", () => {
       ).map((model) => model.slug)
     ).toEqual(["openai/gpt-5.5", "anthropic/claude-opus"])
   })
+  it("applies upstream provider policies to catalog-less dispatch slugs", () => {
+    const policy = {
+      enabledProviders: [],
+      disabledProviders: [],
+      providers: [{ id: "anthropic", blacklist: ["claude-opus"] }],
+    }
+    for (const provider of [
+      { instanceId: "BetterC0de", driver: "BetterC0de" },
+      { instanceId: "opencode-cli", driver: "opencode-cli" },
+    ]) {
+      expect(
+        isRuntimeModelAllowedByProjectPolicy(
+          provider,
+          { slug: "anthropic/claude-opus" },
+          policy
+        )
+      ).toBe(false)
+      expect(
+        isRuntimeModelAllowedByProjectPolicy(
+          provider,
+          { slug: "openai/gpt-5.5" },
+          policy
+        )
+      ).toBe(true)
+    }
+  })
 })

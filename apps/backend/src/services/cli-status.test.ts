@@ -147,6 +147,9 @@ function makeDependencies(
     detectCodex: vi.fn(async () =>
       cliStatus({ binaryPath: "/bin/codex" })
     ),
+    detectOpencode: vi.fn(async () =>
+      cliStatus({ binaryPath: "/bin/opencode" })
+    ),
     probeGrok: vi.fn(async () => grokStatus()),
     resolveCursor: vi.fn(async () => cursorBinary()),
     now: Date.now,

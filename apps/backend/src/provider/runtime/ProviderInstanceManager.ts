@@ -34,6 +34,7 @@ import { probeCursorProviderStatus } from "./cursor/CursorProviderStatus"
 import { GrokAcpAdapter } from "./grok-cli/GrokAcpAdapter"
 import { probeGrokProviderStatusAsync } from "./grok-cli/GrokProviderStatus"
 import { BetterC0deCompatAdapter } from "./betterc0deCompat/BetterC0deCompatAdapter"
+import { OpenCodeAdapter } from "./opencode/OpenCodeAdapter"
 import type { ProviderRuntimeInstance } from "./ProviderHub"
 import type { EventNdjsonLogger } from "./EventNdjsonLogger"
 
@@ -393,6 +394,34 @@ export class ProviderInstanceManager {
       }
     }
 
+    if (driver === "opencode-cli") {
+      const binaryPath =
+        readConfigString(config.config, "binaryPath") ?? "opencode"
+      const continuationKey = instanceContinuationKey(
+        "opencode-cli",
+        config.instanceId
+      )
+      const adapter = new OpenCodeAdapter({
+        providerInstanceId: config.instanceId,
+        continuationKey,
+        binaryPath,
+        serverUrl: readConfigString(config.config, "serverUrl"),
+        serverUsername: readConfigString(config.config, "serverUsername"),
+        serverPassword: readConfigString(config.config, "serverPassword"),
+        environment,
+        customModels: readConfigStringArray(config.config, "customModels"),
+        nativeEventLogger: this.options.nativeEventLogger,
+      })
+      return {
+        ...base,
+        provider: "opencode_cli",
+        continuationKey,
+        version: null,
+        statusProbe: (input) => adapter.probeStatus(input),
+        adapter,
+      }
+    }
+
     return {
       ...base,
       provider: null,
@@ -524,6 +553,27 @@ function defaultProviderInstances(
         customModels: providers["grok-cli"]?.custom_models ?? [],
       },
     },
+    // The local `opencode` binary's headless server. Separate settings slot
+    // from the BetterC0de compatibility provider even though both drive the
+    // same OpenCode-family wire protocol.
+    "opencode-cli": {
+      instanceId: "opencode-cli",
+      driver: "opencode-cli",
+      displayName: "OpenCode CLI",
+      enabled: providers["opencode-cli"]?.enabled !== false,
+      environment: inheritedProviderEnvironment(["OPENCODE_API_KEY"]),
+      config: {
+        binaryPath:
+          readConfigString(providers["opencode-cli"], "binaryPath") ||
+          "opencode",
+        serverUrl: readConfigString(providers["opencode-cli"], "serverUrl") ?? "",
+        serverUsername:
+          readConfigString(providers["opencode-cli"], "serverUsername") ?? "",
+        serverPassword:
+          readConfigString(providers["opencode-cli"], "serverPassword") ?? "",
+        customModels: providers["opencode-cli"]?.custom_models ?? [],
+      },
+    },
     ...(betterC0deEnabled
       ? {
           betterc0de: {
@@ -639,6 +689,23 @@ function normalizeDriver(driver: string): string {
   ) {
     return "betterc0de"
   }
+  // The upstream `opencode` binary. Kept distinct from `betterc0de` so the
+  // Settings UI can show both side by side and so a chat thread's provider
+  // kind stays stable across the two implementations. Bare "opencode" is
+  // intentionally NOT aliased: the legacy "open-code" spelling is an alias
+  // of the BetterC0de compatibility driver and must keep mapping there.
+  if (
+    compactKey === "opencodecli" ||
+    compactKey === "opencodeserver" ||
+    compactKey === "opencodeacp"
+  ) {
+    return "opencode-cli"
+  }
+  // Legacy BetterC0de compatibility alias — "open-code" compacts to
+  // "opencode" and predates the upstream opencode driver.
+  if (compactKey === "opencode") {
+    return "betterc0de"
+  }
   return value
 }
 
@@ -650,6 +717,7 @@ function defaultRank(instanceId: string): number {
   if (instanceId === "betterc0de") return 4
   if (instanceId === "BetterC0de") return 5
   if (instanceId === "grok-cli") return 6
+  if (instanceId === "opencode-cli") return 7
   return 10
 }
 

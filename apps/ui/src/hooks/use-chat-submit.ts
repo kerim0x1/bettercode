@@ -66,6 +66,7 @@ import {
   latestProviderInstanceId,
   latestProviderContinuationKey,
   resolveProviderModelThinkingSelection,
+  resolveDispatchModelId,
 } from "@/lib/provider-model-selection"
 
 // Shared across composers showing the same thread; acquired before lazy imports
@@ -333,10 +334,10 @@ export function useChatSubmit({
           )
           if (!requireAvailableModel(selectedProvider, selectedModel))
             return false
-          const modelId =
-            target.providerKind !== "openrouter" && selectedModel.includes("/")
-              ? selectedModel.split("/").pop()!
-              : selectedModel
+          const modelId = resolveDispatchModelId(
+            target.providerKind,
+            selectedModel
+          )
           const options =
             getProviderComposerSelection(
               selectedProvider?.id,
@@ -812,12 +813,7 @@ export function useChatSubmit({
         )
           return
         const runtimePath = resolveThreadRuntimePath(activeThread)
-        const effectiveModel = (() => {
-          let m = turnModel
-          if (target.providerKind !== "openrouter" && m.includes("/"))
-            m = m.split("/").pop()!
-          return m
-        })()
+        const effectiveModel = resolveDispatchModelId(target.providerKind, turnModel)
         // Fast Mode is only meaningful on Codex CLI (`serviceTier: "fast"`)
         // and Claude CLI (`settings.fastMode: true`). On every other
         // provider the backend silently drops the field, so we don't gate

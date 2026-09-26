@@ -250,6 +250,30 @@ function hasSelectableModel(provider: UiProvider, modelId: string): boolean {
   )
 }
 
+/**
+ * Dispatch-time model id. Most CLI/API providers address models by their bare
+ * id (`gpt-5.5`, `claude-opus-5`), so `provider/model` slugs — which exist only
+ * to namespace pickers from other providers — lose their prefix. Providers
+ * whose backend protocol *is* the `provider/model` slug (OpenRouter, the
+ * BetterC0de compat CLI and the upstream opencode binary, whose adapters
+ * `parseBetterC0deModelSlug` strictly require one slash) keep the full slug.
+ */
+export function resolveDispatchModelId(
+  providerKind: string | null | undefined,
+  modelId: string
+): string {
+  if (!modelId.includes("/")) return modelId
+  const kind = (providerKind ?? "").trim().toLowerCase().replace(/[_\s-]+/g, "")
+  if (
+    kind === "openrouter" ||
+    kind === "betterc0de" ||
+    kind === "opencodecli"
+  ) {
+    return modelId
+  }
+  return modelId.split("/").pop() ?? modelId
+}
+
 export function latestProviderInstanceId(
   activities: ReadonlyArray<{
     providerInstanceId?: string | null
