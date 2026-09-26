@@ -65,4 +65,4 @@ Keep discussion respectful and focused on the work. For suspected vulnerabilitie
 
 ## Releases
 
-Maintainers release by tag; the full procedure is in the [release checklist](docs/release-checklist.md). In short: bump the version in every workspace, move the `Unreleased` changelog entries under the new version, then tag `v<version>` and push the tag. The pre-push hook and the Release workflow both run `release:check`, and the release is published only after every platform passed.
+After a merge to `main`, CI must pass before the Automatic release workflow prepares a versioned commit reachable from a new `v<version>` tag and explicitly starts Release on that tag. The protected `main` branch stays unchanged; its version may trail the latest tag. Release runs `release:check` on every platform and publishes only after every gate passes. Maintainers can still release by tag manually; see the [release checklist](docs/release-checklist.md). Keep `Unreleased` useful: new entries since the last release become public notes automatically.

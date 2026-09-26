@@ -1,0 +1,118 @@
+name: Automatic release
+
+# CI validates the merged commit first. This workflow then commits the next
+# shared version and changelog section on a tag-only commit, then explicitly
+# dispatches Release on that tag. The protected main branch stays unchanged.
+# A tag pushed with GITHUB_TOKEN alone would not start another workflow.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+concurrency:
+  group: automatic-release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  prepare:
+    name: Version, tag and start Release
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      vars.BETTERC0DE_AUTO_RELEASE != 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout main and its tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Confirm this is the latest CI-verified main commit
+        id: gate
+        shell: bash
+        env:
+          VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags
+          current="$(git rev-parse refs/remotes/origin/main)"
+          if [ "$current" != "$VERIFIED_SHA" ]; then
+            echo "::notice::A newer main commit exists. Its CI run will prepare the release."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$(git rev-parse HEAD)" != "$current" ]; then
+            echo "::error::Checkout does not match the verified main commit."
+            exit 1
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare the shared version and release notes
+        if: steps.gate.outputs.ready == 'true'
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$(node scripts/prepare-automatic-release.mjs)"
+          node scripts/check-workspace-versions.mjs
+          node scripts/release-notes.mjs "$tag" > /dev/null
+          git diff --check
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          git diff --stat
+
+      - name: Push the tag, then start the full Release workflow
+        if: steps.gate.outputs.ready == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if [ "$(git rev-parse refs/remotes/origin/main)" != "$VERIFIED_SHA" ]; then
+            echo "::notice::Main advanced while the version was prepared. Its newer CI run will release it."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md package.json package-lock.json apps/*/package.json packages/*/package.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): prepare $TAG"
+          fi
+          git tag -a "$TAG" -m "BetterC0de $TAG"
+          if ! git push origin "refs/tags/$TAG:refs/tags/$TAG"; then
+            git fetch origin main
+            if [ "$(git rev-parse refs/remotes/origin/main)" != "$VERIFIED_SHA" ]; then
+              echo "::notice::Main advanced before the tag push. Its newer CI run will release it."
+              exit 0
+            fi
+            echo "::error::The release tag could not be pushed."
+            exit 1
+          fi
+
+          # GITHUB_TOKEN pushes do not create workflow runs. workflow_dispatch
+          # is the documented exception, and the tag ref makes Release run
+          # its tag, version and changelog gates before publishing.
+          for attempt in 1 2 3 4 5; do
+            if gh workflow run release.yml --ref "$TAG"; then
+              echo "Started Release for $TAG."
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::The tag was pushed, but Release dispatch failed. Rerun Release on $TAG."
+          exit 1

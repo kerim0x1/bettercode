@@ -206,7 +206,7 @@ Preflight names the problem and the fix: a Node version outside the supported ra
 
 ### A tag push is rejected by the pre-push hook
 
-Pushing a `v<version>` tag runs `npm run release:check` first. The hook also refuses the push when the tag does not match the version in `package.json`, points at a commit other than the checked-out one, the working tree has uncommitted files, or `CHANGELOG.md` has no section for the version. Fix what it reports and push the tag again. `git push --no-verify` skips the hook, but the Release workflow runs the same check on every platform before anything is published.
+Normal merges to `main` release automatically after green CI. If a maintainer pushes a `v<version>` tag manually, `npm run release:check` runs first. The hook also refuses the push when the tag does not match the version in `package.json`, points at a commit other than the checked-out one, the working tree has uncommitted files, or `CHANGELOG.md` has no section for the version. Fix what it reports and push the tag again. `git push --no-verify` skips the hook, but the Release workflow runs the same check on every platform before anything is published.
 
 ### Linux: the app exits with a sandbox error
 

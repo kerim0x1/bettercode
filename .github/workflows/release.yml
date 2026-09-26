@@ -1,7 +1,8 @@
 # Release pipeline.
 #
-# Push a `v<version>` tag that matches package.json (the pre-push hook runs
-# `npm run release:check` locally first). This workflow then:
+# A `v<version>` tag that matches package.json starts this workflow, either
+# from a maintainer's push or from Automatic release's explicit dispatch.
+# The pre-push hook checks manually pushed tags locally. This workflow then:
 #   1. runs the full release:check on every supported platform; each job
 #      builds, launches, installs and uninstalls its installers and keeps them
 #      as artifacts

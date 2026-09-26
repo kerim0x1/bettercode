@@ -1,32 +1,40 @@
 # Release Checklist
 
-BetterC0de releases are built from a `v<package-version>` tag by the Release workflow (`.github/workflows/release.yml`). The root app, all workspaces and `package-lock.json` must share the same version.
+BetterC0de releases are built from a `v<package-version>` tag by the Release workflow (`.github/workflows/release.yml`). After every successful CI run for the latest commit on `main`, Automatic release (`.github/workflows/automatic-release.yml`) prepares a tagged release commit. The protected `main` branch stays unchanged, so its development version may trail the latest release tag. On the tag, the root app, all workspaces and `package-lock.json` share the published version.
 
-## Before tagging
+## Before merging
 
-1. Update the version in the root and workspace `package.json` files and in `package-lock.json`, then run `npm run check:versions`.
-2. Move the `Unreleased` entries of [CHANGELOG.md](../CHANGELOG.md) under `## [<version>] - <date>`, including known issues and migrations. This section becomes the release notes, and the release is refused without it.
-3. Review `npm audit --omit=dev` and record any accepted advisory in the changelog.
-4. Make sure CI is green for the commit on `main`. CI runs `npm run release:check` on Linux x64, Windows x64, macOS arm64 and macOS x64.
-5. On your machine, with a clean working tree on that commit:
+1. Record user-visible changes, known issues and migrations under `Unreleased` in [CHANGELOG.md](../CHANGELOG.md). These entries become public release notes.
+2. Review `npm audit --omit=dev` for dependency changes and record any accepted advisory in the changelog.
+3. Let the PR's CI complete before merging. CI also runs on the merge commit on `main` and must pass for an automatic release.
+4. For packaging or installer changes, run the full gate locally where possible:
 
    ```sh
    npm run release:check
    ```
 
-   The pre-push hook runs it again when you push the tag.
+   If the task or environment limits local checks, report that gap and use CI results.
 
-## Tag and publish
+## Automatic tag and publish
 
-1. `git tag v<version>` on the release commit, then `git push origin v<version>`. The hook refuses the push if the tag does not match `package.json`, is not the checked-out commit, the tree is dirty, the changelog section is missing, or `release:check` fails.
-2. The Release workflow then:
+1. Automatic release starts only after the `main` push CI succeeds. It checks that the verified commit is still the tip of `main`; if a newer merge arrived, that newer CI run handles the combined changes.
+2. It increments the latest release tag (for example `0.1.0-beta.3` to `0.1.0-beta.4`), updates every workspace and the lockfile, and writes a dated release section. Entries already present in prior releases are omitted from the new notes, even though `main` retains its rolling `Unreleased` section. The tagged changelog carries forward the full release history. If a maintainer has already bumped to a newer untagged version, it uses that version. Empty new notes receive a maintenance entry.
+3. It pushes the tag pointing to that versioned commit without writing to `main`, then dispatches Release on the tag. GitHub does not start workflows for tags pushed with `GITHUB_TOKEN`, so the explicit dispatch is required.
+4. The Release workflow then:
    - checks that the tag, version and changelog agree
    - runs the full `release:check` on all four platforms; each job builds, launches, installs and uninstalls its installers
    - runs the source checks on Node 24
    - once the phone app is switched on (see [The phone app](#the-phone-app)): builds the APK with the release key and runs the device tests on that exact APK, and builds and tests the iOS app on a simulator
    - only if every job passed: assembles the release. It fails on duplicate file names, merges `latest-mac.yml`, checks every update-metadata entry against its file's sha512, requires every supported download (with the phone app: the APK, signed by the pinned release certificate) and writes `SHA256SUMS.txt`. It then uploads everything to a draft, confirms every file arrived, and publishes the draft. Versions with a `-` (for example `0.2.0-beta.1`) are marked as prereleases.
    - with the phone app: starts the iOS build on EAS, which submits it to TestFlight when it finishes. That can take hours on EAS's free plan; the job does not wait.
-3. If any job fails, nothing is published. Fix the problem, delete the tag locally and on GitHub, and tag again. An already-published release is never modified; release a new version instead.
+5. If any Release job fails, nothing is published. Rerun the tag's Release workflow for transient failures. If code must change, merge a fix and let Automatic release create a newer version; an already-published release is never modified.
+
+## Recovery and manual release
+
+- Check the **Automatic release** workflow after green `main` CI. A failed version, tag or dispatch step needs attention even though the preceding CI was green.
+- If the tag was pushed but dispatch failed, run **Release** manually with that tag as the ref (or `gh workflow run release.yml --ref v<version>`). Do not create a second tag for the same version.
+- To pause automatic releases deliberately, set the repository Actions variable `BETTERC0DE_AUTO_RELEASE` to `false` before the merge. Unset it or set it to `true` to resume.
+- For a manual release while automation is paused, update all workspace versions and the lockfile, add a versioned changelog section, run `npm run check:versions` and `npm run release:check`, then tag the checked-out release commit with `git tag v<version>` and push the tag. The pre-push hook checks it again; Release repeats the full platform gate.
 
 ## After publishing
 

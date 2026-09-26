@@ -149,11 +149,11 @@ No `.env` file or account is needed to build, test or start the app. Optional en
 
 ### Releasing
 
-1. Update the version in every workspace (`npm run check:versions` verifies them) and add a `## [<version>]` section to [CHANGELOG.md](CHANGELOG.md).
-2. Commit, tag `v<version>` and push the tag. The pre-push hook runs `npm run release:check` first and refuses the push if it fails.
-3. The Release workflow runs `release:check` on Linux, Windows and both Mac architectures, and publishes the GitHub release only when every platform passed.
+1. Merge a change into `main` with an accurate entry under `Unreleased` in [CHANGELOG.md](CHANGELOG.md).
+2. After CI passes, Automatic release prepares the next shared version and changelog section in a tagged release commit. The protected `main` branch remains unchanged.
+3. The Release workflow checks Linux, Windows and both Mac architectures again, then publishes the GitHub release only when every platform passed.
 
-The [release checklist](docs/release-checklist.md) has the details. Releases are unsigned by decision; [code signing](docs/development/code-signing.md) explains what that means for users.
+The [release checklist](docs/release-checklist.md) covers recovery and manual tagging. Releases are unsigned by decision; [code signing](docs/development/code-signing.md) explains what that means for users.
 
 ### Troubleshooting
 

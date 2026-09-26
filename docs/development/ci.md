@@ -9,8 +9,9 @@ Read this before editing or opening a pull request. The workflow is [.github/wor
 | Node source and build | Linux, Windows, macOS on Node 24 | Source checks and production build under the next supported Node line. |
 | Phone app on Android | Android emulator | APK build, package checks, and device flows. |
 | Phone app on iOS | iOS simulator | iOS build, package checks, and device flows. |
+| Automatic release | Successful CI push run on the current `main` commit | Prepare the next shared version and changelog section in a tag-only commit, then dispatch the full Release workflow on that tag. |
 
-For branches in this repository, the push run covers the code. For forked contributions, the pull request run covers it. The new contributor job runs for both event types. All applicable jobs should pass before merge; check the failing job's log and the uploaded mobile evidence when a device flow fails.
+For branches in this repository, the push run covers the code. For forked contributions, the pull request run covers it. The contributor job runs for both event types. All applicable jobs should pass before merge; check the failing job's log and the uploaded mobile evidence when a device flow fails. A green push run on `main` starts the separate Automatic release workflow. The protected `main` branch is not changed by that workflow. Its tag-only commit does not trigger CI through `GITHUB_TOKEN`; the dispatched tag release repeats the full platform gate before publishing.
 
 ## Before pushing
 
