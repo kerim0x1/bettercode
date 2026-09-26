@@ -128,7 +128,7 @@ test("a later merge advances the latest tag even when main keeps its old version
   assert.match(plan.changelog, /- A new provider option\./)
   assert.match(plan.changelog, /## \[0\.1\.0-beta\.4\] - 2026-09-26/)
   assert.doesNotMatch(
-    plan.changelog.split("## [0.1.0-beta.3]")[0],
+    plan.changelog.split("## [0.1.0-beta.4]")[0],
     /Cursor remains available after slow startup/
   )
   assert.equal(
