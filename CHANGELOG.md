@@ -6,15 +6,20 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 
 ## [Unreleased]
 
+## [0.1.0-beta.4] - 2026-09-26
+
 ### Fixed
 
 - **Cursor CLI detection and models.** Native Windows installs are found without adding the CLI to `PATH`. Cursor's available models and options come from its signed-in ACP session, with account-specific cached results; provider refresh rechecks them. Model selection uses the exact ACP value, and stable CLI channels are no longer rejected by a fixed gate.
+
 - **Slow Cursor ACP starts no longer immediately disable the provider.** Cursor and Grok ACP session starts and stops use longer bounded deadlines, and stopping a provider cancels a session that is still starting before it can leave a late process behind.
 
 ### Added
 
 - Successful merges to `main` now prepare and tag the next shared version after CI passes, then run the full Release workflow before publishing. The `Unreleased` section becomes that version's release notes.
+
 - Agent mode can open the existing Browser Preview in the right workspace panel, with navigation, element selection, inspector, console, and visual changes routed to the focused chat.
+
 - **Account-backed model catalogs.** Claude, Codex, and Grok CLI models come from each logged-in CLI; Claude API, OpenAI, and xAI models come from the configured API account. Catalogs refresh every 15 minutes, can be refreshed manually, and keep the last successful account-specific list. Claude API is available again as a separate picker provider, and Claude Opus 5.5 supports its 1M context and adaptive thinking with medium default effort. Existing chats keep a withdrawn model ID visible until another model is chosen, and favorites remain saved while a model is unavailable.
 
 ## [0.1.0-beta.3] - 2026-09-25

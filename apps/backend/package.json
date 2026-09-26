@@ -1,6 +1,6 @@
 {
   "name": "@betterc0de/backend",
-  "version": "0.1.0-beta.3",
+  "version": "0.1.0-beta.4",
   "private": true,
   "type": "commonjs",
   "description": "BetterC0de Node.js backend (Hono HTTP + ws + better-sqlite3).",
