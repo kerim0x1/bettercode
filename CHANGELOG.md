@@ -9,6 +9,7 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 ### Fixed
 
 - **Cursor CLI detection and models.** Native Windows installs are found without adding the CLI to `PATH`. Cursor's available models and options come from its signed-in ACP session, with account-specific cached results; provider refresh rechecks them. Model selection uses the exact ACP value, and stable CLI channels are no longer rejected by a fixed gate.
+- **Slow Cursor ACP starts no longer immediately disable the provider.** Cursor and Grok ACP session starts and stops use longer bounded deadlines, and stopping a provider cancels a session that is still starting before it can leave a late process behind.
 
 ### Added
 
