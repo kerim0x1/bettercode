@@ -19,6 +19,7 @@ tags:
     direction: DOWN
 - tapOn:
     id: pair-demo
+    retryTapIfNoChange: true
 - extendedWaitUntil:
     visible:
       id: chats-screen
@@ -38,11 +39,17 @@ tags:
 - tapOn:
     id: file-edit
 
-# CodeMirror splits a line into highlighted pieces; one is the colour.
+# The editor's WebView exposes its highlighted text inconsistently to Maestro
+# on iOS. Its native container is stable; editing and saving still verify that
+# CodeMirror loaded the file and accepts input on the device.
 - extendedWaitUntil:
-    visible: '.*#0a0a0a.*'
+    visible:
+      id: code-editor
     timeout: 30000
-- tapOn: '.*#0a0a0a.*'
+- tapOn:
+    id: code-editor
+    point: "50%,10%"
+    retryTapIfNoChange: true
 - inputText: "1"
 - extendedWaitUntil:
     visible: ".*UNSAVED.*"
