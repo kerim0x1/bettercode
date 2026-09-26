@@ -74,7 +74,7 @@ After the first release that carries the app, add the APK and the TestFlight lin
 
 ### If a phone app job fails
 
-The release is not published, like any failed platform. Fix the cause, delete the tag and tag again. To release the desktop alone meanwhile, set `BETTERC0DE_MOBILE_RELEASE` to `false` for that tag's run and say so in the release notes.
+The release is not published, like any failed platform. Rerun Release on the same tag for a transient failure. If the app or its device tests need a code change, merge the fix and let Automatic release create a new version. To release the desktop alone meanwhile, set `BETTERC0DE_MOBILE_RELEASE` to `false` for that tag's run and say so in the release notes.
 
 ## What is not automated
 
