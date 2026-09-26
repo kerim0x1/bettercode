@@ -2,7 +2,7 @@ import { asRecord, readString, readTrimmed } from "@betterc0de/schema"
 import { EventEmitter } from "node:events"
 import { randomUUID } from "node:crypto"
 import {
-  findCursorModelConfigOption,
+  findCursorModelConfigOption as findAcpModelConfigOption,
   resolveCursorAcpAdvertisedModelId as resolveAcpAdvertisedModelId,
   type CursorAcpSessionConfigOption as AcpSessionConfigOption,
 } from "../cursor/CursorAcpSupport"
@@ -571,7 +571,7 @@ export class AcpRuntimeImpl<
   async setModel(model: string): Promise<void> {
     const started = await this.start()
     const selected = resolveAcpAdvertisedModelId(model, this.configOptions)
-    const modelOption = findCursorModelConfigOption(this.configOptions)
+    const modelOption = findAcpModelConfigOption(this.configOptions)
     if (modelOption?.type === "select") {
       const values = modelOption.options.flatMap((entry) =>
         "value" in entry
@@ -584,9 +584,7 @@ export class AcpRuntimeImpl<
         )
       }
       const response = await this.setConfigOption(modelOption.id, selected)
-      const confirmed = findCursorModelConfigOption(
-        response.configOptions ?? []
-      )
+      const confirmed = findAcpModelConfigOption(response.configOptions ?? [])
       if (confirmed?.type !== "select" || confirmed.currentValue !== selected) {
         throw new Error(
           `${this.profile.label} did not confirm model ${selected}.`
@@ -851,7 +849,7 @@ export function firstAdvertisedAuthMethodId(
 function extractModelConfigId(
   response: AcpSessionSetupResult
 ): string | undefined {
-  return findCursorModelConfigOption(response.configOptions ?? [])?.id
+  return findAcpModelConfigOption(response.configOptions ?? [])?.id
 }
 
 function parseSessionModeState(

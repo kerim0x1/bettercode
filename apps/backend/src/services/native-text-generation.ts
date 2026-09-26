@@ -35,7 +35,7 @@ import {
   type CursorAcpRuntimeOptions,
 } from "../provider/runtime/cursor/CursorAcpRuntime"
 import {
-  resolveCursorAcpBaseModelId,
+  resolveCursorAcpAdvertisedModelId,
   resolveCursorAcpConfigUpdates,
 } from "../provider/runtime/cursor/CursorAcpSupport"
 import { createBetterC0deCompatHttpClient } from "../provider/runtime/BetterC0deCompatHttpClient"
@@ -1225,7 +1225,10 @@ async function runAcpTextGeneration(
             }
           }
           await runtime!.setModel(
-            resolveCursorAcpBaseModelId(modelSelection.model)
+            resolveCursorAcpAdvertisedModelId(
+              modelSelection.model,
+              runtime!.getConfigOptions()
+            )
           )
           const updates = resolveCursorAcpConfigUpdates(
             runtime!.getConfigOptions(),

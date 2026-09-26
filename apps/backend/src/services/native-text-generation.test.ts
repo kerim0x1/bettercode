@@ -1644,6 +1644,14 @@ describe("native provider text generation", () => {
       })),
       getConfigOptions: () => [
         {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "gpt-5.4",
+          options: [{ value: "gpt-5.4", name: "GPT-5.4" }],
+        },
+        {
           id: "reasoning",
           name: "Reasoning",
           category: "model_option",
