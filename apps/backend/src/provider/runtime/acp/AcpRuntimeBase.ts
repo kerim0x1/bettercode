@@ -2,7 +2,8 @@ import { asRecord, readString, readTrimmed } from "@betterc0de/schema"
 import { EventEmitter } from "node:events"
 import { randomUUID } from "node:crypto"
 import {
-  resolveCursorAcpBaseModelId as resolveAcpBaseModelId,
+  findCursorModelConfigOption,
+  resolveCursorAcpAdvertisedModelId as resolveAcpAdvertisedModelId,
   type CursorAcpSessionConfigOption as AcpSessionConfigOption,
 } from "../cursor/CursorAcpSupport"
 import {
@@ -242,9 +243,9 @@ interface EstablishedSession {
   readonly resumed: boolean
 }
 
-export class AcpRuntimeImpl<TSettings extends AcpRuntimeSettings>
-  implements AcpRuntime
-{
+export class AcpRuntimeImpl<
+  TSettings extends AcpRuntimeSettings,
+> implements AcpRuntime {
   private readonly bus = new EventEmitter()
   private readonly extRequestHandlers = new Map<
     string,
@@ -557,7 +558,7 @@ export class AcpRuntimeImpl<TSettings extends AcpRuntimeSettings>
     this.updateSessionSetup(response)
     this.started = {
       ...started,
-      sessionSetupResult: response,
+      sessionSetupResult: { ...started.sessionSetupResult, ...response },
       ...(this.modeState ? { modeState: this.modeState } : {}),
       configOptions: this.configOptions,
       ...(extractModelConfigId(response)
@@ -569,10 +570,53 @@ export class AcpRuntimeImpl<TSettings extends AcpRuntimeSettings>
 
   async setModel(model: string): Promise<void> {
     const started = await this.start()
-    await this.setConfigOption(
-      started.modelConfigId ?? "model",
-      resolveAcpBaseModelId(model)
-    )
+    const selected = resolveAcpAdvertisedModelId(model, this.configOptions)
+    const modelOption = findCursorModelConfigOption(this.configOptions)
+    if (modelOption?.type === "select") {
+      const values = modelOption.options.flatMap((entry) =>
+        "value" in entry
+          ? [entry.value]
+          : entry.options.map((item) => item.value)
+      )
+      if (!values.includes(selected)) {
+        throw new Error(
+          `${this.profile.label} did not advertise model ${selected}.`
+        )
+      }
+      const response = await this.setConfigOption(modelOption.id, selected)
+      const confirmed = findCursorModelConfigOption(
+        response.configOptions ?? []
+      )
+      if (confirmed?.type !== "select" || confirmed.currentValue !== selected) {
+        throw new Error(
+          `${this.profile.label} did not confirm model ${selected}.`
+        )
+      }
+      return
+    }
+    const models = started.sessionSetupResult.models
+    if (Array.isArray(models?.availableModels)) {
+      if (!models.availableModels.some((item) => item.modelId === selected)) {
+        throw new Error(
+          `${this.profile.label} did not advertise model ${selected}.`
+        )
+      }
+      await this.requireClient().call("session/set_model", {
+        sessionId: started.sessionId,
+        modelId: selected,
+      })
+      if (this.started) {
+        this.started = {
+          ...this.started,
+          sessionSetupResult: {
+            ...this.started.sessionSetupResult,
+            models: { ...models, currentModelId: selected },
+          },
+        }
+      }
+      return
+    }
+    throw new Error(`${this.profile.label} did not advertise a model picker.`)
   }
 
   async setMode(modeId: string): Promise<void> {
@@ -653,6 +697,22 @@ export class AcpRuntimeImpl<TSettings extends AcpRuntimeSettings>
     const update = asRecord(asRecord(params).update)
     const sessionUpdate = readTrimmed(update, "sessionUpdate")
     switch (sessionUpdate) {
+      case "config_option_update": {
+        if (Array.isArray(update.configOptions)) {
+          this.configOptions = update.configOptions as AcpSessionConfigOption[]
+          if (this.started) {
+            this.started = {
+              ...this.started,
+              configOptions: this.configOptions,
+              sessionSetupResult: {
+                ...this.started.sessionSetupResult,
+                configOptions: this.configOptions,
+              },
+            }
+          }
+        }
+        break
+      }
       case "current_mode_update": {
         const modeId = readTrimmed(update, "currentModeId")
         if (modeId) {
@@ -791,9 +851,7 @@ export function firstAdvertisedAuthMethodId(
 function extractModelConfigId(
   response: AcpSessionSetupResult
 ): string | undefined {
-  return response.configOptions?.find(
-    (option) => option.category === "model" && option.id.trim().length > 0
-  )?.id
+  return findCursorModelConfigOption(response.configOptions ?? [])?.id
 }
 
 function parseSessionModeState(
@@ -835,16 +893,21 @@ function parsePermissionRequest(params: unknown): AcpPermissionRequest {
 
 function parseToolCallState(
   input: Record<string, unknown>,
-  options: { readonly fallbackStatus?: "pending" | "inProgress" | "completed" | "failed" } = {},
+  options: {
+    readonly fallbackStatus?: "pending" | "inProgress" | "completed" | "failed"
+  } = {}
 ): AcpToolCallState | undefined {
   const id = readTrimmed(input, "toolCallId")
   if (!id) return
   const title = readTrimmed(input, "title")
   const command = extractToolCallCommand(input.rawInput, title)
   const fields = {
-    title, command, kind: readTrimmed(input, "kind"),
+    title,
+    command,
+    kind: readTrimmed(input, "kind"),
     status: normalizeToolCallStatus(input.status, options.fallbackStatus),
-    detail: command ?? title ?? extractTextContentFromToolCallContent(input.content),
+    detail:
+      command ?? title ?? extractTextContentFromToolCallContent(input.content),
   }
   const data: Record<string, unknown> = { toolCallId: id }
   if (fields.kind) data.kind = fields.kind
@@ -853,33 +916,47 @@ function parseToolCallState(
   for (const key of ["rawInput", "rawOutput", "content", "locations"]) {
     if (input[key] !== undefined) data[key] = input[key]
   }
-  return Object.assign({ toolCallId: id, data }, Object.fromEntries(Object.entries(fields).filter(([, value]) => value)))
+  return Object.assign(
+    { toolCallId: id, data },
+    Object.fromEntries(Object.entries(fields).filter(([, value]) => value))
+  )
 }
 
-function mergeToolCallState(previous: AcpToolCallState | undefined, next: AcpToolCallState): AcpToolCallState {
+function mergeToolCallState(
+  previous: AcpToolCallState | undefined,
+  next: AcpToolCallState
+): AcpToolCallState {
   const merged: AcpToolCallState = {
     toolCallId: next.toolCallId,
     data: { ...previous?.data, ...next.data },
   }
-  for (const field of ["kind", "title", "status", "command", "detail"] as const) {
+  for (const field of [
+    "kind",
+    "title",
+    "status",
+    "command",
+    "detail",
+  ] as const) {
     const value = next[field] ?? previous?.[field]
     if (value) Object.assign(merged, { [field]: value })
   }
   return merged
 }
 
-function normalizePlanStepStatus(raw: unknown): "pending" | "inProgress" | "completed" {
+function normalizePlanStepStatus(
+  raw: unknown
+): "pending" | "inProgress" | "completed" {
   const status = normalizeToolCallStatus(raw)
   return status === "completed" || status === "inProgress" ? status : "pending"
 }
 
 function normalizeToolCallStatus(
   raw: unknown,
-  fallback?: "pending" | "inProgress" | "completed" | "failed",
+  fallback?: "pending" | "inProgress" | "completed" | "failed"
 ): "pending" | "inProgress" | "completed" | "failed" | undefined {
   if (raw === "in_progress") return "inProgress"
   const states = ["pending", "inProgress", "completed", "failed"] as const
-  return states.find(state => state === raw) ?? fallback
+  return states.find((state) => state === raw) ?? fallback
 }
 
 function extractToolCallCommand(

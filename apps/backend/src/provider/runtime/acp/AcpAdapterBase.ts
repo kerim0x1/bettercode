@@ -22,7 +22,7 @@ import type { EventNdjsonLogger } from "../EventNdjsonLogger"
 import { acpTurnFailureMessage } from "../cursor/AcpJsonRpcClient"
 import {
   mergeCursorCustomModels as mergeAcpCustomModels,
-  resolveCursorAcpBaseModelId as resolveAcpBaseModelId,
+  resolveCursorAcpAdvertisedModelId as resolveAcpAdvertisedModelId,
   resolveCursorAcpConfigUpdates as resolveAcpConfigUpdates,
 } from "../cursor/CursorAcpSupport"
 import {
@@ -206,16 +206,23 @@ export interface AcpProviderProfile<
   readonly runtimeProfile: AcpRuntimeProfile<TSettings>
   readonly models: {
     /** Base list used when the probe is skipped or fails (before custom-model merge). */
-    readonly fallback: (options: TOptions) => ReadonlyArray<ProviderModel>
+    readonly fallback: (
+      options: TOptions,
+      identity: string | null
+    ) => ReadonlyArray<ProviderModel>
     /** Live inventory read off a started probe session; empty usually uses fallback. */
     readonly fromStarted: (started: AcpStarted) => ReadonlyArray<ProviderModel>
     /** Some agents explicitly advertise an empty model list. */
     readonly isEmptyAuthoritative?: (started: AcpStarted) => boolean
     /** Namespace a cached list by the account selected in the CLI. */
-    readonly cacheIdentity?: (options: TOptions) => string | null
+    readonly cacheIdentity?: (
+      options: TOptions,
+      input: { readonly force: boolean }
+    ) => string | null | Promise<string | null>
     readonly onLiveModels?: (
       options: TOptions,
-      models: ReadonlyArray<ProviderModel>
+      models: ReadonlyArray<ProviderModel>,
+      identity: string | null
     ) => void
     /**
      * Which timestamp the cache gets when `isConfigured()` is false:
@@ -327,15 +334,21 @@ export class AcpAdapterBase<
     return this.profile.isConfigured(this.options)
   }
 
-  async availableModels(): Promise<ReadonlyArray<ProviderModel>> {
+  async availableModels(
+    input: { readonly force?: boolean } = {}
+  ): Promise<ReadonlyArray<ProviderModel>> {
     const now = Date.now()
-    const identity = this.profile.models.cacheIdentity?.(this.options) ?? null
+    const identity =
+      (await this.profile.models.cacheIdentity?.(this.options, {
+        force: input.force === true,
+      })) ?? null
     if (identity !== this.modelsCacheIdentity) {
       this.modelsCacheIdentity = identity
       this.modelsCache = null
       this.modelsInFlight = null
     }
     if (
+      !input.force &&
       this.modelsCache &&
       now - this.modelsCache.checkedAt < METADATA_CACHE_TTL_MS
     ) {
@@ -354,7 +367,7 @@ export class AcpAdapterBase<
     identity: string | null
   ): Promise<ReadonlyArray<ProviderModel>> {
     const fallback = mergeAcpCustomModels(
-      this.profile.models.fallback(this.options),
+      this.profile.models.fallback(this.options, identity),
       this.options.customModels ?? []
     )
     if (!this.isConfigured()) {
@@ -389,7 +402,7 @@ export class AcpAdapterBase<
             live.length > 0 ||
             this.profile.models.isEmptyAuthoritative?.(started)
           )
-            this.profile.models.onLiveModels?.(this.options, live)
+            this.profile.models.onLiveModels?.(this.options, live, identity)
         }
         return models
       } finally {
@@ -786,8 +799,9 @@ export class AcpAdapterBase<
       modelSelection,
     })
     this.updateSession(context, { runtimeMode })
-    const modelId = resolveAcpBaseModelId(
-      modelSelection?.model ?? input.modelId
+    const modelId = resolveAcpAdvertisedModelId(
+      modelSelection?.model ?? input.modelId,
+      context.runtime.getConfigOptions()
     )
     context.activeTurnId = turnId
     context.activeDispatchTurnId = input.dispatchTurnId ?? null
@@ -1346,7 +1360,10 @@ export class AcpAdapterBase<
     readonly modelSelection?: ModelSelection
   }): Promise<void> {
     if (input.modelSelection) {
-      const model = resolveAcpBaseModelId(input.modelSelection.model)
+      const model = resolveAcpAdvertisedModelId(
+        input.modelSelection.model,
+        input.runtime.getConfigOptions()
+      )
       if (this.profile.setModelFailure === "ignore") {
         // The agent may not accept a synthetic "model" configId when its
         // session advertises no model picker — treat a rejected model update

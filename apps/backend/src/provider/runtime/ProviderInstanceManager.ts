@@ -307,16 +307,19 @@ export class ProviderInstanceManager {
         provider: "cursor",
         continuationKey,
         version: null,
-        statusProbe: () =>
+        statusProbe: (input) =>
           probeCursorProviderStatus({
             binaryPath,
             env,
+            refresh: input.refresh,
           }),
         adapter: new CursorAcpAdapter({
           providerInstanceId: config.instanceId,
           continuationKey,
           binaryPath,
           apiEndpoint: readConfigString(config.config, "apiEndpoint"),
+          modelCacheDir: this.options.modelCacheDir,
+          statusEnv: env,
           environment,
           customModels: readConfigStringArray(config.config, "customModels"),
           clientInfo: this.options.clientInfo,

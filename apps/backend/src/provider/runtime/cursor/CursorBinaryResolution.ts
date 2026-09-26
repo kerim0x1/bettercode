@@ -59,6 +59,7 @@ function cursorHomeDirectories(): string[] {
       directories.push(
         path.join(localAppData, "Programs", "cursor-agent"),
         path.join(localAppData, "Programs", "cursor-agent", "bin"),
+        path.join(localAppData, "cursor-agent"),
         path.join(localAppData, "cursor-agent", "bin")
       )
     }

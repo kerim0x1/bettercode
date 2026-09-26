@@ -6,10 +6,7 @@ import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
-  getCursorParameterizedModelPickerUnsupportedMessage,
   parseCursorAboutOutput,
-  parseCursorCliConfigChannel,
-  parseCursorVersionDate,
   probeCursorProviderStatus,
   __resetCursorStatusProbeStateForTests,
 } from "./CursorProviderStatus"
@@ -262,17 +259,18 @@ describe("CursorProviderStatus", () => {
     })
   })
 
-  it("detects Cursor parameterized model picker version and channel requirements", () => {
-    expect(parseCursorVersionDate("2026.04.08-abcdef")).toBe(20260408)
-    expect(parseCursorCliConfigChannel('{"channel":"lab"}')).toBe("lab")
-
-    expect(
-      getCursorParameterizedModelPickerUnsupportedMessage({
-        version: "2026.03.20-abcdef",
-        channel: "stable",
-      })
-    ).toBe(
-      'Cursor Agent CLI version 2026.03.20-abcdef is too old for Cursor ACP parameterized model picker. Cursor Agent CLI channel is "stable", but parameterized model picker is only available on the lab channel. Run `agent set-channel lab && agent update` and use Cursor Agent CLI 2026.04.08 or newer.'
+  it("does not reject a working CLI based on its version or channel", async () => {
+    const binaryPath = await makeProbe(
+      "stable-channel",
+      'console.log(JSON.stringify({cliVersion:"2026.03.20",userEmail:"user@example.com"}))'
     )
+    await expect(
+      probeCursorProviderStatus({ binaryPath })
+    ).resolves.toMatchObject({
+      installed: true,
+      configured: true,
+      status: "ready",
+      auth: { status: "authenticated" },
+    })
   })
 })

@@ -34,7 +34,8 @@ export type CursorAcpPermissionRequest = AcpPermissionRequest
 export type CursorAcpExit = AcpExit
 export type CursorAcpEvent = AcpEvent
 export type CursorAcpRuntime = AcpRuntime
-export type CursorAcpRuntimeOptions = AcpRuntimeOptions<CursorAcpRuntimeSettings>
+export type CursorAcpRuntimeOptions =
+  AcpRuntimeOptions<CursorAcpRuntimeSettings>
 
 // Cursor's ACP server exposes its model picker through a vendor `_meta`
 // extension flag; without it `session/new` advertises no `category: "model"`
@@ -42,6 +43,7 @@ export type CursorAcpRuntimeOptions = AcpRuntimeOptions<CursorAcpRuntimeSettings
 const CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES = {
   fs: { readTextFile: false, writeTextFile: false },
   terminal: false,
+  session: { configOptions: { boolean: {} } },
   _meta: { parameterizedModelPicker: true },
 } as const
 

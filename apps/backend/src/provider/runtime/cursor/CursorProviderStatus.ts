@@ -1,8 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
-import fs from "node:fs/promises"
-import os from "node:os"
-import path from "node:path"
 import { resolveCursorBinaryAsync } from "./CursorBinaryResolution"
 import {
   buildWindowsCmdArgs,
@@ -18,8 +15,7 @@ import { terminateProviderChildProcessTree } from "../ChildProcessTermination"
 
 const ABOUT_TIMEOUT_MS = 8_000
 const CURSOR_NOT_INSTALLED_MESSAGE =
-  "Cursor Agent CLI (`cursor-agent`) is not installed or not on PATH. Install it from cursor.com/install, or set a full path in Settings → Providers."
-const CURSOR_PARAMETERIZED_MODEL_PICKER_MIN_VERSION_DATE = 2026_04_08
+  "Cursor Agent CLI was not found. Install it from cursor.com/install, or set its full path in Settings → Providers."
 
 export interface CursorCommandResult {
   readonly stdout: string
@@ -202,28 +198,16 @@ async function probeCursorProviderStatusUncached(input: {
   }
 
   const parsed = parseCursorAboutOutput(aboutResult)
-  const channel = await readCursorCliConfigChannel()
-  const pickerMessage = getCursorParameterizedModelPickerUnsupportedMessage({
-    version: parsed.version,
-    channel,
-  })
-  const message = joinProviderMessages(
-    pickerMessage && parsed.auth.status === "unauthenticated"
-      ? `${pickerMessage} ${parsed.message ?? ""}`.trim()
-      : pickerMessage,
-    pickerMessage ? undefined : parsed.message
-  )
-  const status = pickerMessage ? "error" : parsed.status
   const configured =
-    status !== "error" && parsed.auth.status !== "unauthenticated"
+    parsed.status !== "error" && parsed.auth.status !== "unauthenticated"
 
   return {
     installed: true,
     configured,
     version: parsed.version,
-    status,
+    status: parsed.status,
     auth: parsed.auth,
-    ...(message ? { message } : {}),
+    ...(parsed.message ? { message: parsed.message } : {}),
   }
 }
 
@@ -280,63 +264,6 @@ export function parseCursorAboutOutput(
     }
   }
   return { auth: { ...metadata, status: "unknown" }, status: "ready", version }
-}
-
-export function parseCursorVersionDate(
-  version: string | null | undefined
-): number | undefined {
-  const date = /^(\d{4})\.(\d{2})\.(\d{2})(?:\b|-|$)/.exec(
-    version?.trim() ?? ""
-  )
-  return date
-    ? Number(date[1]) * 10_000 + Number(date[2]) * 100 + Number(date[3])
-    : undefined
-}
-
-export function parseCursorCliConfigChannel(raw: string): string | undefined {
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      !Array.isArray(parsed) &&
-      typeof (parsed as { channel?: unknown }).channel === "string"
-    ) {
-      const channel = (parsed as { channel: string }).channel
-        .trim()
-        .toLowerCase()
-      return channel.length > 0 ? channel : undefined
-    }
-  } catch {
-    return undefined
-  }
-  return undefined
-}
-
-export function getCursorParameterizedModelPickerUnsupportedMessage(input: {
-  readonly version: string | null | undefined
-  readonly channel: string | null | undefined
-}): string | undefined {
-  const reasons: string[] = []
-  const versionDate = parseCursorVersionDate(input.version)
-  if (
-    versionDate !== undefined &&
-    versionDate < CURSOR_PARAMETERIZED_MODEL_PICKER_MIN_VERSION_DATE
-  ) {
-    reasons.push(
-      `Cursor Agent CLI version ${input.version} is too old for Cursor ACP parameterized model picker`
-    )
-  }
-
-  const channel = input.channel?.trim().toLowerCase()
-  if (channel && channel !== "lab") {
-    reasons.push(
-      `Cursor Agent CLI channel is ${JSON.stringify(input.channel)}, but parameterized model picker is only available on the lab channel`
-    )
-  }
-
-  if (reasons.length === 0) return undefined
-  return `${reasons.join(". ")}. Run \`agent set-channel lab && agent update\` and use Cursor Agent CLI 2026.04.08 or newer.`
 }
 
 async function runCursorAboutCommand(
@@ -476,18 +403,6 @@ async function runCommand(
   })
 }
 
-async function readCursorCliConfigChannel(): Promise<string | undefined> {
-  try {
-    const raw = await fs.readFile(
-      path.join(os.homedir(), ".cursor", "cli-config.json"),
-      "utf8"
-    )
-    return parseCursorCliConfigChannel(raw)
-  } catch {
-    return undefined
-  }
-}
-
 function parseCursorAboutJsonPayload(
   raw: string
 ): CursorAboutJsonPayload | undefined {
@@ -551,15 +466,6 @@ function cursorAuthMetadata(
     type: subscriptionType,
     label: `Cursor ${label ?? toTitleCaseWords(subscriptionType)} Subscription`,
   }
-}
-
-function joinProviderMessages(
-  ...messages: ReadonlyArray<string | undefined>
-): string | undefined {
-  const parts = messages
-    .map((message) => message?.trim())
-    .filter((message): message is string => Boolean(message))
-  return parts.length > 0 ? parts.join(" ") : undefined
 }
 
 function cursorSubscriptionLabel(

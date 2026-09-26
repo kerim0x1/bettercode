@@ -74,8 +74,40 @@ export function buildCursorAcpSpawnInput(
   }
 }
 
-export function resolveCursorAcpBaseModelId(model: string | null | undefined): string {
-  return (model?.trim() || "default").split("[", 1)[0]!
+export function resolveCursorAcpBaseModelId(
+  model: string | null | undefined
+): string {
+  // ACP option values are opaque. A bracket can be part of the advertised ID.
+  return model?.trim() || "default"
+}
+
+export function findCursorModelConfigOption(
+  configOptions: ReadonlyArray<CursorAcpSessionConfigOption>
+): CursorAcpSessionConfigOption | undefined {
+  return configOptions.find(
+    (option) =>
+      option.type === "select" &&
+      (getCursorConfigOptionCategory(option) === "model" ||
+        option.id.trim().toLowerCase() === "model")
+  )
+}
+
+export function resolveCursorAcpAdvertisedModelId(
+  model: string | null | undefined,
+  configOptions: ReadonlyArray<CursorAcpSessionConfigOption>
+): string {
+  const selected = resolveCursorAcpBaseModelId(model)
+  const option = findCursorModelConfigOption(configOptions)
+  const values = flattenSessionConfigSelectOptions(option).map((entry) =>
+    entry.value.trim()
+  )
+  if (values.includes(selected)) return selected
+  // Older BetterC0de selections embedded parameter choices in a suffix.
+  // Strip that suffix only when the resulting ID is actually advertised.
+  const legacyBase = selected.split("[", 1)[0]!
+  return legacyBase !== selected && values.includes(legacyBase)
+    ? legacyBase
+    : selected
 }
 
 export function resolveCursorAcpConfigUpdates(
@@ -267,9 +299,7 @@ export function buildCursorDiscoveredModelsFromConfigOptions(
   configOptions: ReadonlyArray<CursorAcpSessionConfigOption> | null | undefined
 ): ReadonlyArray<ProviderModel> {
   if (!configOptions || configOptions.length === 0) return []
-  const modelOption = configOptions.find(
-    (option) => getCursorConfigOptionCategory(option) === "model"
-  )
+  const modelOption = findCursorModelConfigOption(configOptions)
   const modelChoices = flattenSessionConfigSelectOptions(modelOption)
   if (!modelOption || modelChoices.length === 0) return []
   const currentModelValue =
@@ -294,25 +324,37 @@ export function buildCursorDiscoveredModelsFromConfigOptions(
   )
 }
 
-export function defaultCursorModels(): ReadonlyArray<ProviderModel> {
-  return [
-    {
-      slug: "auto",
-      name: "Auto",
-      shortName: "Auto",
-      context: "runtime",
-      tier: "Runtime",
-      capabilities: { optionDescriptors: [] },
-    },
-    {
-      slug: "composer-2",
-      name: "Composer 2",
-      shortName: "Composer",
-      context: "runtime",
-      tier: "Runtime",
-      capabilities: { optionDescriptors: [] },
-    },
-  ]
+export function buildCursorDiscoveredModelsFromSessionModels(
+  models:
+    | {
+        readonly currentModelId?: string
+        readonly availableModels?: ReadonlyArray<{
+          readonly modelId?: string
+          readonly name?: string
+          readonly description?: string
+        }>
+      }
+    | null
+    | undefined
+): ReadonlyArray<ProviderModel> {
+  return dedupeCursorModels(
+    (models?.availableModels ?? []).flatMap((entry): ProviderModel[] => {
+      const slug = entry.modelId?.trim()
+      if (!slug) return []
+      const name = entry.name?.trim() || slug
+      return [
+        {
+          slug,
+          name,
+          shortName: name,
+          isCustom: false,
+          context: "runtime",
+          tier: "Runtime",
+          capabilities: { optionDescriptors: [] },
+        },
+      ]
+    })
+  )
 }
 
 export function mergeCursorCustomModels(
@@ -365,21 +407,26 @@ function getBooleanSelection(
   return undefined
 }
 
-function flattenSessionConfigSelectOptions(configOption: CursorAcpSessionConfigOption | undefined): ReadonlyArray<CursorAcpSelectOption> {
+function flattenSessionConfigSelectOptions(
+  configOption: CursorAcpSessionConfigOption | undefined
+): ReadonlyArray<CursorAcpSelectOption> {
   const flattened: CursorAcpSelectOption[] = []
   if (configOption?.type === "select") {
     for (const entry of configOption.options) {
       const children = "value" in entry ? [entry] : entry.options
-      for (const child of children) flattened.push({ name: child.name.trim(), value: child.value.trim() })
+      for (const child of children)
+        flattened.push({ name: child.name.trim(), value: child.value.trim() })
     }
   }
   return flattened
 }
 
-function normalizeCursorReasoningValue(value: string | null | undefined): string | undefined {
+function normalizeCursorReasoningValue(
+  value: string | null | undefined
+): string | undefined {
   const label = value?.trim().toLowerCase() ?? ""
   if (["xhigh", "extra-high", "extra high"].includes(label)) return "xhigh"
-  return ["low", "medium", "high", "max"].find(level => level === label)
+  return ["low", "medium", "high", "max"].find((level) => level === label)
 }
 
 function getCursorConfigOptionCategory(
@@ -391,36 +438,62 @@ function getCursorConfigOptionCategory(
 function optionMatches(
   option: CursorAcpSessionConfigOption,
   ids: readonly string[],
-  namePattern: RegExp,
+  namePattern: RegExp
 ): boolean {
-  return ids.includes(option.id.trim().toLowerCase()) || namePattern.test(option.name.trim())
+  return (
+    ids.includes(option.id.trim().toLowerCase()) ||
+    namePattern.test(option.name.trim())
+  )
 }
 
-function isCursorEffortConfigOption(option: CursorAcpSessionConfigOption): boolean {
-  return option.type === "select" && optionMatches(option, ["effort", "reasoning"], /effort|reasoning/i)
+function isCursorEffortConfigOption(
+  option: CursorAcpSessionConfigOption
+): boolean {
+  return (
+    option.type === "select" &&
+    optionMatches(option, ["effort", "reasoning"], /effort|reasoning/i)
+  )
 }
 
-function findCursorEffortConfigOption(configOptions: ReadonlyArray<CursorAcpSessionConfigOption>): CursorAcpSessionConfigOption | undefined {
+function findCursorEffortConfigOption(
+  configOptions: ReadonlyArray<CursorAcpSessionConfigOption>
+): CursorAcpSessionConfigOption | undefined {
   let selected: CursorAcpSessionConfigOption | undefined
   let rank = Infinity
   for (const option of configOptions) {
     if (!isCursorEffortConfigOption(option)) continue
     const category = getCursorConfigOptionCategory(option)
-    const priority = category === "model_option" ? 0 : option.id.trim().toLowerCase() === "effort" ? 1 : category === "thought_level" ? 2 : 3
-    if (priority < rank) { selected = option; rank = priority }
+    const priority =
+      category === "model_option"
+        ? 0
+        : option.id.trim().toLowerCase() === "effort"
+          ? 1
+          : category === "thought_level"
+            ? 2
+            : 3
+    if (priority < rank) {
+      selected = option
+      rank = priority
+    }
   }
   return selected
 }
 
-function isCursorContextConfigOption(option: CursorAcpSessionConfigOption): boolean {
+function isCursorContextConfigOption(
+  option: CursorAcpSessionConfigOption
+): boolean {
   return optionMatches(option, ["context", "context_size"], /context/i)
 }
 
-function isCursorFastConfigOption(option: CursorAcpSessionConfigOption): boolean {
+function isCursorFastConfigOption(
+  option: CursorAcpSessionConfigOption
+): boolean {
   return optionMatches(option, ["fast"], /^fast$|fast mode/i)
 }
 
-function isCursorThinkingConfigOption(option: CursorAcpSessionConfigOption): boolean {
+function isCursorThinkingConfigOption(
+  option: CursorAcpSessionConfigOption
+): boolean {
   return optionMatches(option, ["thinking"], /thinking/i)
 }
 

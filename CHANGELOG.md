@@ -6,6 +6,10 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cursor CLI detection and models.** Native Windows installs are found without adding the CLI to `PATH`. Cursor's available models and options come from its signed-in ACP session, with account-specific cached results; provider refresh rechecks them. Model selection uses the exact ACP value, and stable CLI channels are no longer rejected by a fixed gate.
+
 ### Added
 
 - **Account-backed model catalogs.** Claude, Codex, and Grok CLI models come from each logged-in CLI; Claude API, OpenAI, and xAI models come from the configured API account. Catalogs refresh every 15 minutes, can be refreshed manually, and keep the last successful account-specific list. Claude API is available again as a separate picker provider, and Claude Opus 5.5 supports its 1M context and adaptive thinking with medium default effort. Existing chats keep a withdrawn model ID visible until another model is chosen, and favorites remain saved while a model is unavailable.

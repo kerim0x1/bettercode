@@ -6,9 +6,15 @@ import {
 import { ProviderChatModeUnsupportedError } from "../providerChatModeErrors"
 import {
   buildCursorDiscoveredModelsFromConfigOptions,
-  defaultCursorModels,
+  buildCursorDiscoveredModelsFromSessionModels,
+  findCursorModelConfigOption,
   type CursorAcpRuntimeSettings,
 } from "./CursorAcpSupport"
+import {
+  cursorAccountModels,
+  cursorModelAccountIdentity,
+  saveCursorAccountModels,
+} from "./CursorAccountModels"
 import {
   CURSOR_RUNTIME_PROFILE,
   type CursorAcpRuntime,
@@ -31,9 +37,12 @@ import {
 
 export const CURSOR_ACP_PENDING_REQUEST_TIMEOUT_MS = 5 * 60 * 1000
 
-export interface CursorAcpAdapterOptions
-  extends AcpAdapterOptions<CursorAcpRuntimeSettings> {
+export interface CursorAcpAdapterOptions extends AcpAdapterOptions<CursorAcpRuntimeSettings> {
   readonly apiEndpoint?: string | null
+  readonly modelCacheDir?: string
+  readonly statusEnv?: NodeJS.ProcessEnv
+  /** Deterministic account namespace for a runtime-factory test. */
+  readonly modelAccountIdentity?: string | null
   readonly runtimeFactory?: CursorAcpRuntimeFactory
 }
 
@@ -91,7 +100,7 @@ export const CURSOR_PROFILE: AcpProviderProfile<
     const binaryPath = cursorBinaryPath(options)
     if (!binaryPath) {
       throw new Error(
-        "Cursor Agent CLI is not installed. Install it from cursor.com/install, or set a full path in Settings → Providers.",
+        "Cursor Agent CLI is not installed. Install it from cursor.com/install, or set a full path in Settings → Providers."
       )
     }
     return {
@@ -101,9 +110,23 @@ export const CURSOR_PROFILE: AcpProviderProfile<
   },
   runtimeProfile: CURSOR_RUNTIME_PROFILE,
   models: {
-    fallback: () => defaultCursorModels(),
-    fromStarted: (started) =>
-      buildCursorDiscoveredModelsFromConfigOptions(started.configOptions),
+    fallback: cursorAccountModels,
+    cacheIdentity: cursorModelAccountIdentity,
+    onLiveModels: saveCursorAccountModels,
+    fromStarted: (started) => {
+      const option = findCursorModelConfigOption(started.configOptions)
+      if (option) {
+        return buildCursorDiscoveredModelsFromConfigOptions(
+          started.configOptions
+        )
+      }
+      return buildCursorDiscoveredModelsFromSessionModels(
+        started.sessionSetupResult.models
+      )
+    },
+    isEmptyAuthoritative: (started) =>
+      Boolean(findCursorModelConfigOption(started.configOptions)) ||
+      Array.isArray(started.sessionSetupResult.models?.availableModels),
     unconfiguredCheckedAt: "now",
   },
   registerExtensions: registerCursorExtensions,

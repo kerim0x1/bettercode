@@ -180,7 +180,7 @@ its own and shows their status under **Settings → Providers**:
 | ------------ | ---------------------------------------------- | -------------------- |
 | Claude Code  | `npm i -g @anthropic-ai/claude-code`           | `claude`             |
 | OpenAI Codex | `npm i -g @openai/codex`                       | `codex login`        |
-| Cursor Agent | `curl https://cursor.com/install -fsS \| bash` | `cursor-agent login` |
+| Cursor Agent | Windows: `irm 'https://cursor.com/install?win32=true' \| iex`; macOS/Linux/WSL: `curl https://cursor.com/install -fsS \| bash` | `agent login` |
 | Grok         | `npm i -g @xai-official/grok`                  | `grok login`         |
 
 The initial model selection uses **Claude CLI**, then **Codex**, **Cursor**, and
@@ -193,7 +193,8 @@ Desktop and mobile use the same default provider priority.
 API-key providers (Claude API, OpenAI, xAI, OpenRouter, LM Studio, and others)
 are configured in the same place. Claude API, OpenAI, and xAI show models
 available to the configured account. Claude CLI reads its SDK initialization
-list, Codex uses `model/list`, and Grok uses ACP and its CLI cache. Catalogs
+list, Codex uses `model/list`, Cursor uses its signed-in ACP session, and Grok
+uses ACP and its CLI cache. Catalogs
 refresh every 15 minutes. **Settings → Model Visibility → Refresh API models**
 starts a fresh API lookup, and provider-instance refresh updates a CLI. The last
 successful account-specific list is saved without credentials. If a first
@@ -204,6 +205,9 @@ model before sending again.
 If a CLI is installed somewhere unusual, set its full path in
 **Settings → Providers**; the app never guesses at a bare command name that
 could belong to a different vendor.
+On native Windows, Cursor Agent is also found in `%LOCALAPPDATA%\cursor-agent`
+without adding it to `PATH`. BetterC0de prefers the `cursor-agent` alias there;
+a bare `agent` may belong to another CLI.
 
 Codex can use a separate authentication directory while sharing its session
 history and tools. The shared and authentication directories must not overlap,

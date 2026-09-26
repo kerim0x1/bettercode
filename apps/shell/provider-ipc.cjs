@@ -111,15 +111,18 @@ const PROVIDER_CATALOG = [
     name: "Cursor",
     description: "Cursor's local `cursor-agent` binary — uses your Cursor CLI login.",
     docsUrl: "https://cursor.com/cli",
-    defaultModels: ["auto", "composer-2"],
+    defaultModels: [],
     authMethods: [
       {
         type: "cli",
         label: "Cursor CLI",
         command: "cursor-agent",
         versionArgs: ["--version"],
-        installHint: "curl https://cursor.com/install -fsS | bash",
-        loginCommand: "cursor-agent login",
+        installHint:
+          process.platform === "win32"
+            ? "irm 'https://cursor.com/install?win32=true' | iex"
+            : "curl https://cursor.com/install -fsS | bash",
+        loginCommand: "agent login",
       },
     ],
   },

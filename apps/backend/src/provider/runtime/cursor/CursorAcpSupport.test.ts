@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest"
 import {
   buildCursorAcpSpawnInput,
+  buildCursorDiscoveredModelsFromConfigOptions,
+  buildCursorDiscoveredModelsFromSessionModels,
+  findCursorModelConfigOption,
+  resolveCursorAcpAdvertisedModelId,
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
   type CursorAcpSessionConfigOption,
@@ -66,10 +70,7 @@ describe("buildCursorAcpSpawnInput", () => {
       /absolute/
     )
     expect(() =>
-      buildCursorAcpSpawnInput(
-        { binaryPath: "cursor-agent" },
-        "/tmp/project"
-      )
+      buildCursorAcpSpawnInput({ binaryPath: "cursor-agent" }, "/tmp/project")
     ).toThrow(/absolute/)
   })
 
@@ -91,16 +92,67 @@ describe("buildCursorAcpSpawnInput", () => {
 })
 
 describe("resolveCursorAcpBaseModelId", () => {
-  it("strips parameterized model config suffixes", () => {
+  it("preserves opaque ACP model values", () => {
     expect(
       resolveCursorAcpBaseModelId(
         "gpt-5.4-medium-fast[reasoning=medium,context=272k]"
       )
-    ).toBe("gpt-5.4-medium-fast")
+    ).toBe("gpt-5.4-medium-fast[reasoning=medium,context=272k]")
   })
 
   it("falls back to default for empty values", () => {
     expect(resolveCursorAcpBaseModelId(" ")).toBe("default")
+  })
+})
+
+describe("Cursor ACP model inventory", () => {
+  it("reads an uncategorized model selector and preserves its exact values", () => {
+    const options: CursorAcpSessionConfigOption[] = [
+      {
+        id: "model",
+        name: "Model",
+        type: "select",
+        currentValue: "composer[fast]",
+        options: [{ value: "composer[fast]", name: "Composer Fast" }],
+      },
+    ]
+    expect(findCursorModelConfigOption(options)?.id).toBe("model")
+    expect(buildCursorDiscoveredModelsFromConfigOptions(options)).toEqual([
+      expect.objectContaining({
+        slug: "composer[fast]",
+        name: "Composer Fast",
+      }),
+    ])
+    expect(resolveCursorAcpAdvertisedModelId("composer[fast]", options)).toBe(
+      "composer[fast]"
+    )
+  })
+
+  it("maps older parameter suffixes only to an advertised base model", () => {
+    expect(
+      resolveCursorAcpAdvertisedModelId(
+        "gpt-5.4-medium-fast[reasoning=medium]",
+        parameterizedConfigOptions
+      )
+    ).toBe("gpt-5.4-medium-fast")
+    expect(
+      resolveCursorAcpAdvertisedModelId(
+        "withdrawn[reasoning=medium]",
+        parameterizedConfigOptions
+      )
+    ).toBe("withdrawn[reasoning=medium]")
+  })
+
+  it("reads the typed ACP model list when no config selector is advertised", () => {
+    expect(
+      buildCursorDiscoveredModelsFromSessionModels({
+        currentModelId: "auto",
+        availableModels: [
+          { modelId: "auto", name: "Auto" },
+          { modelId: "new-model", name: "New Model" },
+        ],
+      }).map((model) => model.slug)
+    ).toEqual(["auto", "new-model"])
   })
 })
 

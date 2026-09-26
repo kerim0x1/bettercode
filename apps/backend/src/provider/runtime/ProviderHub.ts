@@ -39,10 +39,7 @@ import {
   findConflictingProviderBinding,
   selectRecoveryBinding,
 } from "./ProviderSessionRecovery"
-import {
-  normalizeRuntimeMode,
-  runtimeModeForTurn,
-} from "./providerTurnOptions"
+import { normalizeRuntimeMode, runtimeModeForTurn } from "./providerTurnOptions"
 import type { EventNdjsonLogger } from "./EventNdjsonLogger"
 import { HubAuditLog } from "./HubAuditLog"
 import {
@@ -108,6 +105,7 @@ export interface ProviderRuntimeInstance {
   readonly config?: unknown
   readonly statusProbe?: (input: {
     readonly cwd?: string | null
+    readonly refresh?: boolean
   }) =>
     | ProviderRuntimeInstanceStatusProbe
     | Promise<ProviderRuntimeInstanceStatusProbe>
@@ -547,9 +545,8 @@ export class ProviderHub {
     []
   private sessionAdmissionActive = false
   private providerInstanceGeneration = 0
-  private pendingInstanceReplacement:
-    | ReadonlyArray<ProviderRuntimeInstance>
-    | null = null
+  private pendingInstanceReplacement: ReadonlyArray<ProviderRuntimeInstance> | null =
+    null
   private readonly turnTimeoutMs: number
   private readonly interruptTimeoutMs: number
   private readonly maxActiveTurns: number
@@ -714,10 +711,7 @@ export class ProviderHub {
     this.byProvider.clear()
     this.byInstance.clear()
     for (const adapter of this.quarantinedAdapters.keys()) {
-      if (
-        !nextAdapters.has(adapter) &&
-        !this.retiringAdapters.has(adapter)
-      ) {
+      if (!nextAdapters.has(adapter) && !this.retiringAdapters.has(adapter)) {
         this.quarantinedAdapters.delete(adapter)
       }
     }
@@ -801,10 +795,7 @@ export class ProviderHub {
           })
           return
         }
-        if (
-          admissionLifecycleEvent &&
-          admission
-        ) {
+        if (admissionLifecycleEvent && admission) {
           const rawPayload = (
             normalized as unknown as { readonly payload?: unknown }
           ).payload
@@ -991,8 +982,7 @@ export class ProviderHub {
     const inFlight = this.listInstancesInFlight.get(key)
     if (inFlight) return inFlight
     if (
-      this.listInstancesInFlight.size >=
-      this.listInstancesInFlightMaxEntries
+      this.listInstancesInFlight.size >= this.listInstancesInFlightMaxEntries
     ) {
       return Promise.reject(new ProviderMetadataCapacityError())
     }
@@ -1043,12 +1033,20 @@ export class ProviderHub {
             instance.adapter.isConfigured())
         const availability: ProviderRuntimeInstanceSnapshot["availability"] =
           effectiveUnavailableReason ? "unavailable" : "available"
+        const cursorProbeUnavailable =
+          instance.driver === "cursor" && instance.enabled && !probe
         const authStatus: ProviderRuntimeInstanceSnapshot["auth"]["status"] =
-          probe?.auth?.status ?? (configured ? "authenticated" : "unknown")
+          probe?.auth?.status ??
+          (cursorProbeUnavailable
+            ? "unknown"
+            : configured
+              ? "authenticated"
+              : "unknown")
         const checkedAt = new Date().toISOString()
-        const status =
-          quarantine
-            ? "error"
+        const status = quarantine
+          ? "error"
+          : cursorProbeUnavailable
+            ? "warning"
             : (probe?.status ??
               providerSnapshotStatus({
                 enabled: instance.enabled,
@@ -1083,6 +1081,10 @@ export class ProviderHub {
           models,
           projectPolicy
         )
+        const cursorModelMessage =
+          instance.driver === "cursor" && configured && models.length === 0
+            ? "Cursor Agent did not provide selectable models through ACP. Check the CLI login, then refresh this provider."
+            : undefined
         const snapshot = {
           instanceId: instance.instanceId,
           driver: instance.driver,
@@ -1094,7 +1096,7 @@ export class ProviderHub {
           configured,
           installed,
           version,
-          status,
+          status: cursorModelMessage ? "warning" : status,
           auth: {
             status: authStatus,
             ...(probe?.auth?.type ? { type: probe.auth.type } : {}),
@@ -1102,7 +1104,14 @@ export class ProviderHub {
             ...(probe?.auth?.email ? { email: probe.auth.email } : {}),
           },
           checkedAt,
-          ...(message ? { message } : {}),
+          ...(cursorModelMessage || message || cursorProbeUnavailable
+            ? {
+                message:
+                  cursorModelMessage ??
+                  message ??
+                  "Cursor Agent status could not be verified. Refresh this provider.",
+              }
+            : {}),
           availability,
           versionAdvisory: createProviderVersionAdvisory({
             driver: instance.driver,
@@ -1207,6 +1216,16 @@ export class ProviderHub {
       !instance.adapter.isConfigured()
     ) {
       return null
+    }
+    if (instance.statusProbe) {
+      await readInstanceStatusProbe(
+        instance,
+        { cwd: input.cwd, refresh: true },
+        Math.max(
+          this.interruptTimeoutMs,
+          ProviderMetadataCache.PROBE_TIMEOUT_MS
+        )
+      )
     }
     const metadata = await this.metadataCache.read(instance, input.cwd, {
       force: true,
@@ -1357,10 +1376,7 @@ export class ProviderHub {
   ): void {
     this.assertAcceptingWork("start provider turn")
     if (this.maintenanceByThread.has(threadId)) {
-      throw new ProviderTurnConflictError(
-        threadId,
-        `maintenance:${threadId}`
-      )
+      throw new ProviderTurnConflictError(threadId, `maintenance:${threadId}`)
     }
     const existing = this.turnsByThread.get(threadId)
     if (existing) {
@@ -1886,7 +1902,10 @@ export class ProviderHub {
           }
         } catch (err) {
           if (err instanceof ProviderTurnDispatchCancelledError) throw err
-          logger.error({ err, threadId: input.threadId, providerInstanceId: instanceId }, "provider turn dispatch failed")
+          logger.error(
+            { err, threadId: input.threadId, providerInstanceId: instanceId },
+            "provider turn dispatch failed"
+          )
           this.emitAndForwardError({
             threadId: input.threadId,
             providerKind: provider,
@@ -1921,11 +1940,10 @@ export class ProviderHub {
         threadId: input.thread,
         reason: `provider switched to ${input.instance.instanceId}`,
       })
-      const generation =
-        input.bindings.rotateGenerationForProviderSwitch(
-          input.thread,
-          input.sourceBinding.providerInstanceId
-        )
+      const generation = input.bindings.rotateGenerationForProviderSwitch(
+        input.thread,
+        input.sourceBinding.providerInstanceId
+      )
       if (generation === null) {
         throw new ProviderSessionInspectionError(
           `Provider binding for thread '${input.thread}' changed while switching providers.`
@@ -1945,9 +1963,7 @@ export class ProviderHub {
     readonly currentInstanceId: string
   }): Promise<void> {
     const threadId = toThreadId(input.threadId)
-    const currentAdapter = this.byInstance.get(
-      input.currentInstanceId
-    )?.adapter
+    const currentAdapter = this.byInstance.get(input.currentInstanceId)?.adapter
     await this.withSessionAdmission(() =>
       this.stopSessionsForThreadUnderAdmission({
         threadId,
@@ -2116,7 +2132,8 @@ export class ProviderHub {
       provider,
       instanceId: instanceId ?? null,
     })
-    if (!instance) throw new ProviderInstanceUnavailableError(provider, instanceId)
+    if (!instance)
+      throw new ProviderInstanceUnavailableError(provider, instanceId)
     await this.recoverSessionForThread({ instance, thread, bindings })
     await instance.adapter.respondToRequest(thread, requestId, decision)
   }
@@ -2133,7 +2150,8 @@ export class ProviderHub {
       provider,
       instanceId: instanceId ?? null,
     })
-    if (!instance) throw new ProviderInstanceUnavailableError(provider, instanceId)
+    if (!instance)
+      throw new ProviderInstanceUnavailableError(provider, instanceId)
     const admission = this.turnsByThread.get(thread)
     if (
       admission?.providerInstanceId &&
@@ -2142,12 +2160,17 @@ export class ProviderHub {
       throw new ProviderInstanceUnavailableError(provider, instanceId)
     }
     const change = this.approvals.updatePermissionMode(
-      thread, mode, permissionLevel
+      thread,
+      mode,
+      permissionLevel
     )
     await this.approvals.reconcile(instance, thread)
     if (instance.adapter.setPermissionMode && change.nativeMode) {
       await this.recoverSessionForThread({ instance, thread, bindings })
-      const native = await instance.adapter.setPermissionMode(thread, change.nativeMode)
+      const native = await instance.adapter.setPermissionMode(
+        thread,
+        change.nativeMode
+      )
       return { applied: change.applied === "live" ? "live" : native.applied }
     }
     return { applied: change.applied }
@@ -2234,7 +2257,10 @@ export class ProviderHub {
         )
       }
       if (
-        !(await input.instance.adapter.needsSessionConfigurationRefresh?.({ threadId: input.thread, cwd: input.context?.projectPath ?? activeSession.cwd })) &&
+        !(await input.instance.adapter.needsSessionConfigurationRefresh?.({
+          threadId: input.thread,
+          cwd: input.context?.projectPath ?? activeSession.cwd,
+        })) &&
         !shouldRestartActiveSessionForContext(activeSession, {
           cwd:
             input.context?.projectPath ??
@@ -2246,7 +2272,7 @@ export class ProviderHub {
             // running adapter never reported one. Only an explicit request can
             // require changing that unknown mode during an active session.
             (normalizeRuntimeMode(activeSession.runtimeMode)
-              ? directBinding?.runtimeMode ?? recoveryBinding?.runtimeMode
+              ? (directBinding?.runtimeMode ?? recoveryBinding?.runtimeMode)
               : undefined),
         })
       ) {
@@ -2315,14 +2341,8 @@ export class ProviderHub {
     } catch (err) {
       if (!(err instanceof ProviderBackendQuarantinedError)) {
         try {
-          await this.runSessionOperation(
-            input.instance,
-            "startSession",
-            () =>
-              restoreStoppedSession(
-                input.instance.adapter,
-                stoppedActiveSession
-              )
+          await this.runSessionOperation(input.instance, "startSession", () =>
+            restoreStoppedSession(input.instance.adapter, stoppedActiveSession)
           )
         } catch {
           // The original start failure is the one the turn should see.
@@ -2540,10 +2560,7 @@ export class ProviderHub {
     let globalCount = 0
     for (const sessions of liveSessions.values()) globalCount += sessions.size
     if (globalCount >= this.maxLiveSessions) {
-      throw new ProviderSessionCapacityError(
-        "global",
-        this.maxLiveSessions
-      )
+      throw new ProviderSessionCapacityError("global", this.maxLiveSessions)
     }
     const targetCount = liveSessions.get(instance.adapter)?.size ?? 0
     if (targetCount >= this.maxLiveSessionsPerInstance) {
@@ -2734,7 +2751,8 @@ export class ProviderHub {
     )
     const backgroundFailures = backgroundResults
       .filter(
-        (result): result is PromiseRejectedResult => result.status === "rejected"
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected"
       )
       .map((result) => result.reason)
     backgroundFailures.push(...this.retiredAdapterFailures.values())
@@ -2742,12 +2760,14 @@ export class ProviderHub {
     if (sessionListingFailure) backgroundFailures.push(sessionListingFailure)
     const stopFailures = stopResults
       .filter(
-        (result): result is PromiseRejectedResult => result.status === "rejected"
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected"
       )
       .map((result) => result.reason)
     const turnFinalizationFailures = finalizationResults
       .filter(
-        (result): result is PromiseRejectedResult => result.status === "rejected"
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected"
       )
       .map((result) => result.reason)
     const failures = [
@@ -2785,14 +2805,10 @@ export class ProviderHub {
     }
     if (failures.length > 0) {
       const message =
-        backgroundFailures.length === 0 &&
-        turnFinalizationFailures.length === 0
+        backgroundFailures.length === 0 && turnFinalizationFailures.length === 0
           ? `${stopFailures.length} provider adapter(s) failed to stop`
           : `${failures.length} provider operation(s) failed during shutdown`
-      throw new AggregateError(
-        failures,
-        message
-      )
+      throw new AggregateError(failures, message)
     }
   }
 
@@ -2831,10 +2847,7 @@ export class ProviderHub {
         this.maxActiveTurnsPerProvider
       )
     }
-    if (
-      instance &&
-      instanceTurns >= this.maxActiveTurnsPerInstance
-    ) {
+    if (instance && instanceTurns >= this.maxActiveTurnsPerInstance) {
       throw new ProviderTurnCapacityError(
         "instance",
         this.maxActiveTurnsPerInstance
@@ -2858,9 +2871,7 @@ export class ProviderHub {
         )
     const quarantine = matching
       .map((instance) => this.quarantinedAdapters.get(instance.adapter))
-      .find(
-        (entry): entry is ProviderBackendQuarantine => entry !== undefined
-      )
+      .find((entry): entry is ProviderBackendQuarantine => entry !== undefined)
     if (quarantine) throw quarantine.failure
   }
 
@@ -3557,10 +3568,7 @@ export class ProviderHub {
     if (this.turnsByThread.get(threadId) === admission) {
       this.turnsByThread.delete(threadId)
       if (admission.sharedToken) {
-        this.threadTurnCoordinator?.releaseTurn(
-          threadId,
-          admission.sharedToken
-        )
+        this.threadTurnCoordinator?.releaseTurn(threadId, admission.sharedToken)
       }
       this.applyPendingInstanceReplacementIfIdle()
     }
@@ -3668,7 +3676,6 @@ export class ProviderHub {
   }
 }
 
-
 function boundedProviderOperationalLimit(
   requested: number | undefined,
   defaultValue: number,
@@ -3708,7 +3715,7 @@ function promiseWithDeadline<T>(
 
 async function readInstanceStatusProbe(
   instance: ProviderRuntimeInstance,
-  input: { readonly cwd?: string | null },
+  input: { readonly cwd?: string | null; readonly refresh?: boolean },
   timeoutMs: number
 ): Promise<ProviderRuntimeInstanceStatusProbe | null> {
   if (
@@ -3776,7 +3783,8 @@ function redactEnvironment(
   environment: NonNullable<ProviderRuntimeInstance["environment"]>
 ): NonNullable<ProviderRuntimeInstanceSnapshot["environment"]> {
   return environment.map((envVar) => {
-    if (!envVar.sensitive && !isSensitiveProviderFieldName(envVar.name)) return envVar
+    if (!envVar.sensitive && !isSensitiveProviderFieldName(envVar.name))
+      return envVar
     const configured = envVar.value.length > 0
     return {
       ...envVar,
@@ -3801,12 +3809,17 @@ function redactProviderConfig(
     }
     return value
   }
-  return Object.fromEntries(Object.entries(config).map(([key, value]) => [
-    key,
-    isSensitiveProviderFieldName(key)
-      ? { configured: typeof value === "string" && value.length > 0, storage: getMasterKey() ? "encrypted" : "plaintext" }
-      : redactValue(value),
-  ]))
+  return Object.fromEntries(
+    Object.entries(config).map(([key, value]) => [
+      key,
+      isSensitiveProviderFieldName(key)
+        ? {
+            configured: typeof value === "string" && value.length > 0,
+            storage: getMasterKey() ? "encrypted" : "plaintext",
+          }
+        : redactValue(value),
+    ])
+  )
 }
 
 async function readAdapterSessions(
@@ -3877,10 +3890,7 @@ function shouldRestartActiveSessionForContext(
   if (!!activeCwd && !!requestedCwd && activeCwd !== requestedCwd) return true
   const activeRuntimeMode = normalizeRuntimeMode(activeSession.runtimeMode)
   const requestedRuntimeMode = normalizeRuntimeMode(context.runtimeMode)
-  return (
-    !!requestedRuntimeMode &&
-    activeRuntimeMode !== requestedRuntimeMode
-  )
+  return !!requestedRuntimeMode && activeRuntimeMode !== requestedRuntimeMode
 }
 
 function normalizeSessionCwd(value: string | null | undefined): string | null {
@@ -3929,7 +3939,8 @@ function publicProviderStatusMessage(input: {
   if (input.probe?.auth?.status === "unauthenticated") {
     return probeMessage ?? "Provider authentication is required."
   }
-  if (!input.configured) return probeMessage ?? "Provider instance is not configured."
+  if (!input.configured)
+    return probeMessage ?? "Provider instance is not configured."
   if (input.probe?.status === "error") {
     return probeMessage ?? "Provider status check failed."
   }
