@@ -54,6 +54,13 @@ agents side by side on the same repository.
 - **Remote access** — pair a phone or a second machine with the running desktop
   app over your own network. Nothing is proxied through a cloud service.
 
+In Agent mode, open **Browser** from the right workspace panel's view picker or
+the **Browser preview** row on its Overview page. It uses the focused chat's
+project or worktree, and selected page elements and visual changes go to that
+chat. The narrow panel places the address bar above the selection and inspector
+controls. The inspector fills the panel; closing it returns to the live page.
+Switching workspace views keeps the open page and its navigation state.
+
 Editor and Canvas sidebars have direct Files, Search, Git, Diff and Code Map
 tabs, with outline and references in the view menu. Entering the editor without
 a project reopens an available workspace, preferring the last one used there.

@@ -47,6 +47,7 @@ function ReviewCard() {
 - Follow the nearby feature's density, spacing, radius, and icon treatment. Use the shared Button and Dialog variants instead of reproducing them with raw elements and custom colors.
 - Preserve visible focus, keyboard operation, useful accessible names, and disabled/loading/error states. Status color must have a text or icon cue.
 - Keep panes usable at narrow widths and when text is scaled. Long paths, code, and translated strings should wrap or scroll inside their panel.
+- In the Agent workspace panel, the Browser Preview splits its toolbar into two rows at the panel's narrow width. Its element inspector replaces the visible page while open, so the page is not squeezed beside a fixed-width inspector.
 - Honor the appearance setting for animations and the operating system's reduced-motion preference. Avoid decorative motion that obscures task progress.
 - Keep mobile controls touch-friendly and follow its native navigation and offline states; do not copy desktop CSS values into React Native styles.
 

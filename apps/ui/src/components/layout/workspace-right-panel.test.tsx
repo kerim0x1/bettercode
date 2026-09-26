@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it, vi } from "vitest"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import type { WorkspaceTab } from "@/lib/preferences-store"
 
 vi.mock("@/lib/chat-store", () => ({
   useChatStore: Object.assign(
@@ -36,7 +37,7 @@ vi.mock("@/components/ai-elements/message", () => ({
 }))
 import { WorkspaceRightPanel } from "./workspace-right-panel"
 
-function render(open: boolean) {
+function render(open: boolean, workspaceTab: WorkspaceTab = "diff") {
   return renderToStaticMarkup(
     <TooltipProvider>
       <WorkspaceRightPanel
@@ -45,9 +46,13 @@ function render(open: boolean) {
         rightSidebarWidth={320}
         onResizeStart={() => {}}
         isResizingRight={false}
-        workspaceTab="diff"
+        workspaceTab={workspaceTab}
         setWorkspaceTab={() => {}}
-        activeThread={{ id: "t1", projectPath: "C:\\repo", projectName: "repo" }}
+        activeThread={{
+          id: "t1",
+          projectPath: "C:\\repo",
+          projectName: "repo",
+        }}
         setPlanModalContent={() => {}}
         setEditingFile={() => {}}
       />
@@ -76,5 +81,11 @@ describe("workspace panel header", () => {
     const html = render(false)
     expect(html).toContain('aria-hidden="true"')
     expect(html).toContain("inert")
+  })
+
+  it("shows the browser preview in the Agent workspace view", () => {
+    const html = render(true, "browser")
+    expect(html).toContain("Current view: Browser")
+    expect(html).toContain('aria-label="Loading browser preview"')
   })
 })

@@ -6,15 +6,13 @@ import {
   ExternalLinkIcon,
   FolderOpenIcon,
   GitBranchIcon,
+  GlobeIcon,
   LayoutPanelTopIcon,
   PlayIcon,
   SearchIcon,
 } from "lucide-react"
 import { HugeiconsIcon } from "@hugeicons/react"
-import {
-  ClipboardIcon,
-  LayoutAlignRightIcon,
-} from "@hugeicons/core-free-icons"
+import { ClipboardIcon, LayoutAlignRightIcon } from "@hugeicons/core-free-icons"
 import { motion } from "motion/react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -23,7 +21,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import React from "react"
+import React, { lazy, Suspense, useEffect, useState } from "react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,12 +38,21 @@ import { GitPanel } from "@/components/git-panel"
 import { ProjectFileTree } from "@/components/file-tree/project-file-tree"
 import { WorkspaceStatusBar } from "@/components/layout/workspace-status-bar"
 import { WorkspaceOverviewCard } from "@/components/layout/workspace-overview-card"
-import { useChatStore, useThreadActivities, useThreadMessages } from "@/lib/chat-store"
+import {
+  useChatStore,
+  useThreadActivities,
+  useThreadMessages,
+} from "@/lib/chat-store"
 import { useChatStreamingState } from "@/hooks/use-chat-streaming-state"
 import { openInEditor, pickFolder } from "@/services/backend"
 import type { SetPlanModalContent } from "@/lib/plan-modal"
+import type { WorkspaceTab } from "@/lib/preferences-store"
 
-type WorkspaceTab = "overview" | "plan" | "files" | "git" | "diff"
+const BrowserPreviewPanel = lazy(() =>
+  import("@/components/browser-preview-panel").then((module) => ({
+    default: module.BrowserPreviewPanel,
+  }))
+)
 
 type ActiveThread = {
   id: string
@@ -58,7 +65,7 @@ type ActiveThread = {
  * Right-hand workspace panel in agent mode.
  *
  * Tabbed container for the plan preview, file tree, source control,
- * and diff viewer — each tab is a thin wrapper around the
+ * diff viewer, and browser preview — each tab is a thin wrapper around the
  * corresponding standalone component/panel, which keeps this file about
  * layout and tab orchestration only.
  *
@@ -113,11 +120,22 @@ export function WorkspaceRightPanel({
   const projectPath =
     activeThread?.worktreePath || activeThread?.projectPath || null
   const hasFolder = !!projectPath
+  const showBrowser =
+    hasFolder && workspaceTab === "browser" && rightSidebarOpen
+  const [openedBrowserProject, setOpenedBrowserProject] = useState<
+    string | null
+  >(null)
+  useEffect(() => {
+    if (showBrowser) setOpenedBrowserProject(projectPath)
+  }, [showBrowser, projectPath])
+  // Keep the guest page alive when another workspace view is selected.
+  const browserMounted = showBrowser || openedBrowserProject === projectPath
 
   // Which external tools are actually installed (Codex-style "Open in"
   // list). Detection pauses while the panel is closed.
-  const { targets: openTargets, loading: openTargetsLoading } =
-    useOpenTargets(hasFolder && rightSidebarOpen)
+  const { targets: openTargets, loading: openTargetsLoading } = useOpenTargets(
+    hasFolder && rightSidebarOpen
+  )
 
   const attachFolderButton = (
     <Button
@@ -164,7 +182,7 @@ export function WorkspaceRightPanel({
           No folder / repo open
         </p>
         <p className="text-xs text-muted-foreground/70">
-          Attach a folder to enable Plans, Files, Git, and Diff.
+          Attach a folder to enable Plans, Files, Git, Diff, and Browser.
         </p>
       </div>
       <div className="w-full max-w-[200px]">{attachFolderButton}</div>
@@ -175,9 +193,7 @@ export function WorkspaceRightPanel({
     {
       key: "overview",
       label: "Overview",
-      icon: (
-        <LayoutPanelTopIcon className="size-3.5" strokeWidth={1.5} />
-      ),
+      icon: <LayoutPanelTopIcon className="size-3.5" strokeWidth={1.5} />,
     },
     {
       key: "diff",
@@ -204,6 +220,11 @@ export function WorkspaceRightPanel({
           className="size-3.5"
         />
       ),
+    },
+    {
+      key: "browser",
+      label: "Browser",
+      icon: <GlobeIcon className="size-3.5" strokeWidth={1.5} />,
     },
   ] as const
   const activeWorkspaceView =
@@ -324,18 +345,18 @@ export function WorkspaceRightPanel({
               {workspaceViews
                 .filter((view) => view.key !== "overview")
                 .map((view) => (
-                <DropdownMenuItem
-                  key={view.key}
-                  onClick={() => setWorkspaceTab(view.key)}
-                  className="gap-2.5"
-                >
-                  <span className="text-muted-foreground">{view.icon}</span>
-                  <span className="flex-1">{view.label}</span>
-                  {workspaceTab === view.key && (
-                    <CheckIcon className="size-3.5 text-primary" />
-                  )}
-                </DropdownMenuItem>
-              ))}
+                  <DropdownMenuItem
+                    key={view.key}
+                    onClick={() => setWorkspaceTab(view.key)}
+                    className="gap-2.5"
+                  >
+                    <span className="text-muted-foreground">{view.icon}</span>
+                    <span className="flex-1">{view.label}</span>
+                    {workspaceTab === view.key && (
+                      <CheckIcon className="size-3.5 text-primary" />
+                    )}
+                  </DropdownMenuItem>
+                ))}
             </DropdownMenuContent>
           </DropdownMenu>
           <Button
@@ -359,7 +380,12 @@ export function WorkspaceRightPanel({
           attached, every tab renders the same grayed-out empty state so
           the panel still feels present and discoverable instead of going
           silently blank. */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div
+        className={cn(
+          "min-h-0 flex-1",
+          workspaceTab === "browser" ? "overflow-hidden" : "overflow-y-auto"
+        )}
+      >
         {!hasFolder && noFolderEmptyState}
         {hasFolder && workspaceTab === "overview" && projectPath && (
           <ErrorBoundary label="Overview">
@@ -554,6 +580,34 @@ export function WorkspaceRightPanel({
               onClose={() => setWorkspaceTab("overview")}
               cwd={projectPath}
             />
+          </div>
+        )}
+        {hasFolder && browserMounted && projectPath && (
+          <div
+            className={cn("h-full min-h-0", !showBrowser && "hidden")}
+            aria-hidden={!showBrowser}
+            inert={!showBrowser}
+          >
+            <ErrorBoundary label="Browser preview">
+              <Suspense
+                fallback={
+                  <div
+                    className="size-full bg-muted/20"
+                    aria-label="Loading browser preview"
+                  />
+                }
+              >
+                <BrowserPreviewPanel
+                  key={projectPath}
+                  projectPath={projectPath}
+                  threadId={activeThread?.id ?? null}
+                  active={showBrowser && rightSidebarOpen}
+                  compact
+                  className="h-full min-h-0"
+                  onClose={() => setWorkspaceTab("overview")}
+                />
+              </Suspense>
+            </ErrorBoundary>
           </div>
         )}
       </div>

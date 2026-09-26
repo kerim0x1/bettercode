@@ -15,7 +15,13 @@ import {
 
 export type ContextWindow = "200k" | "1m"
 export type AppMode = "agent" | "editor" | "design"
-export type WorkspaceTab = "overview" | "plan" | "files" | "git" | "diff"
+export type WorkspaceTab =
+  | "overview"
+  | "plan"
+  | "files"
+  | "git"
+  | "diff"
+  | "browser"
 /** Which view fills the LeftSidebar's content slot in editor mode. The
  *  ActivityBar toggles between these — VS-Code pattern where clicking
  *  Files, Outline, Source Control, or Agents in the icon strip swaps the
@@ -246,6 +252,7 @@ const ENUM_PREFERENCE_VALUES: Partial<
     "files",
     "git",
     "diff",
+    "browser",
   ]),
   editorSidebarView: new Set<EditorSidebarView>([
     "files",

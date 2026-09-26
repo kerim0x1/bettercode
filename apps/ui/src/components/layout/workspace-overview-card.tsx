@@ -24,6 +24,7 @@ import {
   FileIcon,
   GitBranchIcon,
   GitCommitHorizontalIcon,
+  GlobeIcon,
   LinkIcon,
   MonitorIcon,
   PlusIcon,
@@ -263,6 +264,12 @@ export function WorkspaceOverviewCard({
           right={
             <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground/40" />
           }
+        />
+
+        <OverviewRow
+          icon={<GlobeIcon className={iconClass} strokeWidth={1.75} />}
+          label="Browser preview"
+          onClick={() => setWorkspaceTab("browser")}
         />
 
         {repo?.branch && (

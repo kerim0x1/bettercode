@@ -1,7 +1,10 @@
 import { useCallback, useEffect } from "react"
 import { usePreferencesStore } from "@/lib/preferences-store"
 import { useChatStore } from "@/lib/chat-store"
-import type { EditorSidebarView, PermissionLevel } from "@/lib/preferences-store"
+import type {
+  EditorSidebarView,
+  PermissionLevel,
+} from "@/lib/preferences-store"
 import type { ProviderComposerSelection } from "@/lib/provider-composer-selection"
 import {
   resolveComposerPreferences,
@@ -199,7 +202,7 @@ export function useAppPreferences(threadId?: string | null) {
     ),
     workspaceTab: prefs.workspaceTab,
     setWorkspaceTab: useCallback(
-      (v: "overview" | "plan" | "files" | "git" | "diff") =>
+      (v: "overview" | "plan" | "files" | "git" | "diff" | "browser") =>
         prefs.set("workspaceTab", v),
       [prefs]
     ),

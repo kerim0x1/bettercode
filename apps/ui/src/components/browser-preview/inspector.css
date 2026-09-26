@@ -9,6 +9,11 @@
   background: var(--sidebar);
   color: var(--foreground);
 }
+.preview-inspector--compact {
+  flex-basis: 100%;
+  width: 100%;
+  border-right: 0;
+}
 .preview-inspector-tabs {
   display: flex;
   flex-shrink: 0;

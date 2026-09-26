@@ -59,6 +59,17 @@ describe("PREFERENCE_DEFAULTS", () => {
     expect(PREFERENCE_DEFAULTS.providerVisibilityDefaultsVersion).toBe(12)
   })
 
+  it("restores the Agent workspace browser view from saved preferences", () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ ...PREFERENCE_DEFAULTS, workspaceTab: "browser" })
+    )
+
+    usePreferencesStore.getState().load()
+
+    expect(usePreferencesStore.getState().workspaceTab).toBe("browser")
+  })
+
   it("treats OpenRouter and direct provider ids as the same activation family", () => {
     expect(providerActivationKeys("or-qwen")).toEqual(["or-qwen", "qwen"])
     expect(providerActivationKeys("qwen")).toEqual(["or-qwen", "qwen"])
@@ -193,8 +204,7 @@ describe("PREFERENCE_DEFAULTS", () => {
       (state as unknown as Record<string, unknown>).injectedUnknownField
     ).toBeUndefined()
     expect(
-      JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")
-        .injectedUnknownField
+      JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}").injectedUnknownField
     ).toBeUndefined()
   })
 
@@ -278,9 +288,7 @@ describe("PREFERENCE_DEFAULTS", () => {
     })
     vi.advanceTimersByTime(100)
 
-    const persisted = JSON.parse(
-      localStorage.getItem(STORAGE_KEY) ?? "{}"
-    ) as {
+    const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as {
       modelSelectionByProvider: Record<string, Record<string, unknown>>
     }
     expect(persisted.modelSelectionByProvider.codex).toEqual({
@@ -365,9 +373,7 @@ describe("PREFERENCE_DEFAULTS", () => {
       expect(activeWindow.usePreferencesStore.getState().selectedModel).toBe(
         "external-model"
       )
-      expect(activeWindow.usePreferencesStore.getState().sidebarWidth).toBe(
-        480
-      )
+      expect(activeWindow.usePreferencesStore.getState().sidebarWidth).toBe(480)
       expect(activeWindow.usePreferencesStore.getState().appMode).toBe("agent")
 
       // Even after this window has saved its changes, a neighbouring window
