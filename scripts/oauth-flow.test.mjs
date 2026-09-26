@@ -45,7 +45,7 @@ test("failed browser launch cancels OAuth and does not persist a credential", as
   let closed = 0, waited = false, requested = false
   const module = { exports: {} }
   runInNewContext(providerSource, {
-    module, console: { log() {} },
+    module, console: { log() {} }, process: { platform: process.platform },
     require: (name) => {
       if (name === "electron") return { shell: { openExternal: async () => { throw new Error("browser unavailable") } } }
       if (name === "./shared/ipc-contract.cjs") return require("../apps/shell/shared/ipc-contract.cjs")
@@ -77,7 +77,7 @@ test("OAuth refuses a non-HTTPS authorize URL and posts the credential only when
   let closed = 0
   const module = { exports: {} }
   runInNewContext(providerSource, {
-    module, console: { log() {} },
+    module, console: { log() {} }, process: { platform: process.platform },
     require: (name) => {
       if (name === "electron") return { shell: { openExternal: async () => {} } }
       if (name === "./shared/ipc-contract.cjs") return require("../apps/shell/shared/ipc-contract.cjs")
