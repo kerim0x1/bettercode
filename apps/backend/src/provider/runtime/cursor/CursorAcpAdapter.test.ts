@@ -194,6 +194,37 @@ describe("CursorAcpAdapter", () => {
     )
   })
 
+  it("closes a startup child and prevents a late session after stopAll", async () => {
+    const runtime = new FakeCursorRuntime()
+    const originalStart = runtime.start.bind(runtime)
+    let releaseStart!: () => void
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    const start = vi.spyOn(runtime, "start").mockImplementation(async () => {
+      await startGate
+      return originalStart()
+    })
+    const close = vi.spyOn(runtime, "close")
+    const adapter = new CursorAcpAdapter({
+      binaryPath: "node",
+      runtimeFactory: () => runtime,
+    })
+    const threadId = "cursor-late-start" as ThreadId
+
+    const starting = adapter.startSession({ threadId })
+    await vi.waitFor(() => expect(start).toHaveBeenCalledOnce())
+
+    const stopping = adapter.stopAll()
+    await vi.waitFor(() => expect(close).toHaveBeenCalled())
+    releaseStart()
+
+    await expect(starting).rejects.toThrow("session startup was cancelled")
+    await expect(stopping).resolves.toBeUndefined()
+    expect(adapter.hasSession(threadId)).toBe(false)
+    await expect(adapter.listSessions()).resolves.toEqual([])
+  })
+
   it.each(["plan", "ask", "read-only", "approval-required", "security"])(
     "fails closed for the non-implementation %s intent when Cursor only advertises implementation",
     async (runtimeMode) => {
@@ -304,12 +335,24 @@ describe("CursorAcpAdapter", () => {
       threadId,
       resumeCursor: { schemaVersion: 1, sessionId: "cursor-lost" },
     })
-    await adapter.sendTurn({ threadId, message: "Continue", modelId: "composer-2", history })
-    await adapter.sendTurn({ threadId, message: "Again", modelId: "composer-2", history })
+    await adapter.sendTurn({
+      threadId,
+      message: "Continue",
+      modelId: "composer-2",
+      history,
+    })
+    await adapter.sendTurn({
+      threadId,
+      message: "Again",
+      modelId: "composer-2",
+      history,
+    })
 
     const prompts = runtimes[0]?.prompts.map((entry) => entry.prompt[0]?.text)
     // session/load failed, so the agent has no memory of the thread: seed once.
-    expect(prompts?.[0]).toEqual(expect.stringContaining("<conversation_history_json>"))
+    expect(prompts?.[0]).toEqual(
+      expect.stringContaining("<conversation_history_json>")
+    )
     expect(prompts?.[0]).toEqual(expect.stringMatching(/Continue$/))
     expect(prompts?.[1]).toBe("Again")
     await adapter.stopAll()
@@ -387,7 +430,9 @@ describe("CursorAcpAdapter", () => {
 
   it("re-attempts a quarantined runtime after the retry window and releases it only once the close is confirmed", async () => {
     const stuck = new FakeCursorRuntime()
-    vi.spyOn(stuck, "setModel").mockRejectedValueOnce(new Error("model setup failed"))
+    vi.spyOn(stuck, "setModel").mockRejectedValueOnce(
+      new Error("model setup failed")
+    )
     const close = vi
       .spyOn(stuck, "close")
       .mockRejectedValue(new Error("cursor runtime close failed"))
@@ -410,7 +455,10 @@ describe("CursorAcpAdapter", () => {
     ).rejects.toMatchObject({ code: "CURSOR_ACP_CLEANUP_QUARANTINED" })
     const quarantines = (
       adapter as unknown as {
-        runtimeCleanupQuarantines: Map<unknown, { firstFailedAt: number | null }>
+        runtimeCleanupQuarantines: Map<
+          unknown,
+          { firstFailedAt: number | null }
+        >
       }
     ).runtimeCleanupQuarantines
     expect(quarantines.size).toBe(1)

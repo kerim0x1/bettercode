@@ -291,6 +291,12 @@ interface RuntimeCleanupContext extends CleanupQuarantineState {
   readonly runtime: AcpRuntime
 }
 
+interface PendingSessionStartup {
+  runtime: AcpRuntime | null
+  cancelled: boolean
+  promise: Promise<ProviderSession> | null
+}
+
 interface PendingApproval {
   readonly permissionRequest: AcpPermissionRequest
   readonly resolve: (decision: ProviderApprovalDecision) => void
@@ -315,7 +321,7 @@ export class AcpAdapterBase<
     AcpRuntime,
     RuntimeCleanupContext
   >()
-  private startupInProgress = false
+  private pendingSessionStartup: PendingSessionStartup | null = null
   private modelsCache: MetadataCache<ReadonlyArray<ProviderModel>> | null = null
   private modelsCacheIdentity: string | null = null
   // In-flight dedup: concurrent cold-cache callers (several listInstances
@@ -424,7 +430,7 @@ export class AcpAdapterBase<
   }
 
   async startSession(input: AcpStartSessionInput): Promise<ProviderSession> {
-    if (this.startupInProgress) {
+    if (this.pendingSessionStartup) {
       throw Object.assign(
         new Error(
           `Another ${this.profile.label} ACP startup cleanup is already in progress.`
@@ -435,16 +441,34 @@ export class AcpAdapterBase<
         }
       )
     }
-    this.startupInProgress = true
+    const startup: PendingSessionStartup = {
+      runtime: null,
+      cancelled: false,
+      promise: null,
+    }
+    this.pendingSessionStartup = startup
+    const operation = this.startSessionWithAdmission(input, startup)
+    startup.promise = operation
     try {
-      return await this.startSessionWithAdmission(input)
+      return await operation
     } finally {
-      this.startupInProgress = false
+      if (this.pendingSessionStartup === startup) {
+        this.pendingSessionStartup = null
+      }
+    }
+  }
+
+  private assertStartupActive(startup: PendingSessionStartup): void {
+    if (startup.cancelled) {
+      throw new Error(
+        `${this.profile.label} ACP session startup was cancelled.`
+      )
     }
   }
 
   private async startSessionWithAdmission(
-    input: AcpStartSessionInput
+    input: AcpStartSessionInput,
+    startup: PendingSessionStartup
   ): Promise<ProviderSession> {
     try {
       await this.closeAllRuntimeCleanupQuarantines()
@@ -461,16 +485,20 @@ export class AcpAdapterBase<
         }
       )
     }
+    this.assertStartupActive(startup)
     const key = input.threadId as string
     const existing = this.sessions.get(key)
     if (existing) await this.stopSession(input.threadId)
+    this.assertStartupActive(startup)
 
     const cwd = normalizeCwd(input.cwd)
     const resumeSessionId = readAcpResumeSessionId(input.resumeCursor)
     const configuredServers = (await this.resolveSessionMcpServers(cwd)).filter(
       (server) => server.name !== "betterc0de_orchestrator"
     )
+    this.assertStartupActive(startup)
     const teamServer = await this.options.resolveOrchestratorServer?.(cwd, key)
+    this.assertStartupActive(startup)
     const mcpServers: ReadonlyArray<AcpMcpServer> = teamServer
       ? [
           ...configuredServers,
@@ -490,6 +518,7 @@ export class AcpAdapterBase<
       key,
       mcpServers
     )
+    startup.runtime = runtime
     const pendingApprovals = new Map<string, PendingApproval>()
     const pendingUserInputs = new Map<string, PendingUserInput>()
     let context: SessionContext | null = null
@@ -668,13 +697,16 @@ export class AcpAdapterBase<
 
     let started: Awaited<ReturnType<AcpRuntime["start"]>>
     try {
+      this.assertStartupActive(startup)
       started = await runtime.start()
+      this.assertStartupActive(startup)
       await this.applySessionConfiguration({
         runtime,
         runtimeMode: input.runtimeMode ?? null,
         chatMode: null,
         modelSelection: this.modelSelectionForInstance(input.modelSelection),
       })
+      this.assertStartupActive(startup)
     } catch (error) {
       unsubscribeRuntime()
       unsubscribeExit()
@@ -996,6 +1028,21 @@ export class AcpAdapterBase<
   }
 
   async stopAll(): Promise<void> {
+    const startup = this.pendingSessionStartup
+    if (startup) {
+      startup.cancelled = true
+      // A session is registered only after its ACP handshake completes. Stop
+      // the child already starting and wait for that handshake to settle so a
+      // late completion cannot create a session after stopAll returned.
+      if (startup.runtime) {
+        await this.closeTrackedRuntime(startup.runtime).catch(() => {
+          // closeAllRuntimeCleanupQuarantines retries and reports this failure.
+        })
+      }
+      await startup.promise?.catch(() => {
+        // A cancelled startup is expected; cleanup is checked below.
+      })
+    }
     const results = await Promise.allSettled(
       Array.from(this.sessions.keys()).map((threadId) =>
         this.stopSession(threadId as ThreadId)
