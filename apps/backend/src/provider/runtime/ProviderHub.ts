@@ -80,11 +80,7 @@ import {
   runWithAgentPermissionRuntimeContext,
 } from "../agent-permission-runtime"
 import { HubApprovalRequests } from "./HubApprovalRequests"
-
-// ACP startup includes a child spawn, authentication and session setup. Its
-// RPC calls can each wait longer than the short turn-interruption budget.
-const ACP_SESSION_START_TIMEOUT_MS = 75_000
-const ACP_SESSION_STOP_TIMEOUT_MS = 15_000
+import * as SessionBudget from "./ProviderSessionOperationBudget"
 
 export interface ProviderRuntimeInstance {
   readonly instanceId: string
@@ -3491,44 +3487,20 @@ export class ProviderHub {
     )
   }
 
-  private sessionOperationBudgetMs(
-    instance: ProviderRuntimeInstance,
-    label: string
-  ): number {
-    const acp = instance.driver === "cursor" || instance.driver === "grok-cli"
-    if (acp && label === "startSession") {
-      return Math.max(this.interruptTimeoutMs, ACP_SESSION_START_TIMEOUT_MS)
-    }
-    if (acp && label === "stopSession") {
-      return Math.max(this.interruptTimeoutMs, ACP_SESSION_STOP_TIMEOUT_MS)
-    }
-    return this.interruptTimeoutMs
-  }
-
-  /**
-   * Bounds one adapter call. On expiry the backend is quarantined and a
-   * stop is attempted without holding the session-admission mutex.
-   */
+  /** Bounds one adapter call and quarantines it when its deadline expires. */
   private async runSessionOperation<T>(
     instance: ProviderRuntimeInstance,
     label: string,
     operation: () => Promise<T>
   ): Promise<T> {
     this.throwIfAdapterQuarantined(instance)
-    const timeoutMs = this.sessionOperationBudgetMs(instance, label)
+    const { interruptTimeoutMs } = this
+    const timeoutMs = SessionBudget.get(instance, label, interruptTimeoutMs)
     try {
       return await this.raceInterruptBudget(operation, label, timeoutMs)
     } catch (error) {
       if (!(error instanceof ProviderOperationDeadlineError)) throw error
-      logger.warn(
-        {
-          providerInstanceId: instance.instanceId,
-          driver: instance.driver,
-          operation: label,
-          timeoutMs,
-        },
-        "provider session operation exceeded its deadline"
-      )
+      SessionBudget.logDeadline(instance, label, timeoutMs)
       const failure = this.quarantineProviderBackend(
         instance,
         `Provider ${label} did not complete within ${timeoutMs}ms.`
@@ -3536,7 +3508,7 @@ export class ProviderHub {
       void this.raceInterruptBudget(
         () => instance.adapter.stopAll(),
         "stopAll",
-        this.sessionOperationBudgetMs(instance, "stopSession")
+        SessionBudget.get(instance, "stopSession", interruptTimeoutMs)
       ).catch(() => {})
       throw failure
     }
