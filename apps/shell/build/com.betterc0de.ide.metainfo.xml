@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.betterc0de.ide</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>BetterC0de</name>
+  <summary>Your coding agents in one desktop workspace</summary>
+  <description>
+    <p>BetterC0de is a desktop AI coding environment that brings your agents,
+    files, terminals, and live previews into one workspace.</p>
+    <p>Build with your preferred AI coding tools, review changes with Git,
+    and choose Editor, Agent, or Canvas mode for your project.</p>
+  </description>
+  <developer id="com.betterc0de">
+    <name>BetterC0de contributors</name>
+  </developer>
+  <launchable type="desktop-id">betterc0de.desktop</launchable>
+  <icon type="stock">betterc0de</icon>
+  <url type="homepage">https://betterc0de.com</url>
+  <url type="bugtracker">https://github.com/kerim0x1/bettercode/issues</url>
+  <url type="vcs-browser">https://github.com/kerim0x1/bettercode</url>
+  <categories>
+    <category>Development</category>
+    <category>IDE</category>
+  </categories>
+  <provides>
+    <binary>betterc0de</binary>
+  </provides>
+  <screenshots>
+    <screenshot type="default">
+      <caption>BetterC0de website and project overview</caption>
+      <image type="source" width="1920" height="1080">https://raw.githubusercontent.com/kerim0x1/bettercode/main/assets/betterc0de-website.png</image>
+    </screenshot>
+  </screenshots>
+</component>

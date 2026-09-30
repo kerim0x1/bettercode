@@ -358,6 +358,12 @@
       "synopsis": "AI-powered coding IDE",
       "description": "BetterC0de is an AI-powered IDE with a Node.js backend and provider-agnostic chat.",
       "extraResources": [],
+      "extraFiles": [
+        {
+          "from": "apps/shell/build/com.betterc0de.ide.metainfo.xml",
+          "to": "usr/share/metainfo/com.betterc0de.ide.metainfo.xml"
+        }
+      ],
       "files": [
         "package.json",
         "!Example{,/**/*}",

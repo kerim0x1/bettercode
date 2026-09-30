@@ -85,11 +85,30 @@ async function terminateWindowsProviderProcessTree(
     return
   }
 
-  await runProviderWindowsTaskkill(pid, {
-    spawnTaskkill: options.spawnTaskkill,
-    timeoutMs: options.taskkillTimeoutMs,
-    closeGraceMs: options.taskkillCloseGraceMs,
-  })
+  try {
+    await runProviderWindowsTaskkill(pid, {
+      spawnTaskkill: options.spawnTaskkill,
+      timeoutMs: options.taskkillTimeoutMs,
+      closeGraceMs: options.taskkillCloseGraceMs,
+    })
+  } catch (error) {
+    // taskkill can report a partial traversal when a descendant exits while
+    // it enumerates the tree. Retry once while we still own the live root;
+    // after its exit the PID may be reused and must never be targeted again.
+    const failure = error as { code?: string; exitCode?: number } | null
+    if (
+      failure?.code !== "PROVIDER_TASKKILL_FAILED" ||
+      failure.exitCode !== 255 ||
+      childHasExited(child)
+    ) {
+      throw error
+    }
+    await runProviderWindowsTaskkill(pid, {
+      spawnTaskkill: options.spawnTaskkill,
+      timeoutMs: options.taskkillTimeoutMs,
+      closeGraceMs: options.taskkillCloseGraceMs,
+    })
+  }
 
   if (await waitForChildExit(child, options.killGraceMs)) return
   throw codedError(
