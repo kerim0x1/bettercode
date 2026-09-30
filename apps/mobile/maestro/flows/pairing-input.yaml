@@ -13,6 +13,13 @@ tags:
     timeout: 60000
 - tapOn:
     id: pair-manual-tab
+    # Switching tabs is idempotent. A busy iOS simulator can miss the first
+    # tap; confirm the manual form before trying to enter a pairing code.
+    retryTapIfNoChange: true
+- extendedWaitUntil:
+    visible:
+      id: pair-input
+    timeout: 20000
 - tapOn:
     id: pair-input
 - inputText: ABCD-EFGH-JKLM
