@@ -96,6 +96,80 @@ describe("provider child process-tree termination", () => {
     expect(child.kill).not.toHaveBeenCalled()
   })
 
+  it("retries a partial Windows traversal while the root is still owned", async () => {
+    const child = fakeChild(6_212)
+    const first = Object.assign(new EventEmitter(), { kill: vi.fn() })
+    const retry = Object.assign(new EventEmitter(), { kill: vi.fn() })
+    const spawnTaskkill = vi
+      .fn()
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(retry)
+    const termination = terminateProviderChildProcessTree(
+      child as unknown as ChildProcess,
+      {
+        platform: "win32",
+        spawnTaskkill,
+      }
+    )
+
+    first.emit("close", 255, null)
+    await vi.waitFor(() => expect(spawnTaskkill).toHaveBeenCalledTimes(2))
+    child.exitCode = 0
+    child.emit("exit", 0, null)
+    retry.emit("close", 0, null)
+    await expect(termination).resolves.toBeUndefined()
+    expect(child.kill).not.toHaveBeenCalled()
+  })
+
+  it("never retries a partial traversal after the Windows root exits", async () => {
+    const child = fakeChild(6_222)
+    const killer = Object.assign(new EventEmitter(), { kill: vi.fn() })
+    const spawnTaskkill = vi.fn(() => killer as never)
+    const termination = terminateProviderChildProcessTree(
+      child as unknown as ChildProcess,
+      {
+        platform: "win32",
+        spawnTaskkill,
+      }
+    )
+
+    child.exitCode = 0
+    child.emit("exit", 0, null)
+    killer.emit("close", 255, null)
+    await expect(termination).rejects.toMatchObject({
+      code: "PROVIDER_TASKKILL_FAILED",
+      exitCode: 255,
+    })
+    expect(spawnTaskkill).toHaveBeenCalledOnce()
+  })
+
+  it("keeps a failed retry unconfirmed instead of retrying indefinitely", async () => {
+    const child = fakeChild(6_232)
+    const first = Object.assign(new EventEmitter(), { kill: vi.fn() })
+    const retry = Object.assign(new EventEmitter(), { kill: vi.fn() })
+    const spawnTaskkill = vi
+      .fn()
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(retry)
+    const termination = terminateProviderChildProcessTree(
+      child as unknown as ChildProcess,
+      {
+        platform: "win32",
+        spawnTaskkill,
+      }
+    )
+    const rejected = expect(termination).rejects.toMatchObject({
+      code: "PROVIDER_TASKKILL_FAILED",
+      exitCode: 255,
+    })
+
+    first.emit("close", 255, null)
+    await vi.waitFor(() => expect(spawnTaskkill).toHaveBeenCalledTimes(2))
+    retry.emit("close", 255, null)
+    await rejected
+    expect(spawnTaskkill).toHaveBeenCalledTimes(2)
+  })
+
   it("kills a timed-out taskkill helper but still waits for its close event", async () => {
     vi.useFakeTimers()
     const killer = Object.assign(new EventEmitter(), {
