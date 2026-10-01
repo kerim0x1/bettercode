@@ -141,7 +141,8 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
   constructor(
     apiKey: string | null,
     private readonly agentTools: DirectMcpAdapterOptions = {},
-    private readonly modelCatalog = new ApiModelCatalog()
+    private readonly modelCatalog = new ApiModelCatalog(),
+    private readonly apiKeyPool?: import("../../auth/apiKeyPool").ApiKeyPool
   ) {
     super()
     this.setApiKey(apiKey)
@@ -176,10 +177,21 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
   async discoverModels(force = false): Promise<ModelDefinition[]> {
     const refresh = force || this.forceCatalogRefresh
     this.forceCatalogRefresh = false
+    if (this.apiKeyPool) {
+      if (!this.apiKeyPool.isReady("anthropic")) return []
+      return this.apiKeyPool
+        .snapshot("anthropic")
+        .run((key) =>
+          this.modelCatalog.list("anthropic", key.key, refresh, true)
+        )
+        .catch(() => [])
+    }
     return this.modelCatalog.list("anthropic", this.apiKey, refresh)
   }
   isConfigured(): boolean {
-    return this.client !== null
+    return this.apiKeyPool
+      ? this.apiKeyPool.isReady("anthropic")
+      : this.client !== null
   }
   authMeta(): { authType: string; hint?: string } {
     return {
@@ -196,7 +208,8 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
 
   async sendMessage(input: ProviderSendTurnInput): Promise<void> {
     const client = this.client
-    if (!client) {
+    const keySession = this.apiKeyPool?.snapshot("anthropic")
+    if (!client && !keySession) {
       throw new Error("Anthropic API key not configured")
     }
     const controller = new AbortController()
@@ -316,57 +329,79 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
       for (let turn = 0; turn < maxTurns; turn++) {
         if (controller.signal.aborted) break
 
-        const stream = await client.messages.stream(
-          {
-            model,
-            max_tokens: maxTokens,
-            ...(systemBlocks ? { system: systemBlocks } : {}),
-            messages,
-            ...(tools.length > 0 ? { tools } : {}),
-            ...(thinking ? { thinking } : {}),
-            ...(adaptiveEffort
-              ? { output_config: { effort: adaptiveEffort } }
-              : {}),
-          },
-          { signal: controller.signal }
-        )
+        const requestMessage = async (
+          requestClient: Anthropic,
+          started: () => void = () => undefined
+        ) => {
+          const stream = await requestClient.messages.stream(
+            {
+              model,
+              max_tokens: maxTokens,
+              ...(systemBlocks ? { system: systemBlocks } : {}),
+              messages,
+              ...(tools.length > 0 ? { tools } : {}),
+              ...(thinking ? { thinking } : {}),
+              ...(adaptiveEffort
+                ? { output_config: { effort: adaptiveEffort } }
+                : {}),
+            },
+            { signal: controller.signal }
+          )
 
-        stream.on("text", (delta: string) => {
-          if (delta) {
-            this.emit({
-              event_type: "content_delta",
-              thread_id: input.thread_id,
-              payload: { delta },
-            })
-          }
-        })
-        stream.on("contentBlock", (block) => {
-          if (block.type === "thinking") {
-            this.emit({
-              event_type: "reasoning_replace",
-              thread_id: input.thread_id,
-              payload: { text: block.thinking ?? "" },
-            })
-          }
-        })
-        stream.on("streamEvent", (event) => {
-          if (event.type !== "content_block_delta") return
-          const delta =
-            (event.delta as unknown as Record<string, unknown>) ?? {}
-          if (
-            delta.type === "thinking_delta" &&
-            typeof delta.thinking === "string" &&
-            delta.thinking
-          ) {
-            this.emit({
-              event_type: "reasoning_delta",
-              thread_id: input.thread_id,
-              payload: { delta: delta.thinking },
-            })
-          }
-        })
+          stream.on("text", (delta: string) => {
+            if (delta) {
+              started()
+              this.emit({
+                event_type: "content_delta",
+                thread_id: input.thread_id,
+                payload: { delta },
+              })
+            }
+          })
+          stream.on("contentBlock", (block) => {
+            started()
+            if (block.type === "thinking") {
+              this.emit({
+                event_type: "reasoning_replace",
+                thread_id: input.thread_id,
+                payload: { text: block.thinking ?? "" },
+              })
+            }
+          })
+          stream.on("streamEvent", (event) => {
+            started()
+            if (event.type !== "content_block_delta") return
+            const delta =
+              (event.delta as unknown as Record<string, unknown>) ?? {}
+            if (
+              delta.type === "thinking_delta" &&
+              typeof delta.thinking === "string" &&
+              delta.thinking
+            ) {
+              this.emit({
+                event_type: "reasoning_delta",
+                thread_id: input.thread_id,
+                payload: { delta: delta.thinking },
+              })
+            }
+          })
 
-        const final = await stream.finalMessage()
+          return stream.finalMessage()
+        }
+        const final = keySession
+          ? await keySession.run(
+              (key, started) =>
+                requestMessage(
+                  new Anthropic({
+                    apiKey: key.key,
+                    maxRetries: 0,
+                    timeout: 60_000,
+                  }),
+                  started
+                ),
+              controller.signal
+            )
+          : await requestMessage(client!)
 
         if (final.usage) {
           const u = final.usage as unknown as {

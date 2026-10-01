@@ -3,10 +3,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 // ── Mock the Anthropic SDK: a fake client whose `messages.stream` returns a
 //    queued MessageStream-like object (`.on()` + `.finalMessage()`). ─────────
 const streamMock = vi.fn()
+const sdkOptions = vi.hoisted(() => vi.fn())
 vi.mock("@anthropic-ai/sdk", () => ({
   default: class {
     messages = { stream: streamMock }
-    constructor(_opts: unknown) {}
+    constructor(opts: unknown) {
+      sdkOptions(opts)
+    }
   },
 }))
 
@@ -26,6 +29,8 @@ vi.mock("../agent-loop/tool-executor", () => ({
 }))
 
 import { ClaudeApiAdapter } from "./claudeApi"
+import { ApiKeyPool } from "../../auth/apiKeyPool"
+import { defaultSettings } from "../../settings/schema"
 import { executeTool } from "../agent-loop/tool-executor"
 import type { ProviderRuntimeEvent, ProviderSendTurnInput } from "../types"
 
@@ -69,6 +74,114 @@ function baseInput(
 beforeEach(() => vi.clearAllMocks())
 
 describe("ClaudeApiAdapter agent loop", () => {
+  it("fails over inside a model request and does not replay executed tools", async () => {
+    const settings = defaultSettings()
+    settings.providers.anthropic = {
+      enabled: true,
+      custom_models: [],
+      hidden_models: [],
+    }
+    settings.providers.anthropic.api_keys = [
+      {
+        id: "primary",
+        label: "Primary",
+        enabled: true,
+        api_key: "synthetic-primary",
+      },
+      {
+        id: "backup",
+        label: "Backup",
+        enabled: true,
+        api_key: "synthetic-backup",
+      },
+    ]
+    const pool = new ApiKeyPool({
+      get: () => settings,
+      getPublic: () => ({}),
+      update: () => settings,
+    })
+    streamMock
+      .mockReturnValueOnce(
+        makeStream({
+          content: [
+            {
+              type: "tool_use",
+              id: "read",
+              name: "Read",
+              input: { path: "a" },
+            },
+          ],
+        })
+      )
+      .mockImplementationOnce(() => {
+        throw { status: 401 }
+      })
+      .mockReturnValueOnce(
+        makeStream({ content: [{ type: "text", text: "done" }] })
+      )
+    const adapter = new ClaudeApiAdapter(null, {}, undefined, pool)
+    await adapter.sendMessage(baseInput())
+    expect(executeTool).toHaveBeenCalledTimes(1)
+    expect(streamMock).toHaveBeenCalledTimes(3)
+    expect(sdkOptions.mock.calls.map((call) => call[0].apiKey)).toEqual([
+      "synthetic-primary",
+      "synthetic-primary",
+      "synthetic-backup",
+    ])
+    expect(
+      sdkOptions.mock.calls.every((call) => call[0].maxRetries === 0)
+    ).toBe(true)
+  })
+  it("preserves partial Anthropic text and stops without replay on a stream failure", async () => {
+    const settings = defaultSettings()
+    settings.providers.anthropic = {
+      enabled: true,
+      custom_models: [],
+      hidden_models: [],
+    }
+    settings.providers.anthropic.api_keys = [
+      {
+        id: "primary",
+        label: "Primary",
+        enabled: true,
+        api_key: "synthetic-primary",
+      },
+      {
+        id: "backup",
+        label: "Backup",
+        enabled: true,
+        api_key: "synthetic-backup",
+      },
+    ]
+    const pool = new ApiKeyPool({
+      get: () => settings,
+      getPublic: () => ({}),
+      update: () => settings,
+    })
+    const handlers: Record<string, (value: unknown) => void> = {}
+    streamMock.mockReturnValueOnce({
+      on: (name: string, callback: (value: unknown) => void) => {
+        handlers[name] = callback
+      },
+      finalMessage: async () => {
+        handlers.text("partial")
+        throw { status: 529 }
+      },
+    })
+    const adapter = new ClaudeApiAdapter(null, {}, undefined, pool)
+    const events: ProviderRuntimeEvent[] = []
+    adapter.subscribeEvents().on("event", (event) => events.push(event))
+    await expect(adapter.sendMessage(baseInput())).rejects.toThrow("Temporary")
+    expect(streamMock).toHaveBeenCalledTimes(1)
+    expect(
+      events.some(
+        (event) =>
+          event.event_type === "content_delta" &&
+          event.payload.delta === "partial"
+      )
+    ).toBe(true)
+    expect(executeTool).not.toHaveBeenCalled()
+  })
   it.each(["plan", "ask"])(
     "blocks an unadvertised mutation in %s mode even with bypass",
     async (chatMode) => {

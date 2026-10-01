@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { createHash } from "node:crypto"
+import { setTimeout as delay } from "node:timers/promises"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   activeWorkspaceProcessCount,
@@ -3642,7 +3643,7 @@ describe("workspace BetterC0de execution config", () => {
     }
   })
 
-  it("awaits active formatter process-tree shutdown", async () => {
+  it("awaits active formatter process-tree shutdown", async ({ signal }) => {
     const root = await makeWorkspace()
     await fs.writeFile(
       path.join(root, "BetterC0de.json"),
@@ -3663,6 +3664,15 @@ describe("workspace BetterC0de execution config", () => {
     )
     await fs.writeFile(path.join(root, "note.txt"), "hello\n", "utf8")
 
+    // Starting a formatter includes filesystem validation and staging. Reproduce
+    // startup exceeding the old two-second poll without changing shutdown limits.
+    __setWorkspaceMutationTestHookForTests(async (phase) => {
+      if (phase === "format:before-spawn") {
+        await delay(2_100, undefined, { signal })
+      }
+    })
+    const startup = new AbortController()
+    const startupSignal = AbortSignal.any([signal, startup.signal])
     const formatting = formatProjectFile({
       allowWorkspaceCommands: true,
       cwd: root,
@@ -3670,22 +3680,30 @@ describe("workspace BetterC0de execution config", () => {
     })
     void formatting.catch(() => undefined)
     try {
-      const deadline = Date.now() + 2_000
-      while (activeWorkspaceProcessCount() === 0 && Date.now() < deadline) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 5))
-      }
+      // Synchronize on the registered process. The existing test deadline aborts
+      // this wait if startup hangs; an early formatter exit must fail the test.
+      await Promise.race([
+        (async () => {
+          while (activeWorkspaceProcessCount() === 0) {
+            await delay(5, undefined, { signal: startupSignal })
+          }
+        })(),
+        formatting.then(() => {
+          throw new Error(
+            "Formatter settled before registering an active process."
+          )
+        }),
+      ])
       expect(activeWorkspaceProcessCount()).toBe(1)
       await expect(shutdownAllWorkspaceProcesses()).resolves.toBe(1)
       const result = await formatting
       expect(result.results[0]?.success).toBe(false)
       expect(activeWorkspaceProcessCount()).toBe(0)
     } finally {
-      if (activeWorkspaceProcessCount() > 0) {
-        await shutdownAllWorkspaceProcesses().catch(() => undefined)
-      }
-      if (activeWorkspaceProcessCount() === 0) {
-        resumeWorkspaceProcessAdmissions()
-      }
+      startup.abort()
+      await shutdownAllWorkspaceProcesses()
+      await formatting.catch(() => undefined)
+      resumeWorkspaceProcessAdmissions()
     }
   })
 

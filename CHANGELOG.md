@@ -14,6 +14,7 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 
 ### Added
 
+- Anthropic, OpenAI, and Grok API providers support ordered encrypted backup keys, per-key checks and recovery status, and automatic recovery before a response starts. Provider settings group API access, CLI accounts, and local models and expose account-backed model visibility.
 - Linux AppImages include AppStream metadata with the BetterC0de website image, so the AppImage catalog can show the project overview instead of the first-run onboarding capture.
 - Successful merges to `main` now prepare and tag the next shared version after CI passes, then run the full Release workflow before publishing. The `Unreleased` section becomes that version's release notes.
 - Agent mode can open the existing Browser Preview in the right workspace panel, with navigation, element selection, inspector, console, and visual changes routed to the focused chat.

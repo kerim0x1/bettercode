@@ -186,7 +186,8 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
     private readonly config: OpenAiCompatConfig,
     apiKey: string | null,
     private readonly agentTools: DirectMcpAdapterOptions = {},
-    private readonly modelCatalog = new ApiModelCatalog()
+    private readonly modelCatalog = new ApiModelCatalog(),
+    private readonly apiKeyPool?: import("../../auth/apiKeyPool").ApiKeyPool
   ) {
     super()
     this.setApiKey(apiKey)
@@ -234,10 +235,20 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
     if (kind !== "openai" && kind !== "grok") return this.availableModels()
     const refresh = force || this.forceCatalogRefresh
     this.forceCatalogRefresh = false
+    if (this.apiKeyPool) {
+      if (!this.apiKeyPool.isReady(kind)) return []
+      return this.apiKeyPool
+        .snapshot(kind)
+        .run((key) => this.modelCatalog.list(kind, key.key, refresh, true))
+        .catch(() => [])
+    }
     return this.modelCatalog.list(kind, this.apiKey, refresh)
   }
   isConfigured(): boolean {
-    return this.client !== null
+    const kind = this.config.providerKind
+    return this.apiKeyPool && (kind === "openai" || kind === "grok")
+      ? this.apiKeyPool.isReady(kind)
+      : this.client !== null
   }
   authMeta(): { authType: string; hint?: string } {
     if (this.config.providerKind === "lmstudio") {
@@ -261,7 +272,12 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
   async sendMessage(input: ProviderSendTurnInput): Promise<void> {
     // A settings change applies to subsequent turns, preserving this turn's account.
     let client = this.client
-    if (!client) {
+    const kind = this.config.providerKind
+    const keySession =
+      this.apiKeyPool && (kind === "openai" || kind === "grok")
+        ? this.apiKeyPool.snapshot(kind)
+        : undefined
+    if (!client && !keySession) {
       throw new Error(`${this.config.displayName} not configured`)
     }
     const controller = new AbortController()
@@ -358,48 +374,78 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
       for (let turn = 0; turn < maxTurns; turn++) {
         if (controller.signal.aborted) break
 
-        let stream: AsyncIterable<ChatCompletionChunk>
-        try {
-          stream = await client.chat.completions.create(requestParams(), {
-            signal: controller.signal,
-          })
-        } catch (err) {
-          if (
-            turn === 0 &&
-            reasoningEnabled &&
-            isReasoningUnsupportedError(err)
-          ) {
-            logger.warn(
-              { provider: this.config.providerKind },
-              "Model rejected reasoning_effort; retrying without it"
+        const requestCompletion = async (
+          requestClient: OpenAI,
+          started?: () => void
+        ) => {
+          let stream: AsyncIterable<ChatCompletionChunk>
+          try {
+            stream = await requestClient.chat.completions.create(
+              requestParams(),
+              {
+                signal: controller.signal,
+              }
             )
-            reasoningEnabled = false
-            stream = await client.chat.completions.create(requestParams(), {
-              signal: controller.signal,
-            })
-          } else if (
-            turn === 0 &&
-            toolsEnabled &&
-            isToolsUnsupportedError(err)
-          ) {
-            logger.warn(
-              { provider: this.config.providerKind },
-              "Model rejected the tools param; retrying as plain chat"
-            )
-            toolsEnabled = false
-            stream = await client.chat.completions.create(requestParams(), {
-              signal: controller.signal,
-            })
-          } else {
-            throw err
+          } catch (err) {
+            if (
+              turn === 0 &&
+              reasoningEnabled &&
+              isReasoningUnsupportedError(err)
+            ) {
+              logger.warn(
+                { provider: this.config.providerKind },
+                "Model rejected reasoning_effort; retrying without it"
+              )
+              reasoningEnabled = false
+              stream = await requestClient.chat.completions.create(
+                requestParams(),
+                {
+                  signal: controller.signal,
+                }
+              )
+            } else if (
+              turn === 0 &&
+              toolsEnabled &&
+              isToolsUnsupportedError(err)
+            ) {
+              logger.warn(
+                { provider: this.config.providerKind },
+                "Model rejected the tools param; retrying as plain chat"
+              )
+              toolsEnabled = false
+              stream = await requestClient.chat.completions.create(
+                requestParams(),
+                {
+                  signal: controller.signal,
+                }
+              )
+            } else {
+              throw err
+            }
           }
-        }
 
-        const { text, toolCalls, usage } = await this.consumeStream(
-          stream,
-          input.thread_id,
-          controller
-        )
+          return this.consumeStream(
+            stream,
+            input.thread_id,
+            controller,
+            started
+          )
+        }
+        const { text, toolCalls, usage } = keySession
+          ? await keySession.run(
+              (key, started) =>
+                requestCompletion(
+                  new OpenAI({
+                    apiKey: key.key,
+                    baseURL: this.config.baseUrl,
+                    maxRetries: 0,
+                    timeout: 60_000,
+                  }),
+                  started
+                ),
+              controller.signal
+            )
+          : await requestCompletion(client!)
 
         if (usage && usage.inputTokens + usage.outputTokens > 0) {
           cumInput += usage.inputTokens
@@ -611,7 +657,8 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
   private async consumeStream(
     stream: AsyncIterable<ChatCompletionChunk>,
     threadId: string,
-    controller: AbortController
+    controller: AbortController,
+    started?: () => void
   ): Promise<{
     text: string
     toolCalls: Array<{ id: string; name: string; argsRaw: string }>
@@ -626,6 +673,7 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
 
     for await (const chunk of stream) {
       if (controller.signal.aborted) break
+      started?.()
       const choice = chunk.choices?.[0]
       const delta = choice?.delta
 

@@ -23,6 +23,61 @@ function response(body: unknown): Response {
 }
 
 describe("API model catalogs", () => {
+  it("propagates authenticated discovery failures to managed callers even alongside a legacy caller", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: "credit_balance_exhausted",
+              message: "Account credits exhausted",
+            },
+          }),
+          { status: 429, headers: { "Retry-After": "120" } }
+        )
+    )
+    const catalog = new ApiModelCatalog(
+      undefined,
+      fetchMock as unknown as typeof fetch
+    )
+    const legacy = catalog.list("openai", "synthetic-account")
+    const strict = catalog.list("openai", "synthetic-account", false, true)
+    await expect(strict).rejects.toMatchObject({
+      status: 429,
+      error: { error: { code: "credit_balance_exhausted" } },
+    })
+    await expect(legacy).resolves.toEqual([])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await expect(
+      catalog.list("openai", "synthetic-account", false, true)
+    ).rejects.toMatchObject({ status: 429 })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it("bounds and cancels oversized failed discovery responses", async () => {
+    const cancel = vi.fn()
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("x".repeat(16_384)))
+            },
+            cancel,
+          }),
+          { status: 401 }
+        )
+    )
+    const catalog = new ApiModelCatalog(
+      undefined,
+      fetchMock as unknown as typeof fetch
+    )
+    await expect(
+      catalog.list("openai", "synthetic-account", false, true)
+    ).rejects.toMatchObject({ status: 401 })
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
   it("filters unsuitable OpenAI models while accepting new GPT and o chat models", async () => {
     const fetchMock = vi.fn(async () =>
       response({
