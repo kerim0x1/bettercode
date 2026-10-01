@@ -23,6 +23,8 @@ To check a download, compare it with the release's `SHA256SUMS.txt`: `sha256sum 
 
 After installation, open **Settings → Providers**, connect a supported provider, open a project folder, and start a conversation. Provider accounts, API keys, and usage limits belong to the provider you connect.
 
+Anthropic, OpenAI, and Grok API access supports multiple saved keys with ordered backups. See [providers and API keys](docs/providers.md) for setup, key recovery, and model visibility.
+
 Unsigned Windows and macOS builds do not install updates automatically. Download and run the newer installer from Releases to update them. A successful CI run alone does not publish a download: the tag-triggered Release workflow runs the full release check on every platform and publishes the release only after all of them pass. Beta versions are marked as prereleases. Known problems of each version are listed in the [changelog](CHANGELOG.md).
 
 ## Use the phone app

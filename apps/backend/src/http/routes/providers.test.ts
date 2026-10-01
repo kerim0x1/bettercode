@@ -9,7 +9,10 @@ import { logger } from "../../observability/logger"
 const openRouterMocks = vi.hoisted(() => ({
   getOpenRouterCatalogModels: vi.fn(async () => []),
 }))
-vi.mock("../../provider/adapters/openRouterModelDiscovery", () => openRouterMocks)
+vi.mock(
+  "../../provider/adapters/openRouterModelDiscovery",
+  () => openRouterMocks
+)
 vi.mock("../../auth/keyResolution", () => ({
   resolveOpenRouterKey: () => ({ key: "sk-or-configured" }),
 }))
@@ -26,10 +29,7 @@ function registerProviderTestRoutes(state: AppState): Hono {
       typeof possibleHttpError.statusCode === "number"
         ? possibleHttpError.statusCode
         : 500
-    return c.json(
-      { error: error.message },
-      statusCode as 400 | 403 | 500 | 503
-    )
+    return c.json({ error: error.message }, statusCode as 400 | 403 | 500 | 503)
   })
   registerProvidersRoutes(app, state)
   return app
@@ -39,6 +39,52 @@ describe("provider routes", () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+  })
+
+  it("applies API provider visibility to picker models while preserving the settings catalog and CLI models", async () => {
+    const state = {
+      providers: {
+        listModelsLive: async () => [
+          { provider: "openai", slug: "gpt-visible", name: "Visible" },
+          { provider: "openai", slug: "gpt-hidden", name: "Hidden" },
+          { provider: "grok", slug: "grok-test", name: "Grok" },
+          { provider: "codex", slug: "gpt-hidden", name: "Codex" },
+        ],
+      },
+      settings: {
+        get: () => ({
+          providers: {
+            openai: {
+              enabled: true,
+              hidden_models: ["gpt-hidden", "gpt-custom-hidden"],
+              custom_models: ["gpt-visible", "gpt-custom", "gpt-custom-hidden"],
+            },
+            grok: { enabled: false, custom_models: ["grok-custom"] },
+          },
+        }),
+      },
+    } as unknown as AppState
+    const app = registerProviderTestRoutes(state)
+    expect(await (await app.request("/models")).json()).toEqual([
+      { provider: "openai", slug: "gpt-visible", name: "Visible" },
+      { provider: "codex", slug: "gpt-hidden", name: "Codex" },
+      {
+        provider: "openai",
+        slug: "gpt-custom",
+        name: "gpt-custom",
+        isCustom: true,
+      },
+    ])
+    const settingsModels = (await (
+      await app.request("/models?includeHidden=1")
+    ).json()) as Array<{ provider: string; slug: string }>
+    expect(settingsModels).toHaveLength(7)
+    expect(
+      settingsModels.some((model) => model.slug === "gpt-custom-hidden")
+    ).toBe(true)
+    expect(settingsModels.some((model) => model.slug === "grok-test")).toBe(
+      true
+    )
   })
 
   it("does not expose raw key-probe failures to clients", async () => {
@@ -74,35 +120,53 @@ describe("provider routes", () => {
     expect(JSON.stringify(body)).not.toContain("provider.json")
   })
 
-  it.each([200, 400, 401, 403, 429, 500, 503])("only confirms successful key probes and cancels status %i bodies", async (status) => {
-    const cancel = vi.fn()
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({ cancel }), { status })))
-    const app = new Hono()
-    registerProvidersRoutes(app, {} as AppState)
-    const response = await app.request("/providers/validate-key", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind: "google", apiKey: "test-key" }),
-    })
-    expect(await response.json()).toEqual({ ok: true, valid: status === 200, status })
-    expect(cancel).toHaveBeenCalledOnce()
-  })
+  it.each([200, 400, 401, 403, 429, 500, 503])(
+    "only confirms successful key probes and cancels status %i bodies",
+    async (status) => {
+      const cancel = vi.fn()
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () => new Response(new ReadableStream({ cancel }), { status })
+        )
+      )
+      const app = new Hono()
+      registerProvidersRoutes(app, {} as AppState)
+      const response = await app.request("/providers/validate-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "google", apiKey: "test-key" }),
+      })
+      expect(await response.json()).toEqual({
+        ok: true,
+        valid: status === 200,
+        status,
+      })
+      expect(cancel).toHaveBeenCalledOnce()
+    }
+  )
 
   it.each([
     ["openrouter", "https://openrouter.ai/api/v1/key"],
     ["anthropic", "https://api.anthropic.com/v1/models?limit=1"],
-  ])("probes authenticated metadata for %s without generating text", async (kind, url) => {
-    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }))
-    vi.stubGlobal("fetch", fetchMock)
-    const app = new Hono()
-    registerProvidersRoutes(app, {} as AppState)
-    await app.request("/providers/validate-key", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind, apiKey: "test-key" }),
-    })
-    expect(fetchMock).toHaveBeenCalledWith(url, expect.objectContaining({ method: "GET", body: undefined }))
-  })
+  ])(
+    "probes authenticated metadata for %s without generating text",
+    async (kind, url) => {
+      const fetchMock = vi.fn(async () => new Response(null, { status: 200 }))
+      vi.stubGlobal("fetch", fetchMock)
+      const app = new Hono()
+      registerProvidersRoutes(app, {} as AppState)
+      await app.request("/providers/validate-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, apiKey: "test-key" }),
+      })
+      expect(fetchMock).toHaveBeenCalledWith(
+        url,
+        expect.objectContaining({ method: "GET", body: undefined })
+      )
+    }
+  )
 
   it("rejects an unknown provider kind instead of vouching for its key", async () => {
     const fetchMock = vi.fn()
@@ -133,7 +197,9 @@ describe("provider routes", () => {
     const set = vi.fn()
     const remove = vi.fn()
     const app = new Hono()
-    registerProvidersRoutes(app, { authStore: { set, remove } } as unknown as AppState)
+    registerProvidersRoutes(app, {
+      authStore: { set, remove },
+    } as unknown as AppState)
 
     const unknown = await app.request("/providers/evil%20provider/credential", {
       method: "POST",
@@ -155,7 +221,10 @@ describe("provider routes", () => {
       body: JSON.stringify({ type: "api", key: "sk-test" }),
     })
     expect(known.status).toBe(200)
-    expect(set).toHaveBeenCalledWith("openrouter", { type: "api", key: "sk-test" })
+    expect(set).toHaveBeenCalledWith("openrouter", {
+      type: "api",
+      key: "sk-test",
+    })
   })
 
   it("validates the provider instance id and cwd query before touching the hub", async () => {
@@ -177,7 +246,9 @@ describe("provider routes", () => {
   })
 
   it("reports an OpenRouter catalog failure instead of an empty catalog", async () => {
-    const errorLog = vi.spyOn(logger, "error").mockImplementation(() => undefined)
+    const errorLog = vi
+      .spyOn(logger, "error")
+      .mockImplementation(() => undefined)
     openRouterMocks.getOpenRouterCatalogModels.mockRejectedValueOnce(
       new Error("openrouter models 401 for key sk-or-revoked")
     )
@@ -197,20 +268,21 @@ describe("provider routes", () => {
   })
 
   it("uses the bounded LM Studio probe response without fetching models twice", async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          data: [
-            { id: " local-model ", extra: "discarded" },
-            { id: "" },
-            { nope: "invalid" },
-          ],
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      ),
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              { id: " local-model ", extra: "discarded" },
+              { id: "" },
+              { nope: "invalid" },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
     )
     vi.stubGlobal("fetch", fetchMock)
     const app = new Hono()
@@ -224,11 +296,12 @@ describe("provider routes", () => {
   })
 
   it("rejects oversized LM Studio responses for every loopback candidate", async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response("{}", {
-        status: 200,
-        headers: { "Content-Length": String(512 * 1024 + 1) },
-      }),
+    const fetchMock = vi.fn(
+      async () =>
+        new Response("{}", {
+          status: 200,
+          headers: { "Content-Length": String(512 * 1024 + 1) },
+        })
     )
     vi.stubGlobal("fetch", fetchMock)
     const app = new Hono()

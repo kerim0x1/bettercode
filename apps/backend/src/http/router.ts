@@ -85,6 +85,16 @@ function buildApiRoutes(
 ): Hono {
   const api = new Hono()
   const keyForIdentity = identityRateLimitKey(state, config)
+  api.use(
+    "/providers/api-keys/:provider/:id/test",
+    rateLimitMiddleware(
+      createRateLimiter({ capacity: 10, refillPerSecond: 0.5 }),
+      {
+        key: keyForIdentity,
+        message: "Too many API key checks. Please wait and try again.",
+      }
+    )
+  )
   // Every accepted call is an outbound request carrying a user secret to a
   // provider; a loop here is either a bug or an abuse vector, never a need.
   api.use(

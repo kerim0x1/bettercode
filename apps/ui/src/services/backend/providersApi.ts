@@ -1,4 +1,10 @@
 import { invoke } from "./runtime"
+import {
+  apiKeyPoolViewSchema,
+  type ApiKeyProvider,
+  type ApiKeyPoolView,
+} from "@betterc0de/schema"
+import type { ProviderCatalogEntry } from "@/types/electron-api"
 import type {
   ModelCapabilities,
   ProviderInstanceSnapshot,
@@ -26,6 +32,39 @@ export interface ProviderStatus {
 }
 
 export const listProviders = () => invoke<string[]>("/providers")
+export const listProviderCatalog = () =>
+  invoke<ProviderCatalogEntry[]>("/providers/catalog")
+
+const keyPath = (provider: ApiKeyProvider, id?: string) =>
+  `/providers/api-keys/${provider}${id ? `/${encodeURIComponent(id)}` : ""}`
+async function keyRequest(
+  path: string,
+  options?: Parameters<typeof invoke>[1]
+): Promise<ApiKeyPoolView> {
+  return apiKeyPoolViewSchema.parse(await invoke(path, options))
+}
+export const listApiKeys = (provider: ApiKeyProvider, signal?: AbortSignal) =>
+  keyRequest(keyPath(provider), { signal })
+export const addApiKey = (
+  provider: ApiKeyProvider,
+  label: string,
+  apiKey: string
+) => keyRequest(keyPath(provider), { method: "POST", body: { label, apiKey } })
+export const editApiKey = (
+  provider: ApiKeyProvider,
+  id: string,
+  patch: { label?: string; enabled?: boolean; apiKey?: string }
+) => keyRequest(keyPath(provider, id), { method: "PATCH", body: patch })
+export const removeApiKey = (provider: ApiKeyProvider, id: string) =>
+  keyRequest(keyPath(provider, id), { method: "DELETE" })
+export const restoreExternalApiKeySource = (provider: ApiKeyProvider) =>
+  keyRequest(keyPath(provider), { method: "DELETE" })
+export const reorderApiKeys = (provider: ApiKeyProvider, ids: string[]) =>
+  keyRequest(`${keyPath(provider)}/order`, { method: "PUT", body: { ids } })
+export const testApiKey = (provider: ApiKeyProvider, id: string) =>
+  keyRequest(`${keyPath(provider, id)}/test`, { method: "POST" })
+export const retryApiKey = (provider: ApiKeyProvider, id: string) =>
+  keyRequest(`${keyPath(provider, id)}/retry`, { method: "POST" })
 
 export interface ApiModel {
   slug: string
@@ -38,6 +77,8 @@ export interface ApiModel {
 }
 
 export const listModels = () => invoke<ApiModel[]>("/models")
+export const listProviderSettingsModels = () =>
+  invoke<ApiModel[]>("/models?includeHidden=1")
 
 export const refreshModels = () =>
   invoke<ApiModel[]>("/providers/refresh-models", {

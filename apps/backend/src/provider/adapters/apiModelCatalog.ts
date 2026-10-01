@@ -9,6 +9,7 @@ import {
   parseAnthropicModelId,
 } from "@betterc0de/schema"
 import type { ModelDefinition } from "../types"
+import { readApiKeyResponseError } from "../../auth/apiKeyPool"
 
 export type ApiCatalogProvider = "anthropic" | "openai" | "grok"
 
@@ -43,7 +44,8 @@ export class ApiModelCatalog {
   async list(
     provider: ApiCatalogProvider,
     apiKey: string | null,
-    force = false
+    force = false,
+    strict = false
   ): Promise<ModelDefinition[]> {
     if (!apiKey?.trim()) return []
     const id = this.cacheId(provider, apiKey)
@@ -51,10 +53,11 @@ export class ApiModelCatalog {
     const cached = this.entries.get(id) ?? this.load(id, provider)
     if (!force && cached && now - cached.fetchedAt < TTL_MS)
       return cached.models
-    if (!force && now < (this.retryAfter.get(id) ?? 0))
+    if (!strict && !force && now < (this.retryAfter.get(id) ?? 0))
       return cached?.models ?? []
     const pending = this.inFlight.get(id)
-    if (pending) return pending
+    if (pending)
+      return strict ? pending : pending.catch(() => cached?.models ?? [])
     const request = this.fetchCatalog(provider, apiKey)
       .then(
         (models) => {
@@ -64,16 +67,16 @@ export class ApiModelCatalog {
           this.save(id, entry)
           return models
         },
-        () => {
+        (error: unknown) => {
           this.retryAfter.set(id, Date.now() + FAILURE_RETRY_MS)
-          return cached?.models ?? []
+          throw error
         }
       )
       .finally(() => {
         this.inFlight.delete(id)
       })
     this.inFlight.set(id, request)
-    return request
+    return strict ? request : request.catch(() => cached?.models ?? [])
   }
 
   private cacheId(provider: ApiCatalogProvider, apiKey: string): string {
@@ -320,8 +323,9 @@ export class ApiModelCatalog {
       headers,
       signal,
     })
-    if (!response.ok)
-      throw new Error(`Model list failed with ${response.status}`)
+    if (!response.ok) {
+      throw await readApiKeyResponseError(response)
+    }
     const body: unknown = await response.json()
     if (!isRecord(body)) throw new Error("Invalid model list")
     return body

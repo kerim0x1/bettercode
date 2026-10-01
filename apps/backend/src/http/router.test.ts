@@ -76,6 +76,48 @@ function makeState(): AppState {
   } as unknown as AppState
 }
 
+describe("stored API-key probe limits", () => {
+  it("shares the desktop probe budget across all three providers before calling upstream", async () => {
+    const config = makeConfig()
+    const key = { id: "test-key", key: "synthetic-secret" }
+    const view = {
+      provider: "openai",
+      keys: [{ ...key, status: "untested", retryAt: null }],
+    }
+    const app = buildApp(config, {
+      ...makeState(),
+      config,
+      apiKeyPool: {
+        requireKey: () => key,
+        view: () => view,
+        version: () => 0,
+        success: vi.fn(),
+      },
+    } as unknown as AppState)
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }))
+    vi.stubGlobal("fetch", fetchMock)
+    try {
+      for (let index = 0; index < 10; index++) {
+        const provider = ["anthropic", "openai", "grok"][index % 3]
+        const response = await app.request(
+          `/api/v1/providers/api-keys/${provider}/test-key/test`,
+          { method: "POST", headers: { Authorization: "Bearer secret" } }
+        )
+        expect(response.status).toBe(200)
+      }
+      const blocked = await app.request(
+        "/api/v1/providers/api-keys/openai/test-key/test",
+        { method: "POST", headers: { Authorization: "Bearer secret" } }
+      )
+      expect(blocked.status).toBe(429)
+      expect(blocked.headers.get("Retry-After")).not.toBeNull()
+      expect(fetchMock).toHaveBeenCalledTimes(10)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
 describe("buildApp HTTP metrics", () => {
   it("enables model-selected delegation in an ordinary chat without creating a team chat or exposing instructions in history", async () => {
     const createThread = vi.fn()

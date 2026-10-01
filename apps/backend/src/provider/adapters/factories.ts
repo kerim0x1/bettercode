@@ -4,11 +4,13 @@ import type { ModelDefinition } from "../types"
 import { LM_STUDIO_BASE_URL } from "../../constants"
 import type { DirectMcpAdapterOptions } from "../agent-loop/direct-mcp-tools"
 import { ApiModelCatalog } from "./apiModelCatalog"
+import type { ApiKeyPool } from "../../auth/apiKeyPool"
 
 export function makeOpenAiAdapter(
   apiKey: string | null,
   agentTools: DirectMcpAdapterOptions = {},
-  modelCatalog = new ApiModelCatalog()
+  modelCatalog = new ApiModelCatalog(),
+  apiKeyPool?: ApiKeyPool
 ): ProviderAdapter {
   const defaultModels: ModelDefinition[] = []
   return new OpenAiCompatAdapter(
@@ -19,14 +21,16 @@ export function makeOpenAiAdapter(
     },
     apiKey,
     agentTools,
-    modelCatalog
+    modelCatalog,
+    apiKeyPool
   )
 }
 
 export function makeGrokAdapter(
   apiKey: string | null,
   agentTools: DirectMcpAdapterOptions = {},
-  modelCatalog = new ApiModelCatalog()
+  modelCatalog = new ApiModelCatalog(),
+  apiKeyPool?: ApiKeyPool
 ): ProviderAdapter {
   return new OpenAiCompatAdapter(
     {
@@ -37,7 +41,8 @@ export function makeGrokAdapter(
     },
     apiKey,
     agentTools,
-    modelCatalog
+    modelCatalog,
+    apiKeyPool
   )
 }
 
