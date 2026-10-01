@@ -526,7 +526,10 @@ export function wireProviders(
       }),
     afterTurn: finalizeCheckpointTurn,
   })
-  const chatHelpers = new ChatLlmHelpers({ settings: () => settings.get() })
+  const chatHelpers = new ChatLlmHelpers({
+    settings: () => settings.get(),
+    apiKeyPool,
+  })
   const worktrees = new WorktreeManager(db, eventStore, worktreeRegistry)
   const checkpointRefCleanupStore = new CheckpointRefCleanupStore(db)
   const checkpointRefOperationGate = new CheckpointRefOperationGate()

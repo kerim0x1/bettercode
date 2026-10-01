@@ -10,6 +10,7 @@ import { HttpError } from "../errors"
 import { logger } from "../observability/logger"
 import type { Settings } from "../settings/schema"
 import { resolveAnthropicKey, resolveOpenAiKey } from "../auth/keyResolution"
+import type { ApiKeyPool } from "../auth/apiKeyPool"
 import { deriveProviderInstanceConfigs } from "../provider/runtime/ProviderInstanceManager"
 import {
   buildBranchNamePrompt,
@@ -89,6 +90,7 @@ const QUESTIONS_SYSTEM_PROMPT =
 
 export interface ChatLlmHelperDeps {
   settings: () => Settings
+  apiKeyPool?: ApiKeyPool
 }
 
 export class ChatLlmHelpers {
@@ -115,10 +117,16 @@ export class ChatLlmHelpers {
   ): Promise<CommitMessageGenerationResult> {
     const { prompt, schemaName } = buildCommitMessagePrompt(input)
     const settings = this.deps.settings()
-    const candidates = resolveCommitMessageModelSelections(settings, input.modelSelection)
+    const candidates = resolveCommitMessageModelSelections(
+      settings,
+      input.modelSelection
+    )
     if (candidates.length === 0) {
-      throw new HttpError(422,
-        "Enable Codex CLI or Claude CLI in Providers to generate a commit summary. Your draft was kept.", "commit_generation_unavailable")
+      throw new HttpError(
+        422,
+        "Enable Codex CLI or Claude CLI in Providers to generate a commit summary. Your draft was kept.",
+        "commit_generation_unavailable"
+      )
     }
 
     const deadline = Date.now() + COMMIT_MESSAGE_TIMEOUT_MS
@@ -139,16 +147,22 @@ export class ChatLlmHelpers {
           includeBranch: input.includeBranch,
         })
       } catch (err) {
-        logger.warn({
-          err: err instanceof Error ? err.message : String(err),
-          providerInstanceId: modelSelection.instanceId,
-          model: modelSelection.model,
-        }, "Commit summary CLI failed; trying next candidate")
+        logger.warn(
+          {
+            err: err instanceof Error ? err.message : String(err),
+            providerInstanceId: modelSelection.instanceId,
+            model: modelSelection.model,
+          },
+          "Commit summary CLI failed; trying next candidate"
+        )
       }
     }
 
-    throw new HttpError(422,
-      "Could not generate a commit summary through Codex CLI or Claude CLI. Check the CLI connection in Providers and try again. Your draft was kept.", "commit_generation_unavailable")
+    throw new HttpError(
+      422,
+      "Could not generate a commit summary through Codex CLI or Claude CLI. Check the CLI connection in Providers and try again. Your draft was kept.",
+      "commit_generation_unavailable"
+    )
   }
 
   async generatePrContent(
@@ -212,19 +226,26 @@ export class ChatLlmHelpers {
 
   /** A provider handoff must never silently use a different provider/model. */
   async generateProviderHandoffSummary(
-    input: ThreadContextSummaryPromptInput & { readonly modelSelection: ModelSelection },
+    input: ThreadContextSummaryPromptInput & {
+      readonly modelSelection: ModelSelection
+    }
   ): Promise<ThreadContextSummaryGenerationResult> {
     const { prompt, schemaName } = buildThreadContextSummaryPrompt(input)
     const result = await runNativeTextGeneration({
       settings: this.deps.settings(),
       modelSelection: input.modelSelection,
-      prompt: prompt + "\nThis is a handoff to another provider. Preserve the user's goal, constraints, decisions, changed files, verified results, unresolved failures, and precise next steps. Do not execute tools or continue the task.",
+      prompt:
+        prompt +
+        "\nThis is a handoff to another provider. Preserve the user's goal, constraints, decisions, changed files, verified results, unresolved failures, and precise next steps. Do not execute tools or continue the task.",
       schemaName,
       // The transcript contains the context; do not grant workspace access.
       cwd: null,
     })
-    const summary = normalizeGeneratedThreadContextSummary(result ?? "", { fallbackSummary: "" }).summary.trim()
-    if (!summary) throw new Error("The previous provider returned no handoff summary.")
+    const summary = normalizeGeneratedThreadContextSummary(result ?? "", {
+      fallbackSummary: "",
+    }).summary.trim()
+    if (!summary)
+      throw new Error("The previous provider returned no handoff summary.")
     return { summary }
   }
 
@@ -319,19 +340,35 @@ export class ChatLlmHelpers {
     maxTokens: number
   }): Promise<string | null> {
     const settings = this.deps.settings()
+    const pool = this.deps.apiKeyPool
     const anthropic = resolveAnthropicKey(settings)
-    if (anthropic) {
+    if (
+      anthropic &&
+      settings.providers.anthropic?.enabled !== false &&
+      (!pool || pool.isReady("anthropic"))
+    ) {
       try {
-        const client = new Anthropic({ apiKey: anthropic.key })
-        const res = await client.messages.create(
-          {
-            model: ANTHROPIC_HELPER_MODEL,
-            max_tokens: args.maxTokens,
-            system: args.system,
-            messages: [{ role: "user", content: args.user }],
-          },
-          { signal: AbortSignal.timeout(HELPER_MODEL_TIMEOUT_MS) }
-        )
+        const signal = AbortSignal.timeout(HELPER_MODEL_TIMEOUT_MS)
+        const request = (apiKey: string) =>
+          new Anthropic({
+            apiKey,
+            ...(pool
+              ? { maxRetries: 0, timeout: HELPER_MODEL_TIMEOUT_MS }
+              : {}),
+          }).messages.create(
+            {
+              model: ANTHROPIC_HELPER_MODEL,
+              max_tokens: args.maxTokens,
+              system: args.system,
+              messages: [{ role: "user", content: args.user }],
+            },
+            { signal }
+          )
+        const res = pool
+          ? await pool
+              .snapshot("anthropic")
+              .run((key) => request(key.key), signal)
+          : await request(anthropic.key)
         const text = res.content
           .flatMap((b) => (b.type === "text" ? [b.text] : []))
           .join("")
@@ -345,21 +382,34 @@ export class ChatLlmHelpers {
     }
 
     const openai = resolveOpenAiKey(settings)
-    if (openai) {
+    if (
+      openai &&
+      settings.providers.openai?.enabled !== false &&
+      (!pool || pool.isReady("openai"))
+    ) {
       try {
-        const client = new OpenAI({ apiKey: openai.key })
-        const res = await client.chat.completions.create(
-          {
-            model: OPENAI_HELPER_MODEL,
-            // The gpt-5 family rejects `max_tokens` on chat completions.
-            max_completion_tokens: args.maxTokens,
-            messages: [
-              { role: "system", content: args.system },
-              { role: "user", content: args.user },
-            ],
-          },
-          { signal: AbortSignal.timeout(HELPER_MODEL_TIMEOUT_MS) }
-        )
+        const signal = AbortSignal.timeout(HELPER_MODEL_TIMEOUT_MS)
+        const request = (apiKey: string) =>
+          new OpenAI({
+            apiKey,
+            ...(pool
+              ? { maxRetries: 0, timeout: HELPER_MODEL_TIMEOUT_MS }
+              : {}),
+          }).chat.completions.create(
+            {
+              model: OPENAI_HELPER_MODEL,
+              // The gpt-5 family rejects `max_tokens` on chat completions.
+              max_completion_tokens: args.maxTokens,
+              messages: [
+                { role: "system", content: args.system },
+                { role: "user", content: args.user },
+              ],
+            },
+            { signal }
+          )
+        const res = pool
+          ? await pool.snapshot("openai").run((key) => request(key.key), signal)
+          : await request(openai.key)
         const text = res.choices?.[0]?.message?.content ?? ""
         if (text.trim()) return text
       } catch (err) {
@@ -471,17 +521,29 @@ export function resolveCommitMessageModelSelections(
   const configs = deriveProviderInstanceConfigs(settings)
   // Keep the chosen provider/account, but do not inherit an expensive chat
   // model, stale helper model, or workspace API provider for this small task.
-  const preferred = explicit?.instanceId ?? readStoredTextGenerationModelSelection(settings)?.instanceId
-  const nativeConfigs = configs.filter((config) =>
-    config.enabled !== false && nativeCodexOrClaudeProviderForDriver(config.driver) !== null
+  const preferred =
+    explicit?.instanceId ??
+    readStoredTextGenerationModelSelection(settings)?.instanceId
+  const nativeConfigs = configs.filter(
+    (config) =>
+      config.enabled !== false &&
+      nativeCodexOrClaudeProviderForDriver(config.driver) !== null
   )
-  nativeConfigs.sort((a, b) => Number(b.instanceId === preferred) - Number(a.instanceId === preferred))
+  nativeConfigs.sort(
+    (a, b) =>
+      Number(b.instanceId === preferred) - Number(a.instanceId === preferred)
+  )
   return nativeConfigs.map((config) => {
     const provider = nativeCodexOrClaudeProviderForDriver(config.driver)!
     return {
       instanceId: config.instanceId,
       model: COMMIT_MESSAGE_CLI_MODELS[provider],
-      options: [{ id: provider === "codex" ? "reasoningEffort" : "effort", value: "low" }],
+      options: [
+        {
+          id: provider === "codex" ? "reasoningEffort" : "effort",
+          value: "low",
+        },
+      ],
     }
   })
 }
@@ -732,7 +794,7 @@ function defaultGitTextGenerationModelForDriver(driver: string): string {
     nativeProvider ??
     (normalized === "claudeagent" || normalized === "anthropiccli"
       ? "claude"
-    : isBetterC0deDriver(driver)
+      : isBetterC0deDriver(driver)
         ? "betterc0de"
         : normalized)
   return Object.hasOwn(DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER, provider)

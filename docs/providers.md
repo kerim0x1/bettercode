@@ -29,6 +29,8 @@ Each request tries a key at most once. SDK retries are disabled for these manage
 
 Recovery continues the existing agent tool loop. It does not reopen the MCP session or repeat executed tools. After any response event arrives, a failure ends that request and preserves the partial output. An interruption stops recovery. Active turns keep their credential snapshot; settings changes apply to subsequent turns.
 
+Short API helper requests, such as chat titles and question extraction, also use the saved backup keys and respect the API provider's enabled state. Their existing provider-selection order and overall timeout stay the same.
+
 Key health is kept in memory and refreshed while the settings screen is open. Restarting the backend clears that health history. Removed or replaced credentials cannot update their replacement's status when an older request finishes.
 
 ## Models and CLI accounts
