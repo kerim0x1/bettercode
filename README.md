@@ -21,7 +21,8 @@
   <a href="#download">Download</a> ·
   <a href="https://betterc0de.com/docs">Docs</a> ·
   <a href="https://betterc0de.com/blog">Blog</a> ·
-  <a href="https://discord.gg/bettercode">Discord</a>
+  <a href="https://discord.gg/bettercode">Discord</a> ·
+  <a href="Partnership.md">Partnerships</a>
 </p>
 
 [![BetterC0de website: coding agents, chat, and a shared workspace](assets/betterc0de-website.png)](https://betterc0de.com)
@@ -170,6 +171,10 @@ More cases, including registry/DNS failures and backend start-up timeouts, are i
 Read [Contributing](CONTRIBUTING.md), [Security](SECURITY.md) and the [third-party notices](THIRD_PARTY_NOTICES.md) before submitting changes or distributing a build. The [development guide](docs/development/README.md) covers the repository layout and architecture.
 
 BetterC0de source is released under the MIT License. Third-party terms stay with their owners; see [third-party notices](THIRD_PARTY_NOTICES.md).
+
+## Sponsorship & partnerships
+
+You can sponsor BetterC0de with contributions starting at **$500 USD**. Please read our [partnership guidelines](Partnership.md) before contacting us.
 
 ## Stay connected
 
