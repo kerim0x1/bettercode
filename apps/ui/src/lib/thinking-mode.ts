@@ -18,6 +18,8 @@
  * null so the request payload doesn't carry an effort field.
  */
 
+import { isNineRouterProviderKind } from "@betterc0de/schema"
+
 /** Canonical thinking-mode labels as exposed by the chat toolbar. */
 export const THINKING_MODES = [
   "No Reasoning",
@@ -55,6 +57,10 @@ export function normalizeThinkingMode(
 
   // LM Studio configures reasoning at model runtime, not via request payload.
   if (providerKind === "lmstudio") return null
+
+  // 9Router publishes each model's levels (including adaptive "auto") and
+  // clamps upstream; the model descriptor coercion handles the rest.
+  if (isNineRouterProviderKind(providerKind)) return thinkingMode
 
   // Codex validity is checked against live model metadata later. Other
   // providers retain the conservative Low fallback.

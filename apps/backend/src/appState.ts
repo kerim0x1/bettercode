@@ -55,6 +55,7 @@ export interface AppState {
   readonly worktreeRegistry: WorktreeRegistryQuery
   readonly settings: SettingsService
   readonly apiKeyPool?: import("./auth/apiKeyPool").ApiKeyPool
+  readonly nineRouter?: import("./provider/ninerouter/service").NineRouterService
   readonly providers: ProviderService
   readonly providerRegistry: ProviderAdapterRegistry
   readonly threads: ThreadService

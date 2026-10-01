@@ -56,6 +56,8 @@ import {
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input"
 import { ComposerSubmit } from "@/components/chat/composer-submit"
+import { ModelSearchSubmenu } from "@/components/chat/model-search-submenu"
+import { pickerShowsModelSearch } from "@/lib/model-picker-search"
 import {
   SimpleDropdown,
   SimpleDropdownSub,
@@ -125,7 +127,9 @@ export function ComposerMinimalFooter(props: ComposerFooterProps) {
     handleVoiceContextMenu,
   } = props
   const promptInput = usePromptInputController()
-  const planFollowUpActive = hasPendingPlan && !/^\/goal(?:\s|$)/i.test(promptInput.textInput.value.trim())
+  const planFollowUpActive =
+    hasPendingPlan &&
+    !/^\/goal(?:\s|$)/i.test(promptInput.textInput.value.trim())
   const planFollowUpLabel =
     planFollowUpActive && promptInput.textInput.value.trim().length > 0
       ? "Refine"
@@ -211,7 +215,7 @@ export function ComposerMinimalFooter(props: ComposerFooterProps) {
           }
           className="max-h-[350px]"
         >
-          {provider.models.length === 0 ? (
+          {provider.models.length === 0 && !pickerShowsModelSearch(provider) ? (
             // LM Studio (and any other provider whose model list is fetched
             // dynamically) starts with `models: []` — render a placeholder so
             // the entry stays visible in the dropdown instead of being filtered
@@ -223,33 +227,15 @@ export function ComposerMinimalFooter(props: ComposerFooterProps) {
               </span>
             </SimpleDropdownSubItem>
           ) : (
-            (sortedModelsByProviderId.get(provider.id) ?? provider.models).map(
-              (model) => {
-                const isSelected =
-                  selectedProviderId === provider.id &&
-                  selectedModel === model.id
-                return (
-                  <SimpleDropdownSubItem
-                    key={model.id}
-                    onClick={() => {
-                      selectProviderModel(provider, model.id)
-                    }}
-                    active={isSelected}
-                  >
-                    <ProviderIcon
-                      provider={provider}
-                      className="!size-3.5 shrink-0"
-                    />
-                    <span className="flex-1 truncate text-left">
-                      {model.name}
-                    </span>
-                    {isSelected && (
-                      <CheckIcon className="size-3 shrink-0 text-primary" />
-                    )}
-                  </SimpleDropdownSubItem>
-                )
+            <ModelSearchSubmenu
+              provider={provider}
+              models={
+                sortedModelsByProviderId.get(provider.id) ?? provider.models
               }
-            )
+              selectedProviderId={selectedProviderId}
+              selectedModel={selectedModel}
+              onSelect={(modelId) => selectProviderModel(provider, modelId)}
+            />
           )}
         </SimpleDropdownSub>
       )
@@ -386,7 +372,6 @@ export function ComposerMinimalFooter(props: ComposerFooterProps) {
                 Mode chip in the input row — how an agent is allowed to act is
                 decided as often as which mode it runs in, and it was two
                 clicks deep with no indication of the current setting. */}
-
           </SimpleDropdown>
         </div>
 
@@ -441,10 +426,7 @@ export function ComposerMinimalFooter(props: ComposerFooterProps) {
                   permissionLevel === "bypass" && "text-destructive"
                 )}
               >
-                <PermissionChipIcon
-                  className="size-3.5"
-                  strokeWidth={1.75}
-                />
+                <PermissionChipIcon className="size-3.5" strokeWidth={1.75} />
                 <span className="text-[12.5px] @max-[400px]:hidden">
                   {permissionLabel}
                 </span>

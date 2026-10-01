@@ -19,6 +19,7 @@ export type CanonicalProviderKindAlias =
   | "grok"
   | "google"
   | "lmstudio"
+  | "ninerouter"
 
 export function compactProviderAlias(value: string | undefined): string {
   return (value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "")
@@ -71,6 +72,9 @@ export function canonicalProviderKindAlias(
     case "google":
     case "lmstudio":
       return key
+    case "ninerouter":
+    case "9router":
+      return "ninerouter"
     default:
       return null
   }

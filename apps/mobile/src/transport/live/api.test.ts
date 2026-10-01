@@ -356,6 +356,58 @@ describe("mobile HTTP contracts", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it("reads the desktop's 9Router connections, and none from a desktop without the route", async () => {
+    const view = {
+      enabled: true,
+      connections: [
+        {
+          id: "laptop",
+          name: "Laptop",
+          baseUrl: "",
+          dashboardUrl: "",
+          enabled: true,
+          tokenSaver: true,
+          secret: { configured: false, storage: "encrypted" },
+          customModels: [],
+          hiddenModels: [],
+          status: {
+            state: "online",
+            message: null,
+            version: null,
+            latestVersion: null,
+            latencyMs: 9,
+            modelCount: 1,
+            checkedAt: 1,
+          },
+          models: [
+            {
+              slug: "cc/claude-opus-5-5",
+              name: "Claude Opus 5.5",
+              tier: "Claude Code",
+              isCustom: false,
+              hidden: false,
+            },
+          ],
+        },
+      ],
+    }
+    const fetchMock = stubFetch(
+      json(view),
+      json({ error: "Not Found" }, { status: 404 }),
+      json({ error: "boom" }, { status: 500 })
+    )
+    const api = createLiveApi(connection(fetchMock))
+    expect(await api.getNineRouter()).toEqual(view)
+    expect(fetchMock.mock.calls[0]![0]).toBe(
+      "http://localhost:4321/api/v1/providers/ninerouter"
+    )
+    expect(await api.getNineRouter()).toEqual({
+      enabled: false,
+      connections: [],
+    })
+    await expect(api.getNineRouter()).rejects.toMatchObject({ status: 500 })
+  })
+
   it("accepts empty 204 thread writes", async () => {
     const fetchMock = stubFetch(new Response(null, { status: 204 }))
     await expect(

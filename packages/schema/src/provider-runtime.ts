@@ -50,6 +50,8 @@ export const providerKindSchema = z.enum([
   "grok_cli",
   "google",
   "lmstudio",
+  // 9Router: OpenAI-compatible router, one or more named connections.
+  "ninerouter",
 ])
 export type ProviderKind = z.infer<typeof providerKindSchema>
 
@@ -652,7 +654,10 @@ const turnProposedCompletedPayloadSchema = z.object({
 const turnDiffEditSchema = z.object({
   path: z.string().min(1),
   operation: z.enum(["write", "edit"]),
-  preimageHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  preimageHash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .nullable(),
   resultHash: z.string().regex(/^[a-f0-9]{64}$/),
   patchComplete: z.boolean(),
 })
@@ -1280,7 +1285,10 @@ export interface ProviderAdapterShape {
   }): Promise<ReadonlyArray<ProviderCatalogEntry>>
   invalidateMetadata?(input?: { readonly cwd?: string | null }): void
   /** Checked under turn admission. True restarts the idle runtime with its resume cursor before sending. */
-  needsSessionConfigurationRefresh?(input: { readonly threadId: ThreadId; readonly cwd?: string | null }): Promise<boolean>
+  needsSessionConfigurationRefresh?(input: {
+    readonly threadId: ThreadId
+    readonly cwd?: string | null
+  }): Promise<boolean>
   startSession(input: {
     threadId: ThreadId
     cwd?: string | null

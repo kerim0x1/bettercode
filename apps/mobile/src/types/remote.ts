@@ -1,6 +1,7 @@
 import type {
   ChatMessage,
   ChatThread,
+  NineRouterProviderView,
   PermissionUpdate,
   ThreadActivity,
   ProviderInstanceSnapshot,
@@ -10,7 +11,7 @@ import type {
   RemoteProtocol,
 } from "@betterc0de/schema/remote-protocol"
 
-export type { ChatMessage, ChatThread, ThreadActivity }
+export type { ChatMessage, ChatThread, NineRouterProviderView, ThreadActivity }
 export type { RemoteAccessLevel, RemoteProtocol }
 
 export interface RemoteSessionSummary {
@@ -114,6 +115,11 @@ export interface ModelOption {
   providerLabel: string
   modelId: string
   modelLabel: string
+  /**
+   * The model's group inside a router ("Claude Code", "Combos" in 9Router),
+   * shown beside its id. Absent for providers that do not group models.
+   */
+  modelGroup?: string
   capabilities: NonNullable<ProviderModel["capabilities"]> | null
 }
 

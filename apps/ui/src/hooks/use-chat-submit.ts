@@ -34,6 +34,7 @@ import {
   type WorkspaceProjectReference,
 } from "@/services/backend"
 import { resolveProviderTarget } from "@/lib/resolve-provider-target"
+import { wireModelIdForProvider } from "@/lib/wire-model-id"
 import { coerceThinkingModeForModel } from "@/lib/model-capabilities"
 import { useSettingsStore } from "@/lib/settings-store"
 import {
@@ -333,10 +334,10 @@ export function useChatSubmit({
           )
           if (!requireAvailableModel(selectedProvider, selectedModel))
             return false
-          const modelId =
-            target.providerKind !== "openrouter" && selectedModel.includes("/")
-              ? selectedModel.split("/").pop()!
-              : selectedModel
+          const modelId = wireModelIdForProvider(
+            target.providerKind,
+            selectedModel
+          )
           const options =
             getProviderComposerSelection(
               selectedProvider?.id,
@@ -812,12 +813,10 @@ export function useChatSubmit({
         )
           return
         const runtimePath = resolveThreadRuntimePath(activeThread)
-        const effectiveModel = (() => {
-          let m = turnModel
-          if (target.providerKind !== "openrouter" && m.includes("/"))
-            m = m.split("/").pop()!
-          return m
-        })()
+        const effectiveModel = wireModelIdForProvider(
+          target.providerKind,
+          turnModel
+        )
         // Fast Mode is only meaningful on Codex CLI (`serviceTier: "fast"`)
         // and Claude CLI (`settings.fastMode: true`). On every other
         // provider the backend silently drops the field, so we don't gate

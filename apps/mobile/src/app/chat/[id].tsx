@@ -65,7 +65,7 @@ import {
   photoAttachment,
   type PreparedPhoto,
 } from "@/lib/photos"
-import { modelOptions, preferredModel } from "@/lib/provider-selection"
+import { loadModelOptions, preferredModel } from "@/lib/provider-selection"
 import { remoteErrorMessage } from "@/lib/remote-errors"
 import {
   useAppStore,
@@ -237,11 +237,9 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!api || !thread || !threadId) return
     let cancelled = false
-    void api
-      .listProviderInstances(threadRoot)
-      .then((instances) => {
+    void loadModelOptions(api, threadRoot)
+      .then((nextOptions) => {
         if (cancelled) return
-        const nextOptions = modelOptions(instances)
         setOptions(nextOptions)
         // Read the selection at resolve time instead of depending on it:
         // storing the freshly built option object would change `selected`

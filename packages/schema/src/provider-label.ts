@@ -25,6 +25,8 @@ const providerLabels: Record<string, string> = {
   openai: "OpenAI",
   BetterC0de: "BetterC0de",
   openrouter: "OpenRouter",
+  ninerouter: "9Router",
+  "9router": "9Router",
 }
 
 export function formatProviderActivityLabel(
@@ -59,6 +61,7 @@ function inferProviderKind(providerInstanceId: string | undefined) {
     return "betterc0de"
   if (key.includes("BetterC0de")) return "betterc0de"
   if (key.includes("openrouter")) return "openrouter"
+  if (key.includes("ninerouter") || key.includes("9router")) return "ninerouter"
   if (key.includes("lmstudio")) return "lmstudio"
   if (key.includes("openai")) return "openai"
   // Must run before the bare "grok" check — the CLI is a distinct kind.

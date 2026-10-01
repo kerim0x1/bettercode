@@ -26,6 +26,7 @@ import type { ChatRequestBody, RemoteApi } from "../types"
 import {
   DEMO_ENVIRONMENT_ID,
   DEMO_FILES,
+  DEMO_NINEROUTER,
   DEMO_PROJECTS,
   DEMO_PROVIDER,
   DEMO_PROVIDER_INSTANCES,
@@ -286,6 +287,7 @@ export class DemoBackend {
         delete this.activities[threadId]
       },
       listProviderInstances: async () => copy(DEMO_PROVIDER_INSTANCES),
+      getNineRouter: async () => copy(DEMO_NINEROUTER),
       goal: async () => ({ goal: null }),
       sendMessage: async (body) => this.send(body),
       interrupt: async ({ threadId }) => {

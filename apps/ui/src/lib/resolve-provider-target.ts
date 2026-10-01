@@ -1,3 +1,4 @@
+import { isNineRouterProviderKind } from "@betterc0de/schema"
 import { getSettings } from "@/services/backend"
 import type { OpenAiTransport } from "@/lib/provider-types"
 
@@ -36,6 +37,16 @@ export async function resolveProviderTarget(
     return { providerKind, openaiTransport, providerInstanceId }
   }
 
+  // 9Router chooses the upstream itself; the selected connection travels as
+  // the instance id and its `account/model` ids must never reach OpenRouter.
+  if (isNineRouterProviderKind(providerKind)) {
+    return {
+      providerKind: "ninerouter",
+      openaiTransport: null,
+      providerInstanceId,
+    }
+  }
+
   type ProviderKeys = Record<string, { api_key?: string } | undefined>
   let keys: Record<string, string | null> = {}
   try {
@@ -49,10 +60,13 @@ export async function resolveProviderTarget(
       openrouter: providers.openrouter?.api_key || null,
       deepseek: providers.deepseek?.api_key || null,
     }
-  } catch { console.warn("Failed to load provider settings for key resolution") }
+  } catch {
+    console.warn("Failed to load provider settings for key resolution")
+  }
 
   // If direct provider has a key, use it
-  if (keys[providerKind]) return { providerKind, openaiTransport, providerInstanceId }
+  if (keys[providerKind])
+    return { providerKind, openaiTransport, providerInstanceId }
 
   // CLI providers always work (no key needed) — but only the CLI-based ones.
   // "claude" is the native builtin (replaces the retired anthropic-claude
@@ -77,7 +91,11 @@ export async function resolveProviderTarget(
 
   // Fallback: if OpenRouter has a key and model has a slash ID, reroute
   if (keys.openrouter && modelId.includes("/"))
-    return { providerKind: "openrouter", openaiTransport: null, providerInstanceId: null }
+    return {
+      providerKind: "openrouter",
+      openaiTransport: null,
+      providerInstanceId: null,
+    }
 
   // No key available — send anyway, backend will error with helpful message
   return { providerKind, openaiTransport, providerInstanceId }

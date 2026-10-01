@@ -1,5 +1,10 @@
 import { anthropicSupportsExtendedEffort } from "./anthropic-model-family"
 import type { ModelCapabilities } from "./model-selection"
+import {
+  isNineRouterProviderKind,
+  nineRouterThinkingLabel,
+  nineRouterThinkingLevels,
+} from "./ninerouter"
 
 export interface ModelCapabilityInput {
   readonly providerKind: string
@@ -14,6 +19,8 @@ export interface ModelThinkingOption {
 // Provider descriptors are sets of supported values, not an ordered UI scale.
 // Grok advertises these in descending order; sliders must increase to the right.
 const EFFORT_ORDER: Readonly<Record<string, number>> = {
+  // 9Router's adaptive mode leaves the depth to the model; it leads the menu.
+  auto: -1,
   none: 0,
   minimal: 1,
   low: 2,
@@ -37,11 +44,13 @@ export function modelThinkingOptions(
   )
   if (descriptor?.type !== "select" || descriptor.options.length === 0)
     return getFallbackThinkingOptions(input)
+  const nineRouter = isNineRouterProviderKind(input.providerKind)
   return [
     ...(input.modelId === "claude-opus-5-5" ||
     descriptor.options.some((option) => option.id === "none")
       ? []
-      : [{ mode: null, label: "Off" }]),
+      : // A 9Router request without an effort uses the router's own default.
+        [{ mode: null, label: nineRouter ? "Router default" : "Off" }]),
     ...[...descriptor.options]
       .sort(
         (a, b) =>
@@ -122,6 +131,18 @@ function getFallbackThinkingOptions(
 ): ReadonlyArray<ModelThinkingOption> {
   const providerKind = input.providerKind.toLowerCase()
   const model = input.modelId.toLowerCase()
+  if (isNineRouterProviderKind(providerKind)) {
+    // Catalog models always carry descriptors; an empty list means 9Router
+    // reported no reasoning. Custom ids get the generic ladder, which 9Router
+    // clamps to what the routed model supports.
+    if (input.capabilities?.optionDescriptors) return []
+    return (nineRouterThinkingLevels(input.modelId, null) ?? []).map(
+      (level) => ({
+        mode: effortIdToThinkingMode(level),
+        label: nineRouterThinkingLabel(level),
+      })
+    )
+  }
   // Codex advertises its real ladder through `model/list`; this is only the
   // cold-start fallback. It used to offer "Off" alone, which silently
   // discarded the user's reasoning preference and displayed Codex as having

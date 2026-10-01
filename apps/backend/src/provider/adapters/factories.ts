@@ -5,6 +5,14 @@ import { LM_STUDIO_BASE_URL } from "../../constants"
 import type { DirectMcpAdapterOptions } from "../agent-loop/direct-mcp-tools"
 import { ApiModelCatalog } from "./apiModelCatalog"
 import type { ApiKeyPool } from "../../auth/apiKeyPool"
+import type { Settings } from "../../settings/schema"
+import {
+  NINEROUTER_KEYLESS_BEARER,
+  listNineRouterConnections,
+  nineRouterRequestHeaders,
+  pickNineRouterConnection,
+} from "../ninerouter/connections"
+import { describeNineRouterError } from "../ninerouter/errors"
 
 export function makeOpenAiAdapter(
   apiKey: string | null,
@@ -75,4 +83,42 @@ export function makeLmStudioAdapter(
     null,
     agentTools
   ) // OpenAiCompatAdapter handles the no-key case for lmstudio.
+}
+
+/**
+ * 9Router: one adapter, many named connections. Each turn runs on the
+ * connection the renderer selected (`provider_instance_id`), read fresh from
+ * settings so edits apply to the next turn without rebuilding the adapter.
+ */
+export function makeNineRouterAdapter(
+  getSettings: () => Settings,
+  agentTools: DirectMcpAdapterOptions = {}
+): ProviderAdapter {
+  return new OpenAiCompatAdapter(
+    {
+      providerKind: "ninerouter",
+      displayName: "9Router",
+      defaultModels: [], // Per-connection catalogs live in NineRouterService.
+      resolveTurnTarget: (input) => {
+        const connection = pickNineRouterConnection(
+          getSettings(),
+          input.provider_instance_id
+        )
+        return {
+          baseUrl: connection.baseUrl,
+          apiKey: connection.apiKey ?? NINEROUTER_KEYLESS_BEARER,
+          headers: nineRouterRequestHeaders(connection),
+          describeError: (error) =>
+            describeNineRouterError(error, connection, input.model_id),
+        }
+      },
+      isConfigured: () => listNineRouterConnections(getSettings()).length > 0,
+      authMeta: () => ({
+        authType: "local-server",
+        hint: "Add a 9Router connection in Settings → Providers → 9Router (default http://localhost:20128/v1).",
+      }),
+    },
+    null,
+    agentTools
+  )
 }

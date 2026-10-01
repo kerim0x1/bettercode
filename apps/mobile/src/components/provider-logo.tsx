@@ -1,4 +1,4 @@
-import Svg, { Path } from "react-native-svg"
+import Svg, { Circle, Path } from "react-native-svg"
 import { Terminal } from "lucide-react-native"
 import { colors } from "@/design/theme"
 
@@ -7,7 +7,8 @@ import { colors } from "@/design/theme"
  * mark (same SVG paths as apps/ui/public/icons/providers/*.svg) or the
  * desktop's terminal-icon fallback for unknown providers. The OpenAI knot is
  * drawn slightly larger than the Claude spark at the same nominal size, just
- * like the desktop sizing rule.
+ * like the desktop sizing rule. The 9Router mark is drawn in the text color,
+ * as the desktop inverts its black mark on dark themes.
  */
 
 const CLAUDE_PATH =
@@ -18,6 +19,18 @@ const OPENAI_PATH =
 
 export type ProviderLogoKind = string | null | undefined
 
+/** Which brand mark a provider kind shows; `null` for the terminal fallback. */
+export function providerLogoMark(
+  kind: ProviderLogoKind
+): "ninerouter" | "claude" | "openai" | null {
+  const key = (kind ?? "").toLowerCase()
+  if (key.includes("ninerouter") || key.includes("9router")) return "ninerouter"
+  if (key.includes("claude") || key.includes("anthropic")) return "claude"
+  if (key === "codex" || key.includes("openai") || key.includes("gpt"))
+    return "openai"
+  return null
+}
+
 export function ProviderLogo({
   kind,
   size = 15,
@@ -25,15 +38,51 @@ export function ProviderLogo({
   kind: ProviderLogoKind
   size?: number
 }) {
-  const key = (kind ?? "").toLowerCase()
-  if (key.includes("claude") || key.includes("anthropic")) {
+  const mark = providerLogoMark(kind)
+  if (mark === "ninerouter") {
+    return (
+      <Svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        testID="provider-logo-ninerouter"
+      >
+        <Circle
+          cx={11}
+          cy={8.25}
+          r={4.6}
+          fill="none"
+          stroke={colors.text}
+          strokeWidth={2.6}
+        />
+        <Path
+          d="M15.6 8.25V12.6C15.6 17.4 12.7 20.4 8.4 20.4"
+          fill="none"
+          stroke={colors.text}
+          strokeWidth={2.6}
+          strokeLinecap="round"
+        />
+        <Circle cx={19.6} cy={4.4} r={1.7} fill={colors.text} />
+        <Circle cx={19.6} cy={12.6} r={1.7} fill={colors.text} />
+        <Path
+          d="M15.6 8.25H17.4M17.4 8.25V4.4H18.2M17.4 8.25V12.6H18.2"
+          fill="none"
+          stroke={colors.text}
+          strokeWidth={1.3}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </Svg>
+    )
+  }
+  if (mark === "claude") {
     return (
       <Svg width={size} height={size} viewBox="0 0 24 24">
         <Path fill="#D97757" d={CLAUDE_PATH} />
       </Svg>
     )
   }
-  if (key === "codex" || key.includes("openai") || key.includes("gpt")) {
+  if (mark === "openai") {
     const openAiSize = size + 2
     return (
       <Svg width={openAiSize} height={openAiSize} viewBox="0 0 40 40">

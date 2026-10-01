@@ -671,6 +671,7 @@ export async function dispatchChatTurn(
             thread_id: body.thread_id,
             message: orchestrated.message,
             model_id: body.model_id,
+            provider_instance_id: effectiveProviderInstanceId,
             reasoning_effort: body.reasoning_effort,
             chat_mode: body.chat_mode,
             app_mode: body.app_mode,

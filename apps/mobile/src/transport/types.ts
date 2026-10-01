@@ -12,6 +12,7 @@ import type {
   ChatThread,
   DirectoryResult,
   FileSearchResult,
+  NineRouterProviderView,
   ProjectSummary,
   ProviderInstance,
   RemoteBootstrap,
@@ -117,6 +118,11 @@ export interface RemoteApi {
     turnCount: number
   ): Promise<HttpContractResponse<"revertThreadCheckpoint">>
   listProviderInstances(cwd?: string | null): Promise<ProviderInstance[]>
+  /**
+   * The desktop's 9Router connections and their models, without host
+   * addresses. Desktops from before 9Router support answer with none.
+   */
+  getNineRouter(): Promise<NineRouterProviderView>
   goal(body: ChatRequestBody): Promise<{ goal: ChatThread["goal"] | null }>
   sendMessage(body: ChatRequestBody): Promise<ChatSendResponse>
   interrupt(body: {

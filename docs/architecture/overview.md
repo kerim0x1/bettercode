@@ -141,9 +141,14 @@ HTTP and WebSocket handlers delegate into shared TypeScript services:
   discovery must not persist a provisional fallback. The backend adapters and
   historical conversations remain intact.
 - Claude API-key path uses `@anthropic-ai/sdk` in-process (no subprocess).
-- OpenAI / Grok / OpenRouter / LM Studio share `openaiCompat.ts`, which wraps
-  the official `openai` SDK with a `baseURL` override — one SSE loop for all
-  four providers.
+- OpenAI / Grok / OpenRouter / LM Studio / 9Router share `openaiCompat.ts`,
+  which wraps the official `openai` SDK with a `baseURL` override — one SSE
+  loop for all five providers. 9Router resolves its endpoint per turn: the
+  renderer sends the connection as `provider_instance_id`
+  (`ninerouter:<connection id>`), and `provider/ninerouter/` reads that
+  connection's URL, key and token-saver header from settings. Its model
+  catalogs and health checks live in `provider/ninerouter/` and are served at
+  `/providers/ninerouter`.
 - Provider events are emitted through a global `EventEmitter` bus and
   broadcast to every authenticated WebSocket client as
   `{channel:"provider.runtimeEvent", data:{event_type, thread_id, payload}}`.

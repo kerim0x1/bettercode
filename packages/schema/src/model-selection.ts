@@ -208,6 +208,9 @@ export function normalizeModelSlug(
   const trimmed = model.trim()
   if (!trimmed) return null
 
+  // 9Router ids and combo names are routed verbatim ("opus" may be a combo).
+  if (provider && /^(?:ninerouter|9router)$/i.test(provider.trim()))
+    return trimmed
   const aliasKey = trimmed.toLowerCase()
   const ownAlias = (aliases: Record<string, string>): string | undefined =>
     Object.hasOwn(aliases, aliasKey) ? aliases[aliasKey] : undefined

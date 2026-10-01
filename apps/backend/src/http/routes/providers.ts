@@ -21,6 +21,7 @@ import {
 } from "../checkpointRecoveryFence"
 import { resolveApprovedWorkspaceRoot } from "./workspace"
 import { registerApiKeyRoutes } from "./apiKeys"
+import { registerNineRouterRoutes } from "./ninerouter"
 import { listProviders as listProviderCatalog } from "../../provider/catalog"
 
 const LM_STUDIO_PROBE_TIMEOUT_MS = 1_500
@@ -67,6 +68,7 @@ const validateKeySchema = z.object({
 
 export function registerProvidersRoutes(api: Hono, state: AppState): void {
   registerApiKeyRoutes(api, state)
+  registerNineRouterRoutes(api, state)
   api.get("/providers/catalog", (c) => c.json(listProviderCatalog()))
   api.get("/providers", (c) => c.json(state.providers.listProviders()))
   api.get("/models", async (c) =>

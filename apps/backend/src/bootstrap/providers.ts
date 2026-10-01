@@ -14,9 +14,11 @@ import { ClaudeAgentAdapter } from "../provider/adapters/claudeAgent"
 import {
   makeGrokAdapter,
   makeLmStudioAdapter,
+  makeNineRouterAdapter,
   makeOpenAiAdapter,
   makeOpenRouterAdapter,
 } from "../provider/adapters/factories"
+import { NineRouterService } from "../provider/ninerouter/service"
 import {
   portableMcpServersToAcp,
   createPortableMcpServerResolver,
@@ -250,6 +252,13 @@ export function wireProviders(
   )
 
   providerRegistry.register(makeLmStudioAdapter(directAgentTools))
+
+  // 9Router reads its connections from settings on every turn, so it needs no
+  // entry in the key-update list below.
+  providerRegistry.register(
+    makeNineRouterAdapter(() => settings.get(), directAgentTools)
+  )
+  const nineRouter = new NineRouterService(settings)
 
   const nativeProviderEventLogger = makeEventNdjsonLogger(
     config.providerEventLogPath,
@@ -584,6 +593,7 @@ export function wireProviders(
 
   const state: AppState = {
     apiKeyPool,
+    nineRouter,
     orchestrator,
     config,
     db,

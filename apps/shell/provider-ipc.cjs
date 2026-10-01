@@ -178,6 +178,16 @@ const PROVIDER_CATALOG = [
     ],
   },
   {
+    id: "ninerouter",
+    name: "9Router",
+    description: "Route Claude Code, Codex, Copilot, Kiro and API accounts through one or more 9Router connections.",
+    docsUrl: "https://github.com/decolua/9router",
+    defaultModels: [],
+    authMethods: [
+      { type: "local-server", label: "Router URL", defaultBaseUrl: "http://localhost:20128/v1", hint: "Start 9Router with `npx 9router`; remote routers need an API key from the 9Router dashboard." },
+    ],
+  },
+  {
     id: "lmstudio",
     name: "LM Studio",
     description: "Local model server (OpenAI-compatible). No key required.",

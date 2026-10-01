@@ -65,7 +65,8 @@ export function GettingStartedDialog({
             <h4 className="mb-1 font-semibold">5. Configure providers</h4>
             <p className="text-xs text-muted-foreground">
               Go to Settings &gt; Models to set up API keys for Claude, OpenAI,
-              Grok, and more. You can also use local models via LM Studio.
+              Grok, and more, or connect your 9Router. You can also use local
+              models via LM Studio.
             </p>
           </div>
         </div>

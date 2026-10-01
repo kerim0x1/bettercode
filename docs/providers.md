@@ -39,4 +39,35 @@ Account model lists come from the provider API and stay cached separately for ea
 
 Direct API billing is separate from a ChatGPT, Claude, or Grok subscription. Subscription logins remain under the existing CLI account entries. API-key management does not change the CLI harness, approvals, permissions, or tools.
 
+## 9Router
+
+[9Router](https://github.com/decolua/9router) is a local router that puts Claude Code, Codex, GitHub Copilot, Kiro, Gemini and API-key accounts behind one OpenAI-compatible endpoint. BetterC0de can use several 9Router connections at once, for example the router on your laptop and one on a server.
+
+### Connect a router
+
+1. Start 9Router, for example with `npx 9router`. It listens on `http://localhost:20128` and opens its dashboard.
+2. Open **Settings → Providers → 9Router**. When a router is running on this computer, BetterC0de shows it; choose **Use this router**.
+3. Enter a name and the router URL. `localhost:20128`, the dashboard URL or a tunnel URL all work; BetterC0de uses the `/v1` endpoint.
+4. Paste an API key from the 9Router dashboard (**Keys**). 9Router requires a key for chat requests unless **Require API key** is turned off there. Routers on another machine always need one.
+5. Select **Add and check**. BetterC0de checks the router, reads its version and loads its models.
+
+Each connection shows its status (**Online** with version, response time and model count, **Needs API key**, **Offline**, or **Error**), whether a key is saved, and a link to its dashboard. **Check and reload models** repeats the check. Keys are write-only and encrypted with the other provider keys. A saved key is only sent to its own router: changing a connection's URL requires entering the key again or removing it.
+
+### Models
+
+The model list comes from the router's `/v1/models` and is cached for five minutes per connection. It contains the accounts that are active in 9Router and your combos. In the model picker each connection is its own group; models are grouped by account (**Combos**, **Claude Code**, **Codex**, …) and the list can be searched.
+
+- **Models** on a connection card switches models on or off for the picker.
+- **Custom model** adds any ID 9Router can route, such as a model it does not list or `cx/gpt-5.5(xhigh)`, whose suffix pins the thinking level. You can also type an ID in the picker's search field and choose **Use … as model**.
+
+Model IDs are sent to 9Router unchanged, including the account prefix. 9Router decides which account serves a request; combos fall back across accounts. A paired phone (BetterC0de Remote) lists the same models of reachable connections and runs them through the desktop; router addresses and keys never leave the desktop, and connections can only be managed there.
+
+### Reasoning
+
+The reasoning control offers the levels 9Router reports for each model. Claude and Gemini models start on **Auto (adaptive)**, where the model decides how long to think; you can also choose **Off** or a fixed level up to **Max** where the model supports it. 9Router translates the level for the upstream account and lowers one the model does not support. Reasoning text is shown as the response streams. Models without reasoning have no reasoning control; custom model IDs get the general ladder.
+
+### Token saver and usage
+
+9Router compresses tool output by default to save tokens. Turn off **Token saver** on a connection when agents need exact file contents and command output. Token counts are those 9Router reports; 9Router adds a fixed buffer of about 2,000 tokens to the reported input.
+
 Provider error references: [OpenAI](https://developers.openai.com/api/docs/guides/error-codes), [Anthropic](https://platform.claude.com/docs/en/api/errors), and [xAI](https://docs.x.ai/developers/debugging).

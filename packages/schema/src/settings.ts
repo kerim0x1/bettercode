@@ -10,6 +10,7 @@ import { guardrailRuleSchema } from "./guardrails"
 import { pipelineDefinitionSchema } from "./pipelines"
 import { orchestratorTeamSchema } from "./orchestrator"
 import { storedApiKeysSchema } from "./api-keys"
+import { nineRouterConnectionsSchema } from "./ninerouter"
 export {
   secretPatchSchema,
   secretStateSchema,
@@ -53,6 +54,11 @@ export const providerConfigSchema = z.object({
 
 const optInProviderConfigSchema = providerConfigSchema.extend({
   enabled: z.boolean().default(false),
+})
+
+/** 9Router keeps one entry per named router; each carries its own URL and key. */
+export const nineRouterProviderConfigSchema = providerConfigSchema.extend({
+  connections: nineRouterConnectionsSchema,
 })
 
 export const providerSettingsSchema = z.object({
@@ -122,6 +128,12 @@ export const providerSettingsSchema = z.object({
     enabled: true,
     custom_models: [],
     hidden_models: [],
+  }),
+  ninerouter: nineRouterProviderConfigSchema.default({
+    enabled: true,
+    custom_models: [],
+    hidden_models: [],
+    connections: [],
   }),
 })
 

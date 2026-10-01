@@ -1,8 +1,13 @@
 import { invoke } from "./runtime"
 import {
   apiKeyPoolViewSchema,
+  nineRouterConnectionViewSchema,
+  nineRouterDetectResultSchema,
+  nineRouterProviderViewSchema,
   type ApiKeyProvider,
   type ApiKeyPoolView,
+  type CreateNineRouterConnection,
+  type UpdateNineRouterConnection,
 } from "@betterc0de/schema"
 import type { ProviderCatalogEntry } from "@/types/electron-api"
 import type {
@@ -205,4 +210,63 @@ export const validateProviderKey = (kind: string, apiKey: string) =>
   invoke<{ ok: boolean; valid: boolean; status?: number; error?: string }>(
     "/providers/validate-key",
     { method: "POST", body: { kind, apiKey } }
+  )
+
+// ── 9Router ──────────────────────────────────────────────────────────────
+// Connections are managed by the backend; keys are write-only and never
+// returned. Every response is validated against the shared schema.
+
+async function nineRouterRequest<T>(
+  schema: { parse: (value: unknown) => T },
+  path: string,
+  options?: Parameters<typeof invoke>[1]
+): Promise<T> {
+  return schema.parse(await invoke(path, options))
+}
+
+export const getNineRouter = (
+  options: { refresh?: boolean; includeHidden?: boolean } = {},
+  signal?: AbortSignal
+) => {
+  const query = new URLSearchParams()
+  if (options.refresh) query.set("refresh", "1")
+  if (options.includeHidden) query.set("includeHidden", "1")
+  const suffix = query.size > 0 ? `?${query}` : ""
+  return nineRouterRequest(
+    nineRouterProviderViewSchema,
+    `/providers/ninerouter${suffix}`,
+    { signal }
+  )
+}
+export const detectNineRouter = () =>
+  nineRouterRequest(
+    nineRouterDetectResultSchema,
+    "/providers/ninerouter/detect"
+  )
+export const addNineRouterConnection = (input: CreateNineRouterConnection) =>
+  nineRouterRequest(
+    nineRouterConnectionViewSchema,
+    "/providers/ninerouter/connections",
+    { method: "POST", body: input }
+  )
+export const updateNineRouterConnection = (
+  id: string,
+  patch: UpdateNineRouterConnection
+) =>
+  nineRouterRequest(
+    nineRouterConnectionViewSchema,
+    `/providers/ninerouter/connections/${encodeURIComponent(id)}`,
+    { method: "PATCH", body: patch }
+  )
+export const removeNineRouterConnection = (id: string) =>
+  nineRouterRequest(
+    nineRouterProviderViewSchema,
+    `/providers/ninerouter/connections/${encodeURIComponent(id)}`,
+    { method: "DELETE" }
+  )
+export const testNineRouterConnection = (id: string) =>
+  nineRouterRequest(
+    nineRouterConnectionViewSchema,
+    `/providers/ninerouter/connections/${encodeURIComponent(id)}/test`,
+    { method: "POST" }
   )

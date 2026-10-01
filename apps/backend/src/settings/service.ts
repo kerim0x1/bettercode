@@ -473,6 +473,43 @@ function configuredSecret(value: unknown): boolean {
   return typeof value === "string" && value.length > 0
 }
 
+/**
+ * 9Router connections carry their own key. Keys are matched by connection id,
+ * a redacted `secretState` keeps the stored key, and a URL change must clear
+ * or re-enter the key so a stored credential never follows a new destination.
+ */
+function normalizeNineRouterConnectionsPatch(
+  raw: unknown,
+  current: unknown
+): unknown {
+  if (!Array.isArray(raw)) return raw
+  const currentList = Array.isArray(current) ? current : []
+  return raw.map((entry, index) => {
+    if (!isUnknownRecord(entry)) return entry
+    const previous = currentList.find(
+      (candidate) => isUnknownRecord(candidate) && candidate.id === entry.id
+    )
+    const previousRecord = isUnknownRecord(previous) ? previous : {}
+    if (
+      configuredSecret(previousRecord.api_key) &&
+      changesAnyField(entry, previousRecord, ["base_url"]) &&
+      !explicitlyMutatesSecret(entry.api_key)
+    ) {
+      throw new InvalidSettingsPatchError(
+        `providers.ninerouter.connections.${index} URL cannot change while preserving its stored API key; clear or re-enter the key first`
+      )
+    }
+    return {
+      ...entry,
+      api_key: resolveSecretUpdate(
+        entry.api_key,
+        previousRecord.api_key,
+        `providers.ninerouter.connections.${index}.api_key`
+      ),
+    }
+  })
+}
+
 function changesAnyField(
   patch: UnknownRecord,
   current: UnknownRecord,
@@ -665,6 +702,12 @@ function normalizeSettingsPatch(
                   ),
                 }
               })
+      }
+      if (providerId === "ninerouter" && "connections" in rawConfig) {
+        nextConfig.connections = normalizeNineRouterConnectionsPatch(
+          rawConfig.connections,
+          currentConfig.connections
+        )
       }
       for (const key of PROVIDER_SECRET_KEYS) {
         if (key in rawConfig) {

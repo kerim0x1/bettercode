@@ -10,6 +10,7 @@ export type ProviderKind =
   | "grok"
   | "openrouter"
   | "lmstudio"
+  | "ninerouter"
 
 const PROVIDER_KIND_ALIASES: Record<string, ProviderKind> = {
   openai: "openai",
@@ -26,6 +27,10 @@ const PROVIDER_KIND_ALIASES: Record<string, ProviderKind> = {
   grok: "grok",
   openrouter: "openrouter",
   lmstudio: "lmstudio",
+  ninerouter: "ninerouter",
+  "9router": "ninerouter",
+  "nine-router": "ninerouter",
+  nine_router: "ninerouter",
 }
 
 export function parseProviderKind(raw: string): ProviderKind | null {
@@ -71,6 +76,9 @@ export interface ProviderSendTurnInput {
   thread_id: string
   message: string
   model_id: string
+  /** Named provider instance or connection the renderer selected, when the
+   *  provider has several (9Router connections). */
+  provider_instance_id?: string | null
   reasoning_effort?: string | null
   chat_mode?: string | null
   app_mode?: "agent" | "editor" | "design" | null

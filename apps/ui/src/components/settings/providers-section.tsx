@@ -53,6 +53,7 @@ import type {
 import { handleError } from "@/lib/errors"
 import { SETTINGS_UPDATED_EVENT } from "@/lib/settings-store"
 import { ProviderApiKeys } from "./api-key-settings"
+import { NineRouterSettings } from "./ninerouter-settings"
 import { apiKeyProviderSchema } from "@betterc0de/schema"
 import {
   canOneClickUpdateProviderCandidate,
@@ -375,31 +376,40 @@ export function SettingsProvidersSection() {
             <h3 className="mt-5 text-xs font-medium text-foreground">
               {group.title}
             </h3>
-            {group.items.map((provider) => (
-              <ProviderRow
-                key={provider.id}
-                provider={provider}
-                config={providerSettings[provider.id] ?? {}}
-                authType={authStatus[provider.id]}
-                oauthBusy={!!oauthBusy[provider.id]}
-                keyStatus={keyStatus[provider.id] ?? "idle"}
-                cliStatus={cliStatus[provider.id]}
-                models={[
-                  ...new Set([
-                    ...provider.defaultModels,
-                    ...models
-                      .filter((model) => model.provider === provider.id)
-                      .map((model) => model.slug),
-                  ]),
-                ]}
-                onKeysChanged={() => void refreshSavedSettings()}
-                onRefreshModels={() => void refreshProviderModels(true)}
-                onSaveKey={saveKey}
-                onStartOauth={startOauth}
-                onClearAuth={clearAuth}
-                onRefreshCli={refreshCliStatus}
-              />
-            ))}
+            {group.items.map((provider) =>
+              provider.id === "ninerouter" ? (
+                <NineRouterSettings
+                  key={provider.id}
+                  onToggleProvider={(enabled) =>
+                    saveKey(provider.id, "enabled", enabled)
+                  }
+                />
+              ) : (
+                <ProviderRow
+                  key={provider.id}
+                  provider={provider}
+                  config={providerSettings[provider.id] ?? {}}
+                  authType={authStatus[provider.id]}
+                  oauthBusy={!!oauthBusy[provider.id]}
+                  keyStatus={keyStatus[provider.id] ?? "idle"}
+                  cliStatus={cliStatus[provider.id]}
+                  models={[
+                    ...new Set([
+                      ...provider.defaultModels,
+                      ...models
+                        .filter((model) => model.provider === provider.id)
+                        .map((model) => model.slug),
+                    ]),
+                  ]}
+                  onKeysChanged={() => void refreshSavedSettings()}
+                  onRefreshModels={() => void refreshProviderModels(true)}
+                  onSaveKey={saveKey}
+                  onStartOauth={startOauth}
+                  onClearAuth={clearAuth}
+                  onRefreshCli={refreshCliStatus}
+                />
+              )
+            )}
           </div>
         ))}
       <ProviderInstancesSection

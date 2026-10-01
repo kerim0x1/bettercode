@@ -14,6 +14,7 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 
 ### Added
 
+- **9Router support.** Connect one or more [9Router](https://github.com/decolua/9router) routers (local, server or tunnel) under Settings → Providers → 9Router, with automatic detection of a router on this computer, encrypted write-only keys, live status, version and model checks, and a dashboard link. Each connection's models appear in the picker grouped by account and combos, with search and custom model IDs. Reasoning follows each model's 9Router levels, including adaptive thinking for Claude and Gemini models. Agents keep BetterC0de's tools, MCP servers and approvals, and the phone app lists the same models.
 - Anthropic, OpenAI, and Grok API providers support ordered encrypted backup keys, per-key checks and recovery status, and automatic recovery before a response starts. Provider settings group API access, CLI accounts, and local models and expose account-backed model visibility.
 - Linux AppImages include AppStream metadata with the BetterC0de website image, so the AppImage catalog can show the project overview instead of the first-run onboarding capture.
 - Successful merges to `main` now prepare and tag the next shared version after CI passes, then run the full Release workflow before publishing. The `Unreleased` section becomes that version's release notes.

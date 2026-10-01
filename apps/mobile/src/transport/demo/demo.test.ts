@@ -66,6 +66,11 @@ describe("demo desktop", () => {
       "Add dark mode to the settings screen"
     )
     expect(await transport.api.listProjects()).toHaveLength(2)
+    // Like a fresh install: 9Router is on, with no connection.
+    expect(await transport.api.getNineRouter()).toEqual({
+      enabled: true,
+      connections: [],
+    })
   })
 
   it("streams a reply, asks once to run the tests, and stores the answer", async () => {

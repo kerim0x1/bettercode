@@ -1,10 +1,20 @@
 import { useEffect, useRef } from "react"
-import { getThreadStream, useChatStore, useThreadById, useThreadActivities } from "@/lib/chat-store"
+import {
+  getThreadStream,
+  useChatStore,
+  useThreadById,
+  useThreadActivities,
+} from "@/lib/chat-store"
 import { useMessageQueueStore } from "@/lib/message-queue-store"
 import { useAppPreferences } from "@/hooks/use-app-preferences"
-import { resolveProviderModelThinkingSelection, latestProviderInstanceId, latestProviderContinuationKey } from "@/lib/provider-model-selection"
+import {
+  resolveProviderModelThinkingSelection,
+  latestProviderInstanceId,
+  latestProviderContinuationKey,
+} from "@/lib/provider-model-selection"
 import { sendChatMessage } from "@/services/backend"
 import { resolveProviderTarget } from "@/lib/resolve-provider-target"
+import { wireModelIdForProvider } from "@/lib/wire-model-id"
 import { coerceThinkingModeForModel } from "@/lib/model-capabilities"
 import type { UiProvider } from "@/lib/provider-types"
 import type { AutonomousStopReason, AutonomousTask } from "@/lib/chat/types"
@@ -31,8 +41,7 @@ function formatTaskList(list: AutonomousTask[] | null | undefined): string {
   if (!list || list.length === 0) return ""
   return list
     .map(
-      (t) =>
-        `- [${t.done ? "x" : " "}] ${t.id}: ${t.text.trim() || "(empty)"}`,
+      (t) => `- [${t.done ? "x" : " "}] ${t.id}: ${t.text.trim() || "(empty)"}`
     )
     .join("\n")
 }
@@ -70,33 +79,42 @@ function stopReasonLabel(reason: AutonomousStopReason): string {
  * "completed" and record the stop reason.
  */
 export function useAutonomousLoop({ providers }: { providers: UiProvider[] }) {
-  const threadId = useChatStore(s => s.autonomousThreadId)
-  const isStreaming = useChatStore(s => getThreadStream(s, threadId).isStreaming)
+  const threadId = useChatStore((s) => s.autonomousThreadId)
+  const isStreaming = useChatStore(
+    (s) => getThreadStream(s, threadId).isStreaming
+  )
   const thread = useThreadById(threadId)
   const activities = useThreadActivities(threadId)
   const composer = useAppPreferences(threadId)
-  const { provider: selectedProvider, modelId: selectedModel, thinkingMode } = resolveProviderModelThinkingSelection({
-    ...composer, providers,
-    lockedProviderInstanceId: thread?.session?.providerInstanceId ?? latestProviderInstanceId(activities),
-    lockedContinuationKey: thread?.session?.continuationKey ?? latestProviderContinuationKey(activities),
+  const {
+    provider: selectedProvider,
+    modelId: selectedModel,
+    thinkingMode,
+  } = resolveProviderModelThinkingSelection({
+    ...composer,
+    providers,
+    lockedProviderInstanceId:
+      thread?.session?.providerInstanceId ??
+      latestProviderInstanceId(activities),
+    lockedContinuationKey:
+      thread?.session?.continuationKey ??
+      latestProviderContinuationKey(activities),
   })
   const { chatMode, specialMode, permissionLevel, contextWindow } = composer
   const autonomousMode = useChatStore((s) => s.autonomousMode)
   const autonomousStatus = useChatStore((s) => s.autonomousStatus)
   const autonomousIterations = useChatStore((s) => s.autonomousIterations)
-  const autonomousMaxIterations = useChatStore(
-    (s) => s.autonomousMaxIterations,
-  )
-  const autonomousTimeBudgetMin = useChatStore(
-    (s) => s.autonomousTimeBudgetMin,
-  )
+  const autonomousMaxIterations = useChatStore((s) => s.autonomousMaxIterations)
+  const autonomousTimeBudgetMin = useChatStore((s) => s.autonomousTimeBudgetMin)
   const autonomousStartedAt = useChatStore((s) => s.autonomousStartedAt)
   const autonomousTaskList = useChatStore((s) => s.autonomousTaskList)
   const prevAutonomousStreaming = useRef({ threadId, isStreaming: false })
   const autonomousProgressRef = useRef({ signature: "", stagnantCycles: 0 })
 
   useEffect(() => {
-    const wasStreaming = prevAutonomousStreaming.current.threadId === threadId && prevAutonomousStreaming.current.isStreaming
+    const wasStreaming =
+      prevAutonomousStreaming.current.threadId === threadId &&
+      prevAutonomousStreaming.current.isStreaming
     prevAutonomousStreaming.current = { threadId, isStreaming }
 
     if (!wasStreaming || isStreaming) return
@@ -104,16 +122,31 @@ export function useAutonomousLoop({ providers }: { providers: UiProvider[] }) {
 
     const store = useChatStore.getState()
     if (!threadId) return
-    if (useMessageQueueStore.getState().messages.some(entry => entry.threadId === threadId)) return
+    if (
+      useMessageQueueStore
+        .getState()
+        .messages.some((entry) => entry.threadId === threadId)
+    )
+      return
 
     // Shared send helper used by both normal iterations and final summary.
     const sendAutonomousTurn = async (
       promptText: string,
-      isFinalSummary: boolean,
+      isFinalSummary: boolean
     ) => {
       const s = useChatStore.getState()
-      if (!s.autonomousMode || s.autonomousStatus !== "working" || s.autonomousThreadId !== threadId) return
-      if (useMessageQueueStore.getState().messages.some(entry => entry.threadId === threadId)) return
+      if (
+        !s.autonomousMode ||
+        s.autonomousStatus !== "working" ||
+        s.autonomousThreadId !== threadId
+      )
+        return
+      if (
+        useMessageQueueStore
+          .getState()
+          .messages.some((entry) => entry.threadId === threadId)
+      )
+        return
 
       const dispatchUserMessage = {
         id: crypto.randomUUID(),
@@ -123,14 +156,29 @@ export function useAutonomousLoop({ providers }: { providers: UiProvider[] }) {
         createdAt: new Date().toISOString(),
       } as const
       try {
-        const target = await resolveProviderTarget(selectedProvider, selectedModel)
+        const target = await resolveProviderTarget(
+          selectedProvider,
+          selectedModel
+        )
         const current = useChatStore.getState()
         const currentThread = current.threads.find((t) => t.id === threadId)
-        if (!currentThread || !current.autonomousMode || current.autonomousStatus !== "working" || current.autonomousThreadId !== threadId) return
-        if (useMessageQueueStore.getState().messages.some(entry => entry.threadId === threadId)) return
-        const effectiveModel = target.providerKind !== "openrouter" && selectedModel.includes("/")
-          ? selectedModel.split("/").pop()!
-          : selectedModel
+        if (
+          !currentThread ||
+          !current.autonomousMode ||
+          current.autonomousStatus !== "working" ||
+          current.autonomousThreadId !== threadId
+        )
+          return
+        if (
+          useMessageQueueStore
+            .getState()
+            .messages.some((entry) => entry.threadId === threadId)
+        )
+          return
+        const effectiveModel = wireModelIdForProvider(
+          target.providerKind,
+          selectedModel
+        )
         current.addMessage(threadId, dispatchUserMessage)
         current.setStreamingModelId(threadId, selectedModel)
         current.appendStreamDelta(threadId, "")
@@ -139,7 +187,11 @@ export function useAutonomousLoop({ providers }: { providers: UiProvider[] }) {
           promptText,
           effectiveModel,
           target.providerKind,
-          coerceThinkingModeForModel(selectedProvider, selectedModel, thinkingMode),
+          coerceThinkingModeForModel(
+            selectedProvider,
+            selectedModel,
+            thinkingMode
+          ),
           chatMode,
           currentThread?.worktreePath || currentThread?.projectPath || null,
           specialMode,
@@ -149,9 +201,12 @@ export function useAutonomousLoop({ providers }: { providers: UiProvider[] }) {
           target.providerInstanceId,
           contextWindow,
           null,
-          dispatchUserMessage,
+          dispatchUserMessage
         )
-        if (isFinalSummary && useChatStore.getState().autonomousThreadId === threadId) {
+        if (
+          isFinalSummary &&
+          useChatStore.getState().autonomousThreadId === threadId
+        ) {
           useChatStore.getState().setAutonomousStatus("completed")
         }
       } catch {
@@ -246,7 +301,8 @@ export function useAutonomousLoop({ providers }: { providers: UiProvider[] }) {
       const currentStore = useChatStore.getState()
       if (
         !currentStore.autonomousMode ||
-        currentStore.autonomousStatus !== "working" || currentStore.autonomousThreadId !== threadId
+        currentStore.autonomousStatus !== "working" ||
+        currentStore.autonomousThreadId !== threadId
       )
         return
 

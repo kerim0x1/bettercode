@@ -14,7 +14,9 @@ import { ProviderLogo } from "./provider-logo"
  * Model dropdown, mirroring the desktop composer's model menu: models grouped
  * under their provider (section label + count) with a primary check on the
  * active row, rendered as a bottom-sheet dropdown instead of a full-screen
- * modal. A filter box appears once the list is long enough to need one.
+ * modal. A filter box appears once the list is long enough to need one. Each
+ * 9Router connection is its own group, and its models show their 9Router
+ * group ("Claude Code", "Combos") beside the id.
  */
 export function ModelPicker({
   visible,
@@ -34,7 +36,13 @@ export function ModelPicker({
     const needle = query.trim().toLowerCase()
     if (!needle) return options
     return options.filter((option) =>
-      `${option.providerLabel} ${option.modelLabel} ${option.modelId}`
+      [
+        option.providerLabel,
+        option.modelLabel,
+        option.modelId,
+        option.modelGroup ?? "",
+      ]
+        .join(" ")
         .toLowerCase()
         .includes(needle)
     )
@@ -61,6 +69,8 @@ export function ModelPicker({
             autoCapitalize="none"
             autoCorrect={false}
             placeholder="Filter provider or model"
+            accessibilityLabel="Filter provider or model"
+            testID="model-filter"
             placeholderTextColor={colors.textMuted}
             style={styles.searchInput}
           />
@@ -77,7 +87,11 @@ export function ModelPicker({
                 key={option.key}
                 icon={<ProviderLogo kind={option.providerKind} size={15} />}
                 label={option.modelLabel}
-                sublabel={option.modelId}
+                sublabel={
+                  option.modelGroup
+                    ? `${option.modelGroup} · ${option.modelId}`
+                    : option.modelId
+                }
                 active={option.key === selected?.key}
                 onPress={() => {
                   onSelect(option)

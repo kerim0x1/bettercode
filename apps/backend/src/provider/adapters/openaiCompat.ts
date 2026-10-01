@@ -60,11 +60,25 @@ async function loadDirectProjectToolPolicy(cwd: string): Promise<{
   return { toolFlags, permissionRules }
 }
 
+/** Endpoint for one turn when a provider routes per connection (9Router). */
+export interface OpenAiCompatTurnTarget {
+  readonly baseUrl: string
+  readonly apiKey: string
+  readonly headers?: Record<string, string>
+  /** Explains a failed request in provider terms; `null` keeps the SDK error. */
+  readonly describeError?: (error: unknown) => Error | null
+}
+
 export interface OpenAiCompatConfig {
   providerKind: ProviderKind
   displayName: string
   baseUrl?: string
   defaultModels: ModelDefinition[]
+  /** Resolves the endpoint per turn instead of the fixed `baseUrl` client. */
+  resolveTurnTarget?: (input: ProviderSendTurnInput) => OpenAiCompatTurnTarget
+  /** Overrides the key-based configured check for routed providers. */
+  isConfigured?: () => boolean
+  authMeta?: () => { authType: string; hint?: string }
 }
 
 function buildOpenAiUserContent(
@@ -104,12 +118,41 @@ function buildOpenAiUserContent(
  * OpenAI and xAI accept extended levels on models that advertise them.
  * `null` means the user chose no reasoning — the param is omitted entirely.
  */
-function mapCompatReasoningEffort(
+export function mapCompatReasoningEffort(
   effort: string | null | undefined,
   providerKind: string
-): "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null {
+):
+  | "none"
+  | "auto"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+  | null {
   if (!effort) return null
   const key = effort.toLowerCase().replace(/[\s_-]+/g, "")
+  if (providerKind === "ninerouter") {
+    // 9Router translates `reasoning_effort` into each upstream's native field
+    // (Claude adaptive thinking, Gemini thinkingConfig, …) and clamps levels a
+    // model lacks, so the full ladder passes through. `auto` selects adaptive
+    // thinking; `none` disables it where the model allows.
+    if (key === "off") return null
+    if (key === "auto" || key === "adaptive") return "auto"
+    if (key === "none" || key === "noreasoning") return "none"
+    if (
+      key === "minimal" ||
+      key === "low" ||
+      key === "medium" ||
+      key === "high" ||
+      key === "max"
+    )
+      return key
+    if (key === "xhigh" || key === "extrahigh") return "xhigh"
+    if (key === "ultra" || key === "ultrathink") return "max"
+    return null
+  }
   if (key === "none" || key === "noreasoning")
     return providerKind === "openai" ? "none" : null
   if (key === "off") return null
@@ -209,7 +252,11 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
   setApiKey(apiKey: string | null): void {
     if (this.apiKey !== apiKey) this.forceCatalogRefresh = true
     this.apiKey = apiKey
-    if (apiKey || this.config.providerKind === "lmstudio") {
+    if (this.config.resolveTurnTarget) {
+      // Routed providers build a client per turn from the chosen connection.
+      this.client = null
+      this.activeBaseUrl = undefined
+    } else if (apiKey || this.config.providerKind === "lmstudio") {
       this.client = new OpenAI({
         apiKey: apiKey ?? "lm-studio",
         baseURL: this.config.baseUrl,
@@ -245,12 +292,14 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
     return this.modelCatalog.list(kind, this.apiKey, refresh)
   }
   isConfigured(): boolean {
+    if (this.config.isConfigured) return this.config.isConfigured()
     const kind = this.config.providerKind
     return this.apiKeyPool && (kind === "openai" || kind === "grok")
       ? this.apiKeyPool.isReady(kind)
       : this.client !== null
   }
   authMeta(): { authType: string; hint?: string } {
+    if (this.config.authMeta) return this.config.authMeta()
     if (this.config.providerKind === "lmstudio") {
       return {
         authType: "local-server",
@@ -277,6 +326,18 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
       this.apiKeyPool && (kind === "openai" || kind === "grok")
         ? this.apiKeyPool.snapshot(kind)
         : undefined
+    // Resolved before the turn starts so a missing or disabled connection
+    // fails with its own message instead of a generic one.
+    const target = this.config.resolveTurnTarget?.(input)
+    if (target) {
+      client = new OpenAI({
+        apiKey: target.apiKey,
+        baseURL: target.baseUrl,
+        defaultHeaders: target.headers,
+        maxRetries: 0,
+        timeout: 120_000,
+      })
+    }
     if (!client && !keySession) {
       throw new Error(`${this.config.displayName} not configured`)
     }
@@ -361,7 +422,7 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
         ...(reasoningEnabled && reasoningEffort
           ? {
               // The locked SDK types predate OpenAI's "max" effort, which the
-              // API accepts for newer models.
+              // API accepts for newer models, and 9Router's "auto".
               reasoning_effort:
                 reasoningEffort as ChatCompletionCreateParamsStreaming["reasoning_effort"],
             }
@@ -605,7 +666,7 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
         },
         "OpenAI-compat stream failed"
       )
-      throw err
+      throw target?.describeError?.(err) ?? err
     } finally {
       await mcpSession?.close()
       if (this.abortControllers.get(input.thread_id) === controller) {

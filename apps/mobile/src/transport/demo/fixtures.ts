@@ -1,6 +1,7 @@
 import type {
   ChatMessage,
   ChatThread,
+  NineRouterProviderView,
   ProjectSummary,
   ProviderInstance,
   ThreadDiffs,
@@ -39,6 +40,12 @@ export const DEMO_PROVIDER_INSTANCES: ProviderInstance[] = [
     ],
   },
 ]
+
+/** The demo desktop has no 9Router connection, like a fresh install. */
+export const DEMO_NINEROUTER: NineRouterProviderView = {
+  enabled: true,
+  connections: [],
+}
 
 /** File trees of the demo projects: path relative to the project → contents (null for a folder). */
 export const DEMO_FILES: Record<string, Record<string, string | null>> = {

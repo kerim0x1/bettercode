@@ -160,6 +160,44 @@ describe("sending messages through the outbox", () => {
     })
   })
 
+  it("sends a 9Router model with its connection and its own id", async () => {
+    const fetch = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(JSON.stringify({ status: "streaming", turnId: "t1" }), {
+          status: 200,
+        })
+    )
+    const api = createLiveApi({
+      baseUrl: "http://desktop.local:4321",
+      token: "session",
+      client: null,
+      fetch: fetch as unknown as typeof globalThis.fetch,
+    })
+    const routed: ModelOption = {
+      key: "ninerouter:laptop:cc/claude-opus-5-5",
+      providerKind: "ninerouter",
+      providerInstanceId: "ninerouter:laptop",
+      providerLabel: "9Router",
+      modelId: "cc/claude-opus-5-5",
+      modelLabel: "Claude Opus 5.5",
+      modelGroup: "Claude Code",
+      capabilities: null,
+    }
+    store().setTurnOptions("thread-1", { thinkingMode: "High" })
+    expect(await store().send(api, "thread-1", "Hello", routed)).toEqual({
+      status: "sent",
+    })
+    const body: unknown = JSON.parse(String(fetch.mock.calls[0]![1]?.body))
+    expect(() => httpContracts.chatSend.request.parse(body)).not.toThrow()
+    // The `account/model` prefix is what tells 9Router where to route.
+    expect(body).toMatchObject({
+      providerKind: "ninerouter",
+      providerInstanceId: "ninerouter:laptop",
+      modelId: "cc/claude-opus-5-5",
+      reasoningEffort: "High",
+    })
+  })
+
   it("uses the desktop's defaults for a chat nobody configured", async () => {
     const { api, bodies } = desktop({ turnId: "turn-1" })
     await store().send(api, "thread-1", "Hello", selection)

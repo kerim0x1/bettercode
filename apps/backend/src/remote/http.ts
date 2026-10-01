@@ -344,6 +344,7 @@ const READ_ONLY_REMOTE_GET_PATHS = [
   /^\/api\/v1\/providers\/status$/,
   /^\/api\/v1\/providers\/instances$/,
   /^\/api\/v1\/providers\/instances\/[^/]+\/models$/,
+  /^\/api\/v1\/providers\/ninerouter$/,
   /^\/api\/v1\/threads$/,
   /^\/api\/v1\/threads\/stats$/,
   /^\/api\/v1\/threads\/[^/]+$/,
@@ -467,6 +468,13 @@ const DESKTOP_ONLY_PATHS: ReadonlyArray<{
   },
   { methods: null, pattern: /^\/api\/v1\/providers\/[^/]+\/credential$/ },
   { methods: null, pattern: /^\/api\/v1\/providers\/api-keys\// },
+  // 9Router connections hold router keys and addresses; detection probes
+  // this machine. The phone reads the redacted list at /providers/ninerouter.
+  {
+    methods: null,
+    pattern:
+      /^\/api\/v1\/providers\/ninerouter\/(?:connections|detect)(?:\/|$)/,
+  },
   {
     methods: new Set(["POST"]),
     pattern: /^\/api\/v1\/providers\/instances\/[^/]+\/update$/,

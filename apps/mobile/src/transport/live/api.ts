@@ -7,6 +7,7 @@ import {
 import type { RemoteClientInfo } from "@betterc0de/schema/remote-protocol"
 import { relativePathWithinRoot } from "@/lib/endpoint"
 import { createId } from "@/lib/ids"
+import { NO_NINEROUTER, parseNineRouterView } from "@/lib/provider-selection"
 import {
   parseRemoteBootstrap,
   parseRemotePairResponse,
@@ -161,6 +162,16 @@ export function createLiveApi(connection: HttpConnection): RemoteApi {
       call<ProviderInstance[]>(
         `/providers/instances${query({ cwd: cwd || undefined })}`
       ),
+    getNineRouter: async () => {
+      try {
+        return parseNineRouterView(await call<unknown>("/providers/ninerouter"))
+      } catch (error) {
+        // Desktops from before 9Router support do not have the route.
+        if (error instanceof RemoteApiError && error.status === 404)
+          return NO_NINEROUTER
+        throw error
+      }
+    },
 
     goal: (body) => contract("chatGoal", { body }),
     // As on the desktop: compacting or handing a chat over to another

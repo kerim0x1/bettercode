@@ -12,7 +12,11 @@ export const DEFAULT_THINKING_MODE = "High"
 
 /** One line under the level name so the ladder reads as more than a number. */
 const DESCRIPTIONS: Readonly<Record<string, string>> = {
+  // 9Router: the model decides how long to think (adaptive thinking).
+  auto: "Model sets its own depth",
   off: "No extended thinking",
+  noreasoning: "No extended thinking",
+  minimal: "Barely any thinking",
   low: "Quick answers",
   medium: "Balanced",
   high: "Thorough",

@@ -793,6 +793,7 @@ export const sendChatMessage = async (
         "grokcli",
         "openrouter",
         "lmstudio",
+        "ninerouter",
       ])
       const fallbackByModel = !builtinProviderKinds.has(providerKey)
         ? plugins.find((plugin) =>

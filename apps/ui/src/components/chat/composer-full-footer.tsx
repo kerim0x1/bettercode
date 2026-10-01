@@ -22,6 +22,8 @@ import { ProviderIcon } from "@/components/provider-icon"
 import { SimpleContextIndicator } from "@/components/chat/simple-context-indicator"
 import { VoiceInputControl } from "@/components/chat/voice-input-control"
 import { ComposerSubmit } from "@/components/chat/composer-submit"
+import { ModelSearchMenuList } from "@/components/chat/model-search-submenu"
+import { pickerShowsModelSearch } from "@/lib/model-picker-search"
 import { mapSortedModelsByProvider } from "@/lib/model-ordering"
 import {
   PERMISSION_LEVELS,
@@ -120,7 +122,9 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
     setAutonomousDialogOpen,
   } = props
   const promptInput = usePromptInputController()
-  const planFollowUpActive = hasPendingPlan && !/^\/goal(?:\s|$)/i.test(promptInput.textInput.value.trim())
+  const planFollowUpActive =
+    hasPendingPlan &&
+    !/^\/goal(?:\s|$)/i.test(promptInput.textInput.value.trim())
   const planFollowUpLabel =
     planFollowUpActive && promptInput.textInput.value.trim().length > 0
       ? "Refine"
@@ -210,7 +214,11 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
         <SimpleDropdown
           align="start"
           trigger={
-            <PromptInputButton tooltip="Add" aria-label="Add" className="relative">
+            <PromptInputButton
+              tooltip="Add"
+              aria-label="Add"
+              className="relative"
+            >
               <PlusIcon className="size-3.5" />
               {promptInput.attachments.files.length > 0 && (
                 <span className="absolute -top-1 -right-1 flex size-3.5 items-center justify-center rounded-full bg-primary text-[8px] font-semibold text-primary-foreground tabular-nums">
@@ -220,7 +228,9 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
             </PromptInputButton>
           }
         >
-          <SimpleDropdownSubItem onClick={() => promptInput.attachments.openFileDialog()}>
+          <SimpleDropdownSubItem
+            onClick={() => promptInput.attachments.openFileDialog()}
+          >
             <PaperclipIcon className="size-3.5" /> Files and folders
           </SimpleDropdownSubItem>
           <SimpleDropdownSeparator />
@@ -351,9 +361,7 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
           <DropdownMenuTrigger asChild>
             <PromptInputButton
               tooltip="Permissions"
-              className={cn(
-                permissionLevel === "bypass" && "text-destructive"
-              )}
+              className={cn(permissionLevel === "bypass" && "text-destructive")}
             >
               <HugeiconsIcon
                 icon={ShieldKeyIcon}
@@ -472,7 +480,10 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
               // enabled so we don't flash disabled UI on first paint.
               const isProviderDisabled = isProviderUnconfigured(provider)
               const setupTooltip = resolveProviderSetupHint(provider)
-              if (provider.models.length === 0) {
+              if (
+                provider.models.length === 0 &&
+                !pickerShowsModelSearch(provider)
+              ) {
                 return (
                   <DropdownMenuItem
                     key={provider.id}
@@ -526,65 +537,72 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
                     sideOffset={6}
                     collisionPadding={12}
                   >
-                    {(
-                      sortedModelsByProviderId.get(provider.id) ??
-                      provider.models
-                    ).map((model) => {
-                      const isSelected =
-                        selectedProviderId === provider.id &&
-                        selectedModel === model.id
-                      // Context window is pinned to the model's maximum —
-                      // no per-model 1M/200k submenu, the row selects directly.
-                      const contextLabel = supportsModelContextWindow(
-                        provider,
-                        model.id
-                      )
-                        ? "1M"
-                        : model.context
-                      return (
-                        <DropdownMenuItem
-                          key={model.id}
-                          onClick={() => {
-                            selectProviderModel(provider, model.id)
-                          }}
-                          className={cn("gap-2.5", isSelected && "bg-accent")}
-                        >
-                          <ProviderIcon provider={provider} />
-                          <div className="min-w-0 flex-1">
-                            <span
-                              className={cn(
-                                "block text-sm",
-                                isSelected && "font-semibold"
-                              )}
-                            >
-                              {model.name}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground">
-                              {model.tier} · {contextLabel}
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              toggleFavorite(provider.id, model.id)
+                    <ModelSearchMenuList
+                      provider={provider}
+                      models={
+                        sortedModelsByProviderId.get(provider.id) ??
+                        provider.models
+                      }
+                      onSelect={(modelId) =>
+                        selectProviderModel(provider, modelId)
+                      }
+                      renderModel={(model) => {
+                        const isSelected =
+                          selectedProviderId === provider.id &&
+                          selectedModel === model.id
+                        // Context window is pinned to the model's maximum —
+                        // no per-model 1M/200k submenu, the row selects directly.
+                        const contextLabel = supportsModelContextWindow(
+                          provider,
+                          model.id
+                        )
+                          ? "1M"
+                          : model.context
+                        return (
+                          <DropdownMenuItem
+                            key={model.id}
+                            onClick={() => {
+                              selectProviderModel(provider, model.id)
                             }}
-                            className="shrink-0 p-0.5 text-muted-foreground/30 transition-colors hover:text-foreground"
+                            className={cn("gap-2.5", isSelected && "bg-accent")}
                           >
-                            <StarIcon
-                              className={cn(
-                                "size-3.5",
-                                isFavorite(provider.id, model.id) &&
-                                  "fill-current text-foreground"
-                              )}
-                            />
-                          </button>
-                          {isSelected && (
-                            <CheckIcon className="size-3.5 shrink-0 text-primary" />
-                          )}
-                        </DropdownMenuItem>
-                      )
-                    })}
+                            <ProviderIcon provider={provider} />
+                            <div className="min-w-0 flex-1">
+                              <span
+                                className={cn(
+                                  "block text-sm",
+                                  isSelected && "font-semibold"
+                                )}
+                              >
+                                {model.name}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {model.tier} · {contextLabel}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                toggleFavorite(provider.id, model.id)
+                              }}
+                              className="shrink-0 p-0.5 text-muted-foreground/30 transition-colors hover:text-foreground"
+                            >
+                              <StarIcon
+                                className={cn(
+                                  "size-3.5",
+                                  isFavorite(provider.id, model.id) &&
+                                    "fill-current text-foreground"
+                                )}
+                              />
+                            </button>
+                            {isSelected && (
+                              <CheckIcon className="size-3.5 shrink-0 text-primary" />
+                            )}
+                          </DropdownMenuItem>
+                        )
+                      }}
+                    />
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
               )
