@@ -24,7 +24,10 @@ Keep secrets in local environment variables or your CI secret store. `.env.examp
 
 ## If a signing credential leaks
 
-The phone app's signing credentials are secrets of the `release` environment and offline backups; see [code signing](docs/development/code-signing.md#the-phone-app-is-signed).
+The phone app's signing credentials are secrets of the `release` environment and offline backups; see [code signing](docs/development/code-signing.md#the-phone-app-is-signed). The macOS Developer ID certificate and its notarization key are secrets of the `macos-signing` environment; see [set up macOS signing](docs/development/code-signing.md#set-up-macos-signing).
+
+- **macOS Developer ID certificate (`.p12`)**: anyone holding it can sign apps that macOS attributes to you. Ask Apple Developer Support to revoke the certificate, create a new one, replace `MACOS_CERTIFICATE_P12_BASE64` and `MACOS_CERTIFICATE_PASSWORD`, and publish a new release. Apps signed before the revocation date keep opening only if Apple dates the revocation after their signing.
+- **Notarization key (`APPLE_API_KEY_P8_BASE64`)**: revoke it in App Store Connect → Users and Access → Integrations, create a new Developer key, and replace the three API key secrets.
 
 - **`EXPO_TOKEN`**: revoke it at expo.dev → Access tokens, create a new one, and replace the secret.
 - **App Store Connect API key**: revoke it in App Store Connect → Users and Access → Integrations, create a new one, and store it with `eas credentials`.

@@ -127,9 +127,10 @@ test("the phone app joins releases only when switched on, and only tags reach it
     .sort()
   assert.deepEqual(signing, ["mobile-android", "testflight"])
   for (const name of signing) assert.match(release.jobs[name].if, /startsWith\(github\.ref, 'refs\/tags\/v'\)/, name)
-  // Secrets appear only in the jobs of the release environment.
+  // Secrets appear only in the jobs of the release environment, and in the
+  // Mac legs of release:check, which have their own environment (below).
   for (const [name, job] of Object.entries(release.jobs)) {
-    if (job.environment === "release") continue
+    if (job.environment === "release" || name === "release-check") continue
     assert.doesNotMatch(JSON.stringify(job), /secrets\./, `${name} reads a secret outside the release environment`)
   }
   assert.equal(release.jobs.testflight.needs, "publish")
@@ -172,4 +173,36 @@ test("CI builds the phone app and runs its device tests on Android and iOS", () 
 test("CI uses no secrets, so pull requests from forks run everything", () => {
   const source = fs.readFileSync(path.join(root, ".github", "workflows", "ci.yml"), "utf8")
   assert.doesNotMatch(source, /secrets\./)
+})
+
+test("only the Mac release legs reach the signing credentials, and only when macOS signing is on", () => {
+  const release = readWorkflow("release.yml")
+  const job = release.jobs["release-check"]
+  assert.equal(
+    job.environment,
+    "${{ matrix.signing == 'macos' && vars.BETTERC0DE_MACOS_SIGNING == 'true' && 'macos-signing' || '' }}"
+  )
+  const signingLegs = job.strategy.matrix.include.filter((leg) => leg.signing === "macos").map((leg) => leg.os)
+  assert.deepEqual(signingLegs.sort(), ["macos-15", "macos-15-intel"])
+
+  const prepare = job.steps.find((step) => step.run === "node scripts/macos-signing.mjs prepare")
+  assert.ok(prepare, "the credentials are checked before the build")
+  assert.equal(prepare.if, "runner.os == 'macOS' && vars.BETTERC0DE_MACOS_SIGNING == 'true'")
+  assert.equal(prepare.env.BETTERC0DE_MACOS_SIGNING, "true")
+  const check = job.steps.find((step) => String(step.run ?? "").startsWith("npm run release:check"))
+  assert.ok(job.steps.indexOf(prepare) < job.steps.indexOf(check))
+  // electron-builder falls back from WIN_CSC_LINK to CSC_LINK, so a Mac
+  // certificate must never reach the Windows leg.
+  for (const [name, value] of Object.entries(check.env)) {
+    assert.match(value, /^\$\{\{ runner\.os == 'macOS' && (?:secrets|vars)\.[A-Z0-9_]+ \|\| '' \}\}$/, name)
+  }
+  for (const step of job.steps) {
+    if (step === prepare || step === check) continue
+    assert.doesNotMatch(JSON.stringify(step), /secrets\./, `${step.name} reads a signing secret`)
+  }
+  assert.doesNotMatch(
+    fs.readFileSync(path.join(root, ".github", "workflows", "ci.yml"), "utf8"),
+    /secrets\.(?:MACOS_|APPLE_)/,
+    "CI never signs"
+  )
 })

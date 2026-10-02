@@ -196,7 +196,6 @@
     "productName": "BetterC0de",
     "compression": "normal",
     "asar": true,
-    "afterSign": "apps/shell/build/notarize.cjs",
     "asarUnpack": [
       "apps/shell/default-plugins/**/*",
       "**/*.node",
