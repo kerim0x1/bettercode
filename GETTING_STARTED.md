@@ -18,7 +18,7 @@ Download the installer for your computer, run it, follow its prompts, and open B
 [betterc0de.com/download](https://betterc0de.com/download) without parameters detects your system and serves the matching build. On a Mac, **About This Mac** identifies the processor: an "Apple M…" chip is Apple Silicon, anything else is Intel.
 
 **Windows:** SmartScreen may warn about an unrecognized publisher while the beta is unsigned — choose *More info → Run anyway*.
-**macOS:** If Gatekeeper blocks the first launch, right-click the app and choose *Open*, or allow it under **System Settings → Privacy & Security**.
+**macOS:** Signed and notarized releases open normally. If macOS says that Apple could not verify BetterC0de is free of malware (an unsigned beta), open **System Settings → Privacy & Security** and choose **Open Anyway**.
 
 ## 2. Connect a provider
 

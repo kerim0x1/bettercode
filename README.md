@@ -68,10 +68,10 @@ Not sure which Mac you have? Open **About This Mac** — an "Apple M…" chip me
 
 ### Installing a beta build
 
-BetterC0de installers are not code-signed, so your operating system warns before the first launch:
+The Windows installer is not code-signed, and macOS releases are signed and notarized by Apple only from the release where [macOS signing](docs/development/code-signing.md) was switched on. An unsigned build makes your operating system warn before the first launch:
 
 - **Windows:** SmartScreen shows "Windows protected your PC". Choose **More info → Run anyway**. Unsigned Windows builds do not update themselves; install a newer version by running its installer.
-- **macOS:** open the `.dmg` and drag BetterC0de to **Applications**. If macOS blocks the first launch, open **System Settings → Privacy & Security** and choose **Open Anyway**. If it reports that the app is damaged, run `xattr -dr com.apple.quarantine /Applications/BetterC0de.app` in Terminal.
+- **macOS:** open the `.dmg` and drag BetterC0de to **Applications**. A signed and notarized release opens normally and updates itself. For an unsigned release, macOS reports that "Apple could not verify "BetterC0de" is free of malware": open **System Settings → Privacy & Security** and choose **Open Anyway**. If it reports that the app is damaged, run `xattr -dr com.apple.quarantine /Applications/BetterC0de.app` in Terminal. Unsigned macOS builds do not update themselves; install the newer disk image.
 - **Linux:** install the `.deb` with `sudo apt install ./betterc0de_<version>_amd64.deb` or the `.rpm` with `sudo dnf install ./betterc0de-<version>.x86_64.rpm`. Either one installs the libraries the app needs. For the AppImage, run `chmod +x BetterC0de-<version>.AppImage` first.
 
 Each release lists SHA-256 checksums of its files in `SHA256SUMS.txt`. Known problems of each version are in the [changelog](CHANGELOG.md). For 0.1.0-beta.2, the Apple Silicon download contains the Intel build, which runs through Rosetta 2.
@@ -153,7 +153,7 @@ No `.env` file or account is needed to build, test or start the app. Optional en
 2. After CI passes, Automatic release prepares the next shared version and changelog section in a tagged release commit. The protected `main` branch remains unchanged.
 3. The Release workflow checks Linux, Windows and both Mac architectures again, then publishes the GitHub release only when every platform passed.
 
-The [release checklist](docs/release-checklist.md) covers recovery and manual tagging. Releases are unsigned by decision; [code signing](docs/development/code-signing.md) explains what that means for users.
+The [release checklist](docs/release-checklist.md) covers recovery and manual tagging. macOS releases are signed and notarized once the maintainer sets up an Apple Developer ID; Windows releases are unsigned. [Code signing](docs/development/code-signing.md) explains the setup and what each means for users.
 
 ### Troubleshooting
 

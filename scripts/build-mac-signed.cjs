@@ -3,17 +3,24 @@
 // `npm run build:mac:signed`: a local signed and notarized macOS build.
 //
 // Reads signing credentials from the git-ignored `.env.signing` file in the
-// repository root and passes them to `npm run build:mac`. The file uses
-// shell-style assignments, one per line:
+// repository root and passes them to `npm run build:mac`. electron-builder
+// signs with the Developer ID certificate and notarizes and staples the app
+// itself. The file uses shell-style assignments, one per line:
 //
 //   CSC_LINK=/absolute/path/to/DeveloperID.p12
 //   CSC_KEY_PASSWORD=...
-//   APPLE_ID=you@example.com
-//   APPLE_APP_SPECIFIC_PASSWORD=abcd-efgh-ijkl-mnop
 //   APPLE_TEAM_ID=ABCDE12345
+//   # App Store Connect API key (recommended) ...
+//   APPLE_API_KEY=/absolute/path/to/AuthKey_ABC123DEFG.p8
+//   APPLE_API_KEY_ID=ABC123DEFG
+//   APPLE_API_ISSUER=00000000-0000-0000-0000-000000000000
+//   # ... or an Apple ID with an app-specific password instead:
+//   # APPLE_ID=you@example.com
+//   # APPLE_APP_SPECIFIC_PASSWORD=abcd-efgh-ijkl-mnop
 //
-// This replaces a `bash -c 'source .env.signing'` one-liner so the command
-// no longer depends on bash, and reports missing values by name.
+// The build runs with BETTERC0DE_MACOS_SIGNING=true, so incomplete
+// credentials stop it instead of producing an unsigned app. Missing values
+// are reported by name; secret values are never printed.
 
 "use strict";
 
@@ -22,7 +29,6 @@ const fs = require("fs");
 const path = require("path");
 
 const repoRoot = path.resolve(__dirname, "..");
-const REQUIRED = ["CSC_LINK", "CSC_KEY_PASSWORD", "APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"];
 
 function parseEnvFile(source) {
   const values = {};
@@ -40,7 +46,7 @@ function parseEnvFile(source) {
   return values;
 }
 
-function main() {
+async function main() {
   if (process.platform !== "darwin") {
     console.error("[build-mac-signed] only runs on macOS: codesign and notarytool are macOS tools.");
     return 1;
@@ -48,15 +54,16 @@ function main() {
   const envFile = path.join(repoRoot, ".env.signing");
   if (!fs.existsSync(envFile)) {
     console.error(
-      `[build-mac-signed] ${envFile} is missing. Create it with ${REQUIRED.join(", ")} ` +
-        "(see docs/development/code-signing.md). It is git-ignored; never commit it.",
+      `[build-mac-signed] ${envFile} is missing. Create it with the certificate and notarization ` +
+        "credentials (see docs/development/code-signing.md). It is git-ignored; never commit it.",
     );
     return 1;
   }
-  const values = parseEnvFile(fs.readFileSync(envFile, "utf8"));
-  const missing = REQUIRED.filter((name) => !values[name]);
-  if (missing.length > 0) {
-    console.error(`[build-mac-signed] .env.signing does not set: ${missing.join(", ")}`);
+  const values = { ...parseEnvFile(fs.readFileSync(envFile, "utf8")), BETTERC0DE_MACOS_SIGNING: "true" };
+  const { assessMacSigning } = await import("./macos-signing.mjs");
+  const signing = assessMacSigning(values);
+  if (signing.problems.length > 0) {
+    for (const problem of signing.problems) console.error(`[build-mac-signed] ${problem}`);
     return 1;
   }
 
@@ -75,12 +82,15 @@ function main() {
 }
 
 if (require.main === module) {
-  try {
-    process.exitCode = main();
-  } catch (error) {
-    console.error("[build-mac-signed]", error && error.message ? error.message : error);
-    process.exitCode = 1;
-  }
+  main().then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (error) => {
+      console.error("[build-mac-signed]", error && error.message ? error.message : error);
+      process.exitCode = 1;
+    },
+  );
 }
 
 module.exports = { parseEnvFile };

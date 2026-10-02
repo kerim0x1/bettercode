@@ -5,10 +5,13 @@ import {
   findLinuxExecutable,
   findUninstallEntries,
   isForeignNativeBuild,
+  macSignatureProblems,
   machOArchName,
   nsisInstallArgs,
+  parseCodesignDetails,
   parseLipoArchs,
   parseRegQuery,
+  parseSpctlAssessment,
   samePath,
   selectInstallers,
   single,
@@ -172,4 +175,94 @@ test("Linux executable lookup accepts only /opt/<product>/<package>", () => {
   ].join("\n")
   assert.equal(findLinuxExecutable(listing, "betterc0de"), "/opt/BetterC0de/betterc0de")
   assert.throws(() => findLinuxExecutable("/usr/bin/other", "betterc0de"), /found none/)
+})
+
+const NOTARIZED_CODESIGN = `Executable=/tmp/Applications/BetterC0de.app/Contents/MacOS/BetterC0de
+Identifier=com.betterc0de.ide
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20500 size=1023 flags=0x10000(runtime) hashes=21+7 location=embedded
+Signature size=9038
+Authority=Developer ID Application: Example GmbH (ABCDE12345)
+Authority=Developer ID Certification Authority
+Authority=Apple Root CA
+Timestamp=2. Oct 2026 at 10:12:03
+Notarization Ticket=stapled
+Info.plist entries=31
+TeamIdentifier=ABCDE12345
+Runtime Version=15.0.0
+Sealed Resources version=2 rules=13 files=412
+Internal requirements count=1 size=192`
+
+const NOTARIZED_SPCTL = `/tmp/Applications/BetterC0de.app: accepted
+source=Notarized Developer ID
+origin=Developer ID Application: Example GmbH (ABCDE12345)`
+
+const expected = { teamId: "ABCDE12345", identifier: "com.betterc0de.ide", stapled: true }
+
+test("codesign details expose authority, team, runtime, timestamp and ticket", () => {
+  assert.deepEqual(parseCodesignDetails(NOTARIZED_CODESIGN), {
+    identifier: "com.betterc0de.ide",
+    authorities: [
+      "Developer ID Application: Example GmbH (ABCDE12345)",
+      "Developer ID Certification Authority",
+      "Apple Root CA",
+    ],
+    teamIdentifier: "ABCDE12345",
+    hardenedRuntime: true,
+    timestamp: "2. Oct 2026 at 10:12:03",
+    notarizationTicket: "stapled",
+  })
+  const adhoc = parseCodesignDetails(
+    "Identifier=Electron\nCodeDirectory v=20400 size=1 flags=0x20002(adhoc,linker-signed) hashes=1\nSignature=adhoc\nTeamIdentifier=not set"
+  )
+  assert.deepEqual(adhoc.authorities, [])
+  assert.equal(adhoc.teamIdentifier, null)
+  assert.equal(adhoc.hardenedRuntime, false)
+})
+
+test("Gatekeeper's verdict and its source are parsed", () => {
+  assert.deepEqual(parseSpctlAssessment(NOTARIZED_SPCTL), {
+    accepted: true,
+    source: "Notarized Developer ID",
+    origin: "Developer ID Application: Example GmbH (ABCDE12345)",
+  })
+  assert.deepEqual(parseSpctlAssessment("/x/BetterC0de.app: rejected\nsource=Unnotarized Developer ID"), {
+    accepted: false,
+    source: "Unnotarized Developer ID",
+    origin: null,
+  })
+})
+
+test("a notarized, stapled Developer ID build passes", () => {
+  assert.deepEqual(
+    macSignatureProblems(parseCodesignDetails(NOTARIZED_CODESIGN), parseSpctlAssessment(NOTARIZED_SPCTL), expected),
+    []
+  )
+})
+
+test("every reason for the Gatekeeper warning is reported", () => {
+  const details = parseCodesignDetails(
+    NOTARIZED_CODESIGN.replace("Developer ID Application: Example GmbH (ABCDE12345)", "Apple Development: dev@example.com (XYZ)")
+      .replace("TeamIdentifier=ABCDE12345", "TeamIdentifier=ZZZZZ99999")
+      .replace("flags=0x10000(runtime)", "flags=0x0(none)")
+      .replace(/^Timestamp=.*$/m, "")
+      .replace("Notarization Ticket=stapled", "")
+  )
+  const problems = macSignatureProblems(
+    details,
+    parseSpctlAssessment("/x/BetterC0de.app: accepted\nsource=Unnotarized Developer ID"),
+    expected
+  )
+  assert.deepEqual(problems, [
+    'signed by "Apple Development: dev@example.com (XYZ)", expected a Developer ID Application certificate',
+    "signed by team ZZZZZ99999, expected ABCDE12345",
+    "the hardened runtime is off; notarization requires it",
+    "the signature has no secure timestamp",
+    "no notarization ticket is stapled; offline first launches would be blocked",
+    'Gatekeeper accepts it as "Unnotarized Developer ID", not "Notarized Developer ID"',
+  ])
+  assert.deepEqual(
+    macSignatureProblems(parseCodesignDetails(NOTARIZED_CODESIGN), parseSpctlAssessment("x: rejected"), expected),
+    ["Gatekeeper rejects the app"]
+  )
 })

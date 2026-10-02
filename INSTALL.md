@@ -17,7 +17,7 @@ The installer files are published on the repository's [GitHub Releases page](htt
 | Linux x64 (Fedora, RHEL) | `betterc0de-<version>.x86_64.rpm` | `sudo dnf install ./betterc0de-<version>.x86_64.rpm` |
 | Linux x64 (any) | `BetterC0de-<version>.AppImage` or `.tar.gz` | `chmod +x` the AppImage and run it, or extract the tarball and run `betterc0de`. |
 
-The `.deb` and `.rpm` pull in the system libraries Electron needs; the AppImage and tarball expect them to be present already (any desktop installation has them). On macOS, an unsigned app is blocked on first launch: open **System Settings → Privacy & Security** and choose **Open Anyway**, or run `xattr -dr com.apple.quarantine /Applications/BetterC0de.app`. [Code signing](docs/development/code-signing.md) explains why.
+The `.deb` and `.rpm` pull in the system libraries Electron needs; the AppImage and tarball expect them to be present already (any desktop installation has them). On macOS, a release signed and notarized by Apple opens without a warning. An unsigned release is blocked on first launch with "Apple could not verify "BetterC0de" is free of malware": open **System Settings → Privacy & Security** and choose **Open Anyway**, or run `xattr -dr com.apple.quarantine /Applications/BetterC0de.app`. [Code signing](docs/development/code-signing.md) explains why.
 
 To check a download, compare it with the release's `SHA256SUMS.txt`: `sha256sum -c SHA256SUMS.txt --ignore-missing` on Linux, `shasum -a 256 -c SHA256SUMS.txt --ignore-missing` on macOS, or `Get-FileHash <file>` in PowerShell.
 
@@ -25,7 +25,7 @@ After installation, open **Settings → Providers**, connect a supported provide
 
 Anthropic, OpenAI, and Grok API access supports multiple saved keys with ordered backups. See [providers and API keys](docs/providers.md) for setup, key recovery, and model visibility.
 
-Unsigned Windows and macOS builds do not install updates automatically. Download and run the newer installer from Releases to update them. A successful CI run alone does not publish a download: the tag-triggered Release workflow runs the full release check on every platform and publishes the release only after all of them pass. Beta versions are marked as prereleases. Known problems of each version are listed in the [changelog](CHANGELOG.md).
+Signed and notarized macOS builds install updates automatically. Unsigned Windows and macOS builds do not; moving from an unsigned to the first signed macOS build is also a manual install. Download and run the newer installer from Releases to update them. A successful CI run alone does not publish a download: the tag-triggered Release workflow runs the full release check on every platform and publishes the release only after all of them pass. Beta versions are marked as prereleases. Known problems of each version are listed in the [changelog](CHANGELOG.md).
 
 ## Use the phone app
 

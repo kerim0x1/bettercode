@@ -97,12 +97,13 @@ function main(args, runner = createSubprocessRunner()) {
  * merges `extraMetadata` into the packaged `package.json`, so the renderer
  * process can read the build's signing posture at runtime.
  *
- * Windows is signed when a certificate was supplied; macOS is signed when
- * either a certificate or notarization credentials were configured.
+ * Windows is signed when a certificate was supplied; macOS is signed when a
+ * Developer ID certificate was supplied (release:check refuses a certificate
+ * without notarization credentials, so a signed Mac build is also notarized).
  */
 function buildSigningMetadataArgs(env = process.env) {
   const hasWindowsCert = Boolean(env.WIN_CSC_LINK || env.CSC_LINK);
-  const hasMacCert = Boolean(env.CSC_LINK || env.APPLE_TEAM_ID);
+  const hasMacCert = Boolean(env.CSC_LINK || env.CSC_NAME);
   const signed =
     process.platform === "win32"
       ? hasWindowsCert

@@ -23,7 +23,11 @@
 # the repository variable BETTERC0DE_MOBILE_RELEASE is "true"
 # (docs/release-checklist.md); until then steps 3 and 5 are skipped.
 #
-# The desktop app is unsigned by decision (docs/development/code-signing.md).
+# The macOS app is signed with a Developer ID certificate and notarized once
+# the repository variable BETTERC0DE_MACOS_SIGNING is "true"; its secrets live
+# in the `macos-signing` environment (main and `v*` tags), which only the Mac
+# legs of release:check attach. Until then, and on Windows and Linux, the
+# desktop app is unsigned (docs/development/code-signing.md).
 # The phone app has to be signed: Android and iOS install nothing else. Its
 # secrets live only in the `release` environment, which admits `v*` tags,
 # and only the jobs that sign or submit use it.
@@ -81,14 +85,18 @@ jobs:
     name: release:check (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout }}
+    # Only the Mac legs reach the signing credentials, and only once macOS
+    # signing is switched on; every other leg runs without an environment.
+    environment: ${{ matrix.signing == 'macos' && vars.BETTERC0DE_MACOS_SIGNING == 'true' && 'macos-signing' || '' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - { name: Linux x64, os: ubuntu-24.04, arch: x64, timeout: 75, artifact: installers-linux-x64 }
           - { name: Windows x64, os: windows-2025, arch: x64, timeout: 75, artifact: installers-windows-x64 }
-          - { name: macOS arm64, os: macos-15, arch: arm64, timeout: 75, artifact: installers-macos-arm64 }
-          - { name: macOS x64, os: macos-15-intel, arch: x64, timeout: 120, artifact: installers-macos-x64 }
+          # Notarization adds a round trip to Apple's notary service.
+          - { name: macOS arm64, os: macos-15, arch: arm64, timeout: 90, artifact: installers-macos-arm64, signing: macos }
+          - { name: macOS x64, os: macos-15-intel, arch: x64, timeout: 135, artifact: installers-macos-x64, signing: macos }
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -107,7 +115,35 @@ jobs:
         if: runner.os == 'macOS'
         run: sudo mdutil -a -i off
 
+      # Checks the credentials before anything is built and writes the App
+      # Store Connect key to a private file, because notarytool needs a path.
+      - name: Prepare macOS signing
+        if: runner.os == 'macOS' && vars.BETTERC0DE_MACOS_SIGNING == 'true'
+        env:
+          BETTERC0DE_MACOS_SIGNING: "true"
+          CSC_LINK: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: node scripts/macos-signing.mjs prepare
+
       - name: release:check
+        # electron-builder signs, notarizes and staples the Mac app when the
+        # credentials are present; the installer smoke then requires a
+        # notarized Developer ID app. Other legs receive empty values.
+        env:
+          BETTERC0DE_MACOS_SIGNING: ${{ runner.os == 'macOS' && vars.BETTERC0DE_MACOS_SIGNING || '' }}
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MACOS_CERTIFICATE_P12_BASE64 || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MACOS_CERTIFICATE_PASSWORD || '' }}
+          APPLE_API_KEY_ID: ${{ runner.os == 'macOS' && secrets.APPLE_API_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ runner.os == 'macOS' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && vars.APPLE_TEAM_ID || '' }}
         # The phone app is built by its own jobs.
         run: npm run release:check -- --arch ${{ matrix.arch }} --mobile none
 

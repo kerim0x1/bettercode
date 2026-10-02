@@ -2546,6 +2546,17 @@ function scheduleUpdateCheck() {
     updatesDisabledReason = "unsigned-build"
     return
   }
+  // Squirrel.Mac, which electron-updater uses on macOS, refuses an update
+  // whose signature does not satisfy the running app's designated
+  // requirement, so an unsigned build would download every update only to
+  // fail installing it. Signed and notarized builds update themselves.
+  if (process.platform === "darwin" && !isCodeSignedBuild()) {
+    console.log(
+      "[electron] skipping update check — this macOS build is not signed; install new versions from the disk image.",
+    )
+    updatesDisabledReason = "unsigned-build"
+    return
+  }
 
   if (!loadAutoUpdater()) {
     updatesDisabledReason = "updater-unavailable"
