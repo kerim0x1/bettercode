@@ -88,6 +88,12 @@ Build and test on the target operating system and architecture: macOS packages c
 
 Fork maintainers must change the repository/publishing target in `package.json` and review app IDs, mobile bundle identifiers, diagnostic endpoints, and branding before distributing their own builds. The current package metadata points to `kerim0x1/bettercode`.
 
+### AppImage catalog image
+
+Linux packaging copies `apps/shell/build/com.betterc0de.ide.metainfo.xml` into the AppDir at `usr/share/metainfo/com.betterc0de.ide.metainfo.xml`, outside `app.asar`. The AppImage catalog reads the default image URL from this AppStream metadata. It points to the owner's `assets/betterc0de-website.png`, captioned as the website and project overview.
+
+To change the catalog image, update the default screenshot URL in the metainfo file and keep the image publicly accessible. Publish a new AppImage with the metadata, then comment `/retest` on the catalog pull request. Updating the source or posting an image in a comment does not change metadata inside an existing release. The bot's test capture still records the application's actual startup window.
+
 ## Environment and local data
 
 The app runs without a local environment file. `.env.example` documents optional settings; it is not automatically loaded into every Electron or backend process. Set variables in the shell or process launcher that starts the application.

@@ -1,7 +1,7 @@
-import fs from "node:fs";
-import path from "node:path";
-import { EventEmitter } from "node:events";
-import { randomUUID } from "node:crypto";
+import fs from "node:fs"
+import path from "node:path"
+import { EventEmitter } from "node:events"
+import { randomUUID } from "node:crypto"
 import {
   defaultSettings,
   isSensitiveProviderFieldName,
@@ -10,12 +10,17 @@ import {
   settingsSchema,
   type SecretState,
   type Settings,
-} from "./schema";
-import { decryptSecret, encryptSecret, getMasterKey, isEncrypted } from "./crypto";
-import { isUnsafeChildEnvironmentKey } from "../security/childEnvironment";
-import { HttpError } from "../errors";
+} from "./schema"
+import {
+  decryptSecret,
+  encryptSecret,
+  getMasterKey,
+  isEncrypted,
+} from "./crypto"
+import { isUnsafeChildEnvironmentKey } from "../security/childEnvironment"
+import { HttpError } from "../errors"
 
-const PROVIDER_SECRET_KEYS = ["api_key", "serverPassword"] as const;
+const PROVIDER_SECRET_KEYS = ["api_key", "serverPassword"] as const
 const PROVIDER_DESTINATION_KEYS = [
   "base_url",
   "binaryPath",
@@ -24,7 +29,7 @@ const PROVIDER_DESTINATION_KEYS = [
   "serverUsername",
   "homePath",
   "shadowHomePath",
-] as const;
+] as const
 const PROVIDER_INSTANCE_CONFIG_SECRET_KEYS = new Set([
   "apiKey",
   "api_key",
@@ -34,70 +39,70 @@ const PROVIDER_INSTANCE_CONFIG_SECRET_KEYS = new Set([
   "clientSecret",
   "secret",
   "token",
-]);
-const TOP_LEVEL_SECRET_KEYS = ["deepgram_api_key", "jev_api_key"] as const;
+])
+const TOP_LEVEL_SECRET_KEYS = ["deepgram_api_key", "jev_api_key"] as const
 
-type UnknownRecord = Record<string, unknown>;
+type UnknownRecord = Record<string, unknown>
 
 function deepFreeze<T>(value: T): T {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) {
-    return value;
+    return value
   }
   for (const nested of Object.values(value as Record<string, unknown>)) {
-    deepFreeze(nested);
+    deepFreeze(nested)
   }
-  return Object.freeze(value);
+  return Object.freeze(value)
 }
-type ConfigPathSegment = string | number;
-type SecretLoadResult = "none" | "plaintext" | "decrypted" | "undecryptable";
+type ConfigPathSegment = string | number
+type SecretLoadResult = "none" | "plaintext" | "decrypted" | "undecryptable"
 
 interface SettingsSecretLoadState {
-  readonly sawPlaintext: boolean;
-  readonly undecryptableSecretPaths: string[];
+  readonly sawPlaintext: boolean
+  readonly undecryptableSecretPaths: string[]
 }
 
 interface SettingsLoadResult extends SettingsSecretLoadState {
-  readonly settings: Settings;
-  readonly writeBlockedReason: string | null;
+  readonly settings: Settings
+  readonly writeBlockedReason: string | null
   /** Identity of the file that produced this result; null when absent. */
-  readonly fileStamp: SettingsFileStamp | null;
+  readonly fileStamp: SettingsFileStamp | null
 }
 
 /** Enough of `fs.Stats` to notice an external edit without re-parsing. */
 interface SettingsFileStamp {
-  readonly mtimeMs: number;
-  readonly size: number;
-  readonly ino: number;
+  readonly mtimeMs: number
+  readonly size: number
+  readonly ino: number
 }
 
 function readSettingsFileStamp(filePath: string): SettingsFileStamp | null {
   try {
-    const stat = fs.statSync(filePath);
-    return { mtimeMs: stat.mtimeMs, size: stat.size, ino: stat.ino };
+    const stat = fs.statSync(filePath)
+    return { mtimeMs: stat.mtimeMs, size: stat.size, ino: stat.ino }
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR") return null;
-    throw error;
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === "ENOENT" || code === "ENOTDIR") return null
+    throw error
   }
 }
 
 function sameSettingsFileStamp(
   left: SettingsFileStamp | null,
-  right: SettingsFileStamp | null,
+  right: SettingsFileStamp | null
 ): boolean {
-  if (left === null || right === null) return left === right;
+  if (left === null || right === null) return left === right
   return (
     left.mtimeMs === right.mtimeMs &&
     left.size === right.size &&
     left.ino === right.ino
-  );
+  )
 }
 
 function isProviderInstanceConfigSecretKey(key: string): boolean {
   return (
     PROVIDER_INSTANCE_CONFIG_SECRET_KEYS.has(key) ||
     isSensitiveProviderFieldName(key)
-  );
+  )
 }
 
 function visitProviderInstanceConfigSecrets(
@@ -105,23 +110,23 @@ function visitProviderInstanceConfigSecrets(
   visitor: (
     record: UnknownRecord,
     key: string,
-    path: readonly ConfigPathSegment[],
+    path: readonly ConfigPathSegment[]
   ) => void,
-  path: readonly ConfigPathSegment[] = [],
+  path: readonly ConfigPathSegment[] = []
 ): void {
   if (Array.isArray(value)) {
     value.forEach((entry, index) =>
-      visitProviderInstanceConfigSecrets(entry, visitor, [...path, index]),
-    );
-    return;
+      visitProviderInstanceConfigSecrets(entry, visitor, [...path, index])
+    )
+    return
   }
-  if (!isUnknownRecord(value)) return;
+  if (!isUnknownRecord(value)) return
   for (const [key, nested] of Object.entries(value)) {
-    const nestedPath = [...path, key];
+    const nestedPath = [...path, key]
     if (isProviderInstanceConfigSecretKey(key)) {
-      visitor(value, key, nestedPath);
+      visitor(value, key, nestedPath)
     } else {
-      visitProviderInstanceConfigSecrets(nested, visitor, nestedPath);
+      visitProviderInstanceConfigSecrets(nested, visitor, nestedPath)
     }
   }
 }
@@ -131,101 +136,101 @@ function visitSensitiveNamedSettingsFields(
   visitor: (
     record: UnknownRecord,
     key: string,
-    path: readonly ConfigPathSegment[],
+    path: readonly ConfigPathSegment[]
   ) => void,
-  path: readonly ConfigPathSegment[] = [],
+  path: readonly ConfigPathSegment[] = []
 ): void {
   if (Array.isArray(value)) {
     value.forEach((entry, index) =>
-      visitSensitiveNamedSettingsFields(entry, visitor, [...path, index]),
-    );
-    return;
+      visitSensitiveNamedSettingsFields(entry, visitor, [...path, index])
+    )
+    return
   }
-  if (!isUnknownRecord(value)) return;
+  if (!isUnknownRecord(value)) return
   for (const [key, nested] of Object.entries(value)) {
-    const nestedPath = [...path, key];
+    const nestedPath = [...path, key]
     // These are public metadata produced by redaction, never credentials.
-    if (key === "secretState" || key === "secret_state") continue;
+    if (key === "secretState" || key === "secret_state") continue
     if (isSensitiveProviderFieldName(key)) {
-      visitor(value, key, nestedPath);
+      visitor(value, key, nestedPath)
     } else {
-      visitSensitiveNamedSettingsFields(nested, visitor, nestedPath);
+      visitSensitiveNamedSettingsFields(nested, visitor, nestedPath)
     }
   }
 }
 
 function settingsPathLabel(path: readonly ConfigPathSegment[]): string {
-  return path.map(String).join(".");
+  return path.map(String).join(".")
 }
 
 function configValueAtPath(
   value: unknown,
-  path: readonly ConfigPathSegment[],
+  path: readonly ConfigPathSegment[]
 ): unknown {
-  let current = value;
+  let current = value
   for (const segment of path) {
     if (typeof segment === "number") {
-      if (!Array.isArray(current)) return undefined;
-      current = current[segment];
-      continue;
+      if (!Array.isArray(current)) return undefined
+      current = current[segment]
+      continue
     }
-    if (!isUnknownRecord(current)) return undefined;
-    current = current[segment];
+    if (!isUnknownRecord(current)) return undefined
+    current = current[segment]
   }
-  return current;
+  return current
 }
 
 function configPathLabel(
   instanceId: string,
-  path: readonly ConfigPathSegment[],
+  path: readonly ConfigPathSegment[]
 ): string {
   return `provider_instances.${instanceId}.config${path
     .map((segment) => `.${segment}`)
-    .join("")}`;
+    .join("")}`
 }
 
 function normalizeProviderInstanceConfigPatch(
   raw: unknown,
   current: unknown,
   instanceId: string,
-  path: readonly ConfigPathSegment[] = [],
+  path: readonly ConfigPathSegment[] = []
 ): unknown {
   if (Array.isArray(raw)) {
-    const currentArray = Array.isArray(current) ? current : [];
+    const currentArray = Array.isArray(current) ? current : []
     return raw.map((entry, index) =>
       normalizeProviderInstanceConfigPatch(
         entry,
         currentArray[index],
         instanceId,
-        [...path, index],
-      ),
-    );
+        [...path, index]
+      )
+    )
   }
-  if (!isUnknownRecord(raw)) return structuredClone(raw);
-  const currentRecord = isUnknownRecord(current) ? current : {};
-  const normalized = structuredClone(raw) as UnknownRecord;
+  if (!isUnknownRecord(raw)) return structuredClone(raw)
+  const currentRecord = isUnknownRecord(current) ? current : {}
+  const normalized = structuredClone(raw) as UnknownRecord
   for (const [key, value] of Object.entries(raw)) {
-    const nestedPath = [...path, key];
+    const nestedPath = [...path, key]
     normalized[key] = isProviderInstanceConfigSecretKey(key)
       ? resolveSecretUpdate(
           value,
           currentRecord[key],
-          configPathLabel(instanceId, nestedPath),
+          configPathLabel(instanceId, nestedPath)
         )
       : normalizeProviderInstanceConfigPatch(
           value,
           currentRecord[key],
           instanceId,
-          nestedPath,
-        );
+          nestedPath
+        )
   }
-  return normalized;
+  return normalized
 }
 
 export class InvalidSettingsPatchError extends HttpError {
   constructor(message: string) {
-    super(400, message, "invalid_settings_patch");
-    this.name = "InvalidSettingsPatchError";
+    super(400, message, "invalid_settings_patch")
+    this.name = "InvalidSettingsPatchError"
   }
 }
 
@@ -242,66 +247,72 @@ export class InvalidSettingsPatchError extends HttpError {
  * value on disk.
  */
 function decryptSettingsSecrets(settings: Settings): SettingsSecretLoadState {
-  let sawPlaintext = false;
-  const undecryptableSecretPaths: string[] = [];
-  const recordSecret = (
-    result: SecretLoadResult,
-    secretPath: string,
-  ): void => {
-    if (result === "plaintext") sawPlaintext = true;
-    if (result === "undecryptable") undecryptableSecretPaths.push(secretPath);
-  };
-  const mcpServers = (settings as unknown as { mcp_servers?: Array<UnknownRecord> }).mcp_servers;
+  let sawPlaintext = false
+  const undecryptableSecretPaths: string[] = []
+  const recordSecret = (result: SecretLoadResult, secretPath: string): void => {
+    if (result === "plaintext") sawPlaintext = true
+    if (result === "undecryptable") undecryptableSecretPaths.push(secretPath)
+  }
+  const mcpServers = (
+    settings as unknown as { mcp_servers?: Array<UnknownRecord> }
+  ).mcp_servers
   for (const [index, server] of (mcpServers ?? []).entries()) {
     recordSecret(
       decryptSecretProperty(server, "envVars"),
-      `mcp_servers.${index}.envVars`,
-    );
+      `mcp_servers.${index}.envVars`
+    )
   }
 
-  const providerInstances = (settings as unknown as {
-    provider_instances?: Record<string, {
-      environment?: Array<UnknownRecord>;
-      config?: UnknownRecord;
-    }>;
-  }).provider_instances;
-  for (const [instanceId, instance] of Object.entries(providerInstances ?? {})) {
+  const providerInstances = (
+    settings as unknown as {
+      provider_instances?: Record<
+        string,
+        {
+          environment?: Array<UnknownRecord>
+          config?: UnknownRecord
+        }
+      >
+    }
+  ).provider_instances
+  for (const [instanceId, instance] of Object.entries(
+    providerInstances ?? {}
+  )) {
     for (const [index, envVar] of (instance.environment ?? []).entries()) {
       if (envVar.sensitive === true) {
         recordSecret(
           decryptSecretProperty(envVar, "value"),
-          `provider_instances.${instanceId}.environment.${index}.value`,
-        );
+          `provider_instances.${instanceId}.environment.${index}.value`
+        )
       }
     }
   }
 
-  visitSensitiveNamedSettingsFields(
-    settings,
-    (record, key, secretPath) => {
-      recordSecret(
-        decryptSecretProperty(record, key),
-        settingsPathLabel(secretPath),
-      );
-    },
-  );
-  return { sawPlaintext, undecryptableSecretPaths };
+  visitSensitiveNamedSettingsFields(settings, (record, key, secretPath) => {
+    recordSecret(
+      decryptSecretProperty(record, key),
+      settingsPathLabel(secretPath)
+    )
+  })
+  return { sawPlaintext, undecryptableSecretPaths }
 }
 
-function decryptSecretProperty(record: UnknownRecord, key: string): SecretLoadResult {
-  const value = record[key];
-  if (typeof value !== "string" || value.length === 0) return "none";
-  if (!isEncrypted(value)) return "plaintext";
-  const decrypted = decryptSecret(value);
+function decryptSecretProperty(
+  record: UnknownRecord,
+  key: string
+): SecretLoadResult {
+  const value = record[key]
+  if (typeof value !== "string" || value.length === 0) return "none"
+  if (!isEncrypted(value)) return "plaintext"
+  const decrypted = decryptSecret(value)
   if (decrypted === null) {
     // Never pass ciphertext through as a live provider credential. The
     // SettingsService records this locked path and rejects every write, so
     // the original encrypted value remains intact on disk for key recovery.
-    record[key] = "";
-    return "undecryptable";
+    record[key] = ""
+    return "undecryptable"
   }
-  record[key] = decrypted;
-  return "decrypted";
+  record[key] = decrypted
+  return "decrypted"
 }
 
 /**
@@ -313,176 +324,198 @@ function decryptSecretProperty(record: UnknownRecord, key: string): SecretLoadRe
  * ever adopts them.
  */
 function encryptSettingsForDisk(settings: Settings): Settings {
-  const clone = structuredClone(settings) as Settings;
+  const clone = structuredClone(settings) as Settings
 
-  const mcpServers = (clone as unknown as { mcp_servers?: Array<UnknownRecord> }).mcp_servers;
+  const mcpServers = (
+    clone as unknown as { mcp_servers?: Array<UnknownRecord> }
+  ).mcp_servers
   for (const server of mcpServers ?? []) {
-    encryptSecretProperty(server, "envVars");
+    encryptSecretProperty(server, "envVars")
   }
 
-  const providerInstances = (clone as unknown as {
-    provider_instances?: Record<string, {
-      environment?: Array<UnknownRecord>;
-      config?: UnknownRecord;
-    }>;
-  }).provider_instances;
+  const providerInstances = (
+    clone as unknown as {
+      provider_instances?: Record<
+        string,
+        {
+          environment?: Array<UnknownRecord>
+          config?: UnknownRecord
+        }
+      >
+    }
+  ).provider_instances
   for (const instance of Object.values(providerInstances ?? {})) {
     for (const envVar of instance.environment ?? []) {
-      if (envVar.sensitive === true) encryptSecretProperty(envVar, "value");
+      if (envVar.sensitive === true) encryptSecretProperty(envVar, "value")
     }
   }
 
   visitSensitiveNamedSettingsFields(clone, (record, key) =>
-    encryptSecretProperty(record, key),
-  );
+    encryptSecretProperty(record, key)
+  )
 
-  return clone;
+  return clone
 }
 
 function encryptSecretProperty(record: UnknownRecord, key: string): void {
-  const value = record[key];
-  if (typeof value === "string" && value.length > 0) record[key] = encryptSecret(value);
+  const value = record[key]
+  if (typeof value === "string" && value.length > 0)
+    record[key] = encryptSecret(value)
 }
 
 function hasConfiguredSecrets(settings: Settings): boolean {
-  const root = settings as unknown as UnknownRecord;
-  const mcpServers = root.mcp_servers as Array<UnknownRecord> | undefined;
+  const root = settings as unknown as UnknownRecord
+  const mcpServers = root.mcp_servers as Array<UnknownRecord> | undefined
   if (
     (mcpServers ?? []).some(
       (server) =>
-        typeof server.envVars === "string" && server.envVars.length > 0,
+        typeof server.envVars === "string" && server.envVars.length > 0
     )
   ) {
-    return true;
+    return true
   }
   const instances = root.provider_instances as
     | Record<
         string,
         { environment?: Array<UnknownRecord>; config?: UnknownRecord }
       >
-    | undefined;
+    | undefined
   for (const instance of Object.values(instances ?? {})) {
     if (
       (instance.environment ?? []).some(
         (envVar) =>
           envVar.sensitive === true &&
           typeof envVar.value === "string" &&
-          envVar.value.length > 0,
+          envVar.value.length > 0
       )
     ) {
-      return true;
+      return true
     }
   }
-  let configured = false;
+  let configured = false
   visitSensitiveNamedSettingsFields(settings, (record, key) => {
-    if (configuredSecret(record[key])) configured = true;
-  });
-  return configured;
+    if (configuredSecret(record[key])) configured = true
+  })
+  return configured
 }
 
 function secretState(value: unknown): SecretState {
   return {
     configured: typeof value === "string" && value.length > 0,
     storage: getMasterKey() ? "encrypted" : "plaintext",
-  };
+  }
 }
 
 function redactSettings(settings: Settings): UnknownRecord {
-  const view = structuredClone(settings) as unknown as UnknownRecord;
-  const mcpServers = view.mcp_servers as Array<UnknownRecord> | undefined;
-  for (const server of mcpServers ?? []) server.envVars = secretState(server.envVars);
+  const view = structuredClone(settings) as unknown as UnknownRecord
+  const mcpServers = view.mcp_servers as Array<UnknownRecord> | undefined
+  for (const server of mcpServers ?? [])
+    server.envVars = secretState(server.envVars)
 
-  const providerInstances = view.provider_instances as Record<string, {
-    environment?: Array<UnknownRecord>;
-    config?: UnknownRecord;
-  }> | undefined;
+  const providerInstances = view.provider_instances as
+    | Record<
+        string,
+        {
+          environment?: Array<UnknownRecord>
+          config?: UnknownRecord
+        }
+      >
+    | undefined
   for (const instance of Object.values(providerInstances ?? {})) {
     for (const envVar of instance.environment ?? []) {
-      if (envVar.sensitive !== true) continue;
-      const state = secretState(envVar.value);
-      envVar.value = "";
-      envVar.valueRedacted = state.configured;
-      envVar.secretState = state;
+      if (envVar.sensitive !== true) continue
+      const state = secretState(envVar.value)
+      envVar.value = ""
+      envVar.valueRedacted = state.configured
+      envVar.secretState = state
     }
   }
 
   visitSensitiveNamedSettingsFields(view, (record, key) => {
-    record[key] = secretState(record[key]);
-  });
-  return view;
+    record[key] = secretState(record[key])
+  })
+  return view
 }
 
 function isUnknownRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function resolveSecretUpdate(value: unknown, current: unknown, path: string): string {
-  const patch = secretPatchSchema.safeParse(value);
-  if (patch.success) return "set" in patch.data ? patch.data.set : "";
+function resolveSecretUpdate(
+  value: unknown,
+  current: unknown,
+  path: string
+): string {
+  const patch = secretPatchSchema.safeParse(value)
+  if (patch.success) return "set" in patch.data ? patch.data.set : ""
   if (secretStateSchema.safeParse(value).success || value === undefined) {
-    return typeof current === "string" ? current : "";
+    return typeof current === "string" ? current : ""
   }
   // Legacy renderers sent plaintext or null. Continue accepting them while
   // never returning plaintext from the current API.
-  if (value === null) return "";
-  if (typeof value === "string") return value;
-  throw new InvalidSettingsPatchError(`${path} must be { set: string } or { clear: true }`);
+  if (value === null) return ""
+  if (typeof value === "string") return value
+  throw new InvalidSettingsPatchError(
+    `${path} must be { set: string } or { clear: true }`
+  )
 }
 
 function explicitlyClearsSecret(value: unknown): boolean {
-  const patch = secretPatchSchema.safeParse(value);
-  return patch.success && "clear" in patch.data && patch.data.clear === true;
+  const patch = secretPatchSchema.safeParse(value)
+  return patch.success && "clear" in patch.data && patch.data.clear === true
 }
 
 function explicitlyMutatesSecret(value: unknown): boolean {
-  return secretPatchSchema.safeParse(value).success;
+  return secretPatchSchema.safeParse(value).success
 }
 
 function configuredSecret(value: unknown): boolean {
-  return typeof value === "string" && value.length > 0;
+  return typeof value === "string" && value.length > 0
 }
 
 function changesAnyField(
   patch: UnknownRecord,
   current: UnknownRecord,
-  keys: readonly string[],
+  keys: readonly string[]
 ): boolean {
   return keys.some(
-    (key) => key in patch && !Object.is(patch[key], current[key]),
-  );
+    (key) => key in patch && !Object.is(patch[key], current[key])
+  )
 }
 
 function instanceHasConfiguredSecrets(instance: UnknownRecord): boolean {
   const environment = Array.isArray(instance.environment)
     ? instance.environment
-    : [];
+    : []
   if (
     environment.some(
       (entry) =>
         isUnknownRecord(entry) &&
         entry.sensitive === true &&
-        configuredSecret(entry.value),
+        configuredSecret(entry.value)
     )
   ) {
-    return true;
+    return true
   }
-  const config = isUnknownRecord(instance.config) ? instance.config : {};
-  let configured = false;
+  const config = isUnknownRecord(instance.config) ? instance.config : {}
+  let configured = false
   visitProviderInstanceConfigSecrets(config, (record, key) => {
-    if (configuredSecret(record[key])) configured = true;
-  });
-  return configured;
+    if (configuredSecret(record[key])) configured = true
+  })
+  return configured
 }
 
 function instanceSecretsExplicitlyMutated(
   currentInstance: UnknownRecord,
-  rawInstance: UnknownRecord,
+  rawInstance: UnknownRecord
 ): boolean {
   const currentConfig = isUnknownRecord(currentInstance.config)
     ? currentInstance.config
-    : {};
-  const rawConfig = isUnknownRecord(rawInstance.config) ? rawInstance.config : {};
-  let configSecretsMutated = true;
+    : {}
+  const rawConfig = isUnknownRecord(rawInstance.config)
+    ? rawInstance.config
+    : {}
+  let configSecretsMutated = true
   visitProviderInstanceConfigSecrets(
     currentConfig,
     (record, key, configPath) => {
@@ -490,56 +523,57 @@ function instanceSecretsExplicitlyMutated(
         configuredSecret(record[key]) &&
         !explicitlyMutatesSecret(configValueAtPath(rawConfig, configPath))
       ) {
-        configSecretsMutated = false;
+        configSecretsMutated = false
       }
-    },
-  );
-  if (!configSecretsMutated) return false;
+    }
+  )
+  if (!configSecretsMutated) return false
 
   const currentEnvironment = Array.isArray(currentInstance.environment)
     ? currentInstance.environment
-    : [];
+    : []
   const rawEnvironment = Array.isArray(rawInstance.environment)
     ? rawInstance.environment
-    : [];
+    : []
   for (const currentEntry of currentEnvironment) {
     if (
       !isUnknownRecord(currentEntry) ||
       currentEntry.sensitive !== true ||
       !configuredSecret(currentEntry.value)
     ) {
-      continue;
+      continue
     }
     const rawEntry = rawEnvironment.find(
-      (entry) => isUnknownRecord(entry) && entry.name === currentEntry.name,
-    );
+      (entry) => isUnknownRecord(entry) && entry.name === currentEntry.name
+    )
     if (
       !isUnknownRecord(rawEntry) ||
       (!explicitlyMutatesSecret(rawEntry.value) &&
         !explicitlyMutatesSecret(rawEntry.secretState))
     ) {
-      return false;
+      return false
     }
   }
-  return true;
+  return true
 }
 
 function environmentChanges(
   currentEnvironment: unknown[],
-  rawEnvironment: unknown[],
+  rawEnvironment: unknown[]
 ): boolean {
-  if (currentEnvironment.length !== rawEnvironment.length) return true;
+  if (currentEnvironment.length !== rawEnvironment.length) return true
   return rawEnvironment.some((rawEntry) => {
-    if (!isUnknownRecord(rawEntry) || typeof rawEntry.name !== "string") return true;
+    if (!isUnknownRecord(rawEntry) || typeof rawEntry.name !== "string")
+      return true
     const currentEntry = currentEnvironment.find(
-      (entry) => isUnknownRecord(entry) && entry.name === rawEntry.name,
-    );
-    if (!isUnknownRecord(currentEntry)) return true;
+      (entry) => isUnknownRecord(entry) && entry.name === rawEntry.name
+    )
+    if (!isUnknownRecord(currentEntry)) return true
     if (
       "sensitive" in rawEntry &&
       !Object.is(rawEntry.sensitive, currentEntry.sensitive)
     ) {
-      return true;
+      return true
     }
     const redactedSecret =
       currentEntry.sensitive === true &&
@@ -547,85 +581,133 @@ function environmentChanges(
       (rawEntry.valueRedacted === true ||
         secretStateSchema.safeParse(rawEntry.secretState).success) &&
       !explicitlyMutatesSecret(rawEntry.value) &&
-      !explicitlyMutatesSecret(rawEntry.secretState);
-    return !redactedSecret &&
+      !explicitlyMutatesSecret(rawEntry.secretState)
+    return (
+      !redactedSecret &&
       "value" in rawEntry &&
-      !Object.is(rawEntry.value, currentEntry.value);
-  });
+      !Object.is(rawEntry.value, currentEntry.value)
+    )
+  })
 }
 
-function normalizeSettingsPatch(settings: Settings, patch: UnknownRecord): UnknownRecord {
-  const normalized = structuredClone(patch) as UnknownRecord;
-  const current = settings as unknown as UnknownRecord;
+function normalizeSettingsPatch(
+  settings: Settings,
+  patch: UnknownRecord
+): UnknownRecord {
+  const normalized = structuredClone(patch) as UnknownRecord
+  const current = settings as unknown as UnknownRecord
   const removedProviderInstanceIds = readRemovedProviderInstanceIds(
-    patch.remove_provider_instance_ids,
-  );
-  delete normalized.remove_provider_instance_ids;
+    patch.remove_provider_instance_ids
+  )
+  delete normalized.remove_provider_instance_ids
 
   if (isUnknownRecord(patch.providers)) {
-    const currentProviders = isUnknownRecord(current.providers) ? current.providers : {};
-    const nextProviders = structuredClone(currentProviders) as UnknownRecord;
+    const currentProviders = isUnknownRecord(current.providers)
+      ? current.providers
+      : {}
+    const nextProviders = structuredClone(currentProviders) as UnknownRecord
     for (const [providerId, rawConfig] of Object.entries(patch.providers)) {
       if (!isUnknownRecord(rawConfig)) {
-        nextProviders[providerId] = rawConfig;
-        continue;
+        nextProviders[providerId] = rawConfig
+        continue
       }
       const currentConfig = isUnknownRecord(currentProviders[providerId])
-        ? currentProviders[providerId] as UnknownRecord
-        : {};
+        ? (currentProviders[providerId] as UnknownRecord)
+        : {}
+      const currentApiKeys = Array.isArray(currentConfig.api_keys)
+        ? currentConfig.api_keys
+        : []
+      if (
+        changesAnyField(rawConfig, currentConfig, PROVIDER_DESTINATION_KEYS) &&
+        currentApiKeys.some(
+          (entry) => isUnknownRecord(entry) && configuredSecret(entry.api_key)
+        )
+      ) {
+        throw new InvalidSettingsPatchError(
+          `providers.${providerId} destination cannot change while API keys are stored; remove the keys first`
+        )
+      }
       if (
         changesAnyField(rawConfig, currentConfig, PROVIDER_DESTINATION_KEYS) &&
         PROVIDER_SECRET_KEYS.some(
           (key) =>
             configuredSecret(currentConfig[key]) &&
-            !explicitlyMutatesSecret(rawConfig[key]),
+            !explicitlyMutatesSecret(rawConfig[key])
         )
       ) {
         throw new InvalidSettingsPatchError(
-          `providers.${providerId} destination cannot change while preserving stored credentials; clear or re-enter the secret first`,
-        );
+          `providers.${providerId} destination cannot change while preserving stored credentials; clear or re-enter the secret first`
+        )
       }
-      const nextConfig = { ...currentConfig, ...structuredClone(rawConfig) };
+      const nextConfig = { ...currentConfig, ...structuredClone(rawConfig) }
+      if ("api_keys" in rawConfig) {
+        if (
+          !["anthropic", "openai", "grok"].includes(providerId) ||
+          (rawConfig.api_keys !== null && !Array.isArray(rawConfig.api_keys))
+        )
+          throw new InvalidSettingsPatchError(
+            `providers.${providerId}.api_keys must be a supported provider's key list`
+          )
+        nextConfig.api_keys =
+          rawConfig.api_keys === null
+            ? undefined
+            : rawConfig.api_keys.map((entry, index) => {
+                if (!isUnknownRecord(entry)) return entry
+                const previous = currentApiKeys.find(
+                  (key) => isUnknownRecord(key) && key.id === entry.id
+                )
+                return {
+                  ...entry,
+                  api_key: resolveSecretUpdate(
+                    entry.api_key,
+                    isUnknownRecord(previous) ? previous.api_key : undefined,
+                    `providers.${providerId}.api_keys.${index}.api_key`
+                  ),
+                }
+              })
+      }
       for (const key of PROVIDER_SECRET_KEYS) {
         if (key in rawConfig) {
           nextConfig[key] = resolveSecretUpdate(
             rawConfig[key],
             currentConfig[key],
-            `providers.${providerId}.${key}`,
-          );
+            `providers.${providerId}.${key}`
+          )
         }
       }
-      nextProviders[providerId] = nextConfig;
+      nextProviders[providerId] = nextConfig
     }
-    normalized.providers = nextProviders;
+    normalized.providers = nextProviders
   }
 
   if (Array.isArray(patch.mcp_servers)) {
-    const currentServers = Array.isArray(current.mcp_servers) ? current.mcp_servers : [];
+    const currentServers = Array.isArray(current.mcp_servers)
+      ? current.mcp_servers
+      : []
     normalized.mcp_servers = patch.mcp_servers.map((rawServer, index) => {
-      if (!isUnknownRecord(rawServer)) return rawServer;
+      if (!isUnknownRecord(rawServer)) return rawServer
       const currentServer = currentServers.find(
-        (item) => isUnknownRecord(item) && item.id === rawServer.id,
-      );
-      const currentRecord = isUnknownRecord(currentServer) ? currentServer : {};
+        (item) => isUnknownRecord(item) && item.id === rawServer.id
+      )
+      const currentRecord = isUnknownRecord(currentServer) ? currentServer : {}
       if (
         configuredSecret(currentRecord.envVars) &&
         changesAnyField(rawServer, currentRecord, ["command", "args"]) &&
         !explicitlyMutatesSecret(rawServer.envVars)
       ) {
         throw new InvalidSettingsPatchError(
-          `mcp_servers.${index} command cannot change while preserving stored environment secrets; clear or re-enter envVars first`,
-        );
+          `mcp_servers.${index} command cannot change while preserving stored environment secrets; clear or re-enter envVars first`
+        )
       }
       return {
         ...rawServer,
         envVars: resolveSecretUpdate(
           rawServer.envVars,
           currentRecord.envVars,
-          `mcp_servers.${index}.envVars`,
+          `mcp_servers.${index}.envVars`
         ),
-      };
-    });
+      }
+    })
   }
 
   if (
@@ -634,31 +716,31 @@ function normalizeSettingsPatch(settings: Settings, patch: UnknownRecord): Unkno
   ) {
     const currentInstances = isUnknownRecord(current.provider_instances)
       ? current.provider_instances
-      : {};
-    const nextInstances = structuredClone(currentInstances) as UnknownRecord;
+      : {}
+    const nextInstances = structuredClone(currentInstances) as UnknownRecord
     const patchedInstances = isUnknownRecord(patch.provider_instances)
       ? patch.provider_instances
-      : {};
+      : {}
     for (const [instanceId, rawInstance] of Object.entries(patchedInstances)) {
       if (!isUnknownRecord(rawInstance)) {
-        nextInstances[instanceId] = rawInstance;
-        continue;
+        nextInstances[instanceId] = rawInstance
+        continue
       }
       const currentInstance = isUnknownRecord(currentInstances[instanceId])
-        ? currentInstances[instanceId] as UnknownRecord
-        : {};
+        ? (currentInstances[instanceId] as UnknownRecord)
+        : {}
       const currentInstanceConfig = isUnknownRecord(currentInstance.config)
         ? currentInstance.config
-        : {};
+        : {}
       const rawInstanceConfig = isUnknownRecord(rawInstance.config)
         ? rawInstance.config
-        : {};
+        : {}
       const currentEnvironment = Array.isArray(currentInstance.environment)
         ? currentInstance.environment
-        : [];
+        : []
       const rawEnvironment = Array.isArray(rawInstance.environment)
         ? rawInstance.environment
-        : [];
+        : []
       if (
         Array.isArray(rawInstance.environment) &&
         instanceHasConfiguredSecrets(currentInstance) &&
@@ -666,8 +748,8 @@ function normalizeSettingsPatch(settings: Settings, patch: UnknownRecord): Unkno
         !instanceSecretsExplicitlyMutated(currentInstance, rawInstance)
       ) {
         throw new InvalidSettingsPatchError(
-          `provider_instances.${instanceId}.environment cannot change while preserving stored credentials; clear or re-enter every secret first`,
-        );
+          `provider_instances.${instanceId}.environment cannot change while preserving stored credentials; clear or re-enter every secret first`
+        )
       }
       if (
         instanceHasConfiguredSecrets(currentInstance) &&
@@ -676,122 +758,125 @@ function normalizeSettingsPatch(settings: Settings, patch: UnknownRecord): Unkno
           changesAnyField(
             rawInstanceConfig,
             currentInstanceConfig,
-            PROVIDER_DESTINATION_KEYS,
+            PROVIDER_DESTINATION_KEYS
           ))
       ) {
         throw new InvalidSettingsPatchError(
-          `provider_instances.${instanceId} destination cannot change while stored credentials exist; clear them before changing the driver or endpoint`,
-        );
+          `provider_instances.${instanceId} destination cannot change while stored credentials exist; clear them before changing the driver or endpoint`
+        )
       }
       const nextInstance = {
         ...structuredClone(currentInstance),
         ...structuredClone(rawInstance),
-      } as UnknownRecord;
+      } as UnknownRecord
       if (isUnknownRecord(rawInstance.config)) {
         const currentConfig = isUnknownRecord(currentInstance.config)
           ? currentInstance.config
-          : {};
+          : {}
         const normalizedConfig = normalizeProviderInstanceConfigPatch(
           rawInstance.config,
           currentConfig,
-          instanceId,
-        ) as UnknownRecord;
-        const nextConfig = { ...currentConfig, ...normalizedConfig };
-        nextInstance.config = nextConfig;
+          instanceId
+        ) as UnknownRecord
+        const nextConfig = { ...currentConfig, ...normalizedConfig }
+        nextInstance.config = nextConfig
       }
       if (Array.isArray(rawInstance.environment)) {
-        nextInstance.environment = rawInstance.environment.map((rawEnv, index) => {
-          if (!isUnknownRecord(rawEnv)) return rawEnv;
-          if (
-            typeof rawEnv.name === "string" &&
-            isUnsafeChildEnvironmentKey(rawEnv.name)
-          ) {
-            throw new InvalidSettingsPatchError(
-              `provider_instances.${instanceId}.environment.${index}.name is not allowed`,
-            );
-          }
-          const currentEnv = currentEnvironment.find(
-            (item) => isUnknownRecord(item) && item.name === rawEnv.name,
-          );
-          const currentRecord = isUnknownRecord(currentEnv) ? currentEnv : {};
-          const currentIsConfiguredSecret =
-            currentRecord.sensitive === true &&
-            typeof currentRecord.value === "string" &&
-            currentRecord.value.length > 0;
-          const clearsSecret =
-            explicitlyClearsSecret(rawEnv.value) ||
-            explicitlyClearsSecret(rawEnv.secretState);
-          if (
-            currentIsConfiguredSecret &&
-            rawEnv.sensitive === false &&
-            !clearsSecret
-          ) {
-            throw new InvalidSettingsPatchError(
-              `provider_instances.${instanceId}.environment.${index}.sensitive cannot be disabled until the stored secret is cleared`,
-            );
-          }
-          const isRedacted =
-            rawEnv.valueRedacted === true ||
-            secretStateSchema.safeParse(rawEnv.secretState).success;
-          const value = isRedacted
-            ? resolveSecretUpdate(
-                rawEnv.secretState,
-                currentRecord.value,
-                `provider_instances.${instanceId}.environment.${index}.value`,
+        nextInstance.environment = rawInstance.environment.map(
+          (rawEnv, index) => {
+            if (!isUnknownRecord(rawEnv)) return rawEnv
+            if (
+              typeof rawEnv.name === "string" &&
+              isUnsafeChildEnvironmentKey(rawEnv.name)
+            ) {
+              throw new InvalidSettingsPatchError(
+                `provider_instances.${instanceId}.environment.${index}.name is not allowed`
               )
-            : resolveSecretUpdate(
-                rawEnv.value,
-                currentRecord.value,
-                `provider_instances.${instanceId}.environment.${index}.value`,
-              );
-          const {
-            valueRedacted: _valueRedacted,
-            secretState: _secretState,
-            ...cleanEnv
-          } = rawEnv;
-          return {
-            ...cleanEnv,
-            ...(currentIsConfiguredSecret && !clearsSecret
-              ? { sensitive: true }
-              : {}),
-            value,
-          };
-        });
+            }
+            const currentEnv = currentEnvironment.find(
+              (item) => isUnknownRecord(item) && item.name === rawEnv.name
+            )
+            const currentRecord = isUnknownRecord(currentEnv) ? currentEnv : {}
+            const currentIsConfiguredSecret =
+              currentRecord.sensitive === true &&
+              typeof currentRecord.value === "string" &&
+              currentRecord.value.length > 0
+            const clearsSecret =
+              explicitlyClearsSecret(rawEnv.value) ||
+              explicitlyClearsSecret(rawEnv.secretState)
+            if (
+              currentIsConfiguredSecret &&
+              rawEnv.sensitive === false &&
+              !clearsSecret
+            ) {
+              throw new InvalidSettingsPatchError(
+                `provider_instances.${instanceId}.environment.${index}.sensitive cannot be disabled until the stored secret is cleared`
+              )
+            }
+            const isRedacted =
+              rawEnv.valueRedacted === true ||
+              secretStateSchema.safeParse(rawEnv.secretState).success
+            const value = isRedacted
+              ? resolveSecretUpdate(
+                  rawEnv.secretState,
+                  currentRecord.value,
+                  `provider_instances.${instanceId}.environment.${index}.value`
+                )
+              : resolveSecretUpdate(
+                  rawEnv.value,
+                  currentRecord.value,
+                  `provider_instances.${instanceId}.environment.${index}.value`
+                )
+            const {
+              valueRedacted: _valueRedacted,
+              secretState: _secretState,
+              ...cleanEnv
+            } = rawEnv
+            return {
+              ...cleanEnv,
+              ...(currentIsConfiguredSecret && !clearsSecret
+                ? { sensitive: true }
+                : {}),
+              value,
+            }
+          }
+        )
       }
-      nextInstances[instanceId] = nextInstance;
+      nextInstances[instanceId] = nextInstance
     }
     for (const instanceId of removedProviderInstanceIds) {
-      delete nextInstances[instanceId];
+      delete nextInstances[instanceId]
     }
-    normalized.provider_instances = nextInstances;
+    normalized.provider_instances = nextInstances
   }
 
   for (const key of TOP_LEVEL_SECRET_KEYS) {
-    if (key in patch) normalized[key] = resolveSecretUpdate(patch[key], current[key], key);
+    if (key in patch)
+      normalized[key] = resolveSecretUpdate(patch[key], current[key], key)
   }
-  return normalized;
+  return normalized
 }
 
 function readRemovedProviderInstanceIds(value: unknown): string[] {
-  if (value === undefined) return [];
+  if (value === undefined) return []
   if (!Array.isArray(value)) {
     throw new InvalidSettingsPatchError(
-      "remove_provider_instance_ids must be an array of provider instance IDs",
-    );
+      "remove_provider_instance_ids must be an array of provider instance IDs"
+    )
   }
-  const ids = new Set<string>();
+  const ids = new Set<string>()
   for (const item of value) {
     if (
       typeof item !== "string" ||
       !/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(item)
     ) {
       throw new InvalidSettingsPatchError(
-        "remove_provider_instance_ids contains an invalid provider instance ID",
-      );
+        "remove_provider_instance_ids contains an invalid provider instance ID"
+      )
     }
-    ids.add(item);
+    ids.add(item)
   }
-  return [...ids];
+  return [...ids]
 }
 
 /**
@@ -811,28 +896,27 @@ function readRemovedProviderInstanceIds(value: unknown): string[] {
  * are decrypted transparently on load and re-encrypted on the first write.
  */
 export class SettingsService extends EventEmitter {
-  private settings: Settings;
-  private undecryptableSecretPaths: readonly string[];
-  private writeBlockedReason: string | null;
+  private settings: Settings
+  private undecryptableSecretPaths: readonly string[]
+  private writeBlockedReason: string | null
   /** Stamp of the on-disk file the in-memory state was loaded from or wrote. */
-  private fileStamp: SettingsFileStamp | null;
+  private fileStamp: SettingsFileStamp | null
   /** Redacted view, rebuilt lazily after every change (see getPublic). */
-  private publicView: UnknownRecord | null = null;
+  private publicView: UnknownRecord | null = null
 
   constructor(private readonly filePath: string) {
-    super();
+    super()
     const {
       settings,
       sawPlaintext,
       undecryptableSecretPaths,
       writeBlockedReason,
       fileStamp,
-    } =
-      SettingsService.loadFromFile(filePath);
-    this.settings = deepFreeze(settingsSchema.parse(settings));
-    this.undecryptableSecretPaths = undecryptableSecretPaths;
-    this.writeBlockedReason = writeBlockedReason;
-    this.fileStamp = fileStamp;
+    } = SettingsService.loadFromFile(filePath)
+    this.settings = deepFreeze(settingsSchema.parse(settings))
+    this.undecryptableSecretPaths = undecryptableSecretPaths
+    this.writeBlockedReason = writeBlockedReason
+    this.fileStamp = fileStamp
     // Lazy-migrate legacy plaintext keys to encrypted form on disk.  Only
     // runs when a master key is configured — without one we can't improve
     // the on-disk state, so we leave the file untouched.
@@ -843,10 +927,12 @@ export class SettingsService extends EventEmitter {
       getMasterKey()
     ) {
       try {
-        this.persist();
+        this.persist()
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[SettingsService] failed to upgrade plaintext secrets: ${message}`);
+        const message = err instanceof Error ? err.message : String(err)
+        console.warn(
+          `[SettingsService] failed to upgrade plaintext secrets: ${message}`
+        )
       }
     }
   }
@@ -867,22 +953,22 @@ export class SettingsService extends EventEmitter {
    * we refuse to parse must not turn auto-trust back on.
    */
   private static settingsForUnusableFile(): Settings {
-    return { ...defaultSettings(), auto_trust_workspaces: false };
+    return { ...defaultSettings(), auto_trust_workspaces: false }
   }
 
   private static loadFromFile(filePath: string): SettingsLoadResult {
-    let fileStamp: SettingsFileStamp | null;
+    let fileStamp: SettingsFileStamp | null
     try {
-      fileStamp = readSettingsFileStamp(filePath);
+      fileStamp = readSettingsFileStamp(filePath)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error)
       return {
         settings: this.settingsForUnusableFile(),
         sawPlaintext: false,
         undecryptableSecretPaths: [],
         writeBlockedReason: `settings.json metadata could not be read: ${message}`,
         fileStamp: null,
-      };
+      }
     }
     if (fileStamp === null) {
       return {
@@ -891,59 +977,66 @@ export class SettingsService extends EventEmitter {
         undecryptableSecretPaths: [],
         writeBlockedReason: null,
         fileStamp: null,
-      };
+      }
     }
-    let raw: string;
+    let raw: string
     try {
-      raw = fs.readFileSync(filePath, "utf8");
+      raw = fs.readFileSync(filePath, "utf8")
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn(`[SettingsService] failed to read settings.json at ${filePath}: ${message} — using defaults`);
+      const message = err instanceof Error ? err.message : String(err)
+      console.warn(
+        `[SettingsService] failed to read settings.json at ${filePath}: ${message} — using defaults`
+      )
       return {
         settings: this.settingsForUnusableFile(),
         sawPlaintext: false,
         undecryptableSecretPaths: [],
         writeBlockedReason: `settings.json could not be read: ${message}`,
         fileStamp,
-      };
+      }
     }
-    let parsed: unknown;
+    let parsed: unknown
     try {
-      parsed = JSON.parse(raw);
+      parsed = JSON.parse(raw)
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn(`[SettingsService] settings.json is not valid JSON (${message}) — using defaults. File left on disk at ${filePath} for manual inspection.`);
+      const message = err instanceof Error ? err.message : String(err)
+      console.warn(
+        `[SettingsService] settings.json is not valid JSON (${message}) — using defaults. File left on disk at ${filePath} for manual inspection.`
+      )
       return {
         settings: this.settingsForUnusableFile(),
         sawPlaintext: false,
         undecryptableSecretPaths: [],
         writeBlockedReason: `settings.json is not valid JSON: ${message}`,
         fileStamp,
-      };
+      }
     }
-    const result = settingsSchema.safeParse(parsed);
+    const result = settingsSchema.safeParse(parsed)
     if (!result.success) {
-      console.warn("[SettingsService] settings.json failed validation, using defaults:", result.error.message);
+      console.warn(
+        "[SettingsService] settings.json failed validation, using defaults:",
+        result.error.message
+      )
       return {
         settings: this.settingsForUnusableFile(),
         sawPlaintext: false,
         undecryptableSecretPaths: [],
         writeBlockedReason: `settings.json failed validation: ${result.error.message}`,
         fileStamp,
-      };
+      }
     }
-    const secretState = decryptSettingsSecrets(result.data);
+    const secretState = decryptSettingsSecrets(result.data)
     return {
       settings: result.data,
       ...secretState,
       writeBlockedReason: null,
       fileStamp,
-    };
+    }
   }
 
   /** Return the immutable snapshot validated at load/update time. */
   get(): Settings {
-    return this.settings;
+    return this.settings
   }
 
   /**
@@ -956,14 +1049,14 @@ export class SettingsService extends EventEmitter {
    */
   getPublic(): UnknownRecord {
     if (!this.publicView) {
-      this.publicView = deepFreeze(redactSettings(this.get()));
+      this.publicView = deepFreeze(redactSettings(this.get()))
     }
-    return this.publicView;
+    return this.publicView
   }
 
   private replaceSettings(next: Settings): void {
-    this.settings = next;
-    this.publicView = null;
+    this.settings = next
+    this.publicView = null
   }
 
   /**
@@ -973,14 +1066,18 @@ export class SettingsService extends EventEmitter {
    * paid for a full read + parse + decrypt even when nothing had changed.
    */
   private reloadIfFileChanged(): void {
-    const currentStamp = readSettingsFileStamp(this.filePath);
-    if (sameSettingsFileStamp(currentStamp, this.fileStamp) && this.writeBlockedReason === null) return;
-    const latest = SettingsService.loadFromFile(this.filePath);
-    this.writeBlockedReason = latest.writeBlockedReason;
-    this.undecryptableSecretPaths = latest.undecryptableSecretPaths;
-    this.fileStamp = latest.fileStamp;
+    const currentStamp = readSettingsFileStamp(this.filePath)
+    if (
+      sameSettingsFileStamp(currentStamp, this.fileStamp) &&
+      this.writeBlockedReason === null
+    )
+      return
+    const latest = SettingsService.loadFromFile(this.filePath)
+    this.writeBlockedReason = latest.writeBlockedReason
+    this.undecryptableSecretPaths = latest.undecryptableSecretPaths
+    this.fileStamp = latest.fileStamp
     if (latest.writeBlockedReason === null) {
-      this.replaceSettings(deepFreeze(settingsSchema.parse(latest.settings)));
+      this.replaceSettings(deepFreeze(settingsSchema.parse(latest.settings)))
     }
   }
 
@@ -994,106 +1091,115 @@ export class SettingsService extends EventEmitter {
    */
   update(patch: Record<string, unknown>): Settings {
     const next = this.withWriteLock(() => {
-      this.reloadIfFileChanged();
+      this.reloadIfFileChanged()
       if (this.writeBlockedReason) {
         throw new InvalidSettingsPatchError(
-          `${this.writeBlockedReason}. Writes are disabled until the file is repaired or removed.`,
-        );
+          `${this.writeBlockedReason}. Writes are disabled until the file is repaired or removed.`
+        )
       }
       if (this.undecryptableSecretPaths.length > 0) {
         throw new InvalidSettingsPatchError(
-          `Settings contain encrypted secrets that cannot be decrypted (${this.undecryptableSecretPaths.join(", ")}). Writes are disabled until the original encryption key is restored.`,
-        );
+          `Settings contain encrypted secrets that cannot be decrypted (${this.undecryptableSecretPaths.join(", ")}). Writes are disabled until the original encryption key is restored.`
+        )
       }
 
-      const previous = this.settings;
-      const normalizedPatch = normalizeSettingsPatch(previous, patch);
+      const previous = this.settings
+      const normalizedPatch = normalizeSettingsPatch(previous, patch)
       const merged = {
         ...(previous as unknown as Record<string, unknown>),
         ...normalizedPatch,
-      };
-      const result = settingsSchema.safeParse(merged);
+      }
+      const result = settingsSchema.safeParse(merged)
       if (!result.success) {
         console.warn(
           "[SettingsService] update rejected — patch failed validation:",
-          result.error.message,
-        );
-        const fields = [...new Set(result.error.issues.flatMap((issue) =>
-          issue.code === "unrecognized_keys"
-            ? issue.keys.map((key) => [...issue.path, key].join("."))
-            : [issue.path.join(".") || "settings"],
-        ))];
-        throw new InvalidSettingsPatchError(`Invalid settings fields: ${fields.join(", ")}. Check the values and try again.`);
+          result.error.message
+        )
+        const fields = [
+          ...new Set(
+            result.error.issues.flatMap((issue) =>
+              issue.code === "unrecognized_keys"
+                ? issue.keys.map((key) => [...issue.path, key].join("."))
+                : [issue.path.join(".") || "settings"]
+            )
+          ),
+        ]
+        throw new InvalidSettingsPatchError(
+          `Invalid settings fields: ${fields.join(", ")}. Check the values and try again.`
+        )
       }
-      this.replaceSettings(deepFreeze(result.data));
+      this.replaceSettings(deepFreeze(result.data))
       try {
-        this.persist();
+        this.persist()
       } catch (error) {
-        this.replaceSettings(previous);
-        throw error;
+        this.replaceSettings(previous)
+        throw error
       }
-      return this.settings;
-    });
-    this.emitChangeSafely();
-    return next;
+      return this.settings
+    })
+    this.emitChangeSafely()
+    return next
   }
 
   private emitChangeSafely(): void {
     for (const listener of this.rawListeners("change")) {
       try {
-        Reflect.apply(listener, this, [this.settings]);
+        Reflect.apply(listener, this, [this.settings])
       } catch (error) {
-        const message = error instanceof Error ? error.stack ?? error.message : String(error);
+        const message =
+          error instanceof Error
+            ? (error.stack ?? error.message)
+            : String(error)
         console.error(
-          `[SettingsService] change listener failed after settings were persisted: ${message}`,
-        );
+          `[SettingsService] change listener failed after settings were persisted: ${message}`
+        )
       }
     }
   }
 
   /** Persist an update and return only the redacted renderer contract. */
   updatePublic(patch: Record<string, unknown>): UnknownRecord {
-    this.update(patch);
-    return this.getPublic();
+    this.update(patch)
+    return this.getPublic()
   }
 
   private withWriteLock<T>(operation: () => T): T {
-    const lockPath = `${this.filePath}.lock`;
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    let fd: number;
+    const lockPath = `${this.filePath}.lock`
+    fs.mkdirSync(path.dirname(this.filePath), { recursive: true })
+    let fd: number
     try {
-      fd = fs.openSync(lockPath, "wx", 0o600);
+      fd = fs.openSync(lockPath, "wx", 0o600)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      let stale = false;
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+      let stale = false
       try {
-        stale = Date.now() - fs.statSync(lockPath).mtimeMs > 30_000;
+        stale = Date.now() - fs.statSync(lockPath).mtimeMs > 30_000
       } catch {
         // The lock disappeared between open and stat; retry once below.
-        stale = true;
+        stale = true
       }
       if (!stale) {
         throw new InvalidSettingsPatchError(
-          "Another settings write is already in progress; retry shortly.",
-        );
+          "Another settings write is already in progress; retry shortly."
+        )
       }
       try {
-        fs.unlinkSync(lockPath);
-        fd = fs.openSync(lockPath, "wx", 0o600);
+        fs.unlinkSync(lockPath)
+        fd = fs.openSync(lockPath, "wx", 0o600)
       } catch {
         throw new InvalidSettingsPatchError(
-          "Could not recover a stale settings write lock; retry shortly.",
-        );
+          "Could not recover a stale settings write lock; retry shortly."
+        )
       }
     }
     try {
-      return operation();
+      return operation()
     } finally {
       try {
-        fs.closeSync(fd);
+        fs.closeSync(fd)
       } finally {
         try {
-          fs.unlinkSync(lockPath);
+          fs.unlinkSync(lockPath)
         } catch {
           // A stale lock can be removed safely on the next write attempt.
         }
@@ -1108,11 +1214,11 @@ export class SettingsService extends EventEmitter {
       process.env.BETTERC0DE_ALLOW_PLAINTEXT_SECRETS !== "1"
     ) {
       throw new InvalidSettingsPatchError(
-        "Secret persistence requires encrypted storage. Set BETTERC0DE_ALLOW_PLAINTEXT_SECRETS=1 only for an explicitly accepted local fallback.",
-      );
+        "Secret persistence requires encrypted storage. Set BETTERC0DE_ALLOW_PLAINTEXT_SECRETS=1 only for an explicitly accepted local fallback."
+      )
     }
-    const dir = path.dirname(this.filePath);
-    fs.mkdirSync(dir, { recursive: true });
+    const dir = path.dirname(this.filePath)
+    fs.mkdirSync(dir, { recursive: true })
     // Atomic write: write-to-tmp + fsync + rename. Protects against truncating
     // the real file on power loss or crash mid-write; before this change a
     // partial write would corrupt settings.json and the loader would silently
@@ -1120,37 +1226,49 @@ export class SettingsService extends EventEmitter {
     // Secrets (provider api_keys) are encrypted via AES-256-GCM before the
     // JSON payload is written; the in-memory `this.settings` keeps plaintext
     // so `get()` callers don't have to decrypt on every read.
-    const tmpPath = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
-    const forDisk = encryptSettingsForDisk(this.settings);
-    const payload = JSON.stringify(forDisk, null, 2);
-    let fd: number | null = null;
-    let wroteOk = false;
+    const tmpPath = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`
+    const forDisk = encryptSettingsForDisk(this.settings)
+    const payload = JSON.stringify(forDisk, null, 2)
+    let fd: number | null = null
+    let wroteOk = false
     try {
-      fd = fs.openSync(tmpPath, "wx", 0o600);
-      fs.fchmodSync(fd, 0o600);
-      fs.writeFileSync(fd, payload, "utf8");
-      fs.fsyncSync(fd);
-      wroteOk = true;
+      fd = fs.openSync(tmpPath, "wx", 0o600)
+      fs.fchmodSync(fd, 0o600)
+      fs.writeFileSync(fd, payload, "utf8")
+      fs.fsyncSync(fd)
+      wroteOk = true
     } finally {
       if (fd !== null) {
-        try { fs.closeSync(fd); } catch { /* closing a failed fd is best-effort */ }
+        try {
+          fs.closeSync(fd)
+        } catch {
+          /* closing a failed fd is best-effort */
+        }
       }
       if (!wroteOk && fd !== null) {
-        try { fs.unlinkSync(tmpPath); } catch { /* tmp cleanup is best-effort */ }
+        try {
+          fs.unlinkSync(tmpPath)
+        } catch {
+          /* tmp cleanup is best-effort */
+        }
       }
     }
     try {
-      fs.renameSync(tmpPath, this.filePath);
+      fs.renameSync(tmpPath, this.filePath)
     } catch (err) {
-      try { fs.unlinkSync(tmpPath); } catch { /* tmp cleanup is best-effort */ }
-      throw err;
+      try {
+        fs.unlinkSync(tmpPath)
+      } catch {
+        /* tmp cleanup is best-effort */
+      }
+      throw err
     }
     // Rename committed the new settings. A metadata cache failure must not
     // make update() roll memory back while disk already contains the patch.
     try {
-      this.fileStamp = readSettingsFileStamp(this.filePath);
+      this.fileStamp = readSettingsFileStamp(this.filePath)
     } catch {
-      this.fileStamp = null;
+      this.fileStamp = null
     }
   }
 }

@@ -466,6 +466,7 @@ const DESKTOP_ONLY_PATHS: ReadonlyArray<{
     pattern: /^\/api\/v1\/workspace\/project-(?:lsp-servers|config)$/,
   },
   { methods: null, pattern: /^\/api\/v1\/providers\/[^/]+\/credential$/ },
+  { methods: null, pattern: /^\/api\/v1\/providers\/api-keys\// },
   {
     methods: new Set(["POST"]),
     pattern: /^\/api\/v1\/providers\/instances\/[^/]+\/update$/,

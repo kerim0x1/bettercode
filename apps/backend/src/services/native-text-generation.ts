@@ -112,6 +112,10 @@ const BETTERC0DE_TEXT_GENERATION_IDLE_TTL_MS = 30_000
 const NATIVE_PROCESS_MAX_OUTPUT_BYTES = 2 * 1024 * 1024
 const NATIVE_PROCESS_TERMINATE_GRACE_MS = 1_000
 const NATIVE_PROCESS_FINALIZE_GRACE_MS = 2_000
+// Process-tree enumeration can take longer than the root's exit grace under
+// load. Give the Windows helper its own budget instead of aborting a healthy
+// traversal and permanently quarantining the request's private files.
+const NATIVE_TASKKILL_TIMEOUT_MS = 5_000
 const BETTERC0DE_EMPTY_CONFIG_CONTENT = "{}"
 const CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT = "low"
 /**
@@ -2375,7 +2379,7 @@ async function runWindowsTaskkill(
   force: boolean
 ): Promise<boolean> {
   const result = await runWindowsTaskkillDetailed(pid, force, {
-    timeoutMs: NATIVE_PROCESS_FINALIZE_GRACE_MS,
+    timeoutMs: NATIVE_TASKKILL_TIMEOUT_MS,
   })
   return result.status === "closed" && result.code === 0
 }

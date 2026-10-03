@@ -1,13 +1,14 @@
 import assert from "node:assert/strict"
 import fs from "node:fs"
 import { createRequire } from "node:module"
+import os from "node:os"
 import path from "node:path"
 import test from "node:test"
 
 const require = createRequire(import.meta.url)
 const { createSubprocessRunner, main: packageMain, buildSigningMetadataArgs } = require("./pack-electron.cjs")
 const { configureBuildCommand, normalizeOptions } = require("electron-builder/out/builder")
-const { getMainFileMatchers, getNodeModuleFileMatcher } = require("app-builder-lib/out/fileMatcher")
+const { copyFiles, getFileMatchers, getMainFileMatchers, getNodeModuleFileMatcher } = require("app-builder-lib/out/fileMatcher")
 const {
   getConfig: loadElectronBuilderConfig,
 } = require("app-builder-lib/out/util/config/config")
@@ -121,6 +122,34 @@ test("effective Windows files stay allowlisted after electron-builder normalizat
       isIncludedByMatchers(matchers, required),
       true,
       `Windows package allowlist unexpectedly excludes ${required}`
+    )
+  }
+})
+
+test("Linux packaging copies AppStream metadata into the AppDir outside app.asar", async (t) => {
+  const config = await loadElectronBuilderConfig(root, null, null)
+  const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-appstream-"))
+  assert.equal(path.dirname(appDir), path.resolve(os.tmpdir()))
+  t.after(() => fs.rmSync(appDir, { recursive: true, force: true }))
+  const options = {
+    defaultSrc: root,
+    globalOutDir: path.resolve(root, config.directories.output),
+    macroExpander: (pattern) => pattern,
+    customBuildOptions: config.linux,
+  }
+
+  await copyFiles(getFileMatchers(config, "extraFiles", appDir, options))
+
+  const filename = "com.betterc0de.ide.metainfo.xml"
+  assert.deepEqual(
+    fs.readFileSync(path.join(appDir, "usr", "share", "metainfo", filename)),
+    fs.readFileSync(path.join(root, "apps", "shell", "build", filename))
+  )
+  for (const platform of ["win", "mac"]) {
+    assert.equal(
+      getFileMatchers(config, "extraFiles", appDir, { ...options, customBuildOptions: config[platform] }),
+      null,
+      `${platform} packages should not receive Linux AppStream metadata`
     )
   }
 })

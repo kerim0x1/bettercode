@@ -1,5 +1,10 @@
 import { isRecord } from "@betterc0de/schema"
-import { normalizeProviderInstanceConfig, normalizeProviderDriver as normalizeDriver, isValidEnvironmentDraft, changedProviderConfigFields } from "@/lib/provider-instance-settings"
+import {
+  normalizeProviderInstanceConfig,
+  normalizeProviderDriver as normalizeDriver,
+  isValidEnvironmentDraft,
+  changedProviderConfigFields,
+} from "@/lib/provider-instance-settings"
 import { defaultInstanceIdForDriver, normalizeProviderDriverKind } from "@/lib/provider-instances"
 import { useState, useCallback, useEffect, useRef } from "react"
 import { cn } from "@/lib/utils"
@@ -12,6 +17,9 @@ import {
 } from "@/services/backend"
 import {
   getCliStatus,
+  listProviderCatalog,
+  listProviderSettingsModels,
+  refreshModels,
   listProviderInstances,
   refreshProviderInstance,
   updateProviderInstance,
@@ -45,6 +53,8 @@ import type {
 } from "@betterc0de/schema"
 import { handleError } from "@/lib/errors"
 import { SETTINGS_UPDATED_EVENT } from "@/lib/settings-store"
+import { ProviderApiKeys } from "./api-key-settings"
+import { apiKeyProviderSchema } from "@betterc0de/schema"
 import {
   canOneClickUpdateProviderCandidate,
   collectProviderUpdateCandidates,
@@ -76,13 +86,10 @@ function notifySettingsUpdated() {
 /**
  * Settings UI for provider configuration.
  *
- * Pre-PR1 this was a 305-line hardcoded array of {id, name, envVar, models}
- * objects. Post-PR1 the catalog lives in `apps/backend/src/provider/catalog/`
- * (one file per provider) and is served to the renderer via the
- * `provider:list` IPC channel. Adding a provider in the catalog
- * auto-renders here — no UI edit needed.
- *
- * PR3/PR4 add OAuth support: providers whose `authMethods` include an
+ * The catalog lives in `apps/backend/src/provider/catalog/` and is served
+ * through `/providers/catalog`. API key management and CLI accounts have
+ * separate sections so their credentials and billing are clear.
+ * Providers whose `authMethods` include an
  * `oauth` entry get a "Sign in with X" button that delegates to the local
  * OAuth callback server in apps/shell/oauth/.
  */
@@ -97,6 +104,30 @@ export function SettingsProvidersSection() {
     Record<string, "idle" | "checking" | "valid" | "invalid">
   >({})
   const [catalog, setCatalog] = useState<ProviderCatalogEntry[]>([])
+  const [models, setModels] = useState<
+    Array<{ provider: string; slug: string }>
+  >([])
+  const refreshProviderModels = useCallback(async (force = false) => {
+    try {
+      if (force) await refreshModels()
+      setModels(await listProviderSettingsModels())
+    } catch (error) {
+      log.warn("Failed to load provider models", error)
+    }
+  }, [])
+  const refreshSavedSettings = useCallback(async () => {
+    try {
+      const saved = await getSettings()
+      if (isRecord(saved.providers))
+        setProviderSettings(
+          saved.providers as Record<string, Record<string, unknown>>
+        )
+      notifySettingsUpdated()
+      void refreshProviderModels()
+    } catch (error) {
+      log.warn("Failed to refresh provider settings", error)
+    }
+  }, [refreshProviderModels])
   const [authStatus, setAuthStatus] = useState<
     Record<string, "oauth" | "api" | "wellknown">
   >({})
@@ -181,8 +212,7 @@ export function SettingsProvidersSection() {
         log.warn("Failed to load provider settings", e)
       })
 
-    void window.electronAPI
-      ?.providerList?.()
+    void listProviderCatalog()
       .then((list) => {
         if (Array.isArray(list)) setCatalog(list)
       })
@@ -191,7 +221,13 @@ export function SettingsProvidersSection() {
     void refreshAuthStatus()
     void refreshCliStatus()
     void refreshProviderInstances()
-  }, [refreshAuthStatus, refreshCliStatus, refreshProviderInstances])
+    void refreshProviderModels()
+  }, [
+    refreshAuthStatus,
+    refreshCliStatus,
+    refreshProviderInstances,
+    refreshProviderModels,
+  ])
 
   const validateKey = useCallback(
     async (providerId: string, apiKey: string) => {
@@ -223,7 +259,7 @@ export function SettingsProvidersSection() {
           [key]: value,
         },
       }
-      const patch = { providers: nextProviders }
+      const patch = { providers: { [providerId]: { [key]: value } } }
       try {
         const saved = await updateSettings(patch)
         const savedProviders = saved.providers
@@ -311,32 +347,76 @@ export function SettingsProvidersSection() {
   return (
     <>
       <p className="mb-2 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-        API Keys & Providers
+        Providers
       </p>
-      {catalog.map((provider) => (
-        <ProviderRow
-          key={provider.id}
-          provider={provider}
-          config={providerSettings[provider.id] ?? {}}
-          authType={authStatus[provider.id]}
-          oauthBusy={!!oauthBusy[provider.id]}
-          keyStatus={keyStatus[provider.id] ?? "idle"}
-          cliStatus={cliStatus[provider.id]}
-          liveModels={
-            instanceSnapshots.find(
-              (snapshot) =>
-                snapshot.instanceId ===
-                defaultInstanceIdForDriver(
-                  normalizeProviderDriverKind(provider.id)
-                )
-            )?.models ?? []
-          }
-          onSaveKey={saveKey}
-          onStartOauth={startOauth}
-          onClearAuth={clearAuth}
-          onRefreshCli={refreshCliStatus}
-        />
-      ))}
+      <p className="mb-4 text-xs text-muted-foreground">
+        Use API keys for direct access, your signed-in CLI accounts, or a local
+        model server.
+      </p>
+      {[
+        {
+          title: "API providers",
+          items: catalog.filter(
+            (provider) => apiKeyProviderSchema.safeParse(provider.id).success
+          ),
+        },
+        {
+          title: "CLI accounts",
+          items: catalog.filter((provider) =>
+            provider.authMethods.some((method) => method.type === "cli")
+          ),
+        },
+        {
+          title: "Other providers & local models",
+          items: catalog.filter(
+            (provider) =>
+              !apiKeyProviderSchema.safeParse(provider.id).success &&
+              !provider.authMethods.some((method) => method.type === "cli")
+          ),
+        },
+      ]
+        .filter((group) => group.items.length > 0)
+        .map((group) => (
+          <div key={group.title} className="space-y-4">
+            <h3 className="mt-5 text-xs font-medium text-foreground">
+              {group.title}
+            </h3>
+            {group.items.map((provider) => (
+              <ProviderRow
+                key={provider.id}
+                provider={provider}
+                config={providerSettings[provider.id] ?? {}}
+                authType={authStatus[provider.id]}
+                oauthBusy={!!oauthBusy[provider.id]}
+                keyStatus={keyStatus[provider.id] ?? "idle"}
+                cliStatus={cliStatus[provider.id]}
+                models={[
+                  ...new Set([
+                    ...provider.defaultModels,
+                    ...models
+                      .filter((model) => model.provider === provider.id)
+                      .map((model) => model.slug),
+                  ]),
+                ]}
+                liveModels={
+                  instanceSnapshots.find(
+                    (snapshot) =>
+                      snapshot.instanceId ===
+                      defaultInstanceIdForDriver(
+                        normalizeProviderDriverKind(provider.id)
+                      )
+                  )?.models ?? []
+                }
+                onKeysChanged={() => void refreshSavedSettings()}
+                onRefreshModels={() => void refreshProviderModels(true)}
+                onSaveKey={saveKey}
+                onStartOauth={startOauth}
+                onClearAuth={clearAuth}
+                onRefreshCli={refreshCliStatus}
+              />
+            ))}
+          </div>
+        ))}
       <ProviderInstancesSection
         instances={providerInstances}
         snapshots={instanceSnapshots}
@@ -360,6 +440,9 @@ interface ProviderRowProps {
    *  into the Visible Models list so CLI inventories (OpenCode, Cursor…)
    *  stay toggled without re-shipping a static default list. */
   liveModels: ProviderInstanceSnapshot["models"]
+  models: string[]
+  onKeysChanged: () => void
+  onRefreshModels: () => void
   onSaveKey: (providerId: string, key: string, value: unknown) => Promise<void>
   onStartOauth: (providerId: string, handler: string) => Promise<void>
   onClearAuth: (providerId: string) => Promise<void>
@@ -374,6 +457,9 @@ function ProviderRow({
   keyStatus,
   cliStatus,
   liveModels,
+  models,
+  onKeysChanged,
+  onRefreshModels,
   onSaveKey,
   onStartOauth,
   onClearAuth,
@@ -400,9 +486,48 @@ function ProviderRow({
     (typeof config.api_key === "string" && config.api_key.length > 0)
   const customModels = (config.custom_models as string[] | undefined) ?? []
   const hiddenModels = (config.hidden_models as string[] | undefined) ?? []
+  const managedProvider = apiKeyProviderSchema.safeParse(provider.id)
 
   return (
     <SettingsSection title={provider.name} description={provider.description}>
+      {managedProvider.success && (
+        <SettingsRow
+          label="Enable provider"
+          description="Make this provider available in the model picker when its keys are usable."
+        >
+          <Switch
+            aria-label={`Enable ${provider.name}`}
+            checked={config.enabled !== false}
+            onCheckedChange={(enabled) =>
+              void onSaveKey(provider.id, "enabled", enabled)
+            }
+          />
+        </SettingsRow>
+      )}
+      {managedProvider.success && (
+        <ProviderApiKeys
+          provider={managedProvider.data}
+          onChanged={onKeysChanged}
+        />
+      )}
+      {managedProvider.success && provider.docsUrl && (
+        <SettingsRow
+          label="Get an API key"
+          description="Create keys in your provider account."
+        >
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            onClick={() =>
+              void window.electronAPI?.openExternal?.(provider.docsUrl!)
+            }
+          >
+            <ExternalLinkIcon />
+            Open provider console
+          </Button>
+        </SettingsRow>
+      )}
       {/* CLI-backed method (claude / codex) */}
       {cliMethod && (
         <SettingsRow
@@ -513,7 +638,7 @@ function ProviderRow({
       )}
 
       {/* API key method */}
-      {apiKeyMethod && (
+      {apiKeyMethod && !managedProvider.success && (
         <SettingsRow
           label={apiKeyMethod.label}
           description={
@@ -551,7 +676,11 @@ function ProviderRow({
               placeholder={
                 hasKey ? "Stored API key" : (apiKeyMethod.placeholder ?? "")
               }
-              defaultValue={apiKeyState ? "" : ((config.api_key as string | undefined) ?? "")}
+              defaultValue={
+                apiKeyState
+                  ? ""
+                  : ((config.api_key as string | undefined) ?? "")
+              }
               onBlur={(e) => {
                 const value = e.target.value.trim()
                 if (!value && hasKey) return
@@ -624,6 +753,9 @@ function ProviderRow({
       <SettingsRow
         label="Custom Models"
         description="Add model IDs not in the default list"
+        className={
+          managedProvider.success ? "flex-wrap sm:flex-nowrap" : undefined
+        }
       >
         <CustomModelInput
           providerId={provider.id}
@@ -636,21 +768,45 @@ function ProviderRow({
 
       {/* Hidden models */}
       {(() => {
-        const visibleModelIds = [...provider.defaultModels]
+        const visibleModelIds: string[] = []
+        for (const m of models) {
+          if (m && !visibleModelIds.includes(m)) visibleModelIds.push(m)
+        }
         for (const model of liveModels ?? []) {
           const slug = model.slug?.trim()
           if (slug && !visibleModelIds.includes(slug)) visibleModelIds.push(slug)
         }
-        if (visibleModelIds.length === 0) return null
+        if (visibleModelIds.length === 0 && !managedProvider.success) return null
         return (
           <SettingsRow
             label="Visible Models"
             description="Toggle models on/off in the dropdown"
+            className={
+              managedProvider.success
+                ? "flex-wrap items-start sm:flex-nowrap"
+                : undefined
+            }
           >
-            <div className="w-[280px] space-y-0.5">
+            <div className="w-[280px] max-w-full space-y-1">
+              {managedProvider.success && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  onClick={onRefreshModels}
+                >
+                  Refresh models
+                </Button>
+              )}
+              {visibleModelIds.length === 0 && (
+                <p className="text-[11px] text-muted-foreground">
+                  Add an available key to load the account's models.
+                </p>
+              )}
               {visibleModelIds.map((m) => (
                 <div key={m} className="flex items-center gap-2 text-[10px]">
                   <Switch
+                    aria-label={`Show ${m}`}
                     checked={!hiddenModels.includes(m)}
                     onCheckedChange={(v) => {
                       const next = v
@@ -659,7 +815,7 @@ function ProviderRow({
                       void onSaveKey(provider.id, "hidden_models", next)
                     }}
                   />
-                  <span className="truncate font-mono text-muted-foreground">
+                  <span className="min-w-0 font-mono break-all text-muted-foreground">
                     {m}
                   </span>
                 </div>
@@ -684,7 +840,7 @@ function CustomModelInput({
   onChange,
 }: CustomModelInputProps) {
   return (
-    <div className="w-[280px]">
+    <div className="w-[280px] max-w-full">
       <div className="mb-1 flex gap-1.5">
         <Input
           id={`custom-${providerId}`}
@@ -1415,7 +1571,8 @@ function SecretValueInput({
 }) {
   const state = readSecretState(value)
   const configured =
-    state?.configured === true || (typeof value === "string" && value.length > 0)
+    state?.configured === true ||
+    (typeof value === "string" && value.length > 0)
   return (
     <div className="flex items-center gap-1">
       <Input
@@ -1569,7 +1726,8 @@ function readRecordValue(record: unknown, key: string): unknown {
 
 function readSecretState(value: unknown): SecretState | null {
   if (!isRecord(value) || typeof value.configured !== "boolean") return null
-  if (value.storage !== "encrypted" && value.storage !== "plaintext") return null
+  if (value.storage !== "encrypted" && value.storage !== "plaintext")
+    return null
   return {
     configured: value.configured,
     storage: value.storage,

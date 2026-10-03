@@ -9,6 +9,7 @@ import { ThreadTurnCoordinator } from "../provider/threadTurnCoordinator"
 import type { ProviderRuntimeEvent } from "../provider/types"
 import { ClaudeApiAdapter } from "../provider/adapters/claudeApi"
 import { ApiModelCatalog } from "../provider/adapters/apiModelCatalog"
+import { ApiKeyPool } from "../auth/apiKeyPool"
 import { ClaudeAgentAdapter } from "../provider/adapters/claudeAgent"
 import {
   makeGrokAdapter,
@@ -116,6 +117,7 @@ export function wireProviders(
   // ── Provider adapters (API-key fallback chain mirrors Rust auth flow) ─
   const providerRegistry = new ProviderAdapterRegistry()
   const currentSettings = settings.get()
+  const apiKeyPool = new ApiKeyPool(settings)
   const mcpResolverOptions = {
     dataDir: config.dataDir,
     // Resolve lazily at each turn/session so enabling, disabling, or editing a
@@ -216,19 +218,30 @@ export function wireProviders(
     new ClaudeApiAdapter(
       anthropicKey?.key ?? null,
       directAgentTools,
-      apiModelCatalog
+      apiModelCatalog,
+      apiKeyPool
     )
   )
   providerRegistry.register(new ClaudeAgentAdapter())
 
   const openaiKey = resolveOpenAiKey(currentSettings)
   providerRegistry.register(
-    makeOpenAiAdapter(openaiKey?.key ?? null, directAgentTools, apiModelCatalog)
+    makeOpenAiAdapter(
+      openaiKey?.key ?? null,
+      directAgentTools,
+      apiModelCatalog,
+      apiKeyPool
+    )
   )
 
   const grokKey = resolveGrokKey(currentSettings)
   providerRegistry.register(
-    makeGrokAdapter(grokKey?.key ?? null, directAgentTools, apiModelCatalog)
+    makeGrokAdapter(
+      grokKey?.key ?? null,
+      directAgentTools,
+      apiModelCatalog,
+      apiKeyPool
+    )
   )
 
   const openrouterKey = resolveOpenRouterKey(currentSettings)
@@ -513,7 +526,10 @@ export function wireProviders(
       }),
     afterTurn: finalizeCheckpointTurn,
   })
-  const chatHelpers = new ChatLlmHelpers({ settings: () => settings.get() })
+  const chatHelpers = new ChatLlmHelpers({
+    settings: () => settings.get(),
+    apiKeyPool,
+  })
   const worktrees = new WorktreeManager(db, eventStore, worktreeRegistry)
   const checkpointRefCleanupStore = new CheckpointRefCleanupStore(db)
   const checkpointRefOperationGate = new CheckpointRefOperationGate()
@@ -567,6 +583,7 @@ export function wireProviders(
   )
 
   const state: AppState = {
+    apiKeyPool,
     orchestrator,
     config,
     db,

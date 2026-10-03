@@ -20,6 +20,8 @@ import {
   withCheckpointRecoveryMutation,
 } from "../checkpointRecoveryFence"
 import { resolveApprovedWorkspaceRoot } from "./workspace"
+import { registerApiKeyRoutes } from "./apiKeys"
+import { listProviders as listProviderCatalog } from "../../provider/catalog"
 
 const LM_STUDIO_PROBE_TIMEOUT_MS = 1_500
 const LM_STUDIO_MODELS_MAX_BYTES = 512 * 1024
@@ -64,9 +66,17 @@ const validateKeySchema = z.object({
 })
 
 export function registerProvidersRoutes(api: Hono, state: AppState): void {
+  registerApiKeyRoutes(api, state)
+  api.get("/providers/catalog", (c) => c.json(listProviderCatalog()))
   api.get("/providers", (c) => c.json(state.providers.listProviders()))
   api.get("/models", async (c) =>
-    c.json(withCustomApiModels(await state.providers.listModelsLive(), state))
+    c.json(
+      withCustomApiModels(
+        await state.providers.listModelsLive(),
+        state,
+        c.req.query("includeHidden") === "1"
+      )
+    )
   )
   api.get("/providers/status", (c) => c.json(state.providers.getStatus()))
   api.get("/providers/instances", async (c) => {
@@ -389,7 +399,8 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
 
 function withCustomApiModels(
   models: ModelDefinition[],
-  state: AppState
+  state: AppState,
+  includeHidden = false
 ): ModelDefinition[] {
   const providers = state.settings?.get().providers
   if (!providers) return models
@@ -407,7 +418,20 @@ function withCustomApiModels(
       result.push({ slug, name: slug, provider: kind, isCustom: true })
     }
   }
-  return result
+  if (includeHidden) return result
+  return result.filter((model) => {
+    if (
+      model.provider !== "anthropic" &&
+      model.provider !== "openai" &&
+      model.provider !== "grok"
+    )
+      return true
+    const config = providers[model.provider]
+    return (
+      config?.enabled !== false &&
+      !(config?.hidden_models ?? []).includes(model.slug)
+    )
+  })
 }
 
 function parseInstanceRouteParams(

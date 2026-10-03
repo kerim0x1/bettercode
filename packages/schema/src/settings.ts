@@ -9,6 +9,7 @@ import { DEFAULT_DESIGN_DEFAULTS, designDefaultsSchema } from "./design"
 import { guardrailRuleSchema } from "./guardrails"
 import { pipelineDefinitionSchema } from "./pipelines"
 import { orchestratorTeamSchema } from "./orchestrator"
+import { storedApiKeysSchema } from "./api-keys"
 export {
   secretPatchSchema,
   secretStateSchema,
@@ -32,13 +33,14 @@ export {
 // Older settings files serialized absent optional strings as null. Normalize
 // only these fields; malformed values and required settings still fail validation.
 const optionalSettingsString = z.preprocess(
-  (value) => value === null ? undefined : value,
+  (value) => (value === null ? undefined : value),
   z.string().optional()
 )
 
 export const providerConfigSchema = z.object({
   enabled: z.boolean().default(true),
   api_key: optionalSettingsString,
+  api_keys: storedApiKeysSchema.optional(),
   custom_models: z.array(z.string()).default([]),
   hidden_models: z.array(z.string()).default([]),
   base_url: optionalSettingsString,
@@ -197,7 +199,9 @@ const settingsObjectSchema = z
     toast_errors: z.boolean().default(true),
     toast_attention: z.boolean().default(true),
     attention_badges: z.boolean().default(true),
-    backend_log_level: z.enum(["error", "warn", "info", "debug"]).default("info"),
+    backend_log_level: z
+      .enum(["error", "warn", "info", "debug"])
+      .default("info"),
     backend_log_format: z.enum(["simple", "json"]).default("simple"),
     backend_trace_http: z.boolean().default(false),
     backend_trace_provider_events: z.boolean().default(false),
@@ -218,7 +222,7 @@ const settingsObjectSchema = z
     orchestrator_enabled: z.boolean().default(false),
     orchestrator_team: orchestratorTeamSchema.nullable().default(null),
     jev_api_key: z.preprocess(
-      (value) => value === null ? undefined : value,
+      (value) => (value === null ? undefined : value),
       z.string().max(4096).optional()
     ),
     default_thread_env_mode: z.string().default("local"),
@@ -247,33 +251,36 @@ const settingsObjectSchema = z
   .strict()
 
 /** Remote devices may change presentation only. New settings are owner-only by default. */
-export const remoteSettingsPatchSchema = settingsObjectSchema.pick({
-  theme: true,
-  language: true,
-  time_format: true,
-  enable_assistant_streaming: true,
-  show_message_timestamps: true,
-  show_thinking_blocks: true,
-  show_reasoning_summaries: true,
-  show_tool_details: true,
-  show_session_progress_bar: true,
-  shell_tool_parts_expanded: true,
-  edit_tool_parts_expanded: true,
-  show_chat_scrollbar: true,
-  show_generic_tool_output: true,
-  conceal_code_blocks: true,
-  diff_word_wrap: true,
-  diff_style: true,
-  confirm_archive: true,
-  confirm_delete: true,
-  notification_agent: true,
-  notification_permissions: true,
-  notification_errors: true,
-  toast_enabled: true,
-  toast_errors: true,
-  toast_attention: true,
-  attention_badges: true,
-}).partial().strict()
+export const remoteSettingsPatchSchema = settingsObjectSchema
+  .pick({
+    theme: true,
+    language: true,
+    time_format: true,
+    enable_assistant_streaming: true,
+    show_message_timestamps: true,
+    show_thinking_blocks: true,
+    show_reasoning_summaries: true,
+    show_tool_details: true,
+    show_session_progress_bar: true,
+    shell_tool_parts_expanded: true,
+    edit_tool_parts_expanded: true,
+    show_chat_scrollbar: true,
+    show_generic_tool_output: true,
+    conceal_code_blocks: true,
+    diff_word_wrap: true,
+    diff_style: true,
+    confirm_archive: true,
+    confirm_delete: true,
+    notification_agent: true,
+    notification_permissions: true,
+    notification_errors: true,
+    toast_enabled: true,
+    toast_errors: true,
+    toast_attention: true,
+    attention_badges: true,
+  })
+  .partial()
+  .strict()
 
 export const settingsSchema = z.preprocess((raw) => {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw

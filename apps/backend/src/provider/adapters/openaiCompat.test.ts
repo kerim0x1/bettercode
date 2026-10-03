@@ -3,10 +3,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 // ── Mock the OpenAI SDK: a fake client whose `chat.completions.create`
 //    returns queued async-iterable chunk streams. ───────────────────────────
 const createMock = vi.fn()
+const sdkOptions = vi.hoisted(() => vi.fn())
 vi.mock("openai", () => ({
   default: class {
     chat = { completions: { create: createMock } }
-    constructor(_opts: unknown) {}
+    constructor(opts: unknown) {
+      sdkOptions(opts)
+    }
   },
 }))
 
@@ -31,6 +34,8 @@ vi.mock("../../constants", async (importOriginal) => ({
 }))
 
 import { OpenAiCompatAdapter } from "./openaiCompat"
+import { ApiKeyPool } from "../../auth/apiKeyPool"
+import { defaultSettings } from "../../settings/schema"
 import { executeTool } from "../agent-loop/tool-executor"
 import { probeLmStudioBaseUrl } from "../../constants"
 import type { ProviderRuntimeEvent, ProviderSendTurnInput } from "../types"
@@ -86,6 +91,116 @@ function baseInput(
 beforeEach(() => vi.clearAllMocks())
 
 describe("OpenAiCompatAdapter agent loop", () => {
+  it.each(["openai", "grok"] as const)(
+    "recovers %s with a backup while preserving executed tools",
+    async (providerKind) => {
+      const settings = defaultSettings()
+      settings.providers[providerKind] = {
+        enabled: true,
+        custom_models: [],
+        hidden_models: [],
+      }
+      settings.providers[providerKind].api_keys = [
+        {
+          id: "primary",
+          label: "Primary",
+          enabled: true,
+          api_key: "synthetic-primary",
+        },
+        {
+          id: "backup",
+          label: "Backup",
+          enabled: true,
+          api_key: "synthetic-backup",
+        },
+      ]
+      const pool = new ApiKeyPool({
+        get: () => settings,
+        getPublic: () => ({}),
+        update: () => settings,
+      })
+      createMock
+        .mockReturnValueOnce(
+          stream(toolCallTurn("read", "Read", '{"path":"a"}'))
+        )
+        .mockRejectedValueOnce({ status: 401 })
+        .mockReturnValueOnce(stream(textTurn("done")))
+      const adapter = new OpenAiCompatAdapter(
+        { providerKind, displayName: providerKind, defaultModels: [] },
+        null,
+        {},
+        undefined,
+        pool
+      )
+      await adapter.sendMessage(baseInput())
+      expect(executeTool).toHaveBeenCalledTimes(1)
+      expect(createMock).toHaveBeenCalledTimes(3)
+      expect(sdkOptions.mock.calls.map((call) => call[0].apiKey)).toEqual([
+        "synthetic-primary",
+        "synthetic-primary",
+        "synthetic-backup",
+      ])
+      expect(
+        sdkOptions.mock.calls.every((call) => call[0].maxRetries === 0)
+      ).toBe(true)
+      expect(
+        createMock.mock.calls[2][0].messages.some(
+          (message: { role: string }) => message.role === "tool"
+        )
+      ).toBe(true)
+    }
+  )
+  it("keeps partial text and does not replay the request after a broken SSE stream", async () => {
+    const settings = defaultSettings()
+    settings.providers.openai = {
+      enabled: true,
+      custom_models: [],
+      hidden_models: [],
+    }
+    settings.providers.openai.api_keys = [
+      {
+        id: "primary",
+        label: "Primary",
+        enabled: true,
+        api_key: "synthetic-primary",
+      },
+      {
+        id: "backup",
+        label: "Backup",
+        enabled: true,
+        api_key: "synthetic-backup",
+      },
+    ]
+    const pool = new ApiKeyPool({
+      get: () => settings,
+      getPublic: () => ({}),
+      update: () => settings,
+    })
+    createMock.mockReturnValueOnce({
+      async *[Symbol.asyncIterator]() {
+        yield { choices: [{ delta: { content: "partial" } }] }
+        throw { status: 503 }
+      },
+    })
+    const adapter = new OpenAiCompatAdapter(
+      { providerKind: "openai", displayName: "OpenAI", defaultModels: [] },
+      null,
+      {},
+      undefined,
+      pool
+    )
+    const events: ProviderRuntimeEvent[] = []
+    adapter.subscribeEvents().on("event", (event) => events.push(event))
+    await expect(adapter.sendMessage(baseInput())).rejects.toThrow("Temporary")
+    expect(createMock).toHaveBeenCalledTimes(1)
+    expect(
+      events.some(
+        (event) =>
+          event.event_type === "content_delta" &&
+          event.payload.delta === "partial"
+      )
+    ).toBe(true)
+  })
   it.each(["none", "xhigh", "max"])(
     "passes OpenAI %s reasoning through to chat completions",
     async (effort) => {
