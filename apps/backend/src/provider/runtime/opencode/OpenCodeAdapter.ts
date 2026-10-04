@@ -21,7 +21,9 @@ import { OPENCODE_CLI_PROFILE } from "../betterc0deCompat/OpenCodeCompatProfile"
  * v1 provider list remains authoritative.
  */
 export class OpenCodeAdapter extends BetterC0deCompatAdapter {
-  constructor(options: ConstructorParameters<typeof BetterC0deCompatAdapter>[0] = {}) {
+  constructor(
+    options: ConstructorParameters<typeof BetterC0deCompatAdapter>[0] = {}
+  ) {
     super({ ...options, profile: OPENCODE_CLI_PROFILE })
   }
 }

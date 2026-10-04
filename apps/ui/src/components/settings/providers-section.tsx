@@ -5,7 +5,10 @@ import {
   isValidEnvironmentDraft,
   changedProviderConfigFields,
 } from "@/lib/provider-instance-settings"
-import { defaultInstanceIdForDriver, normalizeProviderDriverKind } from "@/lib/provider-instances"
+import {
+  defaultInstanceIdForDriver,
+  normalizeProviderDriverKind,
+} from "@/lib/provider-instances"
 import { useState, useCallback, useEffect, useRef } from "react"
 import { cn } from "@/lib/utils"
 import { SettingsSection, SettingsRow } from "@/components/settings/atoms"
@@ -774,9 +777,11 @@ function ProviderRow({
         }
         for (const model of liveModels ?? []) {
           const slug = model.slug?.trim()
-          if (slug && !visibleModelIds.includes(slug)) visibleModelIds.push(slug)
+          if (slug && !visibleModelIds.includes(slug))
+            visibleModelIds.push(slug)
         }
-        if (visibleModelIds.length === 0 && !managedProvider.success) return null
+        if (visibleModelIds.length === 0 && !managedProvider.success)
+          return null
         return (
           <SettingsRow
             label="Visible Models"

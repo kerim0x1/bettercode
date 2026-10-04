@@ -263,7 +263,10 @@ export function resolveDispatchModelId(
   modelId: string
 ): string {
   if (!modelId.includes("/")) return modelId
-  const kind = (providerKind ?? "").trim().toLowerCase().replace(/[_\s-]+/g, "")
+  const kind = (providerKind ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s-]+/g, "")
   if (
     kind === "openrouter" ||
     kind === "betterc0de" ||

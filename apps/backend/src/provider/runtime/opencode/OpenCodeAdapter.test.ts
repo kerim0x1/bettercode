@@ -44,7 +44,11 @@ function fakeClient(input: { readonly stream: AsyncIterable<unknown> }) {
                   id: "big-pickle",
                   providerID: "opencode",
                   name: "Big Pickle",
-                  capabilities: { tools: true, input: ["text"], output: ["text"] },
+                  capabilities: {
+                    tools: true,
+                    input: ["text"],
+                    output: ["text"],
+                  },
                   cost: [{ input: 0, output: 0, cache: { read: 0, write: 0 } }],
                   limit: { context: 200_000, output: 8_192 },
                   status: "active",
@@ -119,7 +123,8 @@ function pushStream<T>() {
         return {
           next(): Promise<IteratorResult<T>> {
             const value = values.shift()
-            if (value !== undefined) return Promise.resolve({ value, done: false })
+            if (value !== undefined)
+              return Promise.resolve({ value, done: false })
             if (closed) return Promise.resolve({ value: undefined, done: true })
             return new Promise((resolve) => waiters.push(resolve))
           },
@@ -208,7 +213,10 @@ describe("OpenCodeAdapter", () => {
     const session = await adapter.startSession({
       threadId,
       cwd: os.tmpdir(),
-      modelSelection: { instanceId: "opencode-cli", model: "opencode/big-pickle" },
+      modelSelection: {
+        instanceId: "opencode-cli",
+        model: "opencode/big-pickle",
+      },
     })
     expect(session.providerThreadId).toBe("ses_opencode_1")
     expect(client.session.create).toHaveBeenCalledWith(

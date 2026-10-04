@@ -951,13 +951,16 @@ async function runBetterC0deTextGeneration(
         path.join(os.tmpdir(), "betterc0de-compat-text-generation-")
       )
     }
-    client = await createClient({
-      baseUrl: server.url,
-      directory: resolveCwd(input.cwd, scratchDirectory ?? ""),
-      ...(server.external && serverPassword
-        ? { serverUsername, serverPassword }
-        : {}),
-    }, profile)
+    client = await createClient(
+      {
+        baseUrl: server.url,
+        directory: resolveCwd(input.cwd, scratchDirectory ?? ""),
+        ...(server.external && serverPassword
+          ? { serverUsername, serverPassword }
+          : {}),
+      },
+      profile
+    )
     if (server.external && !client.session.delete) {
       throw Object.assign(
         new Error(
@@ -1523,7 +1526,9 @@ async function connectBetterC0deServer(
  * `opencode` binary speaks the same protocol as BetterC0de's compatibility
  * CLI but wraps v2 inventory payloads, so the v2 envelope flag differs.
  */
-function profileForTextDriver(driver: string | undefined): OpenCodeCompatProfile {
+function profileForTextDriver(
+  driver: string | undefined
+): OpenCodeCompatProfile {
   const key = (driver ?? "")
     .trim()
     .toLowerCase()

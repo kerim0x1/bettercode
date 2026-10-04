@@ -90,7 +90,8 @@ export function runtimeProviderProjectPolicyKeys(
   const keys = new Set<string>()
   addProviderProjectAliases(keys, provider.instanceId)
   addProviderProjectAliases(keys, provider.driver)
-  if (provider.displayName) addProviderProjectAliases(keys, provider.displayName)
+  if (provider.displayName)
+    addProviderProjectAliases(keys, provider.displayName)
   return [...keys]
 }
 
@@ -102,7 +103,8 @@ export function runtimeModelProjectPolicyKeys(
   if (model.name) addModelProjectAliases(keys, model.name)
   if (model.shortName) addModelProjectAliases(keys, model.shortName)
   if (model.subProvider) addModelProjectAliases(keys, model.subProvider)
-  if (model.catalog?.modelId) addModelProjectAliases(keys, model.catalog.modelId)
+  if (model.catalog?.modelId)
+    addModelProjectAliases(keys, model.catalog.modelId)
   if (model.catalog?.api?.id) addModelProjectAliases(keys, model.catalog.api.id)
   return [...keys]
 }

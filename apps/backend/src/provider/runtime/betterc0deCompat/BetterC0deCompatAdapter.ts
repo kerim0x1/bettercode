@@ -75,21 +75,31 @@ const METADATA_ERROR_CACHE_TTL_MS = 10 * 1000
 const EMPTY_CONFIG_CONTENT = "{}"
 
 // Covers failures before a server connection exists, including version probes.
-const compatProcessCleanups = new Map<ChildProcessWithoutNullStreams, {
-  failed: boolean
-  promise: Promise<void> | null
-}>()
+const compatProcessCleanups = new Map<
+  ChildProcessWithoutNullStreams,
+  {
+    failed: boolean
+    promise: Promise<void> | null
+  }
+>()
 
-async function closeCompatProcess(child: ChildProcessWithoutNullStreams): Promise<void> {
+async function closeCompatProcess(
+  child: ChildProcessWithoutNullStreams
+): Promise<void> {
   let record = compatProcessCleanups.get(child)
   if (!record) {
     record = { failed: false, promise: null }
     compatProcessCleanups.set(child, record)
   }
   if (record.promise) return record.promise
-  if (record.failed && process.platform === "win32" &&
-    (child.exitCode !== null || child.signalCode !== null)) {
-    throw new Error("Compatibility process descendants remain unconfirmed after the Windows root exited.")
+  if (
+    record.failed &&
+    process.platform === "win32" &&
+    (child.exitCode !== null || child.signalCode !== null)
+  ) {
+    throw new Error(
+      "Compatibility process descendants remain unconfirmed after the Windows root exited."
+    )
   }
   const operation = terminateProviderChildProcessTree(child)
   record.promise = operation
@@ -105,9 +115,17 @@ async function closeCompatProcess(child: ChildProcessWithoutNullStreams): Promis
 }
 
 async function retryCompatProcessCleanup(): Promise<void> {
-  const results = await Promise.allSettled([...compatProcessCleanups.keys()].map(closeCompatProcess))
-  const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : [])
-  if (failures.length) throw new AggregateError(failures, "Compatibility process cleanup is still unconfirmed.")
+  const results = await Promise.allSettled(
+    [...compatProcessCleanups.keys()].map(closeCompatProcess)
+  )
+  const failures = results.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : []
+  )
+  if (failures.length)
+    throw new AggregateError(
+      failures,
+      "Compatibility process cleanup is still unconfirmed."
+    )
 }
 
 const CAPABILITIES: ProviderCapabilities = {
@@ -1287,10 +1305,13 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
 
   private readonly bus = new EventEmitter()
   private readonly sessions = new Map<string, SessionContext>()
-  private readonly pendingSessionStarts = new Map<string, {
-    controller: AbortController
-    promise: Promise<ProviderSession>
-  }>()
+  private readonly pendingSessionStarts = new Map<
+    string,
+    {
+      controller: AbortController
+      promise: Promise<ProviderSession>
+    }
+  >()
   private stopAllPromise: Promise<void> | null = null
   private readonly metadataOperations = new Set<Promise<unknown>>()
   private readonly serverCleanupQuarantines = new Map<
@@ -1342,7 +1363,9 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     return this.trackMetadataOperation(() => this.probeStatusInternal(input))
   }
 
-  private async probeStatusInternal(input: { readonly cwd?: string | null } = {}): Promise<{
+  private async probeStatusInternal(
+    input: { readonly cwd?: string | null } = {}
+  ): Promise<{
     readonly configured: boolean
     readonly installed: boolean
     readonly version: string | null
@@ -1450,7 +1473,9 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
   }
 
   availableModels(input: { readonly force?: boolean } = {}) {
-    return this.trackMetadataOperation(() => this.availableModelsInternal(input))
+    return this.trackMetadataOperation(() =>
+      this.availableModelsInternal(input)
+    )
   }
 
   private async availableModelsInternal(
@@ -1474,7 +1499,8 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       // "Not configured" changes the moment the user fills in a server URL
       // or binary path; pin the fallback for the short error TTL, not the
       // five-minute success TTL, so the real catalog shows up promptly.
-      if (generation === this.metadataGeneration) this.modelsCache = { checkedAt: now, value: fallback, error: true }
+      if (generation === this.metadataGeneration)
+        this.modelsCache = { checkedAt: now, value: fallback, error: true }
       return fallback
     }
 
@@ -1485,29 +1511,43 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         live.length > 0
           ? mergeCustomModels(live, this.options.customModels ?? [])
           : fallback
-      if (generation === this.metadataGeneration) this.modelsCache = { checkedAt: Date.now(), value: models }
+      if (generation === this.metadataGeneration)
+        this.modelsCache = { checkedAt: Date.now(), value: models }
       return models
     } catch (error) {
-      logger.warn({ err: error }, `${this.brand()} model inventory probe failed`)
-      if (generation === this.metadataGeneration) this.modelsCache = { checkedAt: Date.now(), value: fallback, error: true }
+      logger.warn(
+        { err: error },
+        `${this.brand()} model inventory probe failed`
+      )
+      if (generation === this.metadataGeneration)
+        this.modelsCache = {
+          checkedAt: Date.now(),
+          value: fallback,
+          error: true,
+        }
       return fallback
     }
   }
 
   private trackMetadataOperation<T>(operation: () => Promise<T>): Promise<T> {
-    if (this.stopAllPromise) return Promise.reject(new Error(`${this.brand()} shutdown is in progress.`))
+    if (this.stopAllPromise)
+      return Promise.reject(
+        new Error(`${this.brand()} shutdown is in progress.`)
+      )
     // Register before yielding so retirement also owns probes awaiting their
     // first native version check or temporary server connection.
     const pending = Promise.resolve().then(operation)
     this.metadataOperations.add(pending)
-    return pending.finally(() => { this.metadataOperations.delete(pending) })
+    return pending.finally(() => {
+      this.metadataOperations.delete(pending)
+    })
   }
 
   private storeMetadata<T>(
     cache: Map<string, MetadataCache<T>>,
     cwd: string,
     generation: number,
-    value: MetadataCache<T>,
+    value: MetadataCache<T>
   ): void {
     if (generation !== this.metadataGeneration) return
     cache.delete(cwd)
@@ -1538,8 +1578,12 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     this.toolsCache.delete(cwd)
   }
 
-  availableProviderCatalog(input: { readonly cwd?: string | null; readonly force?: boolean } = {}) {
-    return this.trackMetadataOperation(() => this.availableProviderCatalogInternal(input))
+  availableProviderCatalog(
+    input: { readonly cwd?: string | null; readonly force?: boolean } = {}
+  ) {
+    return this.trackMetadataOperation(() =>
+      this.availableProviderCatalogInternal(input)
+    )
   }
 
   private async availableProviderCatalogInternal(
@@ -1549,11 +1593,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     const generation = this.metadataGeneration
     const cwd = normalizeCwd(input.cwd)
     const cached = this.providerCatalogCache.get(cwd)
-    if (
-      !input.force &&
-      cached &&
-      isMetadataCacheFresh(cached)
-    ) {
+    if (!input.force && cached && isMetadataCacheFresh(cached)) {
       return cached.value
     }
 
@@ -1566,7 +1606,10 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       })
       return catalog
     } catch (error) {
-      logger.warn({ err: error, cwd }, `${this.brand()} provider catalog probe failed`)
+      logger.warn(
+        { err: error, cwd },
+        `${this.brand()} provider catalog probe failed`
+      )
       this.storeMetadata(this.providerCatalogCache, cwd, generation, {
         checkedAt: Date.now(),
         value: [],
@@ -1576,8 +1619,12 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     }
   }
 
-  availableAgents(input: { readonly cwd?: string | null; readonly force?: boolean } = {}) {
-    return this.trackMetadataOperation(() => this.availableAgentsInternal(input))
+  availableAgents(
+    input: { readonly cwd?: string | null; readonly force?: boolean } = {}
+  ) {
+    return this.trackMetadataOperation(() =>
+      this.availableAgentsInternal(input)
+    )
   }
 
   private async availableAgentsInternal(
@@ -1587,27 +1634,32 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     const generation = this.metadataGeneration
     const cwd = normalizeCwd(input.cwd)
     const cached = this.agentsCache.get(cwd)
-    if (
-      !input.force &&
-      cached &&
-      isMetadataCacheFresh(cached)
-    ) {
+    if (!input.force && cached && isMetadataCacheFresh(cached)) {
       return cached.value
     }
 
     try {
       const inventory = await this.loadInventory(cwd)
       const agents = betterC0deProviderAgents(inventory.agents)
-      this.storeMetadata(this.agentsCache, cwd, generation, { checkedAt: Date.now(), value: agents })
+      this.storeMetadata(this.agentsCache, cwd, generation, {
+        checkedAt: Date.now(),
+        value: agents,
+      })
       return agents
     } catch (error) {
       logger.warn({ err: error, cwd }, `${this.brand()} agents probe failed`)
-      this.storeMetadata(this.agentsCache, cwd, generation, { checkedAt: Date.now(), value: [], error: true })
+      this.storeMetadata(this.agentsCache, cwd, generation, {
+        checkedAt: Date.now(),
+        value: [],
+        error: true,
+      })
       return []
     }
   }
 
-  availableTools(input: { readonly cwd?: string | null; readonly force?: boolean } = {}) {
+  availableTools(
+    input: { readonly cwd?: string | null; readonly force?: boolean } = {}
+  ) {
     return this.trackMetadataOperation(() => this.availableToolsInternal(input))
   }
 
@@ -1618,28 +1670,35 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     const generation = this.metadataGeneration
     const cwd = normalizeCwd(input.cwd)
     const cached = this.toolsCache.get(cwd)
-    if (
-      !input.force &&
-      cached &&
-      isMetadataCacheFresh(cached)
-    ) {
+    if (!input.force && cached && isMetadataCacheFresh(cached)) {
       return cached.value
     }
 
     try {
       const inventory = await this.loadInventory(cwd)
       const tools = betterC0deProviderTools(inventory)
-      this.storeMetadata(this.toolsCache, cwd, generation, { checkedAt: Date.now(), value: tools })
+      this.storeMetadata(this.toolsCache, cwd, generation, {
+        checkedAt: Date.now(),
+        value: tools,
+      })
       return tools
     } catch (error) {
       logger.warn({ err: error, cwd }, `${this.brand()} tools probe failed`)
-      this.storeMetadata(this.toolsCache, cwd, generation, { checkedAt: Date.now(), value: [], error: true })
+      this.storeMetadata(this.toolsCache, cwd, generation, {
+        checkedAt: Date.now(),
+        value: [],
+        error: true,
+      })
       return []
     }
   }
 
-  availableSkills(input: { readonly cwd?: string | null; readonly force?: boolean } = {}) {
-    return this.trackMetadataOperation(() => this.availableSkillsInternal(input))
+  availableSkills(
+    input: { readonly cwd?: string | null; readonly force?: boolean } = {}
+  ) {
+    return this.trackMetadataOperation(() =>
+      this.availableSkillsInternal(input)
+    )
   }
 
   private async availableSkillsInternal(
@@ -1649,11 +1708,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     const generation = this.metadataGeneration
     const cwd = normalizeCwd(input.cwd)
     const cached = this.skillsCache.get(cwd)
-    if (
-      !input.force &&
-      cached &&
-      isMetadataCacheFresh(cached)
-    ) {
+    if (!input.force && cached && isMetadataCacheFresh(cached)) {
       return cached.value
     }
 
@@ -1676,20 +1731,31 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           scope: "betterc0de",
           enabled: true,
         }))
-        this.storeMetadata(this.skillsCache, cwd, generation, { checkedAt: Date.now(), value: skills })
+        this.storeMetadata(this.skillsCache, cwd, generation, {
+          checkedAt: Date.now(),
+          value: skills,
+        })
         return skills
       } finally {
         await this.closeTrackedServer(server)
       }
     } catch (error) {
       logger.warn({ err: error, cwd }, `${this.brand()} skills probe failed`)
-      this.storeMetadata(this.skillsCache, cwd, generation, { checkedAt: Date.now(), value: [], error: true })
+      this.storeMetadata(this.skillsCache, cwd, generation, {
+        checkedAt: Date.now(),
+        value: [],
+        error: true,
+      })
       return []
     }
   }
 
-  availableSlashCommands(input: { readonly cwd?: string | null; readonly force?: boolean } = {}) {
-    return this.trackMetadataOperation(() => this.availableSlashCommandsInternal(input))
+  availableSlashCommands(
+    input: { readonly cwd?: string | null; readonly force?: boolean } = {}
+  ) {
+    return this.trackMetadataOperation(() =>
+      this.availableSlashCommandsInternal(input)
+    )
   }
 
   private async availableSlashCommandsInternal(
@@ -1699,11 +1765,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     const generation = this.metadataGeneration
     const cwd = normalizeCwd(input.cwd)
     const cached = this.commandsCache.get(cwd)
-    if (
-      !input.force &&
-      cached &&
-      isMetadataCacheFresh(cached)
-    ) {
+    if (!input.force && cached && isMetadataCacheFresh(cached)) {
       return cached.value
     }
 
@@ -1722,13 +1784,19 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           description: command.description,
           ...(command.hints?.[0] ? { input: { hint: command.hints[0] } } : {}),
         }))
-        this.storeMetadata(this.commandsCache, cwd, generation, { checkedAt: Date.now(), value: commands })
+        this.storeMetadata(this.commandsCache, cwd, generation, {
+          checkedAt: Date.now(),
+          value: commands,
+        })
         return commands
       } finally {
         await this.closeTrackedServer(server)
       }
     } catch (error) {
-      logger.warn({ err: error, cwd }, `${this.brand()} slash command probe failed`)
+      logger.warn(
+        { err: error, cwd },
+        `${this.brand()} slash command probe failed`
+      )
       this.storeMetadata(this.commandsCache, cwd, generation, {
         checkedAt: Date.now(),
         value: [],
@@ -1738,10 +1806,14 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     }
   }
 
-  async startSession(input: BetterC0deStartSessionInput): Promise<ProviderSession> {
+  async startSession(
+    input: BetterC0deStartSessionInput
+  ): Promise<ProviderSession> {
     const key = input.threadId as string
     if (this.stopAllPromise || this.pendingSessionStarts.has(key)) {
-      throw new Error(`${this.brand()} session startup is already pending or shutdown is in progress.`)
+      throw new Error(
+        `${this.brand()} session startup is already pending or shutdown is in progress.`
+      )
     }
     const controller = new AbortController()
     const promise = this.startSessionInternal(input, controller.signal)
@@ -1750,13 +1822,14 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     try {
       return await promise
     } finally {
-      if (this.pendingSessionStarts.get(key) === pending) this.pendingSessionStarts.delete(key)
+      if (this.pendingSessionStarts.get(key) === pending)
+        this.pendingSessionStarts.delete(key)
     }
   }
 
   private async startSessionInternal(
     input: BetterC0deStartSessionInput,
-    signal: AbortSignal,
+    signal: AbortSignal
   ): Promise<ProviderSession> {
     const key = input.threadId as string
     const existing = this.sessions.get(key)
@@ -1797,8 +1870,14 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         created,
         `${this.brand()} session.create returned no session payload.`
       )
-      if (!betterC0deSession || typeof betterC0deSession.id !== "string" || !betterC0deSession.id.trim()) {
-        throw new Error(`${this.brand()} session.create returned an invalid session ID.`)
+      if (
+        !betterC0deSession ||
+        typeof betterC0deSession.id !== "string" ||
+        !betterC0deSession.id.trim()
+      ) {
+        throw new Error(
+          `${this.brand()} session.create returned an invalid session ID.`
+        )
       }
       const now = Date.now()
       const runtimeMode = normalizeProviderRuntimeMode(input.runtimeMode)
@@ -1910,8 +1989,14 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     context.activeAgent =
       getModelSelectionStringOptionValue(modelSelection, "agent") ??
       (await this.resolveAgentForChatMode(context.directory, input.chatMode))
-    if (context.stopped || this.sessions.get(key) !== context || context.activeTurnId !== turnId) {
-      throw new Error(`${this.brand()} turn was stopped or cancelled during agent discovery.`)
+    if (
+      context.stopped ||
+      this.sessions.get(key) !== context ||
+      context.activeTurnId !== turnId
+    ) {
+      throw new Error(
+        `${this.brand()} turn was stopped or cancelled during agent discovery.`
+      )
     }
     context.activeVariant =
       getModelSelectionStringOptionValue(modelSelection, "variant") ?? null
@@ -1930,8 +2015,14 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     })
 
     try {
-      if (context.stopped || this.sessions.get(key) !== context || context.activeTurnId !== turnId) {
-        throw new Error(`${this.brand()} turn was stopped or cancelled before prompt dispatch.`)
+      if (
+        context.stopped ||
+        this.sessions.get(key) !== context ||
+        context.activeTurnId !== turnId
+      ) {
+        throw new Error(
+          `${this.brand()} turn was stopped or cancelled before prompt dispatch.`
+        )
       }
       const currentPrompt = prependProviderHistoryForFreshSession({
         history: input.history,
@@ -2102,7 +2193,11 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (pending) {
       pending.controller.abort()
       await pending.promise.catch((error) => {
-        if (this.serverCleanupQuarantines.size > 0 || compatProcessCleanups.size > 0) throw error
+        if (
+          this.serverCleanupQuarantines.size > 0 ||
+          compatProcessCleanups.size > 0
+        )
+          throw error
       })
     }
     const context = this.sessions.get(key)
@@ -2274,7 +2369,9 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     }
   }
 
-  private async connectServer(signal?: AbortSignal): Promise<BetterC0deServerConnection> {
+  private async connectServer(
+    signal?: AbortSignal
+  ): Promise<BetterC0deServerConnection> {
     try {
       await this.closeAllServerCleanupQuarantines()
     } catch (error) {
@@ -2353,9 +2450,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     // The compat CLI and current `opencode` both stamp the session id on
     // the event envelope (`properties.sessionID`), but current `opencode`
     // can also nest it inside `info`/`part` for message events.
-    if (
-      readEventSessionId(event.properties) !== context.betterC0deSessionId
-    ) {
+    if (readEventSessionId(event.properties) !== context.betterC0deSessionId) {
       return
     }
 
@@ -3230,7 +3325,10 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         break
       }
       case "session.error": {
-        const message = sessionErrorMessage(event.properties.error, this.brand())
+        const message = sessionErrorMessage(
+          event.properties.error,
+          this.brand()
+        )
         const activeTurnId = context.activeTurnId
         context.activeTurnId = null
         context.activeAgent = null
@@ -3698,8 +3796,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           type: "task.progress",
           payload: {
             taskId: `${this.taskId("compaction")}:${context.betterC0deSessionId}`,
-            description:
-              `${this.brand()} compatibility context compaction in progress.`,
+            description: `${this.brand()} compatibility context compaction in progress.`,
             summary: event.properties.text,
           },
         })
@@ -4048,7 +4145,9 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
   private ensureContext(threadId: string): SessionContext {
     const context = this.sessions.get(threadId)
     if (!context || context.stopped) {
-      throw new Error(`${this.brand()} session not found for thread ${threadId}`)
+      throw new Error(
+        `${this.brand()} session not found for thread ${threadId}`
+      )
     }
     return context
   }
@@ -4364,22 +4463,45 @@ function formatBetterC0deProbeError(input: {
 }): { readonly installed: boolean; readonly message: string } {
   const brand = input.brand
   const detail = sdkErrorDetail(input.cause).toLowerCase()
-  const rules: ReadonlyArray<readonly [RegExp, boolean, string]> = input.isExternalServer
-    ? [
-        [/401|403|unauthorized|forbidden/, true, "compatibility server rejected authentication. Check the server URL and password."],
-        [/econnrefused|enotfound|fetch failed|networkerror|timed out|timeout|socket hang up/, true, "Couldn't reach the configured compatibility server. Check that the server is running and the URL is correct."],
-      ]
-    : [
-        [/enoent|notfound|not recognized/, false, `${brand} compatibility CLI is not installed or not on PATH.`],
-        [/quarantine/, true, `macOS is blocking the ${brand} compatibility binary (quarantine). Remove the quarantine attribute from the configured compatibility binary to fix this.`],
-        [/invalid code signature|corrupted/, true, `macOS killed the ${brand} compatibility process due to an invalid code signature. The binary may be corrupted. Try reinstalling the compatibility CLI.`],
-      ]
+  const rules: ReadonlyArray<readonly [RegExp, boolean, string]> =
+    input.isExternalServer
+      ? [
+          [
+            /401|403|unauthorized|forbidden/,
+            true,
+            "compatibility server rejected authentication. Check the server URL and password.",
+          ],
+          [
+            /econnrefused|enotfound|fetch failed|networkerror|timed out|timeout|socket hang up/,
+            true,
+            "Couldn't reach the configured compatibility server. Check that the server is running and the URL is correct.",
+          ],
+        ]
+      : [
+          [
+            /enoent|notfound|not recognized/,
+            false,
+            `${brand} compatibility CLI is not installed or not on PATH.`,
+          ],
+          [
+            /quarantine/,
+            true,
+            `macOS is blocking the ${brand} compatibility binary (quarantine). Remove the quarantine attribute from the configured compatibility binary to fix this.`,
+          ],
+          [
+            /invalid code signature|corrupted/,
+            true,
+            `macOS killed the ${brand} compatibility process due to an invalid code signature. The binary may be corrupted. Try reinstalling the compatibility CLI.`,
+          ],
+        ]
   const matched = rules.find(([pattern]) => pattern.test(detail))
   return {
     installed: matched?.[1] ?? true,
-    message: matched?.[2] ?? (input.isExternalServer
-      ? "Failed to connect to the configured compatibility server."
-      : "Failed to execute compatibility CLI health check."),
+    message:
+      matched?.[2] ??
+      (input.isExternalServer
+        ? "Failed to connect to the configured compatibility server."
+        : "Failed to execute compatibility CLI health check."),
   }
 }
 
@@ -4419,9 +4541,7 @@ export function spawnBetterC0deBinary(
   const directExe =
     isWindows && path.isAbsolute(binaryPath) && /\.exe$/i.test(binaryPath)
   const viaCmd = isWindows && !directExe
-  const command = viaCmd
-    ? process.env.ComSpec?.trim() || "cmd.exe"
-    : binaryPath
+  const command = viaCmd ? process.env.ComSpec?.trim() || "cmd.exe" : binaryPath
   const spawnArgs = viaCmd ? buildWindowsCmdArgs(binaryPath, args) : [...args]
   return spawn(command, spawnArgs, {
     env: sanitizedChildEnvironment(options.env),
@@ -4816,7 +4936,12 @@ function betterC0deProviderCatalogEndpoint(
  */
 function betterC0deNormalizeEndpoint(
   endpoint:
-    | { readonly type?: string; readonly url?: string; readonly package?: string; readonly websocket?: boolean }
+    | {
+        readonly type?: string
+        readonly url?: string
+        readonly package?: string
+        readonly websocket?: boolean
+      }
     | undefined
 ): ProviderCatalogEntry["endpoint"] | undefined {
   if (!endpoint) return undefined
@@ -4839,13 +4964,15 @@ function betterC0deNormalizeEndpoint(
 function betterC0deModelV2Endpoint(
   model: BetterC0deModelV2 | undefined,
   provider: BetterC0deProviderV2 | undefined
-): { readonly type?: string; readonly url?: string; readonly package?: string; readonly websocket?: boolean } | undefined {
-  return (
-    model?.endpoint ??
-    model?.api ??
-    provider?.endpoint ??
-    provider?.api
-  )
+):
+  | {
+      readonly type?: string
+      readonly url?: string
+      readonly package?: string
+      readonly websocket?: boolean
+    }
+  | undefined {
+  return model?.endpoint ?? model?.api ?? provider?.endpoint ?? provider?.api
 }
 
 function betterC0deProviderAgents(
@@ -5311,7 +5438,9 @@ function resolveTextStreamKind(
   return part.type === "reasoning" ? "reasoning_text" : "assistant_text"
 }
 
-function detailFromToolPart(part: Extract<Part, { type: "tool" }>): string | undefined {
+function detailFromToolPart(
+  part: Extract<Part, { type: "tool" }>
+): string | undefined {
   const state = part.state
   if (state.status === "pending") return
   if (state.status === "running") return state.title
@@ -5399,10 +5528,13 @@ function toToolLifecycleStatus(
   return status
 }
 
-function toolStateCreatedAt(part: Extract<Part, { type: "tool" }>): string | undefined {
+function toolStateCreatedAt(
+  part: Extract<Part, { type: "tool" }>
+): string | undefined {
   const state = part.state
   if (state.status === "pending") return
-  const timestamp = state.status === "running" ? state.time.start : state.time.end
+  const timestamp =
+    state.status === "running" ? state.time.start : state.time.end
   return isoFromEpochMs(timestamp)
 }
 
@@ -5457,14 +5589,19 @@ function mapPermissionDecision(reply: "once" | "always" | "reject"): string {
 function normalizeQuestionRequest(request: QuestionRequest) {
   return Array.from(request.questions, (source, index) => {
     const result: {
-      id: string; header: string; question: string
+      id: string
+      header: string
+      question: string
       options: Array<{ label: string; description: string | undefined }>
       multiSelect?: boolean
     } = {
       id: betterC0deQuestionId(index, source),
       question: source.question,
       header: source.header,
-      options: Array.from(source.options, choice => ({ description: choice.description, label: choice.label })),
+      options: Array.from(source.options, (choice) => ({
+        description: choice.description,
+        label: choice.label,
+      })),
     }
     if (source.multiple) result.multiSelect = true
     return result
@@ -5473,7 +5610,7 @@ function normalizeQuestionRequest(request: QuestionRequest) {
 
 function sessionErrorMessage(error: unknown, brand = "BetterC0de"): string {
   const object = (value: unknown): Record<string, unknown> =>
-    value && typeof value === "object" ? value as Record<string, unknown> : {}
+    value && typeof value === "object" ? (value as Record<string, unknown>) : {}
   const message = object(object(error).data).message
   if (typeof message === "string" && message.trim()) return message
   return `${brand} session failed.`

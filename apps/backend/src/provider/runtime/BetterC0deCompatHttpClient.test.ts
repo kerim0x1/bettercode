@@ -33,14 +33,22 @@ afterEach(() => {
 
 describe("BetterC0deCompatHttpClient bounds", () => {
   it("keeps split CRLF sequences within a single multiline SSE frame", async () => {
-    const chunks = ['data: {"type":\r', '\ndata: "test"}\r', '\n\r\n']
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({
-      pull(controller) {
-        const chunk = chunks.shift()
-        if (chunk === undefined) controller.close()
-        else controller.enqueue(new TextEncoder().encode(chunk))
-      },
-    }))))
+    const chunks = ['data: {"type":\r', '\ndata: "test"}\r', "\n\r\n"]
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              pull(controller) {
+                const chunk = chunks.shift()
+                if (chunk === undefined) controller.close()
+                else controller.enqueue(new TextEncoder().encode(chunk))
+              },
+            })
+          )
+      )
+    )
     const { stream } = await client().event.subscribe()
     const events = []
     for await (const event of stream) events.push(event)
@@ -50,14 +58,24 @@ describe("BetterC0deCompatHttpClient bounds", () => {
   it("counts empty SSE data lines toward the frame budget", async () => {
     const chunk = new TextEncoder().encode("data:\n".repeat(1024))
     let remaining = 180
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({
-      pull(controller) {
-        if (remaining-- > 0) controller.enqueue(chunk)
-        else controller.close()
-      },
-    }))))
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              pull(controller) {
+                if (remaining-- > 0) controller.enqueue(chunk)
+                else controller.close()
+              },
+            })
+          )
+      )
+    )
     const { stream } = await client().event.subscribe()
-    await expect(stream[Symbol.asyncIterator]().next()).rejects.toThrow(/frame exceeded/i)
+    await expect(stream[Symbol.asyncIterator]().next()).rejects.toThrow(
+      /frame exceeded/i
+    )
   })
 
   it("rejects oversized JSON responses", async () => {
@@ -163,7 +181,8 @@ describe("BetterC0deCompatHttpClient bounds", () => {
     })
   })
 
-  it("rejects an oversized SSE frame", async () => {    const encoded = new TextEncoder().encode(
+  it("rejects an oversized SSE frame", async () => {
+    const encoded = new TextEncoder().encode(
       `data: ${"x".repeat(1024 * 1024 + 1)}\n\n`
     )
     vi.stubGlobal(

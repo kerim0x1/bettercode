@@ -90,7 +90,14 @@ export const builtinProviders: UiProvider[] = [
     logo: "",
     providerKind: "opencode_cli",
     providerInstanceId: "opencode-cli",
-    models: [{ id: "opencode/big-pickle", name: "Big Pickle", context: "400K", tier: "Flagship" }],
+    models: [
+      {
+        id: "opencode/big-pickle",
+        name: "Big Pickle",
+        context: "400K",
+        tier: "Flagship",
+      },
+    ],
   },
   // OpenAI API (direct API key)
   {

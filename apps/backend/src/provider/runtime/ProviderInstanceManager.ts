@@ -566,7 +566,8 @@ function defaultProviderInstances(
         binaryPath:
           readConfigString(providers["opencode-cli"], "binaryPath") ||
           "opencode",
-        serverUrl: readConfigString(providers["opencode-cli"], "serverUrl") ?? "",
+        serverUrl:
+          readConfigString(providers["opencode-cli"], "serverUrl") ?? "",
         serverUsername:
           readConfigString(providers["opencode-cli"], "serverUsername") ?? "",
         serverPassword:

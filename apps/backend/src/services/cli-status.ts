@@ -90,10 +90,7 @@ export function createCliStatusReader(
     deadlineMs: CLI_STATUS_DEADLINE_MS,
     ...overrides,
   }
-  const ttlMs = positiveDuration(
-    dependencies.ttlMs,
-    CLI_STATUS_CACHE_TTL_MS
-  )
+  const ttlMs = positiveDuration(dependencies.ttlMs, CLI_STATUS_CACHE_TTL_MS)
   const deadlineMs = positiveDuration(
     dependencies.deadlineMs,
     CLI_STATUS_DEADLINE_MS
@@ -174,7 +171,13 @@ async function probeCliStatus(
   return {
     claude,
     codex,
-    cli: { claude, codex, "grok-cli": grokCli, cursor, "opencode-cli": opencode },
+    cli: {
+      claude,
+      codex,
+      "grok-cli": grokCli,
+      cursor,
+      "opencode-cli": opencode,
+    },
     adapters: snapshotAdapterConfiguration(registry, {
       anthropic_cli: claude,
       codex,
@@ -236,7 +239,5 @@ function waitForCliStatus(
 }
 
 function positiveDuration(value: number, fallback: number): number {
-  return Number.isFinite(value) && value > 0
-    ? Math.floor(value)
-    : fallback
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback
 }

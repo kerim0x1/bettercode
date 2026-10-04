@@ -46,9 +46,7 @@ export function useInlineEdit({
     async (request: InlineEditRequest) => {
       const storeAtStart = useChatStore.getState()
       const activeThread = storeAtStart.activeThreadId
-        ? storeAtStart.threads.find(
-            (t) => t.id === storeAtStart.activeThreadId
-          )
+        ? storeAtStart.threads.find((t) => t.id === storeAtStart.activeThreadId)
         : null
       const projectPath = activeThread?.projectPath ?? ""
       const projectName = activeThread?.projectName ?? "BetterC0de"
@@ -121,7 +119,7 @@ export function useInlineEdit({
           target.openaiTransport,
           null,
           target.providerInstanceId,
-          contextWindow,
+          contextWindow
         )
       } catch (err) {
         console.error("[inline-edit] failed:", err)

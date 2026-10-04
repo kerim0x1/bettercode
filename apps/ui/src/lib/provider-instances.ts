@@ -136,13 +136,17 @@ export function deriveProviderInstanceEntries(
   })
 }
 
-export function sortProviderInstanceEntries(entries: ReadonlyArray<ProviderInstanceEntry>): ReadonlyArray<ProviderInstanceEntry> {
+export function sortProviderInstanceEntries(
+  entries: ReadonlyArray<ProviderInstanceEntry>
+): ReadonlyArray<ProviderInstanceEntry> {
   const kinds = new Map<string, number>()
   for (const entry of entries) {
     if (!kinds.has(entry.driverKind)) kinds.set(entry.driverKind, kinds.size)
   }
-  return [...entries].sort((a, b) =>
-    kinds.get(a.driverKind)! - kinds.get(b.driverKind)! || Number(b.isDefault) - Number(a.isDefault),
+  return [...entries].sort(
+    (a, b) =>
+      kinds.get(a.driverKind)! - kinds.get(b.driverKind)! ||
+      Number(b.isDefault) - Number(a.isDefault)
   )
 }
 

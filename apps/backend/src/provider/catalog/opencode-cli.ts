@@ -1,4 +1,4 @@
-import type { ProviderDefinition } from "./types";
+import type { ProviderDefinition } from "./types"
 
 /**
  * OpenCode CLI — the local `opencode` binary from the opencode project.
@@ -16,7 +16,8 @@ import type { ProviderDefinition } from "./types";
 export const opencodeCli: ProviderDefinition = {
   id: "opencode-cli",
   name: "OpenCode CLI",
-  description: "The local `opencode` binary — uses your CLI login (v1 and v2 APIs).",
+  description:
+    "The local `opencode` binary — uses your CLI login (v1 and v2 APIs).",
   // Used only until the CLI's live inventory advertises its model picker.
   defaultModels: [],
   enabledByDefault: true,
@@ -27,8 +28,9 @@ export const opencodeCli: ProviderDefinition = {
       label: "OpenCode CLI",
       command: "opencode",
       versionArgs: ["--version"],
-      installHint: "curl -fsSL https://opencode.ai/install | bash  (or: npm i -g opencode-ai)",
+      installHint:
+        "curl -fsSL https://opencode.ai/install | bash  (or: npm i -g opencode-ai)",
       loginCommand: "opencode auth login",
     },
   ],
-};
+}

@@ -813,7 +813,10 @@ export function useChatSubmit({
         )
           return
         const runtimePath = resolveThreadRuntimePath(activeThread)
-        const effectiveModel = resolveDispatchModelId(target.providerKind, turnModel)
+        const effectiveModel = resolveDispatchModelId(
+          target.providerKind,
+          turnModel
+        )
         // Fast Mode is only meaningful on Codex CLI (`serviceTier: "fast"`)
         // and Claude CLI (`settings.fastMode: true`). On every other
         // provider the backend silently drops the field, so we don't gate
