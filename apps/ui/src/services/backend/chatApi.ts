@@ -791,6 +791,9 @@ export const sendChatMessage = async (
         "grok_cli",
         "grok-cli",
         "grokcli",
+        "opencode-cli",
+        "opencode_cli",
+        "opencodecli",
         "openrouter",
         "lmstudio",
       ])

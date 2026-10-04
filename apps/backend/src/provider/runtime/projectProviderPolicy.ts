@@ -90,7 +90,8 @@ export function runtimeProviderProjectPolicyKeys(
   const keys = new Set<string>()
   addProviderProjectAliases(keys, provider.instanceId)
   addProviderProjectAliases(keys, provider.driver)
-  if (provider.displayName) addProviderProjectAliases(keys, provider.displayName)
+  if (provider.displayName)
+    addProviderProjectAliases(keys, provider.displayName)
   return [...keys]
 }
 
@@ -102,7 +103,8 @@ export function runtimeModelProjectPolicyKeys(
   if (model.name) addModelProjectAliases(keys, model.name)
   if (model.shortName) addModelProjectAliases(keys, model.shortName)
   if (model.subProvider) addModelProjectAliases(keys, model.subProvider)
-  if (model.catalog?.modelId) addModelProjectAliases(keys, model.catalog.modelId)
+  if (model.catalog?.modelId)
+    addModelProjectAliases(keys, model.catalog.modelId)
   if (model.catalog?.api?.id) addModelProjectAliases(keys, model.catalog.api.id)
   return [...keys]
 }
@@ -116,7 +118,11 @@ function runtimeModelPolicyForProvider(
 
   const providerKeys = new Set(runtimeProviderProjectPolicyKeys(provider))
   let catalogProviderId = model.catalog?.providerId
-  if (!catalogProviderId && canonicalProviderKindAlias(provider.driver) === "betterc0de") {
+  const driverKind = canonicalProviderKindAlias(provider.driver)
+  if (
+    !catalogProviderId &&
+    (driverKind === "betterc0de" || driverKind === "opencode_cli")
+  ) {
     // Dispatch carries a provider/model slug without the catalog metadata
     // used by model listing. Both paths must apply the upstream policy.
     const slug = model.slug.trim()

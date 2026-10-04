@@ -49,21 +49,27 @@ export async function resolveProviderTarget(
       openrouter: providers.openrouter?.api_key || null,
       deepseek: providers.deepseek?.api_key || null,
     }
-  } catch { console.warn("Failed to load provider settings for key resolution") }
+  } catch {
+    console.warn("Failed to load provider settings for key resolution")
+  }
 
   // If direct provider has a key, use it
-  if (keys[providerKind]) return { providerKind, openaiTransport, providerInstanceId }
+  if (keys[providerKind])
+    return { providerKind, openaiTransport, providerInstanceId }
 
   // CLI providers always work (no key needed) — but only the CLI-based ones.
   // "claude" is the native builtin (replaces the retired anthropic-claude
   // plugin), "anthropic_cli" is a legacy alias. "grok_cli" is the xAI Grok
   // Build CLI (never reroute it to OpenRouter — the API-key "grok" kind is
-  // a different provider).
+  // a different provider). "opencode_cli" is the upstream `opencode` binary,
+  // likewise driven by its own login rather than an API key.
   if (
     providerKind === "claude" ||
     providerKind === "anthropic_cli" ||
     providerKind === "grok_cli" ||
-    providerKind === "grok-cli"
+    providerKind === "grok-cli" ||
+    providerKind === "opencode_cli" ||
+    providerKind === "opencode-cli"
   )
     return { providerKind, openaiTransport, providerInstanceId }
 
@@ -77,7 +83,11 @@ export async function resolveProviderTarget(
 
   // Fallback: if OpenRouter has a key and model has a slash ID, reroute
   if (keys.openrouter && modelId.includes("/"))
-    return { providerKind: "openrouter", openaiTransport: null, providerInstanceId: null }
+    return {
+      providerKind: "openrouter",
+      openaiTransport: null,
+      providerInstanceId: null,
+    }
 
   // No key available — send anyway, backend will error with helpful message
   return { providerKind, openaiTransport, providerInstanceId }

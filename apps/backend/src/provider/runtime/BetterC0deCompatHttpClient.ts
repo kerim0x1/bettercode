@@ -5,6 +5,13 @@ export interface BetterC0deCompatClientInput {
   readonly directory: string
   readonly serverUsername?: string
   readonly serverPassword?: string
+  /**
+   * Current `opencode` wraps v2 inventory payloads in a
+   * `{ location, data: [...] }` envelope instead of returning a bare array.
+   * When set, the v2 list calls unwrap that envelope so callers still see a
+   * plain array. Defaults to false (legacy BetterC0de compatibility).
+   */
+  readonly v2Envelope?: boolean
 }
 
 interface RoutingQuery extends Record<string, string | undefined> {
@@ -42,6 +49,8 @@ export function createBetterC0deCompatHttpClient<TClient = unknown>(
   const defaultRouting: RoutingQuery = {
     directory: input.directory,
   }
+  const unwrapV2 = <T>(payload: T | undefined): T | undefined =>
+    input.v2Envelope ? (unwrapV2Envelope(payload) as T | undefined) : payload
 
   const request = async <T = unknown>(
     options: RequestOptions
@@ -52,12 +61,17 @@ export function createBetterC0deCompatHttpClient<TClient = unknown>(
       "BetterC0de compatibility request timed out."
     )
     try {
-      const response = await fetch(buildUrl(baseUrl, options.path, options.query), {
-        method: options.method,
-        headers: buildHeaders(input, Boolean(options.body)),
-        body: options.body ? JSON.stringify(stripUndefined(options.body)) : undefined,
-        signal: deadline.signal,
-      })
+      const response = await fetch(
+        buildUrl(baseUrl, options.path, options.query),
+        {
+          method: options.method,
+          headers: buildHeaders(input, Boolean(options.body)),
+          body: options.body
+            ? JSON.stringify(stripUndefined(options.body))
+            : undefined,
+          signal: deadline.signal,
+        }
+      )
       return await readJsonResponse<T>(response, deadline.signal)
     } finally {
       deadline.cleanup()
@@ -96,10 +110,7 @@ export function createBetterC0deCompatHttpClient<TClient = unknown>(
 
   return {
     session: {
-      create: (
-        parameters?: Record<string, unknown>,
-        options?: CallOptions
-      ) => {
+      create: (parameters?: Record<string, unknown>, options?: CallOptions) => {
         const { query, body } = splitRouting(parameters)
         return request({
           method: "POST",
@@ -220,23 +231,33 @@ export function createBetterC0deCompatHttpClient<TClient = unknown>(
     v2: {
       model: {
         list: (parameters?: {
-          readonly location?: { readonly directory?: string; readonly workspace?: string }
+          readonly location?: {
+            readonly directory?: string
+            readonly workspace?: string
+          }
         }) =>
           request({
             method: "GET",
             path: "/api/model",
             query: locationQuery(parameters?.location, defaultRouting),
-          }),
+          }).then((result: CompatResult<unknown>) => ({
+            data: unwrapV2(result.data),
+          })),
       },
       provider: {
         list: (parameters?: {
-          readonly location?: { readonly directory?: string; readonly workspace?: string }
+          readonly location?: {
+            readonly directory?: string
+            readonly workspace?: string
+          }
         }) =>
           request({
             method: "GET",
             path: "/api/provider",
             query: locationQuery(parameters?.location, defaultRouting),
-          }),
+          }).then((result: CompatResult<unknown>) => ({
+            data: unwrapV2(result.data),
+          })),
       },
     },
     app: {
@@ -399,7 +420,10 @@ async function* streamSseEvents(
         // A malformed frame is dropped rather than surfaced as a string the
         // event loop would try to read `.type` off.
         logger.warn(
-          { bytes: Buffer.byteLength(data, "utf8"), preview: data.slice(0, 120) },
+          {
+            bytes: Buffer.byteLength(data, "utf8"),
+            preview: data.slice(0, 120),
+          },
           "BetterC0de compatibility SSE frame was not valid JSON; skipped"
         )
         return
@@ -425,7 +449,8 @@ async function* streamSseEvents(
       let newlineIndex = findNewlineIndex(buffer)
       while (newlineIndex >= 0) {
         const line = buffer.slice(0, newlineIndex).replace(/\r$/u, "")
-        skipNextLf = buffer[newlineIndex] === "\r" && newlineIndex === buffer.length - 1
+        skipNextLf =
+          buffer[newlineIndex] === "\r" && newlineIndex === buffer.length - 1
         buffer = buffer.slice(
           buffer[newlineIndex] === "\r" && buffer[newlineIndex + 1] === "\n"
             ? newlineIndex + 2
@@ -569,9 +594,7 @@ function readWithIdleTimeout(
     const timer = setTimeout(
       () =>
         finish(() =>
-          reject(
-            new Error("BetterC0de compatibility response idle timeout.")
-          )
+          reject(new Error("BetterC0de compatibility response idle timeout."))
         ),
       timeoutMs
     )
@@ -585,15 +608,37 @@ function readWithIdleTimeout(
 }
 
 function locationQuery(
-  location: { readonly directory?: string; readonly workspace?: string } | undefined,
+  location:
+    | { readonly directory?: string; readonly workspace?: string }
+    | undefined,
   fallback: RoutingQuery
 ): Record<string, string> {
   return {
     "location[directory]": location?.directory ?? fallback.directory ?? "",
-    ...(location?.workspace ?? fallback.workspace
-      ? { "location[workspace]": location?.workspace ?? fallback.workspace ?? "" }
+    ...((location?.workspace ?? fallback.workspace)
+      ? {
+          "location[workspace]":
+            location?.workspace ?? fallback.workspace ?? "",
+        }
       : {}),
   }
+}
+
+/**
+ * Current `opencode` wraps its v2 list payloads in `{ location, data }`.
+ * Older builds (and BetterC0de's compatibility CLI) return the array
+ * directly, so tolerate both.
+ */
+function unwrapV2Envelope(value: unknown): unknown {
+  if (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    "data" in value
+  ) {
+    return (value as { data: unknown }).data
+  }
+  return value
 }
 
 function requiredString(value: unknown, name: string): string {
@@ -623,7 +668,9 @@ function omit<T extends Record<string, unknown>>(
   )
 }
 
-type ParsedJson = { readonly ok: true; readonly value: unknown } | { readonly ok: false }
+type ParsedJson =
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false }
 
 /**
  * Never hands the raw text back as if it were the parsed document: a caller

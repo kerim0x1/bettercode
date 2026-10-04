@@ -13,6 +13,7 @@ export type CanonicalProviderKindAlias =
   | "cursor"
   | "grok_cli"
   | "betterc0de"
+  | "opencode_cli"
   | "openai"
   | "anthropic"
   | "openrouter"
@@ -64,6 +65,11 @@ export function canonicalProviderKindAlias(
     case "betterc0deagent":
     case "bettercodeagent":
       return "betterc0de"
+    // The local `opencode` binary's headless server. Distinct from
+    // `betterc0de` even though they share the HTTP/SSE wire protocol.
+    case "opencodecli":
+    case "opencode":
+      return "opencode_cli"
     case "openai":
     case "anthropic":
     case "openrouter":
@@ -91,5 +97,6 @@ export function providerKindFromDriver(
     return "claude"
   }
   if (key === "anthropiccli") return "anthropic_cli"
+  if (key === "opencode" || key === "opencodecli") return "opencode_cli"
   return value
 }

@@ -65,7 +65,12 @@ export interface ProviderRuntimeActivityStore {
 
 export interface ProviderRuntimeThreadMetadataStore {
   updateThreadTitle(threadId: string, title: string, updatedAt?: string): void
-  updateThreadGoal?(threadId: string, goal: unknown, providerKind?: string, updatedAt?: string): void
+  updateThreadGoal?(
+    threadId: string,
+    goal: unknown,
+    providerKind?: string,
+    updatedAt?: string
+  ): void
 }
 
 type ProviderRuntimeLifecycleKind =
@@ -76,6 +81,7 @@ type ProviderRuntimeLifecycleKind =
   | "cursor"
   | "betterc0de"
   | "BetterC0de"
+  | "opencode_cli"
   | "openai"
   | "anthropic"
   | "openrouter"
@@ -168,10 +174,7 @@ export interface ProviderRuntimeChatDispatchLifecycleStore {
 
 export interface ProviderRuntimeTranscriptStore {
   upsertMessage(input: ThreadMessageUpsertRequest): void
-  getMessage?(
-    threadId: string,
-    messageId: string
-  ): ThreadSaveMessage | null
+  getMessage?(threadId: string, messageId: string): ThreadSaveMessage | null
 }
 
 export interface ProviderRuntimeTranscriptRecoveryStore {
@@ -415,7 +418,10 @@ interface ProcessProviderRuntimeEventOptions {
  * as a persistence failure — the row is durable and waits for replay.
  */
 export class ProviderRuntimeBridgeError extends Error {
-  constructor(cause: Error, readonly eventType: string) {
+  constructor(
+    cause: Error,
+    readonly eventType: string
+  ) {
     super(cause.message, { cause })
     this.name = "ProviderRuntimeBridgeError"
   }
@@ -777,9 +783,10 @@ export class ProviderRuntimeIngestion {
    * and again after it for projection. A bridge that throws is reported as
    * a failed view (`error`) so the caller can decide what that costs.
    */
-  private legacyViewOfEntry(
-    entry: ProviderRuntimeJournalEntry
-  ): { readonly view: ProviderRuntimeEvent | null; readonly error: unknown } {
+  private legacyViewOfEntry(entry: ProviderRuntimeJournalEntry): {
+    readonly view: ProviderRuntimeEvent | null
+    readonly error: unknown
+  } {
     try {
       return { view: legacyViewOf(entry, this.options.legacyView), error: null }
     } catch (error) {
@@ -806,11 +813,12 @@ export class ProviderRuntimeIngestion {
     let durableDispatchTerminal = false
     if (terminalDispatch && this.options.chatDispatchLifecycleStore) {
       try {
-        durableDispatchTerminal = this.options.chatDispatchLifecycleStore.hasProviderTurn(
-          eventMeta.thread,
-          terminalDispatch.providerInstanceId,
-          terminalDispatch.providerTurnId
-        )
+        durableDispatchTerminal =
+          this.options.chatDispatchLifecycleStore.hasProviderTurn(
+            eventMeta.thread,
+            terminalDispatch.providerInstanceId,
+            terminalDispatch.providerTurnId
+          )
       } catch (error) {
         // A lifecycle lookup failure must not bypass the journal. Assume the
         // event is durable so replay can converge after storage recovers.
@@ -896,7 +904,13 @@ export class ProviderRuntimeIngestion {
       // replay does not re-offer it; a future bridge can re-project it.
       this.noteDeclinedEntry(journaled, eventMeta)
       if (journalSequence !== undefined) {
-        if (!this.markProjectionReceipt(journalSequence, failureSourceOfEntry(journaled), eventMeta)) {
+        if (
+          !this.markProjectionReceipt(
+            journalSequence,
+            failureSourceOfEntry(journaled),
+            eventMeta
+          )
+        ) {
           return true
         }
         this.projectionDegradedThreads.delete(eventMeta.thread)
@@ -1194,7 +1208,11 @@ export class ProviderRuntimeIngestion {
     const receipts = this.options.projectionReceipts
     if (!receipts) return true
     let lastError: unknown
-    for (let attempt = 1; attempt <= PROJECTION_RECEIPT_ATTEMPTS; attempt += 1) {
+    for (
+      let attempt = 1;
+      attempt <= PROJECTION_RECEIPT_ATTEMPTS;
+      attempt += 1
+    ) {
       try {
         receipts.markProjected(journalSequence)
         return true
@@ -1327,7 +1345,9 @@ export class ProviderRuntimeIngestion {
     }
   }
 
-  private enqueueJournalBlockedEvent(entry: ProviderRuntimeJournalEntry): boolean {
+  private enqueueJournalBlockedEvent(
+    entry: ProviderRuntimeJournalEntry
+  ): boolean {
     const bytes = journalEntryBytes(entry, DEFAULT_JOURNAL_QUEUE_MAX_BYTES)
     const queueAtCapacity =
       this.journalQueue.length >= this.journalQueueMaxEvents ||
@@ -1489,7 +1509,8 @@ export class ProviderRuntimeIngestion {
     const key = assistantTranscriptKey(event.thread_id, turnId)
 
     if (isAssistantContentEvent(event.event_type, payload)) {
-      if (this.isAssistantTranscriptEvicted(key, event.thread_id, turnId)) return true
+      if (this.isAssistantTranscriptEvicted(key, event.thread_id, turnId))
+        return true
       const text = providerTranscriptText(event.event_type, payload)
       if (text === undefined) return true
       const transcript = this.assistantTranscript(
@@ -1509,7 +1530,9 @@ export class ProviderRuntimeIngestion {
         transcript,
         "content",
         !isReplaceEvent(event.event_type) &&
-          text && transcript.assistantTextBoundaryPending && transcript.content
+          text &&
+          transcript.assistantTextBoundaryPending &&
+          transcript.content
           ? `${assistantParagraphSeparator(transcript.content, text)}${text}`
           : text,
         isReplaceEvent(event.event_type)
@@ -1531,7 +1554,8 @@ export class ProviderRuntimeIngestion {
     }
 
     if (isReasoningContentEvent(event.event_type)) {
-      if (this.isAssistantTranscriptEvicted(key, event.thread_id, turnId)) return true
+      if (this.isAssistantTranscriptEvicted(key, event.thread_id, turnId))
+        return true
       const text = providerTranscriptText(event.event_type, payload)
       if (text === undefined) return true
       const transcript = this.assistantTranscript(
@@ -1567,7 +1591,8 @@ export class ProviderRuntimeIngestion {
     }
 
     if (transcriptToolPhase(event.event_type, payload)) {
-      if (this.isAssistantTranscriptEvicted(key, event.thread_id, turnId)) return true
+      if (this.isAssistantTranscriptEvicted(key, event.thread_id, turnId))
+        return true
       const transcript = this.assistantTranscript(
         event,
         payload,
@@ -1596,11 +1621,19 @@ export class ProviderRuntimeIngestion {
     // Persist the boundary with the same projection receipt so recovery neither
     // glues paragraphs together nor inserts separators between token chunks.
     if (isAssistantMessageBoundary(event.event_type, payload)) {
-      if (this.isAssistantTranscriptEvicted(key, event.thread_id, turnId)) return true
-      const transcript = this.assistantTranscript(event, payload, turnId, recoverySnapshot)
+      if (this.isAssistantTranscriptEvicted(key, event.thread_id, turnId))
+        return true
+      const transcript = this.assistantTranscript(
+        event,
+        payload,
+        turnId,
+        recoverySnapshot
+      )
       if (projectionSequence <= transcript.lastAppliedProjectionSequence) {
         return this.flushPreviouslyAppliedAssistantTranscript(
-          key, transcript, flushImmediately
+          key,
+          transcript,
+          flushImmediately
         )
       }
       transcript.assistantTextBoundaryPending = true
@@ -1612,7 +1645,12 @@ export class ProviderRuntimeIngestion {
     }
 
     if (!isTerminalJournalEventType(event.event_type)) return true
-    const transcript = this.assistantTranscript(event, payload, turnId, recoverySnapshot)
+    const transcript = this.assistantTranscript(
+      event,
+      payload,
+      turnId,
+      recoverySnapshot
+    )
     let persisted = true
     if (transcript) {
       if (projectionSequence > transcript.lastAppliedProjectionSequence) {
@@ -1699,28 +1737,24 @@ export class ProviderRuntimeIngestion {
       reasoningBytes,
       toolCalls,
       toolCallsBytes,
-      providerKind: readString(
-        payload,
-        "providerKind",
-        "provider_kind",
-        "provider"
-      ) ?? readString(persistedExtra, "providerKind", "provider_kind"),
-      providerInstanceId: readString(
-        payload,
-        "providerInstanceId",
-        "provider_instance_id"
-      ) ?? readString(
-        persistedExtra,
-        "providerInstanceId",
-        "provider_instance_id"
-      ),
+      providerKind:
+        readString(payload, "providerKind", "provider_kind", "provider") ??
+        readString(persistedExtra, "providerKind", "provider_kind"),
+      providerInstanceId:
+        readString(payload, "providerInstanceId", "provider_instance_id") ??
+        readString(
+          persistedExtra,
+          "providerInstanceId",
+          "provider_instance_id"
+        ),
       status: readString(persistedExtra, "status"),
       truncated: persistedExtra.transcriptTruncated === true || undefined,
       retryAttempts: 0,
       bytesSincePersist: 0,
     }
     this.bufferedAssistantTranscripts.set(key, transcript)
-    this.bufferedAssistantTranscriptBytes += assistantTranscriptBytes(transcript)
+    this.bufferedAssistantTranscriptBytes +=
+      assistantTranscriptBytes(transcript)
     return transcript
   }
 
@@ -1769,7 +1803,11 @@ export class ProviderRuntimeIngestion {
         : transcript.content + boundedText
       const nextContentBytes = replace
         ? Buffer.byteLength(boundedText, "utf8")
-        : appendedUtf8Bytes(transcript.content, transcript.contentBytes, boundedText)
+        : appendedUtf8Bytes(
+            transcript.content,
+            transcript.contentBytes,
+            boundedText
+          )
       const remainingReasoningBytes = Math.max(
         0,
         this.assistantTranscriptMaxBytes -
@@ -1777,9 +1815,10 @@ export class ProviderRuntimeIngestion {
           transcript.toolCallsBytes
       )
       const previousReasoning = transcript.reasoning
-      const nextReasoning = transcript.reasoningBytes <= remainingReasoningBytes
-        ? previousReasoning
-        : utf8Prefix(previousReasoning, remainingReasoningBytes)
+      const nextReasoning =
+        transcript.reasoningBytes <= remainingReasoningBytes
+          ? previousReasoning
+          : utf8Prefix(previousReasoning, remainingReasoningBytes)
       transcript.content = nextContent
       transcript.contentBytes = nextContentBytes
       transcript.reasoning = nextReasoning
@@ -1800,8 +1839,14 @@ export class ProviderRuntimeIngestion {
       const boundedText = utf8Prefix(text, remainingBytes)
       transcript.reasoningBytes = replace
         ? Buffer.byteLength(boundedText, "utf8")
-        : appendedUtf8Bytes(transcript.reasoning, transcript.reasoningBytes, boundedText)
-      transcript.reasoning = replace ? boundedText : transcript.reasoning + boundedText
+        : appendedUtf8Bytes(
+            transcript.reasoning,
+            transcript.reasoningBytes,
+            boundedText
+          )
+      transcript.reasoning = replace
+        ? boundedText
+        : transcript.reasoning + boundedText
       truncated = boundedText.length !== text.length
     }
 
@@ -1847,7 +1892,11 @@ export class ProviderRuntimeIngestion {
       ? transcript.toolCalls.findIndex((call) => call.id === explicitId)
       : -1
     if (index < 0 && phase !== "started") {
-      for (let candidate = transcript.toolCalls.length - 1; candidate >= 0; candidate -= 1) {
+      for (
+        let candidate = transcript.toolCalls.length - 1;
+        candidate >= 0;
+        candidate -= 1
+      ) {
         const call = transcript.toolCalls[candidate]
         if (
           call?.state === "input-available" &&
@@ -1870,12 +1919,12 @@ export class ProviderRuntimeIngestion {
     // classification that says more than the item type is worth keeping.
     const itemType = readString(payload, "itemType", "item_type")
     const payloadKind =
-      readString(payload, "kind") ??
-      readString(asRecord(payload.data), "kind")
+      readString(payload, "kind") ?? readString(asRecord(payload.data), "kind")
     const kind =
       (payloadKind && payloadKind !== itemType ? payloadKind : undefined) ??
       existing?.kind
-    const id = explicitId ?? existing?.id ?? `tool-${transcript.toolCalls.length + 1}`
+    const id =
+      explicitId ?? existing?.id ?? `tool-${transcript.toolCalls.length + 1}`
     const now =
       readString(payload, "createdAt", "created_at", "timestamp") ??
       new Date().toISOString()
@@ -1895,7 +1944,11 @@ export class ProviderRuntimeIngestion {
         ? existing?.completedAt
         : (readString(payload, "completedAt", "completed_at") ?? now)
     const input = boundedTranscriptToolValue(
-      payload.input ?? payload.arguments ?? payload.args ?? existing?.input ?? {}
+      payload.input ??
+        payload.arguments ??
+        payload.args ??
+        existing?.input ??
+        {}
     )
     const outputSource =
       payload.output ?? payload.result ?? payload.data ?? payload.content
@@ -2141,7 +2194,11 @@ export class ProviderRuntimeIngestion {
       })
     } catch (callbackError) {
       this.options.logger.error(
-        { err: callbackError, thread: transcript.threadId, turn: transcript.turnId },
+        {
+          err: callbackError,
+          thread: transcript.threadId,
+          turn: transcript.turnId,
+        },
         "fatal transcript durability callback failed"
       )
     }
@@ -2179,7 +2236,9 @@ export class ProviderRuntimeIngestion {
       if (persisted) {
         this.dropBufferedAssistantTranscript(oldestKey, transcript)
         this.markAssistantTranscriptEvicted(oldestKey, transcript)
-      } else if (!this.spoolAssistantTranscript(oldestKey, transcript, "memory_pressure")) {
+      } else if (
+        !this.spoolAssistantTranscript(oldestKey, transcript, "memory_pressure")
+      ) {
         this.dropBufferedAssistantTranscript(oldestKey, transcript)
         this.markAssistantTranscriptEvicted(oldestKey, transcript)
         this.options.logger.error(
@@ -2395,7 +2454,8 @@ export class ProviderRuntimeIngestion {
     if (event.event_type !== "thread.metadata.updated") return true
     const title = providerMetadataTitle(event.payload)
     const payload = asRecord(event.payload)
-    const metadata = payload.metadata === undefined ? payload : asRecord(payload.metadata)
+    const metadata =
+      payload.metadata === undefined ? payload : asRecord(payload.metadata)
     const hasGoal = Object.prototype.hasOwnProperty.call(metadata, "goal")
     if (!title && !hasGoal) return true
     try {
@@ -2499,29 +2559,32 @@ export class ProviderRuntimeIngestion {
       readString(target.payload, "createdAt", "created_at") ??
       new Date().toISOString()
     this.sequence += 1
-    const persisted = this.persistThreadActivity({
-      activity_id: sourceProposedPlanImplementedActivityId(pending),
-      thread_id: pending.sourceProposedPlan.threadId,
-      turn_id: null,
-      provider_instance_id:
-        pending.providerInstanceId ?? target.providerInstanceId ?? null,
-      kind: "turn.proposed.implemented",
-      tone: "info",
-      summary: "Plan implemented",
-      payload: {
-        sourceProposedPlan: pending.sourceProposedPlan,
-        implementationThreadId: pending.implementationThreadId,
-        implementedAt,
-        providerKind: pending.providerKind,
-        ...(pending.providerInstanceId
-          ? { providerInstanceId: pending.providerInstanceId }
-          : target.providerInstanceId
-            ? { providerInstanceId: target.providerInstanceId }
-            : {}),
+    const persisted = this.persistThreadActivity(
+      {
+        activity_id: sourceProposedPlanImplementedActivityId(pending),
+        thread_id: pending.sourceProposedPlan.threadId,
+        turn_id: null,
+        provider_instance_id:
+          pending.providerInstanceId ?? target.providerInstanceId ?? null,
+        kind: "turn.proposed.implemented",
+        tone: "info",
+        summary: "Plan implemented",
+        payload: {
+          sourceProposedPlan: pending.sourceProposedPlan,
+          implementationThreadId: pending.implementationThreadId,
+          implementedAt,
+          providerKind: pending.providerKind,
+          ...(pending.providerInstanceId
+            ? { providerInstanceId: pending.providerInstanceId }
+            : target.providerInstanceId
+              ? { providerInstanceId: target.providerInstanceId }
+              : {}),
+        },
+        sequence: this.sequence,
+        created_at: implementedAt,
       },
-      sequence: this.sequence,
-      created_at: implementedAt,
-    }, broadcast)
+      broadcast
+    )
     if (!persisted) return false
     try {
       store.ackPending(pendingKey)
@@ -2761,10 +2824,7 @@ export class ProviderRuntimeIngestion {
       if (!delta) continue
       const boundedDelta = utf8Prefix(
         delta,
-        Math.max(
-          0,
-          this.proposedPlanMaxBytes - Buffer.byteLength(text, "utf8")
-        )
+        Math.max(0, this.proposedPlanMaxBytes - Buffer.byteLength(text, "utf8"))
       )
       text += boundedDelta
       truncated ||= boundedDelta.length !== delta.length
@@ -2848,7 +2908,8 @@ export class ProviderRuntimeIngestion {
       if (key.startsWith(prefix)) this.deleteBufferedProposedPlan(key)
     }
     for (const key of this.evictedAssistantTranscriptKeys) {
-      if (key.startsWith(prefix)) this.evictedAssistantTranscriptKeys.delete(key)
+      if (key.startsWith(prefix))
+        this.evictedAssistantTranscriptKeys.delete(key)
     }
     this.activeTurnByThread.delete(threadId)
     this.evictedAssistantTurnByThread.delete(threadId)
@@ -2952,8 +3013,16 @@ function utf8Prefix(value: string, maxBytes: number): string {
 }
 
 function assistantParagraphSeparator(previous: string, next: string): string {
-  const trailing = previous.slice(-4).match(/(?:\r?\n)*$/)?.[0].match(/\n/g)?.length ?? 0
-  const leading = next.slice(0, 4).match(/^(?:\r?\n)*/)?.[0].match(/\n/g)?.length ?? 0
+  const trailing =
+    previous
+      .slice(-4)
+      .match(/(?:\r?\n)*$/)?.[0]
+      .match(/\n/g)?.length ?? 0
+  const leading =
+    next
+      .slice(0, 4)
+      .match(/^(?:\r?\n)*/)?.[0]
+      .match(/\n/g)?.length ?? 0
   return "\n".repeat(Math.max(0, 2 - trailing - leading))
 }
 
@@ -2961,11 +3030,17 @@ function isAssistantMessageBoundary(
   eventType: string,
   payload: Record<string, unknown>
 ): boolean {
-  if (eventType !== "item.completed" && eventType !== "item_completed") return false
+  if (eventType !== "item.completed" && eventType !== "item_completed")
+    return false
   const kind = (readString(payload, "itemType", "item_type", "kind") ?? "")
-    .toLowerCase().replace(/[^a-z]/g, "")
-  return kind === "assistantmessage" || kind === "agentmessage" ||
-    kind === "assistant" || payload.role === "assistant"
+    .toLowerCase()
+    .replace(/[^a-z]/g, "")
+  return (
+    kind === "assistantmessage" ||
+    kind === "agentmessage" ||
+    kind === "assistant" ||
+    payload.role === "assistant"
+  )
 }
 
 function isAssistantContentEvent(
@@ -3010,9 +3085,7 @@ function transcriptToolPhase(
     eventType === "item.completed" ||
     eventType === "item_completed"
   ) {
-    return readString(payload, "error", "errorMessage")
-      ? "failed"
-      : "completed"
+    return readString(payload, "error", "errorMessage") ? "failed" : "completed"
   }
   if (
     eventType === "tool_call" ||
@@ -3033,7 +3106,9 @@ function boundedTranscriptToolValue(value: unknown): unknown {
   } catch {
     serialized = String(value ?? "")
   }
-  if (Buffer.byteLength(serialized, "utf8") <= MAX_TRANSCRIPT_TOOL_VALUE_BYTES) {
+  if (
+    Buffer.byteLength(serialized, "utf8") <= MAX_TRANSCRIPT_TOOL_VALUE_BYTES
+  ) {
     return value
   }
   const suffix = "\n[tool value truncated]"
@@ -3072,11 +3147,7 @@ function persistedTranscriptToolCalls(
       state,
       ...(readString(record, "providerKind", "provider_kind")
         ? {
-            providerKind: readString(
-              record,
-              "providerKind",
-              "provider_kind"
-            ),
+            providerKind: readString(record, "providerKind", "provider_kind"),
           }
         : {}),
       ...(readString(record, "providerInstanceId", "provider_instance_id")
@@ -3246,7 +3317,10 @@ function reasoningStartKey(
   event: ProviderRuntimeEvent,
   payload: Record<string, unknown>
 ): string {
-  return assistantTranscriptKey(event.thread_id, readString(payload, "turn_id", "turnId") ?? "__thread__")
+  return assistantTranscriptKey(
+    event.thread_id,
+    readString(payload, "turn_id", "turnId") ?? "__thread__"
+  )
 }
 
 function isToolishProviderEvent(
@@ -3266,9 +3340,9 @@ function isToolishProviderEvent(
     .toLowerCase()
   return Boolean(
     itemType &&
-      ["tool", "command", "file", "search", "read", "write", "patch"].some(
-        (part) => itemType.includes(part)
-      )
+    ["tool", "command", "file", "search", "read", "write", "patch"].some(
+      (part) => itemType.includes(part)
+    )
   )
 }
 
@@ -3301,7 +3375,9 @@ function proposedPlanBufferKey(
     readString(payload, "turn_id", "turnId") ??
     readString(payload, "itemId", "item_id") ??
     "__thread__"
-  return planKey.length > 0 ? assistantTranscriptKey(event.thread_id, planKey) : null
+  return planKey.length > 0
+    ? assistantTranscriptKey(event.thread_id, planKey)
+    : null
 }
 
 function compactProvider(value: string | undefined): string {
@@ -3344,10 +3420,7 @@ function sourcePlanImplementationMatches(
   ) {
     return false
   }
-  if (
-    input.acceptedTurnId &&
-    pending.acceptedTurnId !== input.acceptedTurnId
-  ) {
+  if (input.acceptedTurnId && pending.acceptedTurnId !== input.acceptedTurnId) {
     return false
   }
   if (
@@ -3544,7 +3617,9 @@ function providerDispatchTerminalProjection(
   )?.toLowerCase()
   const error =
     readString(payload, "error", "errorMessage", "message", "reason") ??
-    (status ? `Provider turn ended with status '${status}'.` : "Provider turn failed.")
+    (status
+      ? `Provider turn ended with status '${status}'.`
+      : "Provider turn failed.")
   if (
     status === "failed" ||
     status === "error" ||
@@ -3664,12 +3739,20 @@ function sessionStatusFromRuntimeState(
 
 function isSqliteContention(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code
-  return typeof code === "string" && /^(SQLITE_BUSY|SQLITE_LOCKED)(_|$)/.test(code)
+  return (
+    typeof code === "string" && /^(SQLITE_BUSY|SQLITE_LOCKED)(_|$)/.test(code)
+  )
 }
 
-function appendedUtf8Bytes(previous: string, previousBytes: number, delta: string): number {
+function appendedUtf8Bytes(
+  previous: string,
+  previousBytes: number,
+  delta: string
+): number {
   // A surrogate pair split across provider deltas encodes to four bytes, not
   // the six replacement-character bytes counted by the fragments separately.
-  const joinsPair = /[\uD800-\uDBFF]$/.test(previous.slice(-1)) && /^[\uDC00-\uDFFF]/.test(delta)
+  const joinsPair =
+    /[\uD800-\uDBFF]$/.test(previous.slice(-1)) &&
+    /^[\uDC00-\uDFFF]/.test(delta)
   return previousBytes + Buffer.byteLength(delta, "utf8") - (joinsPair ? 2 : 0)
 }

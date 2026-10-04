@@ -40,6 +40,11 @@ import {
 } from "../provider/runtime/cursor/CursorAcpSupport"
 import { createBetterC0deCompatHttpClient } from "../provider/runtime/BetterC0deCompatHttpClient"
 import { parseBetterC0deModelSlug } from "../provider/runtime/betterc0deCompat/BetterC0deCompatRuntimeSupport"
+import {
+  BETTERC0DE_COMPAT_PROFILE,
+  OPENCODE_CLI_PROFILE,
+  type OpenCodeCompatProfile,
+} from "../provider/runtime/betterc0deCompat/OpenCodeCompatProfile"
 import { extractJsonObject } from "./text-generation"
 import { logger } from "../observability/logger"
 import {
@@ -112,10 +117,6 @@ const NATIVE_PROCESS_FINALIZE_GRACE_MS = 2_000
 // traversal and permanently quarantining the request's private files.
 const NATIVE_TASKKILL_TIMEOUT_MS = 5_000
 const BETTERC0DE_EMPTY_CONFIG_CONTENT = "{}"
-const BETTERC0DE_SERVER_READY_PREFIXES = [
-  "betterc0de server listening",
-  "BetterC0de server listening",
-] as const
 const CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT = "low"
 /**
  * Values `codex exec --config model_reasoning_effort=...` accepts. The value
@@ -882,6 +883,7 @@ async function runBetterC0deTextGeneration(
   runner: NativeTextGenerationRunner,
   lifecycleSignal: AbortSignal
 ): Promise<string> {
+  const profile = profileForTextDriver(config.driver)
   const parsedModel = parseBetterC0deModelSlug(modelSelection.model)
   if (!parsedModel) {
     throw new Error(
@@ -889,12 +891,12 @@ async function runBetterC0deTextGeneration(
     )
   }
 
-  const binaryPath = configString(config.config, "binaryPath") ?? "betterc0de"
+  const binaryPath =
+    configString(config.config, "binaryPath") ?? profile.defaultBinaryPath
   const serverUrl = configString(config.config, "serverUrl")
   const serverUsername =
     configString(config.config, "serverUsername") ??
-    process.env.BETTERC0DE_SERVER_USERNAME ??
-    process.env.BetterC0de_SERVER_USERNAME
+    firstDefinedEnv(profile.serverUsernameEnvVars)
   const serverPassword = configString(config.config, "serverPassword")
   const serverConnector =
     runner.connectBetterC0deServer ?? connectBetterC0deServer
@@ -910,6 +912,7 @@ async function runBetterC0deTextGeneration(
       env: providerEnvironment(config),
       serverConnector,
       signal: lifecycleSignal,
+      profile,
     })
   } catch (error) {
     releaseBetterC0deSessionCleanupCapacity()
@@ -948,13 +951,16 @@ async function runBetterC0deTextGeneration(
         path.join(os.tmpdir(), "betterc0de-compat-text-generation-")
       )
     }
-    client = await createClient({
-      baseUrl: server.url,
-      directory: resolveCwd(input.cwd, scratchDirectory ?? ""),
-      ...(server.external && serverPassword
-        ? { serverUsername, serverPassword }
-        : {}),
-    })
+    client = await createClient(
+      {
+        baseUrl: server.url,
+        directory: resolveCwd(input.cwd, scratchDirectory ?? ""),
+        ...(server.external && serverPassword
+          ? { serverUsername, serverPassword }
+          : {}),
+      },
+      profile
+    )
     if (server.external && !client.session.delete) {
       throw Object.assign(
         new Error(
@@ -1445,6 +1451,7 @@ interface BetterC0deServerConnectorInput {
   readonly binaryPath: string
   readonly serverUrl?: string | null
   readonly env: NodeJS.ProcessEnv
+  readonly profile?: OpenCodeCompatProfile
 }
 
 interface BetterC0deServerConnection {
@@ -1488,13 +1495,15 @@ interface BetterC0deTextClient {
 }
 
 async function defaultBetterC0deClientFactory(
-  input: BetterC0deClientFactoryInput
+  input: BetterC0deClientFactoryInput,
+  profile: OpenCodeCompatProfile = BETTERC0DE_COMPAT_PROFILE
 ): Promise<BetterC0deTextClient> {
   return createBetterC0deCompatHttpClient<BetterC0deTextClient>({
     baseUrl: input.baseUrl,
     directory: input.directory,
     serverUsername: input.serverUsername,
     serverPassword: input.serverPassword,
+    v2Envelope: profile.v2Envelope,
   })
 }
 
@@ -1512,11 +1521,39 @@ async function connectBetterC0deServer(
   return startBetterC0deServerProcess(input)
 }
 
+/**
+ * Which OpenCode-family CLI a native text-generation request drives. The
+ * `opencode` binary speaks the same protocol as BetterC0de's compatibility
+ * CLI but wraps v2 inventory payloads, so the v2 envelope flag differs.
+ */
+function profileForTextDriver(
+  driver: string | undefined
+): OpenCodeCompatProfile {
+  const key = (driver ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s-]+/g, "")
+  // `opencode-cli` is the upstream `opencode` binary's driver; bare
+  // `opencode` and `open-code` stay aliases of the BetterC0de compat driver
+  // (see normalizeDriverForCompat) and must keep its profile.
+  if (key === "opencodecli") return OPENCODE_CLI_PROFILE
+  return BETTERC0DE_COMPAT_PROFILE
+}
+
+function firstDefinedEnv(names: ReadonlyArray<string>): string | undefined {
+  for (const name of names) {
+    const value = process.env[name]
+    if (value) return value
+  }
+  return undefined
+}
+
 async function acquireBetterC0deTextServer(input: {
   readonly binaryPath: string
   readonly serverUrl?: string | null
   readonly env: NodeJS.ProcessEnv
   readonly signal: AbortSignal
+  readonly profile: OpenCodeCompatProfile
   readonly serverConnector: (
     input: BetterC0deServerConnectorInput
   ) => Promise<BetterC0deServerConnection>
@@ -1528,6 +1565,7 @@ async function acquireBetterC0deTextServer(input: {
       binaryPath: input.binaryPath,
       serverUrl,
       env: input.env,
+      profile: input.profile,
     })
     if (!nativeTextGenerationAdmissionsOpen || input.signal.aborted) {
       const admissionFailure =
@@ -1556,6 +1594,7 @@ async function acquireBetterC0deTextServer(input: {
     env: input.env,
     serverConnector: input.serverConnector,
     signal: input.signal,
+    profile: input.profile,
   })
   return {
     server: entry.server,
@@ -1569,6 +1608,7 @@ async function acquireSharedBetterC0deTextServer(input: {
   readonly binaryPath: string
   readonly env: NodeJS.ProcessEnv
   readonly signal: AbortSignal
+  readonly profile: OpenCodeCompatProfile
   readonly serverConnector: (
     input: BetterC0deServerConnectorInput
   ) => Promise<BetterC0deServerConnection>
@@ -1594,6 +1634,7 @@ async function acquireSharedBetterC0deTextServer(input: {
     const server = await input.serverConnector({
       binaryPath: input.binaryPath,
       env: input.env,
+      profile: input.profile,
     })
     const entry: SharedBetterC0deTextServer = {
       fingerprint,
@@ -1736,13 +1777,17 @@ function throwIfNativeTextGenerationUnavailable(signal: AbortSignal): void {
 async function startBetterC0deServerProcess(input: {
   readonly binaryPath: string
   readonly env: NodeJS.ProcessEnv
+  readonly profile?: OpenCodeCompatProfile
 }): Promise<BetterC0deServerConnection> {
+  const profile = input.profile ?? BETTERC0DE_COMPAT_PROFILE
   const port = await findAvailablePort()
   const spawnInput = nativeProcessSpawnInput(input.binaryPath, [
-    "serve",
-    `--hostname=${DEFAULT_BETTERC0DE_HOSTNAME}`,
-    `--port=${port}`,
+    ...profile.serveArgs(port, DEFAULT_BETTERC0DE_HOSTNAME),
   ])
+  const configEnv: NodeJS.ProcessEnv = {}
+  for (const name of profile.configContentEnv) {
+    configEnv[name] = BETTERC0DE_EMPTY_CONFIG_CONTENT
+  }
   const child = spawn(spawnInput.command, [...spawnInput.args], {
     detached: process.platform !== "win32",
     shell: false,
@@ -1750,8 +1795,7 @@ async function startBetterC0deServerProcess(input: {
     windowsVerbatimArguments: spawnInput.windowsVerbatimArguments,
     env: {
       ...input.env,
-      BETTERC0DE_CONFIG_CONTENT: BETTERC0DE_EMPTY_CONFIG_CONTENT,
-      BetterC0de_CONFIG_CONTENT: BETTERC0DE_EMPTY_CONFIG_CONTENT,
+      ...configEnv,
     },
   })
   activeNativeTextChildren.add(child)
@@ -1802,7 +1846,7 @@ async function startBetterC0deServerProcess(input: {
       }
       if (
         settled ||
-        !BETTERC0DE_SERVER_READY_PREFIXES.some((prefix) =>
+        !profile.serverReadyPrefixes.some((prefix) =>
           stdout.text.toLowerCase().includes(prefix)
         )
       )
