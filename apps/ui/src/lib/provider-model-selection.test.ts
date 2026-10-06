@@ -756,7 +756,7 @@ describe("resolveProviderModelSelection", () => {
     })
   })
 
-  it("builds a persisted switch selection for GPT Extra High to Claude Max", () => {
+  it("preserves Extra High when the destination Claude model offers it", () => {
     const claude = provider({
       id: "claude",
       providerKind: "claude",
@@ -798,7 +798,7 @@ describe("resolveProviderModelSelection", () => {
     ).toEqual({
       providerId: "claude",
       modelId: "claude-opus-4-7",
-      thinkingMode: "max",
+      thinkingMode: "xHigh",
       contextWindow: "200k",
     })
     expect(
@@ -811,7 +811,7 @@ describe("resolveProviderModelSelection", () => {
     ).toEqual({
       providerId: "claude",
       modelId: "claude-opus-4-7",
-      thinkingMode: "max",
+      thinkingMode: "xHigh",
       contextWindow: "1m",
     })
   })
@@ -915,7 +915,7 @@ describe("resolveProviderModelSelection", () => {
     ).toEqual({
       providerId: "claude",
       modelId: "opus-4.7",
-      thinkingMode: "max",
+      thinkingMode: "xHigh",
       contextWindow: "1m",
     })
     // Ultrathink left the fallback menu; the alias steps down to Max.

@@ -22,11 +22,15 @@
 
 Use Editor when files are the center of the task. Explore the project tree, search for text, edit files, and keep chat beside your work. Open a changed file from the Diff view to inspect the comparison in the editor.
 
+The project tree loads folders as you open them. Large projects do not share one file-count limit; a very large individual folder offers **Load more files**. The header shows how many entries have loaded, and refreshing updates opened folders while keeping their contents visible. **Reveal in Explorer** loads the necessary parent folders automatically.
+
 ### Agent: discuss and delegate
 
 Use Agent when you want to focus on AI conversations and task progress. Arrange panes for the chats, terminals, plans, and changes you need to follow.
 
 Multiple conversations can work with the same repository. Keep their responsibilities clear: separate chats alone do not isolate their file changes. Use separate worktrees when tasks need independent checkouts.
+
+The **Orchestration** icon with connected nodes sits immediately left of the chat's permissions control. Open its compact menu to see the main model, enable experimental delegation, and choose agent models from the provider dropdowns. Each selected model has the same thinking slider as the chat; **Auto** uses that model's provider default. The icon indicates whether orchestration is on, and the menu shows the selection count. Above the composer controls, selected models form an overlapping group with each logo and model name visible. Hover or focus a model to see its thinking level and colored level icon; Escape closes the tooltip. You can change the selection between turns. The **+** menu holds file attachments.
 
 ### Canvas: see the project in context
 
@@ -64,6 +68,14 @@ The heartbeat itself contains no project files or conversation text. Error repor
 Manual and automatic reports share a 10-second cooldown. Reporting is best effort: an unavailable network or a sudden process termination can prevent delivery. Not every crash can be captured.
 
 See the website's [terms and data information](https://betterc0de.com/terms#data) for published policies. This section explains the current app behavior; it does not make claims about server-side retention.
+
+## Usage overview
+
+Open **Usage** from the sidebar to review Claude Code or Codex activity. Choose a provider from the dropdown to see lifetime statistics, recorded limits, daily activity, and usage drivers. The dropdown uses the providers' logos, and the overview follows your selected appearance. Limits show when they were last checked; local activity may not include other devices.
+
+**API cost equivalent** estimates the value of recorded usage at model API rates. Its four cards show input, output, cache-read, and cache-write costs and their share of the estimate. Token coverage shows how much usage has a known price; pricing details identify missing model rates and custom rates. This is a cost comparison, not your subscription bill.
+
+Recent reports remain available when you leave and reopen the page. **Refresh** reads the stores again while keeping the previous numbers visible. The first scan of a large history or a fresh provider limit check may take longer; later scans reuse unchanged files. Grok is not included in this overview.
 
 ## Availability and provider costs
 

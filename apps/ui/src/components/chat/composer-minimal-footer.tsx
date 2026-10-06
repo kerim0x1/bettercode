@@ -3,7 +3,8 @@
  *
  *   [+] [permissions ▾]                 [⚡ model · reasoning ▾] [mic] [⬆]
  *
- * - "+" menu: Files and folders, plus experimental orchestration.
+ * - "+" menu: Files and folders.
+ * - Orchestration icon: model pool, directly before permissions.
  * - There is no Mode picker: Agent is the default and Plan is toggled with
  *   Shift+Tab, so the one thing left to choose in the input row is how far
  *   the agent may act on its own.
@@ -46,6 +47,8 @@ import {
   supportsModelFastMode,
 } from "@/lib/model-capabilities"
 import { ThinkingEffortSlider } from "@/components/chat/thinking-effort-slider"
+import { ReasoningLevelIcon } from "@/components/chat/reasoning-level-icon"
+import { reasoningColorClass } from "@/lib/reasoning-appearance"
 import { resolveProviderModelSwitchSelection } from "@/lib/provider-model-selection"
 import { useMultiAgentStore } from "@/lib/multi-agent-store"
 import { buildSystemInstruction } from "@/lib/mode-instructions"
@@ -75,15 +78,10 @@ import {
   PauseIcon,
   PlayIcon,
   SquareIcon,
+  TerminalIcon,
 } from "lucide-react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  AiBrainIcon,
-  // The model row used to show a generic cube, which reads as "package"; a
-  // chip names the engine. The speed row is a lightning bolt by the user's
-  // choice: the Fast option inside fills its bolt when active, so the outline
-  // on the row still reads as the axis rather than the value.
-  AiChipIcon,
   FlashIcon as FlashHugeIcon,
   BotIcon,
   ClipboardIcon,
@@ -125,7 +123,9 @@ export function ComposerMinimalFooter(props: ComposerFooterProps) {
     handleVoiceContextMenu,
   } = props
   const promptInput = usePromptInputController()
-  const planFollowUpActive = hasPendingPlan && !/^\/goal(?:\s|$)/i.test(promptInput.textInput.value.trim())
+  const planFollowUpActive =
+    hasPendingPlan &&
+    !/^\/goal(?:\s|$)/i.test(promptInput.textInput.value.trim())
   const planFollowUpLabel =
     planFollowUpActive && promptInput.textInput.value.trim().length > 0
       ? "Refine"
@@ -174,6 +174,12 @@ export function ComposerMinimalFooter(props: ComposerFooterProps) {
     <ThinkingEffortSlider
       options={buildThinkingOptions()}
       thinkingMode={thinkingMode}
+      modelName={currentModelName}
+      selectionKey={JSON.stringify([
+        threadId,
+        currentProvider?.id,
+        selectedModel,
+      ])}
       onSelect={(mode) => setThinkingMode(mode, currentProvider?.id)}
     />
   )
@@ -345,7 +351,7 @@ export function ComposerMinimalFooter(props: ComposerFooterProps) {
           its size and the left group hides labels (see the @max-[400px]
           variants) instead of drawing under the model chip. */}
       <PromptInputTools className="min-w-0 gap-1 overflow-hidden">
-        {/* ── "+" menu — Files and folders + Orchestration ── */}
+        {/* ── "+" menu — Files and folders ── */}
         <div className="order-1">
           <SimpleDropdown
             align="start"
@@ -378,15 +384,6 @@ export function ComposerMinimalFooter(props: ComposerFooterProps) {
                 </span>
               )}
             </SimpleDropdownSubItem>
-
-            <SimpleDropdownSeparator />
-            <ComposerOrchestrationMenu {...props} />
-
-            {/* Permissions used to be a submenu here. It now sits beside the
-                Mode chip in the input row — how an agent is allowed to act is
-                decided as often as which mode it runs in, and it was two
-                clicks deep with no indication of the current setting. */}
-
           </SimpleDropdown>
         </div>
 
@@ -429,7 +426,8 @@ export function ComposerMinimalFooter(props: ComposerFooterProps) {
             It carries the icon of the ACTIVE preset, not a generic shield:
             the chip and the checked row in its own menu must show the same
             thing. Bypass Permission announces itself in red. ── */}
-        <div className="order-2">
+        <div className="order-2 flex shrink-0 items-center gap-1">
+          <ComposerOrchestrationMenu {...props} />
           <SimpleDropdown
             align="start"
             trigger={
@@ -441,10 +439,7 @@ export function ComposerMinimalFooter(props: ComposerFooterProps) {
                   permissionLevel === "bypass" && "text-destructive"
                 )}
               >
-                <PermissionChipIcon
-                  className="size-3.5"
-                  strokeWidth={1.75}
-                />
+                <PermissionChipIcon className="size-3.5" strokeWidth={1.75} />
                 <span className="text-[12.5px] @max-[400px]:hidden">
                   {permissionLabel}
                 </span>
@@ -582,7 +577,12 @@ export function ComposerMinimalFooter(props: ComposerFooterProps) {
                 {currentModelName}
               </span>
               {!isLmStudio && (
-                <span className="text-[12.5px] text-muted-foreground/70 @max-[400px]:hidden">
+                <span
+                  className={cn(
+                    "text-[12.5px] @max-[400px]:hidden",
+                    reasoningColorClass(thinkingMode)
+                  )}
+                >
                   {thinkingLabel}
                 </span>
               )}
@@ -597,11 +597,14 @@ export function ComposerMinimalFooter(props: ComposerFooterProps) {
             triggerClassName="min-h-8 gap-2.5 rounded-lg px-2.5 text-[12px]"
             trigger={
               <>
-                <HugeiconsIcon
-                  icon={AiChipIcon}
-                  strokeWidth={1.75}
-                  className="size-4 shrink-0 text-muted-foreground"
-                />
+                {currentProvider ? (
+                  <ProviderIcon
+                    provider={currentProvider}
+                    className="!size-4 shrink-0"
+                  />
+                ) : (
+                  <TerminalIcon aria-hidden="true" className="size-5" />
+                )}
                 <span className="flex-1">Model</span>
                 <span className="mr-1 max-w-[120px] truncate text-[11px] text-muted-foreground">
                   {currentModelName}
@@ -618,18 +621,23 @@ export function ComposerMinimalFooter(props: ComposerFooterProps) {
               triggerClassName="min-h-8 gap-2.5 rounded-lg px-2.5 text-[12px]"
               trigger={
                 <>
-                  <HugeiconsIcon
-                    icon={AiBrainIcon}
-                    strokeWidth={1.75}
+                  <ReasoningLevelIcon
+                    options={buildThinkingOptions()}
+                    mode={thinkingMode}
                     className="size-4 shrink-0 text-muted-foreground"
                   />
                   <span className="flex-1">Reasoning</span>
-                  <span className="mr-1 text-[11px] text-muted-foreground">
+                  <span
+                    className={cn(
+                      "mr-1 text-[11px] font-medium",
+                      reasoningColorClass(thinkingMode)
+                    )}
+                  >
                     {thinkingLabel}
                   </span>
                 </>
               }
-              className="min-w-[256px]"
+              className="min-w-[258px]"
             >
               {renderThinkingItems()}
             </SimpleDropdownSub>

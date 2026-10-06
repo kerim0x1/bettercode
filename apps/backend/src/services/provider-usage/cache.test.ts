@@ -92,4 +92,46 @@ describe("scanWithCache", () => {
       false
     )
   })
+
+  it("preserves both providers when their scans overlap", async () => {
+    const claude = write("claude.jsonl", "claude")
+    const codex = write("codex.jsonl", "codex")
+    let finishClaude!: () => void
+    const pending = new Promise<void>((resolve) => {
+      finishClaude = resolve
+    })
+    const first = scanWithCache({
+      dataDir,
+      scope: "claude",
+      files: [claude],
+      compute: async () => {
+        await pending
+        return 6
+      },
+    })
+    await scanWithCache({
+      dataDir,
+      scope: "codex",
+      files: [codex],
+      compute: async () => 5,
+    })
+    finishClaude()
+    await first
+
+    for (const [scope, file, value] of [
+      ["claude", claude, 6],
+      ["codex", codex, 5],
+    ] as const) {
+      const cached = await scanWithCache({
+        dataDir,
+        scope,
+        files: [file],
+        compute: async () => {
+          throw new Error("Unchanged transcripts must not be read again")
+        },
+      })
+      expect(cached.values).toEqual([value])
+      expect(cached.reused).toBe(1)
+    }
+  })
 })

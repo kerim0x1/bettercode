@@ -521,9 +521,7 @@ function claudeEffortOptionsFor(slug: string): ReadonlyArray<{
 }> | null {
   const identity = parseAnthropicModelId(slug)
   if (slug === "claude-opus-5-5")
-    return CLAUDE_OPUS_47_OPTIONS.filter(
-      (option) => option.id !== "ultracode"
-    ).map((option) => ({
+    return CLAUDE_OPUS_47_OPTIONS.map((option) => ({
       id: option.id,
       label: option.label,
       ...(option.id === "medium" ? { isDefault: true } : {}),
@@ -599,9 +597,29 @@ export function buildClaudeModelsFromInitialization(
         : info.supportsEffort === false
           ? []
           : claudeEffortOptionsFor(slug)
+    // SDK effort levels describe API values only. Keep this adapter's prompt
+    // modes when discovery replaces the native ladder, including Ultracode.
+    const promptOptions =
+      model.capabilities?.optionDescriptors?.flatMap((descriptor) =>
+        descriptor.type === "select"
+          ? descriptor.options.filter((option) =>
+              descriptor.promptInjectedValues?.includes(option.id)
+            )
+          : []
+      ) ?? []
+    const combinedEffortOptions = effortOptions?.length
+      ? [
+          ...effortOptions,
+          ...promptOptions.filter(
+            (option) => !effortOptions.some((effort) => effort.id === option.id)
+          ),
+        ]
+      : effortOptions
     const capabilities = hasSdkCapabilities
       ? claudeCapabilities({
-          ...(effortOptions ? { effortOptions } : {}),
+          ...(combinedEffortOptions
+            ? { effortOptions: combinedEffortOptions }
+            : {}),
           supportsThinking:
             info.supportsAdaptiveThinking === true &&
             (effortOptions?.length ?? 0) === 0,
@@ -943,7 +961,8 @@ type ResolvedOptions = {
 function resolveOptions(
   effort: string | null | undefined,
   modelId: string,
-  fastMode?: boolean | null
+  fastMode?: boolean | null,
+  thinking?: boolean | null
 ): ResolvedOptions {
   const out: ResolvedOptions = {}
   if (supportsAdaptiveThinking(modelId)) {
@@ -955,7 +974,7 @@ function resolveOptions(
     }
   }
   if (isHaiku(modelId)) {
-    out.settings = { alwaysThinkingEnabled: true }
+    out.settings = { alwaysThinkingEnabled: thinking ?? true }
   }
   // Claude CLI Fast Mode — wires `settings.fastMode: true` into the
   // ClaudeQueryOptions block. This matches the verified reference behavior.
@@ -976,10 +995,10 @@ function mapAdaptiveEffort(
   if (!raw) return undefined
   const key = raw.toLowerCase().replace(/[\s_-]+/g, "")
   if (key === "low" || key === "medium" || key === "high") return key
-  // Normalize Claude's Opus 4.7 `xhigh` capability to the SDK/CLI
-  // `max` effort. `ultrathink` is still handled as a prompt-injected mode.
+  // The installed SDK accepts xhigh. Preserve it on models advertising the
+  // extended ladder; older models retain the compatibility fallback.
   if (key === "xhigh" || key === "extrahigh")
-    return modelId === "claude-opus-5-5" ? "xhigh" : "max"
+    return anthropicSupportsExtendedEffort(modelId) ? "xhigh" : "max"
   if (key === "max" || key === "ultra" || key === "ultrathink") {
     return "max"
   }
@@ -2193,7 +2212,13 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     )
       ? resolveTurnBooleanOption(input, "fastMode", input.fastMode)
       : undefined
-    const opts = resolveOptions(resolvedEffort, modelId, fastMode)
+    const thinking = modelCapabilities.optionDescriptors?.some(
+      (descriptor) =>
+        descriptor.id === "thinking" && descriptor.type === "boolean"
+    )
+      ? resolveTurnBooleanOption(input, "thinking")
+      : undefined
+    const opts = resolveOptions(resolvedEffort, modelId, fastMode, thinking)
     const promptInjectedEffort = resolvePromptInjectedEffort(
       modelCapabilities,
       reasoningEffort

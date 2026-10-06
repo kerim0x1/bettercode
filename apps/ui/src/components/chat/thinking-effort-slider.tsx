@@ -1,29 +1,37 @@
-import { useState } from "react"
+import { useId, useState } from "react"
 import { Slider as SliderPrimitive } from "radix-ui"
 import { RotateCcwIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { ReasoningLevelIcon } from "@/components/chat/reasoning-level-icon"
+import { reasoningColorClass } from "@/lib/reasoning-appearance"
 import {
   isThinkingModeOptionActive,
   type ModelThinkingOption,
 } from "@/lib/model-capabilities"
+import { normalizeThinkingModeValue } from "@betterc0de/schema"
 
 /** The preference default (`preferences-store`) the reset control returns to. */
 export const DEFAULT_THINKING_MODE = "High"
 
-/** One line under the level name so the ladder reads as more than a number. */
+/** Accessible explanation and hover hint for the selected level. */
 const DESCRIPTIONS: Readonly<Record<string, string>> = {
-  off: "No extended thinking",
-  low: "Quick answers",
-  medium: "Balanced",
-  high: "Thorough",
-  xhigh: "Very thorough",
-  max: "Longest thinking",
-  ultrathink: "Longest thinking",
-  ultracode: "Multi-agent orchestration",
+  auto: "Uses this model's default reasoning effort.",
+  off: "No extended thinking. Responds directly.",
+  none: "No extended thinking. Responds directly.",
+  minimal: "Minimal reasoning for quick responses.",
+  low: "Quick reasoning for straightforward tasks.",
+  medium: "Balanced depth for everyday tasks.",
+  high: "Thorough reasoning for complex problems.",
+  xhigh: "Extra depth for difficult, multi-step problems.",
+  max: "Maximum reasoning effort for the hardest tasks.",
+  ultrathink: "Maximum reasoning effort for the hardest tasks.",
+  ultra: "Extended reasoning at this model's highest effort.",
+  ultracode: "Multi-agent orchestration for complex tasks.",
 }
 
 function modeKey(mode: string | null): string {
-  return mode ? mode.toLowerCase().replace(/[^a-z0-9]/g, "") : "off"
+  return mode ? normalizeThinkingModeValue(mode) : "off"
 }
 
 /** Position of a mode on the ladder, or -1 when the ladder does not offer it. */
@@ -37,10 +45,8 @@ export function thinkingOptionIndex(
 }
 
 /**
- * The reasoning-effort picker as a slider: the chosen level and what it
- * means on top, a reset to the preference default on the right, one stop per
- * level along the track. Replaces the seven-row list, which took a whole
- * flyout to answer "how hard should it think".
+ * Compact reasoning picker with the level and model centred above a stepped
+ * pill slider. The menu's level icon and reset flank the header.
  *
  * The level applies on release (or on an arrow key), not on every pixel of a
  * drag, so a drag across five stops is one preference write, not five.
@@ -48,12 +54,17 @@ export function thinkingOptionIndex(
 export function ThinkingEffortSlider({
   options,
   thinkingMode,
+  modelName,
+  selectionKey,
   defaultMode = DEFAULT_THINKING_MODE,
   onSelect,
   className,
 }: {
   options: ReadonlyArray<ModelThinkingOption>
   thinkingMode: string | null
+  modelName?: string
+  /** Resets a drag when the thread, provider, or model changes. */
+  selectionKey?: string
   /** `null` disables the reset control. */
   defaultMode?: string | null
   onSelect: (mode: string | null) => void
@@ -64,89 +75,173 @@ export function ThinkingEffortSlider({
   const selectedIndex = Math.max(0, thinkingOptionIndex(options, thinkingMode))
   const defaultIndex =
     defaultMode === null ? -1 : thinkingOptionIndex(options, defaultMode)
-  const [previewIndex, setPreviewIndex] = useState<number | null>(null)
-  const shownIndex = previewIndex ?? selectedIndex
+  const contextKey = JSON.stringify([
+    selectionKey ?? modelName,
+    options.map((option) => option.mode),
+  ])
+  const [preview, setPreview] = useState({
+    sourceMode: thinkingMode,
+    contextKey,
+    mode: thinkingMode,
+  })
+  const previewIsCurrent =
+    preview.sourceMode === thinkingMode && preview.contextKey === contextKey
+  // Reconcile before rendering, without remounting the focused slider. Keep
+  // committed previews until the parent acknowledges them; clearing on commit
+  // flashes the old value and conflicts with Radix's keyboard callback order.
+  if (!previewIsCurrent) {
+    setPreview({ sourceMode: thinkingMode, contextKey, mode: thinkingMode })
+  }
+  const descriptionId = useId()
+  const shownIndex = previewIsCurrent
+    ? Math.max(0, thinkingOptionIndex(options, preview.mode))
+    : selectedIndex
   const shown = options[shownIndex] ?? options[0]
   if (!shown) return null
   const max = Math.max(0, options.length - 1)
-  const isUltraThink = /ultra ?think/iu.test(shown.mode ?? "")
+  const levelColor = reasoningColorClass(shown.mode)
   const resetTarget = defaultIndex >= 0 ? options[defaultIndex] : undefined
-  const canReset = resetTarget !== undefined && defaultIndex !== selectedIndex
+  const canReset = resetTarget !== undefined && defaultIndex !== shownIndex
+  const description =
+    shown.label === "On"
+      ? "Thinking is enabled for this model."
+      : (DESCRIPTIONS[modeKey(shown.mode)] ??
+        "Choose how deeply this model reasons through a task.")
+  const showMode = (mode: string | null) => {
+    setPreview({ sourceMode: thinkingMode, contextKey, mode })
+  }
+  const commitMode = (mode: string | null) => {
+    showMode(mode)
+    if (!isThinkingModeOptionActive(thinkingMode, mode)) onSelect(mode)
+  }
 
   return (
     <div
       role="group"
       aria-label="Reasoning effort"
-      className={cn("w-[240px] px-3.5 pt-2.5 pb-3.5", className)}
+      className={cn("w-[252px] max-w-[calc(100vw-2rem)] p-2.5", className)}
       // The menus around this control move focus with the arrow keys; the
       // slider needs them for itself.
-      onKeyDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (
+          [
+            "ArrowLeft",
+            "ArrowRight",
+            "ArrowUp",
+            "ArrowDown",
+            "Home",
+            "End",
+            "PageUp",
+            "PageDown",
+          ].includes(event.key)
+        )
+          event.stopPropagation()
+      }}
     >
-      <div className="flex items-center gap-2">
-        {/* Mirrors the reset button so the title sits on the true centre. */}
-        {resetTarget && <span aria-hidden="true" className="size-6 shrink-0" />}
-        <div className="min-w-0 flex-1 text-center">
-          <div
+      <div className="grid grid-cols-[28px_minmax(0,1fr)_28px] items-start gap-2">
+        <span className="flex size-7 items-center justify-center">
+          <ReasoningLevelIcon
+            options={options}
+            mode={shown.mode}
+            className="size-6"
+          />
+        </span>
+        <div className="min-w-0 text-center">
+          <p
             aria-live="polite"
+            title={description}
             className={cn(
-              "truncate text-[14px] leading-5 font-semibold text-foreground",
-              isUltraThink && "ultra-think-text"
+              "truncate text-sm leading-[18px] font-semibold",
+              levelColor
             )}
           >
             {shown.label}
-          </div>
-          <div className="truncate text-[11px] leading-4 text-muted-foreground">
-            {DESCRIPTIONS[modeKey(shown.mode)] ?? "Reasoning effort"}
-          </div>
+          </p>
+          <p
+            title={modelName}
+            className="mt-0.5 truncate text-[11px] leading-4 text-muted-foreground"
+          >
+            {modelName || "Reasoning effort"}
+          </p>
         </div>
         {resetTarget && (
-          <button
+          <Button
+            variant="ghost"
+            size="icon-xs"
             type="button"
             aria-label={`Reset to ${resetTarget.label}`}
             title={`Reset to ${resetTarget.label}`}
             disabled={!canReset}
-            onClick={() => onSelect(resetTarget.mode)}
-            className="grid size-6 shrink-0 place-items-center rounded-full text-muted-foreground transition-[color,background-color,scale] duration-150 hover:bg-foreground/8 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none active:scale-[0.96] disabled:opacity-30 disabled:hover:bg-transparent disabled:active:scale-100"
+            onClick={() => commitMode(resetTarget.mode)}
+            className="justify-self-center rounded-md text-muted-foreground motion-reduce:transition-none"
           >
-            <RotateCcwIcon className="size-3.5" strokeWidth={2} />
-          </button>
+            <RotateCcwIcon
+              aria-hidden="true"
+              className="size-3.5"
+              strokeWidth={1.5}
+            />
+          </Button>
         )}
       </div>
-      <SliderPrimitive.Root
-        aria-label="Reasoning effort"
-        min={0}
-        max={max}
-        step={1}
-        value={[shownIndex]}
-        onValueChange={([index]) => setPreviewIndex(index ?? 0)}
-        onValueCommit={([index]) => {
-          setPreviewIndex(null)
-          const next = options[index ?? 0]
-          if (next) onSelect(next.mode)
-        }}
-        className="relative mt-3.5 flex h-6 w-full touch-none items-center select-none"
-      >
-        {/* Filled up to the thumb; the stops still ahead sit on the rest of
-            the track, as on a hardware slider. */}
-        <SliderPrimitive.Track className="relative h-2 grow rounded-full bg-foreground/12">
-          <SliderPrimitive.Range className="absolute h-full rounded-full bg-primary" />
-          {options.map((option, index) =>
-            index > shownIndex ? (
-              <span
-                key={`${option.mode ?? "off"}:${index}`}
-                aria-hidden="true"
-                data-slot="effort-stop"
-                className="absolute top-1/2 size-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/40"
-                style={{ left: `${max === 0 ? 50 : (index / max) * 100}%` }}
-              />
-            ) : null
+      <p id={descriptionId} className="sr-only">
+        {description}
+      </p>
+
+      {options.length > 1 ? (
+        <SliderPrimitive.Root
+          data-slot="reasoning-slider"
+          aria-label="Reasoning effort"
+          aria-describedby={descriptionId}
+          min={0}
+          max={max}
+          step={1}
+          value={[shownIndex]}
+          onValueChange={([index]) => {
+            const next = options[index ?? 0]
+            if (next) showMode(next.mode)
+          }}
+          onValueCommit={([index]) => {
+            const next = options[index ?? 0]
+            if (next) commitMode(next.mode)
+          }}
+          onPointerCancel={() => showMode(thinkingMode)}
+          className={cn(
+            "relative mt-1.5 flex h-8 w-full touch-none items-center select-none",
+            levelColor
           )}
-        </SliderPrimitive.Track>
-        <SliderPrimitive.Thumb
-          aria-valuetext={shown.label}
-          className="block size-5 cursor-grab rounded-full bg-primary shadow-[0_1px_3px_rgb(0_0_0/0.45)] ring-[3px] ring-popover transition-[box-shadow] duration-150 outline-none hover:ring-ring/40 focus-visible:ring-ring/60 active:cursor-grabbing"
-        />
-      </SliderPrimitive.Root>
+        >
+          <SliderPrimitive.Track className="relative h-6 grow overflow-hidden rounded-full bg-foreground/10">
+            <SliderPrimitive.Range className="absolute h-full rounded-full bg-current" />
+            {/* Match the stop centres to Radix's in-bounds 28px thumb. */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 right-3.5 left-3.5"
+            >
+              {options.map((option, index) => (
+                <span
+                  key={`${option.mode ?? "off"}:${index}`}
+                  data-slot={index > shownIndex ? "effort-stop" : undefined}
+                  className={cn(
+                    "absolute top-1/2 size-1 -translate-x-1/2 -translate-y-1/2 rounded-full",
+                    index < shownIndex ? "bg-background/50" : "bg-foreground/30"
+                  )}
+                  style={{ left: `${(index / max) * 100}%` }}
+                />
+              ))}
+            </div>
+          </SliderPrimitive.Track>
+          <SliderPrimitive.Thumb
+            aria-label="Reasoning effort"
+            aria-valuetext={shown.label}
+            aria-describedby={descriptionId}
+            className="block size-7 cursor-grab rounded-full border border-popover/10 bg-foreground shadow-sm outline-none hover:ring-4 hover:ring-ring/15 focus-visible:ring-4 focus-visible:ring-ring/40 active:cursor-grabbing motion-safe:transition-shadow motion-safe:duration-150"
+          />
+        </SliderPrimitive.Root>
+      ) : (
+        <p className="mt-2 text-center text-[10px] text-muted-foreground">
+          One level available
+        </p>
+      )}
     </div>
   )
 }

@@ -4,6 +4,8 @@ import {
   withBrowserElementContext,
   parseGoalCommand,
   orchestrationForMain,
+  modelReasoningDescriptor,
+  normalizeThinkingModeValue,
 } from "@betterc0de/schema"
 import { activeContextMessages } from "@/lib/chat-context"
 import { useMessageQueueStore } from "@/lib/message-queue-store"
@@ -126,13 +128,35 @@ export function buildModelSelection(input: {
   const modelId =
     normalizeModelSlug(input.modelId, input.providerKind) ?? input.modelId
   const options: ProviderOptionSelection[] = []
-  const effort = thinkingModeToProviderEffort(
-    input.providerKind,
-    input.reasoningEffort
-  )
-  if (effort) {
+  const descriptor = modelReasoningDescriptor(input.capabilities)
+  const thinkingToggle =
+    !descriptor &&
+    input.capabilities?.optionDescriptors?.some(
+      (option) => option.id === "thinking" && option.type === "boolean"
+    )
+  const requestedEffort = input.reasoningEffort
+    ? normalizeThinkingModeValue(input.reasoningEffort)
+    : undefined
+  const advertisedEffort = requestedEffort
+    ? descriptor?.options.find(
+        (option) => normalizeThinkingModeValue(option.id) === requestedEffort
+      )?.id
+    : undefined
+  const effort =
+    advertisedEffort ??
+    thinkingModeToProviderEffort(input.providerKind, input.reasoningEffort)
+  if (thinkingToggle && input.reasoningEffort !== undefined) {
     options.push({
-      id: effortOptionIdForProvider(input.providerKind),
+      id: "thinking",
+      value:
+        Boolean(input.reasoningEffort) &&
+        !["none", "off"].includes(
+          normalizeThinkingModeValue(input.reasoningEffort ?? "")
+        ),
+    })
+  } else if (effort) {
+    options.push({
+      id: descriptor?.id ?? effortOptionIdForProvider(input.providerKind),
       value: effort,
     })
   }

@@ -21,6 +21,7 @@ function render(thinkingMode: string | null, defaultMode?: string | null) {
     <ThinkingEffortSlider
       options={ladder}
       thinkingMode={thinkingMode}
+      modelName="GPT-6 Astra"
       {...(defaultMode !== undefined ? { defaultMode } : {})}
       onSelect={() => {}}
     />
@@ -45,13 +46,32 @@ function stopsAhead(html: string): number {
 
 describe("ThinkingEffortSlider", () => {
   it("puts Grok High one stop before Extra High, with Low at the left", () => {
-    const options = modelThinkingOptions({ providerKind: "grok_cli", modelId: "grok-4.6", capabilities: {
-      optionDescriptors: [{ id: "reasoningEffort", label: "Effort", type: "select", options: [
-        { id: "xhigh", label: "Extra High Effort" }, { id: "high", label: "High Effort" },
-        { id: "medium", label: "Medium Effort" }, { id: "low", label: "Low Effort" },
-      ] }],
-    } })
-    const html = renderToStaticMarkup(<ThinkingEffortSlider options={options} thinkingMode="High" onSelect={() => {}} />)
+    const options = modelThinkingOptions({
+      providerKind: "grok_cli",
+      modelId: "grok-4.6",
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "reasoningEffort",
+            label: "Effort",
+            type: "select",
+            options: [
+              { id: "xhigh", label: "Extra High Effort" },
+              { id: "high", label: "High Effort" },
+              { id: "medium", label: "Medium Effort" },
+              { id: "low", label: "Low Effort" },
+            ],
+          },
+        ],
+      },
+    })
+    const html = renderToStaticMarkup(
+      <ThinkingEffortSlider
+        options={options}
+        thinkingMode="High"
+        onSelect={() => {}}
+      />
+    )
     expect(stopsAhead(html)).toBe(1)
     expect(html).toContain('aria-valuetext="High Effort"')
     expect(thinkingOptionIndex(options, "Low")).toBe(1)
@@ -66,12 +86,31 @@ describe("ThinkingEffortSlider", () => {
     expect(html).toContain('aria-valuetext="High"')
   })
 
-  it("draws the levels ahead as stops and no list rows", () => {
+  it("identifies the current model and exposes one slider spanning all supported levels", () => {
     const html = render("Medium")
     expect(stopsAhead(html)).toBe(4)
     expect(render("ultracode")).not.toContain("effort-stop")
     expect(html).not.toContain("<li")
     expect(html).not.toContain("lucide-check")
+    expect(html).toContain(">GPT-6 Astra<")
+    expect(html.match(/role="slider"/g)).toHaveLength(1)
+    expect(html).toContain('aria-valuemin="0"')
+    expect(html).toContain('aria-valuemax="6"')
+    expect(html).toContain('aria-valuetext="Medium"')
+  })
+
+  it("shows a single available level without a degenerate slider", () => {
+    const html = renderToStaticMarkup(
+      <ThinkingEffortSlider
+        options={[{ mode: null, label: "Off" }]}
+        thinkingMode={null}
+        onSelect={() => {}}
+      />
+    )
+    expect(html).toContain("One level available")
+    expect(html).toContain(">Off<")
+    expect(html).not.toContain('role="slider"')
+    expect(html).not.toContain("Reset to")
   })
 
   it("offers a reset only when the level differs from the default", () => {
@@ -97,7 +136,11 @@ describe("ThinkingEffortSlider", () => {
   it("renders nothing for an empty ladder", () => {
     expect(
       renderToStaticMarkup(
-        <ThinkingEffortSlider options={[]} thinkingMode={null} onSelect={() => {}} />
+        <ThinkingEffortSlider
+          options={[]}
+          thinkingMode={null}
+          onSelect={() => {}}
+        />
       )
     ).toBe("")
   })

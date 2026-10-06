@@ -161,6 +161,15 @@ export function coerceThinkingModeForModel(
 ): string | null {
   if (modelId === "claude-opus-5-5" && !thinkingMode) return "Medium"
   const providerKey = getProviderKey(provider)
+  if (providerKey === "lmstudio") return null
+  const options = getModelThinkingOptions(provider, modelId)
+  // A selectable level must survive the preference reconciliation unchanged.
+  // Provider-wide legacy aliases otherwise downgrade Grok xhigh to High and
+  // promote Claude xhigh to Max immediately after the user selects it.
+  const supported = options.find((option) =>
+    isThinkingModeOptionActive(thinkingMode, option.mode)
+  )
+  if (supported) return supported.mode
   const normalized = normalizeThinkingMode(
     provider
       ? { id: provider.id, providerKind: provider.providerKind }
@@ -171,7 +180,7 @@ export function coerceThinkingModeForModel(
   if (!normalized) return normalized
 
   const supportedModes = new Map<string, string>()
-  for (const option of getModelThinkingOptions(provider, modelId)) {
+  for (const option of options) {
     if (option.mode) {
       supportedModes.set(normalizeThinkingModeValue(option.mode), option.mode)
     }

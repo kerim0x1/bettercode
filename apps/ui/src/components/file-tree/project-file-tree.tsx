@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react"
 import { ChevronRightIcon, RefreshCwIcon } from "lucide-react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { FileAddIcon, FolderAddIcon } from "@hugeicons/core-free-icons"
@@ -18,21 +25,15 @@ import {
 import { getThreadStream, useChatStore } from "@/lib/chat-store"
 import { confirmCloseDirtyEditorTabs } from "@/lib/editor-close-confirmation"
 import { useEditorStore } from "@/lib/editor-store"
-import {
-  deleteWorkspacePath,
-  moveWorkspacePath,
-  searchEntriesDetailed,
-  type WorkspaceSearchEntry,
-} from "@/services/backend"
-import { SearchTruncationNotice } from "@/components/search-truncation-notice"
-import { searchTruncationMessage } from "@/lib/search-truncation"
+import { deleteWorkspacePath, moveWorkspacePath } from "@/services/backend"
+import { Button } from "@/components/ui/button"
+import { ProjectFileTreeLoader } from "@/lib/project-file-tree-loader"
 import { InlineCreateInput } from "@/components/file-tree/inline-create-input"
 import { createTreeEntry, treeCreateErrorMessage } from "@/lib/file-tree-create"
 import { toast } from "@/lib/toast"
 import {
   FileTreeNode,
   type FileTreeOpenOptions,
-  type TreeEntry,
 } from "@/components/file-tree/file-tree-node"
 import { useVisibilityInterval } from "@/hooks/use-visibility-interval"
 import { useFileTreeDragDrop } from "@/hooks/use-file-tree-drag-drop"
@@ -55,66 +56,6 @@ import {
   type EditorRevealFileEventDetail,
 } from "@/lib/editor-reveal-event"
 import { resolveFileTreeRevealTarget } from "@/lib/file-tree-reveal"
-import { listDirectoryFs } from "@/services/backend/filesystem"
-import {
-  mergeProjectTreeChildren,
-  projectDirectoryEntries,
-} from "@/lib/project-file-tree-data"
-
-/**
- * Group the flat `{path, name, is_dir}` list returned by `/workspace/search`
- * into a nested tree that {@link FileTreeNode} can render recursively.
- *
- * The backend's walk emits every directory it visits *and* its children
- * (with project-relative, forward-slash paths), so we have all the parent
- * nodes available — we just attach each entry to its immediate parent by
- * path. Entries whose parent wasn't returned (e.g. `.gitignore` filtered
- * the parent for some reason) surface as roots so they remain visible
- * instead of disappearing.
- *
- * Children are sorted folders-first, then alphabetical case-insensitive,
- * matching VS Code / file-explorer conventions.
- */
-function buildTree(flat: readonly WorkspaceSearchEntry[]): TreeEntry[] {
-  const byPath = new Map<string, TreeEntry>()
-  for (const e of flat) {
-    byPath.set(e.path, {
-      name: e.name,
-      path: e.path,
-      type: e.is_dir ? "folder" : "file",
-      children: e.is_dir ? [] : undefined,
-    })
-  }
-
-  const roots: TreeEntry[] = []
-  for (const node of byPath.values()) {
-    const sepIdx = node.path.lastIndexOf("/")
-    if (sepIdx < 0) {
-      roots.push(node)
-      continue
-    }
-    const parentPath = node.path.slice(0, sepIdx)
-    const parent = byPath.get(parentPath)
-    if (parent?.children) {
-      parent.children.push(node)
-    } else {
-      // Parent missing (orphan) — surface at root so the file is still reachable.
-      roots.push(node)
-    }
-  }
-
-  const sortNodes = (nodes: TreeEntry[]): void => {
-    nodes.sort((a, b) => {
-      if (a.type !== b.type) return a.type === "folder" ? -1 : 1
-      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
-    })
-    for (const n of nodes) {
-      if (n.children) sortNodes(n.children)
-    }
-  }
-  sortNodes(roots)
-  return roots
-}
 
 function toProjectTreePath(
   projectPath: string,
@@ -153,26 +94,12 @@ function splitTreeEntryPath(
   }
 }
 
-/**
- * The entry count shown in the tree header. When the backend stopped its walk
- * early the number is a floor, not a total: it gets a trailing "+" and a
- * title that says why, so a 5,000-entry cap never reads as "this project has
- * exactly 5,000 files". Pure so the wording is testable without a DOM.
- */
-export function fileTreeCountLabel(
-  totalCount: number,
-  truncation: { truncated: boolean; reason?: string }
-): { text: string; title: string | undefined } {
-  if (!truncation.truncated) {
-    return { text: String(totalCount), title: undefined }
-  }
+/** Loaded entries are not a project-wide file count. */
+export function fileTreeCountLabel(totalCount: number) {
   return {
-    text: `${totalCount}+`,
-    title: `Partial count — ${searchTruncationMessage({
-      subject: "the workspace scan was",
-      reason: truncation.reason,
-      hint: "expand a folder to load the rest",
-    })}`,
+    text: `${totalCount} loaded`,
+    title:
+      "Files and folders loaded so far. Open a folder to load its contents.",
   }
 }
 
@@ -180,8 +107,8 @@ export function fileTreeCountLabel(
  * Top-level project file tree shown in the agent-mode right sidebar.
  *
  * Responsibilities kept in this component (vs. {@link FileTreeNode}):
- *  - Loading + caching the flat entry list from the backend
- *    (`searchEntriesDetailed`), including whether a cap cut that list short.
+ *  - Loading and caching the root and opened folders independently, with
+ *    continuation pages for directories containing more than 5,000 entries.
  *  - Owning the "creating" / "renaming" / "expanded" state so all descendants
  *    agree on what's in-flight without redux/store indirection.
  *  - Auto-refreshing the tree while the agent is streaming, since a turn may
@@ -210,17 +137,24 @@ export function ProjectFileTree({
   onFileSelect?: (path: string, options?: FileTreeOpenOptions) => void
 }) {
   const confirm = useConfirm()
-  const [entries, setEntries] = useState<TreeEntry[]>([])
-  // `entries` is the *root level* after tree-building; for the header badge
-  // we want the project-wide total (files + folders) so the count doesn't
-  // collapse to "however many top-level entries exist".
-  const [totalCount, setTotalCount] = useState(0)
-  // Set when the backend stopped its walk early: the tree and the count are
-  // then partial, and folders past the cut only fill in on expand.
-  const [truncation, setTruncation] = useState<{
-    truncated: boolean
-    reason?: string
-  }>({ truncated: false })
+  const loader = useMemo(
+    () => new ProjectFileTreeLoader(projectPath),
+    [projectPath]
+  )
+  const {
+    entries,
+    totalCount,
+    loaded,
+    loadError,
+    loadingDirectoryPaths,
+    failedDirectoryPaths,
+    moreDirectoryPaths,
+  } = useSyncExternalStore(
+    loader.subscribe,
+    loader.getSnapshot,
+    loader.getSnapshot
+  )
+  const expandedPathsRef = useRef<Set<string>>(new Set())
   const [internalOpen, setInternalOpen] = useState(() => {
     try {
       const saved = openStorageKey ? localStorage.getItem(openStorageKey) : null
@@ -239,8 +173,6 @@ export function ProjectFileTree({
       /* The workspace remains collapsible when storage is unavailable. */
     }
   }, [isOpen, openStorageKey])
-  const [loaded, setLoaded] = useState(false)
-  const [loadError, setLoadError] = useState(false)
   const activeProjectPathRef = useRef(projectPath)
   activeProjectPathRef.current = projectPath
   const isStreaming = useChatStore(
@@ -256,44 +188,12 @@ export function ProjectFileTree({
   const revealResetTimerRef = useRef<number | null>(null)
   const refreshTree = useCallback(() => {
     if (!projectPath) return
-    setLoadError(false)
-    const requestedProjectPath = projectPath
-    return Promise.all([
-      searchEntriesDetailed(projectPath, ""),
-      completeRootListing
-        ? listDirectoryFs(projectPath, { showHidden: true })
-        : Promise.resolve(null),
-    ])
-      .then(([data, root]) => {
-        if (activeProjectPathRef.current !== requestedProjectPath) return
-        const indexed = new Map(
-          data.entries.map((entry) => [entry.path, entry])
-        )
-        // A capped recursive scan can miss entire root folders. Keep every
-        // root reachable in the editor; expansion loads its children on demand.
-        for (const entry of root?.entries ?? []) {
-          if (entry.name === ".git" || entry.name === "node_modules") continue
-          indexed.set(entry.name, {
-            path: entry.name,
-            name: entry.name,
-            is_dir: entry.isDir,
-          })
-        }
-        setEntries(buildTree([...indexed.values()]))
-        setTotalCount(indexed.size)
-        setTruncation({
-          truncated: data.truncated || Boolean(root?.truncated),
-          reason: data.truncatedReason,
-        })
-        setLoaded(true)
-      })
-      .catch(() => {
-        if (activeProjectPathRef.current === requestedProjectPath) {
-          setLoaded(true)
-          setLoadError(true)
-        }
-      })
-  }, [projectPath, completeRootListing])
+    return loader.refresh(
+      new Set(
+        [...expandedPathsRef.current].filter((path) => path !== projectPath)
+      )
+    )
+  }, [projectPath, loader])
 
   // ── Create / Rename state ──
   const [creating, setCreating] = useState<{
@@ -302,15 +202,7 @@ export function ProjectFileTree({
   } | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
-  const [loadedDirectoryPaths, setLoadedDirectoryPaths] = useState<Set<string>>(
-    new Set()
-  )
-  const [loadingDirectoryPaths, setLoadingDirectoryPaths] = useState<
-    Set<string>
-  >(new Set())
-  const [failedDirectoryPaths, setFailedDirectoryPaths] = useState<Set<string>>(
-    new Set()
-  )
+  expandedPathsRef.current = expandedPaths
   const [revealedPath, setRevealedPath] = useState<string | null>(null)
   const moveInProgress = useRef(false)
   const [moving, setMoving] = useState(false)
@@ -368,39 +260,14 @@ export function ProjectFileTree({
   )
 
   const loadDirectory = useCallback(
-    async (entryPath: string) => {
-      const requestedProjectPath = projectPath
-      setLoadingDirectoryPaths((current) => new Set(current).add(entryPath))
-      setFailedDirectoryPaths((current) => {
-        const next = new Set(current)
-        next.delete(entryPath)
-        return next
-      })
-      try {
-        const listing = await listDirectoryFs(resolveTreeEntryPath(entryPath), {
-          showHidden: true,
-        })
-        if (activeProjectPathRef.current !== requestedProjectPath) return
-        const children = projectDirectoryEntries(projectPath, listing.entries)
-        setEntries((current) =>
-          mergeProjectTreeChildren(current, entryPath, children)
-        )
-        setLoadedDirectoryPaths((current) => new Set(current).add(entryPath))
-      } catch {
-        if (activeProjectPathRef.current === requestedProjectPath) {
-          setFailedDirectoryPaths((current) => new Set(current).add(entryPath))
-        }
-      } finally {
-        if (activeProjectPathRef.current === requestedProjectPath) {
-          setLoadingDirectoryPaths((current) => {
-            const next = new Set(current)
-            next.delete(entryPath)
-            return next
-          })
-        }
-      }
+    (entryPath: string) => loader.load(entryPath),
+    [loader]
+  )
+  const loadMore = useCallback(
+    (entryPath: string) => {
+      void loader.load(entryPath, { more: true })
     },
-    [projectPath, resolveTreeEntryPath]
+    [loader]
   )
 
   const toggleExpanded = useCallback(
@@ -412,15 +279,9 @@ export function ProjectFileTree({
         else next.add(entryPath)
         return next
       })
-      if (
-        isExpanding &&
-        !loadedDirectoryPaths.has(entryPath) &&
-        !loadingDirectoryPaths.has(entryPath)
-      ) {
-        void loadDirectory(entryPath)
-      }
+      if (isExpanding) void loadDirectory(entryPath)
     },
-    [expandedPaths, loadDirectory, loadedDirectoryPaths, loadingDirectoryPaths]
+    [expandedPaths, loadDirectory]
   )
 
   const relativeTreeEntryPath = useCallback(
@@ -433,20 +294,9 @@ export function ProjectFileTree({
       setOpen(true)
       if (!directory) return
       expandPathSet([...editorPathAncestors(directory), directory])
-      if (
-        !loadedDirectoryPaths.has(directory) &&
-        !loadingDirectoryPaths.has(directory)
-      ) {
-        void loadDirectory(directory)
-      }
+      void loadDirectory(directory)
     },
-    [
-      setOpen,
-      expandPathSet,
-      loadedDirectoryPaths,
-      loadingDirectoryPaths,
-      loadDirectory,
-    ]
+    [setOpen, expandPathSet, loadDirectory]
   )
 
   const moveEntry = useCallback(
@@ -487,8 +337,6 @@ export function ProjectFileTree({
               ...editorPathAncestors(move.toRelativePath),
             ])
         )
-        setLoadedDirectoryPaths(new Set())
-        setFailedDirectoryPaths(new Set())
         setOpen(true)
         await refreshTree()
         if (activeProjectPathRef.current !== root) return
@@ -535,6 +383,7 @@ export function ProjectFileTree({
       setCreating(null)
       try {
         await createTreeEntry(parentCwd, trimmed, type)
+        if (activeProjectPathRef.current !== projectPath) return
         if (type === "file") {
           onFileSelect?.(resolveWorkspaceFilePath(parentCwd, trimmed), {
             preview: false,
@@ -542,7 +391,16 @@ export function ProjectFileTree({
         }
         // Make sure the parent folder is expanded so the new item is visible
         setExpandedPaths((prev) => new Set(prev).add(parent))
-        refreshTree()
+        await refreshTree()
+        await loader.load(parent === projectPath ? "" : parent, {
+          refresh: true,
+        })
+        await loader.reveal(
+          toProjectRelativeCopyPath(
+            projectPath,
+            resolveWorkspaceFilePath(parentCwd, trimmed)
+          )
+        )
       } catch (err) {
         console.error("[file-tree] create failed:", err)
         toast.error(`Could not create "${trimmed}"`, {
@@ -550,7 +408,14 @@ export function ProjectFileTree({
         })
       }
     },
-    [creating, refreshTree, onFileSelect, resolveTreeEntryPath]
+    [
+      creating,
+      refreshTree,
+      onFileSelect,
+      resolveTreeEntryPath,
+      loader,
+      projectPath,
+    ]
   )
 
   const startCreate = useCallback(
@@ -580,12 +445,23 @@ export function ProjectFileTree({
       try {
         await moveWorkspacePath(cwd, oldName, trimmed)
         useEditorStore.getState().handlePathMoved(oldAbsPath, newAbsPath)
-        refreshTree()
+        if (activeProjectPathRef.current !== projectPath) return
+        const nextPath = toProjectRelativeCopyPath(projectPath, newAbsPath)
+        setExpandedPaths(
+          (current) =>
+            new Set(
+              [...current].map(
+                (path) => rebaseEditorPath(path, oldPath, nextPath) ?? path
+              )
+            )
+        )
+        await refreshTree()
+        await loader.reveal(nextPath)
       } catch (err) {
         console.error("[file-tree] rename failed:", err)
       }
     },
-    [projectPath, refreshTree, resolveTreeEntryPath]
+    [projectPath, refreshTree, resolveTreeEntryPath, loader]
   )
 
   const handleDelete = useCallback(
@@ -625,24 +501,27 @@ export function ProjectFileTree({
 
   // Initial load
   useEffect(() => {
-    setLoaded(false)
-    setEntries([])
-    setTotalCount(0)
-    setTruncation({ truncated: false })
-    setExpandedPaths(new Set())
-    setLoadedDirectoryPaths(new Set())
-    setLoadingDirectoryPaths(new Set())
-    setFailedDirectoryPaths(new Set())
-    refreshTree()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectPath])
+    const cleared = new Set<string>()
+    expandedPathsRef.current = cleared
+    setExpandedPaths(cleared)
+    if (projectPath) void loader.load("")
+    return loader.cancel
+  }, [projectPath, loader])
+
+  useEffect(() => {
+    if (expandedPathsRef.current !== expandedPaths) return
+    for (const directory of expandedPaths) {
+      if (directory && directory !== projectPath) void loader.load(directory)
+    }
+  }, [expandedPaths, loader, projectPath])
 
   // Keep the active editor's parent folders expanded so the selection is
   // visible whenever the Explorer is open or gets mounted later.
   useEffect(() => {
     if (!selectedFilePath) return
     expandAncestors(selectedFilePath)
-  }, [expandAncestors, selectedFilePath])
+    void loader.reveal(selectedFilePath)
+  }, [expandAncestors, selectedFilePath, loader])
 
   // Poll every 3s while AI is streaming (creating/editing files). Pauses
   // automatically when the window is hidden so a streaming session in a
@@ -652,10 +531,12 @@ export function ProjectFileTree({
   // Refresh once when streaming ends (turn completed)
   const prevStreaming = useRef(false)
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
     if (prevStreaming.current && !isStreaming) {
-      setTimeout(refreshTree, 500)
+      timer = setTimeout(refreshTree, 500)
     }
     prevStreaming.current = isStreaming
+    return () => clearTimeout(timer)
   }, [isStreaming, refreshTree])
 
   // Instant refresh when AI writes files (tool_result hook).
@@ -695,8 +576,11 @@ export function ProjectFileTree({
       if (!target) return
       setOpen(true)
       expandPathSet(target.ancestorPaths)
-      flashRevealedPath(target.relativePath)
-      scrollFileIntoView(target.relativePath)
+      void loader.reveal(target.relativePath).then(() => {
+        if (activeProjectPathRef.current !== projectPath) return
+        flashRevealedPath(target.relativePath)
+        scrollFileIntoView(target.relativePath)
+      })
     }
     window.addEventListener(
       EDITOR_REVEAL_FILE_EVENT,
@@ -709,6 +593,7 @@ export function ProjectFileTree({
       )
   }, [
     activeEditorTab?.filePath,
+    loader,
     expandPathSet,
     flashRevealedPath,
     projectPath,
@@ -723,7 +608,7 @@ export function ProjectFileTree({
       .replace(/[/\\]+$/, "")
       .split(/[/\\]/)
       .pop() || "Project"
-  const countLabel = fileTreeCountLabel(totalCount, truncation)
+  const countLabel = fileTreeCountLabel(totalCount)
 
   return (
     <Collapsible
@@ -888,6 +773,8 @@ export function ProjectFileTree({
                 expandedPaths={expandedPaths}
                 loadingDirectoryPaths={loadingDirectoryPaths}
                 failedDirectoryPaths={failedDirectoryPaths}
+                moreDirectoryPaths={moreDirectoryPaths}
+                onLoadMore={loadMore}
                 toggleExpanded={toggleExpanded}
                 selectedPath={selectedFilePath}
                 revealedPath={revealedPath}
@@ -907,13 +794,19 @@ export function ProjectFileTree({
               />
             ))
           )}
-          <SearchTruncationNotice
-            truncated={truncation.truncated}
-            reason={truncation.reason}
-            subject="Tree"
-            hint="expand a folder to load the rest"
-            className="px-1.5"
-          />
+          {moreDirectoryPaths.has("") && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="my-1 w-full justify-start rounded-md text-xs text-muted-foreground"
+              disabled={loadingDirectoryPaths.has("")}
+              onClick={() => loadMore("")}
+            >
+              {loadingDirectoryPaths.has("")
+                ? "Loading more files…"
+                : "Load more files"}
+            </Button>
+          )}
         </div>
       </CollapsibleContent>
     </Collapsible>

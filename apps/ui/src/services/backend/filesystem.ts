@@ -14,6 +14,7 @@ export interface ListResult {
   parent: string | null
   entries: ListEntry[]
   truncated: boolean
+  nextOffset?: number
 }
 
 export interface SearchHit {
@@ -45,11 +46,11 @@ export interface DrivesResult {
 
 export function listDirectoryFs(
   path: string,
-  opts: { showHidden?: boolean; signal?: AbortSignal } = {},
+  opts: { showHidden?: boolean; offset?: number; signal?: AbortSignal } = {}
 ): Promise<ListResult> {
   return httpInvoke<ListResult>("/filesystem/list", {
     method: "POST",
-    body: { path, showHidden: opts.showHidden ?? false },
+    body: { path, showHidden: opts.showHidden ?? false, offset: opts.offset },
     signal: opts.signal,
   })
 }
@@ -57,7 +58,7 @@ export function listDirectoryFs(
 export function searchTreeFs(
   root: string,
   query: string,
-  opts: { limit?: number; signal?: AbortSignal } = {},
+  opts: { limit?: number; signal?: AbortSignal } = {}
 ): Promise<SearchResult> {
   return httpInvoke<SearchResult>("/filesystem/search", {
     method: "POST",
@@ -66,7 +67,9 @@ export function searchTreeFs(
   })
 }
 
-export function enumerateDrivesFs(opts: { signal?: AbortSignal } = {}): Promise<DrivesResult> {
+export function enumerateDrivesFs(
+  opts: { signal?: AbortSignal } = {}
+): Promise<DrivesResult> {
   return httpInvoke<DrivesResult>("/filesystem/drives", {
     method: "GET",
     signal: opts.signal,

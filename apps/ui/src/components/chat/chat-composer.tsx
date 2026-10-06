@@ -47,7 +47,9 @@ function ComposerInsertPromptSync({ threadId }: { threadId: string | null }) {
   const controller = usePromptInputController()
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ text?: string; threadId?: string | null }>).detail
+      const detail = (
+        e as CustomEvent<{ text?: string; threadId?: string | null }>
+      ).detail
       if (!detail || detail.threadId !== threadId) return
       const text = detail.text
       if (typeof text === "string") controller.textInput.setInput(text)
@@ -166,7 +168,10 @@ export function ChatComposer(props: any) {
     // context so `ComposerDraftSync` can read/write per-thread drafts.
     // One provider per composer instance → isolated state (splitting the
     // view into two columns still gives each its own draft buffer).
-    <PromptInputProvider key={threadId ?? "new-chat"} initialInput={threadId ? useChatStore.getState().getDraft(threadId) : ""}>
+    <PromptInputProvider
+      key={threadId ?? "new-chat"}
+      initialInput={threadId ? useChatStore.getState().getDraft(threadId) : ""}
+    >
       {/* Minimal layout: ONE lighter card (bg-sidebar, #141414) holds the
           context strip, and the input sits recessed inside it in the darker
           body tone (#0F0F0F). That two-tone step is what makes the strip read
@@ -181,68 +186,85 @@ export function ChatComposer(props: any) {
             : "contents"
         )}
       >
-        {minimalChat && <ComposerContextChips threadId={threadId} activatePane={activatePane} />}
+        {minimalChat && (
+          <ComposerContextChips
+            threadId={threadId}
+            activatePane={activatePane}
+          />
+        )}
         <PromptInput
-        imageAttachmentPolicy={projectBehavior.imageAttachmentPolicy}
-        multiple
-        onError={handleAttachmentError}
-        onSubmit={handleSubmit}
-        className={cn(
-          minimalChat
-            ? "w-full [&_[data-slot=input-group]]:rounded-xl [&_[data-slot=input-group]]:border-transparent [&_[data-slot=input-group]]:bg-background [&_[data-slot=input-group]]:shadow-none [&_[data-slot=input-group]]:transition-colors [&_[data-slot=input-group]:focus-within]:border-border/60"
-            : "[&_[data-slot=input-group]]:border-ring/30 [&_[data-slot=input-group]]:ring-4 [&_[data-slot=input-group]]:ring-ring/8 [&_[data-slot=input-group]]:transition-[border-color] [&_[data-slot=input-group]]:duration-100 [&_[data-slot=input-group]:focus-within]:border-ring/50",
-          autonomousMode && autonomousStatus === "working" && "ring-primary/20"
-        )}
-      >
-        <ComposerDraftSync threadId={threadId} isActive={isActive} />
-        <ComposerPromptHistorySync threadId={threadId} />
-        <ComposerInsertPromptSync threadId={threadId} />
-        <ComposerAttachments simple={minimalChat} />
-        <MentionChips threadId={threadId} skills={selectedProvider?.skills ?? []} />
-        {!minimalChat && (
-          <div className="pointer-events-none absolute top-2 right-2 z-10">
-            <div className="pointer-events-auto">
-              <ComposerInlineModelTrigger {...footerProps} />
-            </div>
-          </div>
-        )}
-        <ComposerVoiceTextarea
-          threadId={threadId}
-          placeholder={
-            minimalChat
-              ? "Just get started"
-              : fileContextEnabled
-                ? "Message BetterC0de — / for commands and skills, @ for files"
-                : "Message BetterC0de — / for commands and skills"
-          }
+          imageAttachmentPolicy={projectBehavior.imageAttachmentPolicy}
+          multiple
+          onError={handleAttachmentError}
+          onSubmit={handleSubmit}
           className={cn(
             minimalChat
-              ? "min-h-28 py-3.5 pl-3 text-[13px] leading-5"
-              : "min-h-44 pt-5 pl-4 text-base"
+              ? "w-full [&_[data-slot=input-group]]:rounded-xl [&_[data-slot=input-group]]:border-transparent [&_[data-slot=input-group]]:bg-background [&_[data-slot=input-group]]:shadow-none [&_[data-slot=input-group]]:transition-colors [&_[data-slot=input-group]:focus-within]:border-border/60"
+              : "[&_[data-slot=input-group]]:border-ring/30 [&_[data-slot=input-group]]:ring-4 [&_[data-slot=input-group]]:ring-ring/8 [&_[data-slot=input-group]]:transition-[border-color] [&_[data-slot=input-group]]:duration-100 [&_[data-slot=input-group]:focus-within]:border-ring/50",
+            autonomousMode &&
+              autonomousStatus === "working" &&
+              "ring-primary/20"
           )}
-          onChange={(e) => {
-            checkSlash(e.target.value, e.target.selectionStart)
-            checkMention(e.target.value)
-          }}
-          onClick={(e) => {
-            checkSlash(e.currentTarget.value, e.currentTarget.selectionStart)
-          }}
-          onKeyUp={(e) => {
-            checkSlash(e.currentTarget.value, e.currentTarget.selectionStart)
-          }}
-        />
-        {/* The footer is its own container so the chips can react to the
-            column they live in (design side panel vs. wide agent chat). */}
-        <ComposerOrchestrationBadge threadId={threadId} currentProvider={currentProvider} />
-        <PromptInputFooter
-          className={cn("@container", minimalChat && "gap-0.5 px-2 pt-0 pb-2")}
         >
-          {minimalChat ? (
-            <ComposerMinimalFooter {...footerProps} />
-          ) : (
-            <ComposerFullFooter {...footerProps} />
+          <ComposerDraftSync threadId={threadId} isActive={isActive} />
+          <ComposerPromptHistorySync threadId={threadId} />
+          <ComposerInsertPromptSync threadId={threadId} />
+          <ComposerAttachments simple={minimalChat} />
+          <MentionChips
+            threadId={threadId}
+            skills={selectedProvider?.skills ?? []}
+          />
+          {!minimalChat && (
+            <div className="pointer-events-none absolute top-2 right-2 z-10">
+              <div className="pointer-events-auto">
+                <ComposerInlineModelTrigger {...footerProps} />
+              </div>
+            </div>
           )}
-        </PromptInputFooter>
+          <ComposerVoiceTextarea
+            threadId={threadId}
+            placeholder={
+              minimalChat
+                ? "Just get started"
+                : fileContextEnabled
+                  ? "Message BetterC0de — / for commands and skills, @ for files"
+                  : "Message BetterC0de — / for commands and skills"
+            }
+            className={cn(
+              minimalChat
+                ? "min-h-28 py-3.5 pl-3 text-[13px] leading-5"
+                : "min-h-44 pt-5 pl-4 text-base"
+            )}
+            onChange={(e) => {
+              checkSlash(e.target.value, e.target.selectionStart)
+              checkMention(e.target.value)
+            }}
+            onClick={(e) => {
+              checkSlash(e.currentTarget.value, e.currentTarget.selectionStart)
+            }}
+            onKeyUp={(e) => {
+              checkSlash(e.currentTarget.value, e.currentTarget.selectionStart)
+            }}
+          />
+          {/* The footer is its own container so the chips can react to the
+            column they live in (design side panel vs. wide agent chat). */}
+          <ComposerOrchestrationBadge
+            threadId={threadId}
+            currentProvider={currentProvider}
+            providers={providers}
+          />
+          <PromptInputFooter
+            className={cn(
+              "@container",
+              minimalChat && "gap-0.5 px-2 pt-0 pb-2"
+            )}
+          >
+            {minimalChat ? (
+              <ComposerMinimalFooter {...footerProps} />
+            ) : (
+              <ComposerFullFooter {...footerProps} />
+            )}
+          </PromptInputFooter>
         </PromptInput>
       </div>
     </PromptInputProvider>

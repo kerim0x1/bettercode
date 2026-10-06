@@ -7,6 +7,12 @@ const SEARCH_ABSOLUTE_MAX = 5000
 export const filesystemListSchema = z.object({
   path: z.string().min(1).max(MAX_PATH_LEN),
   showHidden: z.boolean().default(false),
+  offset: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional(),
 })
 export type FilesystemListBody = z.infer<typeof filesystemListSchema>
 

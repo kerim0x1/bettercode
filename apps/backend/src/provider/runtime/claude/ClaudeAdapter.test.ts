@@ -5,8 +5,13 @@ import { describe, expect, it, vi, beforeEach } from "vitest"
 import type { ProviderRuntimeEvent, ThreadId } from "../contracts"
 import {
   ClaudeAdapter,
+  buildClaudeProviderModel,
   buildClaudeModelsFromInitialization,
 } from "./ClaudeAdapter"
+import {
+  modelThinkingOptions,
+  resolvePromptInjectedEffort,
+} from "@betterc0de/schema"
 
 const queryMock = vi.hoisted(() => vi.fn())
 
@@ -94,6 +99,39 @@ function makeFakeClaudeBinary(version = "2.1.111") {
 }
 
 describe("ClaudeAdapter provider metadata", () => {
+  it.each(["claude-opus-4-8", "claude-opus-5-5", "claude-sonnet-5"])(
+    "retains Ultracode for %s before and after live model discovery",
+    (slug) => {
+      const levels = ["low", "medium", "high", "xhigh", "max"]
+      const live = buildClaudeModelsFromInitialization([
+        {
+          value: slug,
+          supportsEffort: true,
+          supportedEffortLevels: levels,
+        },
+      ])[0]
+      for (const model of [buildClaudeProviderModel(slug), live]) {
+        expect(
+          modelThinkingOptions({
+            providerKind: "claude",
+            modelId: slug,
+            capabilities: model.capabilities,
+          })
+        ).toContainEqual({ mode: "ultracode", label: "Ultracode" })
+        expect(
+          resolvePromptInjectedEffort(model.capabilities, "ultracode")
+        ).toBe("ultracode")
+        const effort = model.capabilities?.optionDescriptors?.find(
+          (option) => option.id === "effort"
+        )
+        expect(
+          effort?.type === "select" &&
+            effort.options.filter((option) => option.id === "ultracode")
+        ).toHaveLength(1)
+      }
+      expect(levels).toEqual(["low", "medium", "high", "xhigh", "max"])
+    }
+  )
   it("uses the SDK account's exact model list and Opus 5.5 effort options", () => {
     const models = buildClaudeModelsFromInitialization([
       {
@@ -1868,7 +1906,7 @@ describe("ClaudeAdapter prompt-injected effort", () => {
     queryMock.mockReset()
   })
 
-  it("maps Opus 4.8 xhigh selections to Claude max effort", async () => {
+  it("passes Opus 4.8 xhigh selections to the SDK without promoting to max", async () => {
     queryMock.mockReturnValueOnce(
       makeQuery([{ type: "result", subtype: "success" }])
     )
@@ -1887,33 +1925,39 @@ describe("ClaudeAdapter prompt-injected effort", () => {
     })
 
     const queryArgs = queryMock.mock.calls[0]?.[0]
-    expect(queryArgs?.options?.effort).toBe("max")
+    expect(queryArgs?.options?.effort).toBe("xhigh")
   })
 
-  it("prefixes ultracode prompts when modelSelection carries a prompt-injected effort", async () => {
-    queryMock.mockReturnValueOnce(
-      makeQuery([{ type: "result", subtype: "success" }])
-    )
+  it.each([
+    ["claude-opus-4-8", "xhigh"],
+    ["claude-opus-5-5", "medium"],
+  ])(
+    "prefixes Ultracode for %s while keeping SDK effort at %s",
+    async (modelId, effort) => {
+      queryMock.mockReturnValueOnce(
+        makeQuery([{ type: "result", subtype: "success" }])
+      )
 
-    const adapter = new ClaudeAdapter()
-    await adapter.sendTurn({
-      threadId: "thread-ultra",
-      message: "Investigate this failure",
-      modelId: "claude-opus-4-8",
-      history: [],
-      modelSelection: {
-        instanceId: "claude",
-        model: "claude-opus-4-8",
-        options: [{ id: "effort", value: "ultracode" }],
-      },
-    })
+      const adapter = new ClaudeAdapter()
+      await adapter.sendTurn({
+        threadId: "thread-ultra",
+        message: "Investigate this failure",
+        modelId,
+        history: [],
+        modelSelection: {
+          instanceId: "claude",
+          model: modelId,
+          options: [{ id: "effort", value: "ultracode" }],
+        },
+      })
 
-    // The prompt carries the keyword; the API-side effort falls back to the
-    // ladder's default (xhigh → SDK "max").
-    const queryArgs = queryMock.mock.calls[0]?.[0]
-    expect(queryArgs?.options?.effort).toBe("max")
-    expect(queryArgs?.prompt).toBe("ultracode:\nInvestigate this failure")
-  })
+      // The prompt carries the keyword; the API-side effort falls back to the
+      // ladder's default, independently of the prompt keyword.
+      const queryArgs = queryMock.mock.calls[0]?.[0]
+      expect(queryArgs?.options?.effort).toBe(effort)
+      expect(queryArgs?.prompt).toBe("ultracode:\nInvestigate this failure")
+    }
+  )
 
   it("treats Sonnet ultracode as prompt control while keeping the default SDK effort", async () => {
     queryMock.mockReturnValueOnce(
@@ -1952,8 +1996,32 @@ describe("ClaudeAdapter prompt-injected effort", () => {
     })
 
     const queryArgs = queryMock.mock.calls[0]?.[0]
-    expect(queryArgs?.options?.effort).toBe("max")
+    expect(queryArgs?.options?.effort).toBe("xhigh")
   })
+
+  it.each([true, false])(
+    "respects Haiku thinking=%s in the SDK settings",
+    async (thinking) => {
+      queryMock.mockReturnValueOnce(
+        makeQuery([{ type: "result", subtype: "success" }])
+      )
+      const adapter = new ClaudeAdapter()
+      await adapter.sendTurn({
+        threadId: "thread-haiku-thinking",
+        message: "Hello",
+        modelId: "claude-haiku-4-5",
+        history: [],
+        modelSelection: {
+          instanceId: "claude",
+          model: "claude-haiku-4-5",
+          options: [{ id: "thinking", value: thinking }],
+        },
+      })
+      expect(
+        queryMock.mock.calls[0]?.[0]?.options?.settings?.alwaysThinkingEnabled
+      ).toBe(thinking)
+    }
+  )
 
   it("does not duplicate an existing ultracode keyword", async () => {
     queryMock.mockReturnValueOnce(

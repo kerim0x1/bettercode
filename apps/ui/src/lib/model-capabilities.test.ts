@@ -508,7 +508,7 @@ describe("model capabilities", () => {
     ).toBe("Low")
   })
 
-  it("maps GPT xHigh style selections to Claude-native max effort", () => {
+  it("preserves Claude's advertised xhigh separately from max", () => {
     const provider: UiProvider = {
       id: "claude",
       name: "Claude CLI",
@@ -543,13 +543,13 @@ describe("model capabilities", () => {
 
     expect(
       coerceThinkingModeForModel(provider, "claude-opus-4-7", "xHigh")
-    ).toBe("max")
+    ).toBe("xHigh")
     expect(
       coerceThinkingModeForModel(provider, "claude-opus-4-7", "Extra High")
-    ).toBe("max")
+    ).toBe("xHigh")
     expect(
       coerceThinkingModeForModel(provider, "claude-opus-4-7", "ExtraHigh")
-    ).toBe("max")
+    ).toBe("xHigh")
     expect(
       coerceThinkingModeForModel(provider, "claude-opus-4-7", "Ultra Think")
     ).toBe("ultrathink")
@@ -558,7 +558,7 @@ describe("model capabilities", () => {
     ).toBe("Low")
   })
 
-  it("maps GPT xHigh to Claude max before runtime descriptors load", () => {
+  it("preserves selectable Claude xhigh before runtime descriptors load", () => {
     const provider: UiProvider = {
       id: "claude",
       name: "Claude CLI",
@@ -585,11 +585,11 @@ describe("model capabilities", () => {
     ])
     expect(
       coerceThinkingModeForModel(provider, "claude-opus-4-7", "xHigh")
-    ).toBe("max")
+    ).toBe("xHigh")
     expect(getThinkingModeLabel(provider, "claude-opus-4-7", "max")).toBe("Max")
   })
 
-  it("maps dotted Opus 4.7 aliases to Claude max and ultrathink before descriptors load", () => {
+  it("preserves xhigh on dotted Opus aliases and falls back only for absent levels", () => {
     const provider: UiProvider = {
       id: "claude",
       name: "Claude CLI",
@@ -615,7 +615,7 @@ describe("model capabilities", () => {
       { mode: "ultracode", label: "Ultracode" },
     ])
     expect(coerceThinkingModeForModel(provider, "opus-4.7", "ExtraHigh")).toBe(
-      "max"
+      "xHigh"
     )
     // Ultrathink left the menu; a stored selection steps down to Max.
     expect(

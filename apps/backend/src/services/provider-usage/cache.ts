@@ -113,8 +113,11 @@ export async function scanWithCache<T>(options: {
     options.dataDir &&
     (scanned > 0 || Object.keys(previous).length !== Object.keys(next).length)
   ) {
-    cache.scopes[options.scope] = next
-    writeCacheFile(options.dataDir, cache)
+    // Other providers may have committed while this scan awaited file reads.
+    // Merge into the latest snapshot so concurrent scans preserve each other.
+    const latest = readCacheFile(options.dataDir)
+    latest.scopes[options.scope] = next
+    writeCacheFile(options.dataDir, latest)
   }
   return { values, scanned, reused }
 }

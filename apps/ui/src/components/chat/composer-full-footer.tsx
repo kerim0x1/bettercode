@@ -16,7 +16,6 @@ import { ComposerOrchestrationMenu } from "./composer-orchestration"
 import {
   SimpleDropdown,
   SimpleDropdownSubItem,
-  SimpleDropdownSeparator,
 } from "@/components/ui/simple-dropdown"
 import { ProviderIcon } from "@/components/provider-icon"
 import { SimpleContextIndicator } from "@/components/chat/simple-context-indicator"
@@ -120,7 +119,9 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
     setAutonomousDialogOpen,
   } = props
   const promptInput = usePromptInputController()
-  const planFollowUpActive = hasPendingPlan && !/^\/goal(?:\s|$)/i.test(promptInput.textInput.value.trim())
+  const planFollowUpActive =
+    hasPendingPlan &&
+    !/^\/goal(?:\s|$)/i.test(promptInput.textInput.value.trim())
   const planFollowUpLabel =
     planFollowUpActive && promptInput.textInput.value.trim().length > 0
       ? "Refine"
@@ -210,7 +211,11 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
         <SimpleDropdown
           align="start"
           trigger={
-            <PromptInputButton tooltip="Add" aria-label="Add" className="relative">
+            <PromptInputButton
+              tooltip="Add"
+              aria-label="Add"
+              className="relative"
+            >
               <PlusIcon className="size-3.5" />
               {promptInput.attachments.files.length > 0 && (
                 <span className="absolute -top-1 -right-1 flex size-3.5 items-center justify-center rounded-full bg-primary text-[8px] font-semibold text-primary-foreground tabular-nums">
@@ -220,11 +225,11 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
             </PromptInputButton>
           }
         >
-          <SimpleDropdownSubItem onClick={() => promptInput.attachments.openFileDialog()}>
+          <SimpleDropdownSubItem
+            onClick={() => promptInput.attachments.openFileDialog()}
+          >
             <PaperclipIcon className="size-3.5" /> Files and folders
           </SimpleDropdownSubItem>
-          <SimpleDropdownSeparator />
-          <ComposerOrchestrationMenu {...props} />
         </SimpleDropdown>
 
         {/* Permissions moved out of this "More options" menu and into the
@@ -345,15 +350,15 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
             Without it, Shift+Tab would put the thread into a state with no
             sign it happened and no way back except the same hidden shortcut.
             Clicking returns to Agent. */}
+        <ComposerOrchestrationMenu {...props} />
+
         {/* Permissions sits beside Mode: the two are chosen together — which
             mode the agent runs in, and how far it may act without asking. */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <PromptInputButton
               tooltip="Permissions"
-              className={cn(
-                permissionLevel === "bypass" && "text-destructive"
-              )}
+              className={cn(permissionLevel === "bypass" && "text-destructive")}
             >
               <HugeiconsIcon
                 icon={ShieldKeyIcon}

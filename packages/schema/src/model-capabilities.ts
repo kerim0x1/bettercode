@@ -26,20 +26,43 @@ const EFFORT_ORDER: Readonly<Record<string, number>> = {
   ultracode: 9,
 }
 
+/** Runtime providers use these ids for the same reasoning-level selection. */
+export function modelReasoningDescriptor(
+  capabilities?: ModelCapabilities | null
+) {
+  const descriptor = capabilities?.optionDescriptors?.find(
+    (option) =>
+      option.type === "select" &&
+      option.options.length > 0 &&
+      ["reasoningEffort", "effort", "reasoning"].includes(option.id)
+  )
+  return descriptor?.type === "select" ? descriptor : undefined
+}
+
 /** Shared by desktop and mobile; live descriptors take precedence over fallbacks. */
 export function modelThinkingOptions(
   input: ModelCapabilityInput
 ): ReadonlyArray<ModelThinkingOption> {
-  const descriptor = input.capabilities?.optionDescriptors?.find(
-    (option) =>
-      option.type === "select" &&
-      (option.id === "reasoningEffort" || option.id === "effort")
-  )
-  if (descriptor?.type !== "select" || descriptor.options.length === 0)
+  const descriptor = modelReasoningDescriptor(input.capabilities)
+  if (!descriptor?.options.length) {
+    if (
+      input.capabilities?.optionDescriptors?.some(
+        (option) => option.id === "thinking" && option.type === "boolean"
+      )
+    ) {
+      // Keep High as the persisted enabled value for existing preferences.
+      return [
+        { mode: null, label: "Off" },
+        { mode: "High", label: "On" },
+      ]
+    }
     return getFallbackThinkingOptions(input)
+  }
   return [
     ...(input.modelId === "claude-opus-5-5" ||
-    descriptor.options.some((option) => option.id === "none")
+    descriptor.options.some(
+      (option) => normalizeThinkingModeValue(option.id) === "none"
+    )
       ? []
       : [{ mode: null, label: "Off" }]),
     ...[...descriptor.options]

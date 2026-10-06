@@ -1,13 +1,10 @@
 import { copyText } from "@/lib/clipboard"
 import { useState } from "react"
-import {
-  ChevronRightIcon,
-  PencilIcon,
-  Trash2Icon,
-} from "lucide-react"
+import { ChevronRightIcon, PencilIcon, Trash2Icon } from "lucide-react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { FileAddIcon, FolderAddIcon } from "@hugeicons/core-free-icons"
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 import type { FileTreeDragState } from "@/hooks/use-file-tree-drag-drop"
 import { getFileIconUrl, getFolderIconUrl } from "@/lib/file-icons"
 import { InlineCreateInput } from "@/components/file-tree/inline-create-input"
@@ -46,6 +43,8 @@ export function FileTreeNode({
   expandedPaths,
   loadingDirectoryPaths,
   failedDirectoryPaths,
+  moreDirectoryPaths,
+  onLoadMore,
   toggleExpanded,
   selectedPath,
   revealedPath,
@@ -68,6 +67,8 @@ export function FileTreeNode({
   expandedPaths: Set<string>
   loadingDirectoryPaths: Set<string>
   failedDirectoryPaths: Set<string>
+  moreDirectoryPaths?: ReadonlySet<string>
+  onLoadMore?: (path: string) => void
   toggleExpanded: (path: string) => void
   selectedPath?: string
   revealedPath?: string | null
@@ -195,7 +196,10 @@ export function FileTreeNode({
           "group/row relative flex min-h-7 cursor-pointer items-center gap-1.5 rounded px-1 py-px transition-[background-color,box-shadow,color]",
           isSelected ? "bg-muted text-foreground" : "hover:bg-muted/50",
           dragState?.sourcePath === item.path && "opacity-50",
-          isFolder && !dragState?.insertion && dragState?.targetDirectory === item.path && "bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring",
+          isFolder &&
+            !dragState?.insertion &&
+            dragState?.targetDirectory === item.path &&
+            "bg-sidebar-accent ring-1 ring-sidebar-ring ring-inset",
           isRevealed &&
             "bg-sidebar-accent text-sidebar-foreground shadow-[inset_2px_0_0_var(--sidebar-primary)] ring-1 ring-sidebar-ring/40"
         )}
@@ -205,7 +209,13 @@ export function FileTreeNode({
         onContextMenu={handleContextMenu}
         data-betterc0de-file-tree-path={item.path}
         data-betterc0de-file-tree-kind={item.type}
-        data-file-tree-drop-target={isFolder && !dragState?.insertion && dragState?.targetDirectory === item.path ? "true" : undefined}
+        data-file-tree-drop-target={
+          isFolder &&
+          !dragState?.insertion &&
+          dragState?.targetDirectory === item.path
+            ? "true"
+            : undefined
+        }
         draggable={!isRenaming && !creating}
         data-betterc0de-file-tree-selected={isSelected ? "true" : undefined}
         data-betterc0de-file-tree-revealed={isRevealed ? "true" : undefined}
@@ -281,7 +291,12 @@ export function FileTreeNode({
             <span className="flex-1 truncate text-xs leading-5 2xl:text-[13px]">
               {item.name}
             </span>
-            <div className={cn("flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100", dragState?.sourcePath && "pointer-events-none invisible")}>
+            <div
+              className={cn(
+                "flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100",
+                dragState?.sourcePath && "pointer-events-none invisible"
+              )}
+            >
               {isFolder && (
                 <>
                   <button
@@ -294,7 +309,12 @@ export function FileTreeNode({
                       onStartCreate(item.path, "file")
                     }}
                   >
-                    <HugeiconsIcon icon={FileAddIcon} aria-hidden="true" className="size-3.5" strokeWidth={2} />
+                    <HugeiconsIcon
+                      icon={FileAddIcon}
+                      aria-hidden="true"
+                      className="size-3.5"
+                      strokeWidth={2}
+                    />
                   </button>
                   <button
                     type="button"
@@ -306,7 +326,12 @@ export function FileTreeNode({
                       onStartCreate(item.path, "folder")
                     }}
                   >
-                    <HugeiconsIcon icon={FolderAddIcon} aria-hidden="true" className="size-3.5" strokeWidth={2} />
+                    <HugeiconsIcon
+                      icon={FolderAddIcon}
+                      aria-hidden="true"
+                      className="size-3.5"
+                      strokeWidth={2}
+                    />
                   </button>
                 </>
               )}
@@ -376,6 +401,8 @@ export function FileTreeNode({
               expandedPaths={expandedPaths}
               loadingDirectoryPaths={loadingDirectoryPaths}
               failedDirectoryPaths={failedDirectoryPaths}
+              moreDirectoryPaths={moreDirectoryPaths}
+              onLoadMore={onLoadMore}
               toggleExpanded={toggleExpanded}
               selectedPath={selectedPath}
               revealedPath={revealedPath}
@@ -394,6 +421,21 @@ export function FileTreeNode({
               relativeEntryPath={relativeEntryPath}
             />
           ))}
+          {moreDirectoryPaths?.has(item.path) && onLoadMore && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="my-1 w-full justify-start rounded-md text-[11px] text-muted-foreground"
+              style={{ paddingLeft: indentPx + 28 }}
+              disabled={loadingDirectoryPaths.has(item.path)}
+              onClick={() => onLoadMore(item.path)}
+              aria-label={`Load more files in ${item.name}`}
+            >
+              {loadingDirectoryPaths.has(item.path)
+                ? "Loading more files…"
+                : "Load more files"}
+            </Button>
+          )}
         </div>
       )}
     </div>

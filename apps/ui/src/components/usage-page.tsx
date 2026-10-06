@@ -1,23 +1,54 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   ActivityIcon,
+  ArrowDownToLineIcon,
   ArrowLeftIcon,
+  ArrowUpFromLineIcon,
+  BadgeCheckIcon,
+  BookOpenIcon,
+  BoxesIcon,
+  BrainIcon,
+  CalendarDaysIcon,
   CheckIcon,
   ChevronDownIcon,
+  CoinsIcon,
   CopyIcon,
+  DatabaseBackupIcon,
+  DatabaseIcon,
+  DatabaseZapIcon,
+  FileTextIcon,
+  FlameIcon,
+  FolderCodeIcon,
+  GaugeIcon,
+  HardDriveIcon,
+  HistoryIcon,
+  InfoIcon,
+  LayersIcon,
   LoaderCircleIcon,
+  MessagesSquareIcon,
+  PuzzleIcon,
+  ReceiptTextIcon,
   RefreshCwIcon,
+  TimerIcon,
+  TrendingUpIcon,
+  TrophyIcon,
+  WorkflowIcon,
+  ZapIcon,
+  type LucideIcon,
 } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import {
   SimpleDropdown,
   SimpleDropdownItem,
 } from "@/components/ui/simple-dropdown"
+import { ProviderIcon } from "@/components/provider-icon"
+import { builtinProviders } from "@/lib/builtin-providers"
+import { useUsageStore } from "@/lib/usage-store"
 import {
-  loadProviderUsage,
-  type ProviderUsageReport,
   type UsageEntry,
   type UsagePricing,
   type UsageProviderId,
+  type UsageLimit,
 } from "@/services/backend"
 import { cn } from "@/lib/utils"
 
@@ -29,7 +60,31 @@ const RANGES: Array<{ id: ActivityRange; label: string }> = [
   { id: "cumulative", label: "Cumulative" },
 ]
 
-const PROVIDER_ORDER: UsageProviderId[] = ["claude", "codex", "grok"]
+const USAGE_PROVIDERS = ["claude", "codex"].map(
+  (id) => builtinProviders.find((item) => item.id === id)!
+)
+const TOKEN_ICONS: Record<string, LucideIcon> = {
+  input: ArrowDownToLineIcon,
+  output: ArrowUpFromLineIcon,
+  "cache-read": DatabaseZapIcon,
+  "cache-write": DatabaseBackupIcon,
+}
+const INSIGHT_ICONS: Record<string, LucideIcon> = {
+  "fast-mode": ZapIcon,
+  effort: BrainIcon,
+  "skills-distinct": BookOpenIcon,
+  "skills-total": WorkflowIcon,
+  chats: MessagesSquareIcon,
+  average: GaugeIcon,
+  models: BoxesIcon,
+  plan: BadgeCheckIcon,
+}
+const LIST_ICONS: Record<string, LucideIcon> = {
+  plugins: PuzzleIcon,
+  skills: BookOpenIcon,
+  projects: FolderCodeIcon,
+}
+const DETAIL_ICON = "size-3.5 shrink-0 text-muted-foreground"
 const WEEKS = 53
 const DAYS_PER_WEEK = 7
 const DAY_MS = 86_400_000
@@ -42,6 +97,18 @@ const DAY_MS = 86_400_000
 const ENTER =
   "motion-safe:animate-in motion-safe:fill-mode-both motion-safe:duration-300 motion-safe:fade-in motion-safe:slide-in-from-bottom-1"
 const enterDelay = (index: number) => ({ animationDelay: `${index * 60}ms` })
+
+function Skeleton({ className }: { className: string }) {
+  return (
+    <div
+      aria-hidden="true"
+      className={cn(
+        "rounded-md bg-foreground/[0.06] motion-safe:animate-pulse",
+        className
+      )}
+    />
+  )
+}
 
 function formatCompact(value: number): string {
   if (!Number.isFinite(value) || value === 0) return "0"
@@ -142,13 +209,6 @@ function weekStart(timestamp: number): number {
   return date.getTime()
 }
 
-const STATUS_DOT: Record<string, string> = {
-  ready: "bg-emerald-400",
-  partial: "bg-amber-400",
-  unavailable: "bg-muted-foreground/40",
-  error: "bg-red-400",
-}
-
 /** Rows run Monday to Sunday; only alternate rows are labelled. */
 const WEEKDAYS = ["Mon", "", "Wed", "", "Fri", "", ""]
 
@@ -202,60 +262,33 @@ function unitFor(metric: "tokens" | "sessions", amount: number): string {
 
 const HEATMAP_LEVELS = [
   "bg-foreground/[0.05]",
-  "bg-blue-500/25",
-  "bg-blue-500/45",
-  "bg-blue-500/70",
-  "bg-blue-500",
+  "bg-primary/25",
+  "bg-primary/45",
+  "bg-primary/70",
+  "bg-primary",
 ]
 
 export function UsagePage({ onClose }: { onClose: () => void }) {
-  const [reports, setReports] = useState<ProviderUsageReport[]>([])
-  const [provider, setProvider] = useState<UsageProviderId | null>(null)
-  const [range, setRange] = useState<ActivityRange>("daily")
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { reports, loading, error, load } = useUsageStore()
+  const [provider, setProvider] = useState<UsageProviderId>("claude")
   const [menuOpen, setMenuOpen] = useState(false)
+  const [range, setRange] = useState<ActivityRange>("daily")
   const [hovered, setHovered] = useState<{
     date: string
     amount: number
   } | null>(null)
 
-  const load = useCallback((refresh: boolean) => {
-    setLoading(true)
-    loadProviderUsage({ refresh })
-      .then((next) => {
-        setReports(next)
-        setError(null)
-        setProvider((current) => {
-          if (current && next.some((item) => item.provider === current)) {
-            return current
-          }
-          const ready = next.find((item) => item.status === "ready")
-          return ready?.provider ?? next.at(0)?.provider ?? null
-        })
-      })
-      .catch(() => setError("The provider usage reports could not be read."))
-      .finally(() => setLoading(false))
-  }, [])
-
-  useEffect(() => load(false), [load])
+  useEffect(() => {
+    void load()
+  }, [load])
 
   const report = useMemo(
     () => reports.find((item) => item.provider === provider) ?? null,
     [provider, reports]
   )
-  const ordered = useMemo(
-    () =>
-      [...reports].sort(
-        (a, b) =>
-          PROVIDER_ORDER.indexOf(a.provider) -
-          PROVIDER_ORDER.indexOf(b.provider)
-      ),
-    [reports]
-  )
-
-  // A provider that records no tokens (Grok today) still records chats, so
-  // the chart shows those rather than a year of empty cells.
+  const selectedProvider = USAGE_PROVIDERS.find((item) => item.id === provider)!
+  const providerLabel = provider === "claude" ? "Claude Code" : "Codex"
+  // A store may record chats before its first token count is available.
   const hasTokens = (report?.summary.totalTokens ?? 0) > 0
   const metric: "tokens" | "sessions" =
     report && !hasTokens && report.summary.sessions > 0 ? "sessions" : "tokens"
@@ -355,13 +388,16 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
   const tiles = [
     {
       id: "tokens",
+      icon: LayersIcon,
       value: tokenValue(summary?.totalTokens ?? 0),
       label: "Total tokens",
+      hint: summary ? `${summary.sessions.toLocaleString()} chats` : undefined,
       title:
         "Every token this CLI has recorded, including cache reads and writes",
     },
     {
       id: "peak",
+      icon: TrendingUpIcon,
       value: tokenValue(summary?.peakDayTokens ?? 0),
       label: "Peak day",
       hint:
@@ -372,21 +408,30 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
     },
     {
       id: "longest",
+      icon: TimerIcon,
       value: summary ? formatDuration(summary.longestSessionMs) : "—",
       label: "Longest chat",
+      hint: "Active time",
       title: "Longest single chat measured as working time, not wall clock",
     },
     {
       id: "current-streak",
+      icon: FlameIcon,
       value: summary ? `${summary.currentStreakDays} days` : "—",
       label: "Current streak",
+      hint:
+        summary?.currentStreakDays === 0
+          ? "No activity today"
+          : "Consecutive days",
       title:
         "Consecutive days with activity, counting yesterday while today is still quiet",
     },
     {
       id: "longest-streak",
+      icon: TrophyIcon,
       value: summary ? `${summary.longestStreakDays} days` : "—",
       label: "Longest streak",
+      hint: "Personal best",
       title: "Longest run of consecutive days with activity",
     },
   ]
@@ -409,47 +454,46 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
 
   let section = 0
   return (
-    <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+    <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background text-foreground">
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-border/40 bg-background px-3">
         <div className="flex items-center gap-2.5">
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onClick={onClose}
             aria-label="Back to chat"
             className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-sidebar-accent hover:text-foreground active:scale-[0.96]"
           >
             <ArrowLeftIcon className="size-3.5" strokeWidth={1.5} />
-          </button>
+          </Button>
           <div className="flex items-center gap-2">
             <ActivityIcon
               className="size-3.5 text-muted-foreground"
               strokeWidth={1.5}
             />
-            <span className="text-[12px] font-medium">Usage</span>
+            <h1 className="text-[12px] font-medium">Usage</h1>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => load(true)}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => void load(true)}
           disabled={loading}
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors duration-150 hover:bg-sidebar-accent hover:text-foreground active:scale-[0.96] disabled:opacity-50"
         >
           <RefreshCwIcon
-            className={cn("size-3.5", loading && "animate-spin")}
+            className={cn("size-3.5", loading && "motion-safe:animate-spin")}
             strokeWidth={1.5}
           />
-          Refresh
-        </button>
+          {loading ? "Updating…" : "Refresh"}
+        </Button>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-9 sm:px-10">
-        <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-3">
-          <div
-            style={enterDelay(section++)}
-            className={cn(
-              ENTER,
-              "flex flex-wrap items-center justify-between gap-3 px-0.5"
-            )}
+        <div className="@container/usage mx-auto flex w-full max-w-[1040px] flex-col gap-3">
+          <section
+            className="flex flex-wrap items-center justify-between gap-3 px-0.5"
+            aria-label="Usage overview"
           >
             <SimpleDropdown
               open={menuOpen}
@@ -458,86 +502,103 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
               side="bottom"
               className="min-w-[240px]"
               trigger={
-                <button
-                  type="button"
-                  aria-label="Select provider"
-                  className="flex items-center gap-2.5 rounded-xl border border-border/50 bg-foreground/[0.02] px-3.5 py-2.5 text-[13px] transition-colors duration-150 hover:bg-foreground/[0.05] active:scale-[0.96]"
+                <Button
+                  variant="ghost"
+                  aria-label="Select usage provider"
+                  aria-expanded={menuOpen}
+                  className="h-auto gap-2.5 rounded-xl border border-border/50 bg-foreground/[0.02] px-3.5 py-2.5 text-[13px] hover:bg-foreground/[0.05] motion-reduce:transition-none"
                 >
-                  <span
-                    className={cn(
-                      "size-2 rounded-full",
-                      STATUS_DOT[report?.status ?? "unavailable"]
-                    )}
+                  <ProviderIcon
+                    provider={{ ...selectedProvider, name: providerLabel }}
+                    className="size-4 shrink-0"
                   />
-                  <span className="font-medium">
-                    {report?.label ?? "No provider"}
-                  </span>
+                  <span className="font-medium">{providerLabel}</span>
                   {report?.version && (
-                    <span className="text-[11px] text-muted-foreground">
+                    <span className="text-[11px] font-normal text-muted-foreground">
                       v{report.version}
                     </span>
                   )}
                   <ChevronDownIcon
-                    className="size-3.5 text-muted-foreground/60"
+                    className="size-3.5 text-muted-foreground"
                     strokeWidth={1.5}
                   />
-                </button>
+                </Button>
               }
             >
-              {ordered.map((item) => (
-                <SimpleDropdownItem
-                  key={item.provider}
-                  onClick={() => setProvider(item.provider)}
-                >
-                  <span
-                    className={cn(
-                      "size-2 shrink-0 rounded-full",
-                      STATUS_DOT[item.status]
-                    )}
-                  />
-                  <span className="flex-1">{item.label}</span>
-                  <span className="text-[11px] text-muted-foreground tabular-nums">
-                    {item.status === "ready"
-                      ? formatCompact(item.summary.totalTokens)
-                      : item.status === "partial"
-                        ? "No tokens"
-                        : item.status === "error"
-                          ? "Error"
-                          : "Not installed"}
-                  </span>
-                  {item.provider === provider && (
-                    <CheckIcon
-                      className="size-3.5 text-primary"
-                      strokeWidth={2}
+              {USAGE_PROVIDERS.map((item) => {
+                const usage = reports.find(
+                  (entry) => entry.provider === item.id
+                )
+                const label = item.id === "claude" ? "Claude Code" : "Codex"
+                return (
+                  <SimpleDropdownItem
+                    key={item.id}
+                    active={provider === item.id}
+                    aria-pressed={provider === item.id}
+                    onClick={() => {
+                      setProvider(item.id as UsageProviderId)
+                      setHovered(null)
+                    }}
+                    className="min-h-9 gap-2.5 px-2.5 focus-visible:outline focus-visible:outline-ring motion-reduce:transition-none"
+                  >
+                    <ProviderIcon
+                      provider={{ ...item, name: label }}
+                      className="size-4 shrink-0"
                     />
-                  )}
-                </SimpleDropdownItem>
-              ))}
+                    <span className="flex-1">{label}</span>
+                    <span className="text-[10px] text-muted-foreground tabular-nums">
+                      {usage?.status === "unavailable"
+                        ? "Not installed"
+                        : usage?.status === "error"
+                          ? "Unavailable"
+                          : usage
+                            ? `${formatCompact(usage.summary.totalTokens)} tokens`
+                            : loading
+                              ? "Reading…"
+                              : "No report"}
+                    </span>
+                    <span className="flex size-3.5 items-center justify-center">
+                      {provider === item.id && (
+                        <CheckIcon className="size-3.5" strokeWidth={2} />
+                      )}
+                    </span>
+                  </SimpleDropdownItem>
+                )
+              })}
             </SimpleDropdown>
-
-            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
               {report?.plan && (
                 <span className="rounded-full border border-border/50 px-2.5 py-1 text-[10px] font-medium text-foreground/80">
                   {report.plan}
                 </span>
               )}
-              <span className="truncate">
-                {report ? report.source : "Reading provider stores…"}
+              <span role="status">
+                {loading
+                  ? report
+                    ? "Updating local usage…"
+                    : "Reading local usage…"
+                  : report
+                    ? `Updated ${formatAge(report.fetchedAt)} · All time`
+                    : "Local usage"}
               </span>
-              {report && (
-                <span className="shrink-0 text-muted-foreground/60">
-                  · {formatAge(report.fetchedAt)}
-                </span>
-              )}
             </div>
-          </div>
+          </section>
+
+          {error && (
+            <p
+              role="alert"
+              className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-xs text-foreground"
+            >
+              {error}
+            </p>
+          )}
 
           {report?.error && (
             <div
               style={enterDelay(section++)}
               className={cn(
                 ENTER,
-                "rounded-2xl border border-amber-400/25 bg-amber-400/[0.06] px-5 py-4 text-[12px] text-amber-200/90"
+                "rounded-xl border border-warning/30 bg-warning/5 px-5 py-4 text-xs text-foreground"
               )}
             >
               {report.error}
@@ -545,46 +606,58 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
           )}
 
           <section
-            style={enterDelay(section++)}
-            className={cn(ENTER, "grid grid-cols-2 gap-2.5 sm:grid-cols-5")}
+            aria-label="Lifetime statistics"
+            aria-busy={!report && loading}
+            className="grid grid-cols-2 gap-2.5 @[760px]/usage:grid-cols-5"
           >
             {tiles.map((tile) => (
               <div
                 key={tile.id}
                 title={tile.title}
-                className="rounded-2xl border border-border/40 bg-foreground/[0.02] px-4 py-5 text-center"
+                className="min-w-0 rounded-2xl border border-border/40 bg-foreground/[0.02] p-4"
               >
-                <p className="text-[27px] leading-none font-medium tracking-[-0.035em] tabular-nums">
-                  {tile.value}
-                </p>
-                <p className="mt-2.5 truncate text-[11px] text-muted-foreground">
+                <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <tile.icon
+                    aria-hidden="true"
+                    className={DETAIL_ICON}
+                    strokeWidth={1.5}
+                  />
                   {tile.label}
                 </p>
-                <p className="mt-1 h-3 truncate text-[10px] text-muted-foreground/60">
-                  {tile.hint ?? ""}
+                {!report && loading ? (
+                  <Skeleton className="mt-4 h-7 w-20" />
+                ) : (
+                  <p className="mt-4 text-[27px] leading-none font-medium tracking-[-0.035em] tabular-nums">
+                    {tile.value}
+                  </p>
+                )}
+                <p className="mt-2 text-[10px] text-muted-foreground">
+                  {tile.hint ??
+                    (tile.id === "peak"
+                      ? "Highest daily usage"
+                      : "All recorded activity")}
                 </p>
               </div>
             ))}
           </section>
 
           {!report && (
-            <div
-              style={enterDelay(section++)}
-              className={cn(
-                ENTER,
-                "flex items-center justify-center gap-2 rounded-2xl border border-border/40 bg-foreground/[0.02] px-5 py-14 text-[12px] text-muted-foreground"
-              )}
+            <section
+              aria-label="Loading usage details"
+              className="rounded-2xl border border-border/40 bg-foreground/[0.02] p-5"
             >
+              <p role="status" className="text-xs text-muted-foreground">
+                {loading
+                  ? "Reading your local activity. Large histories may take a moment on the first visit."
+                  : "No provider usage is available."}
+              </p>
               {loading && (
-                <LoaderCircleIcon
-                  className="size-3.5 animate-spin"
-                  strokeWidth={2}
-                />
+                <div className="mt-5 grid gap-6 sm:grid-cols-2">
+                  <Skeleton className="h-32 rounded-lg" />
+                  <Skeleton className="h-32 rounded-lg" />
+                </div>
               )}
-              {loading
-                ? "Reading the provider CLI stores…"
-                : "No provider usage is available."}
-            </div>
+            </section>
           )}
 
           {report && report.status === "unavailable" && (
@@ -608,105 +681,97 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
 
           {report && report.limits.length > 0 && (
             <section
-              style={enterDelay(section++)}
-              className={cn(
-                ENTER,
-                "rounded-2xl border border-border/40 bg-foreground/[0.02] p-5"
-              )}
+              aria-label="Current limits"
+              className="rounded-2xl border border-border/40 bg-foreground/[0.02] p-5"
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <h2 className="text-[13px] font-semibold">Current limits</h2>
-                {/* Served from a stored copy so the page does not wait on the
-                    CLI; say so once the copy is no longer fresh. */}
-                {report.limitsObservedAt &&
-                  Date.now() - Date.parse(report.limitsObservedAt) >
-                    120_000 && (
-                    <span className="text-[10px] text-muted-foreground/70">
-                      read {formatAge(report.limitsObservedAt)}
-                    </span>
-                  )}
+                {report.limitsObservedAt && (
+                  <span className="text-[10px] text-muted-foreground">
+                    Checked {formatAge(report.limitsObservedAt)}
+                  </span>
+                )}
               </div>
-              {/* Providers report one to three windows; each gets its own
-                  surface so the label, the number and the bar read as one
-                  unit instead of three columns the eye has to pair up. */}
-              <div className="mt-4 grid [grid-template-columns:repeat(auto-fit,minmax(240px,1fr))] gap-3">
+              <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))] gap-3">
                 {report.limits.map((limit) => (
-                  <div
-                    key={limit.id}
-                    className="rounded-xl bg-foreground/[0.03] p-4"
-                  >
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-[22px] leading-none font-medium tracking-[-0.03em] tabular-nums">
-                        {limit.usedPercent}%
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-                        {limit.label}
-                      </span>
-                    </div>
-                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-foreground/[0.08]">
-                      <span
-                        className={cn(
-                          "block h-full rounded-full transition-[width] duration-500 ease-out",
-                          limit.usedPercent >= 90
-                            ? "bg-red-400"
-                            : limit.usedPercent >= 70
-                              ? "bg-amber-400"
-                              : "bg-blue-500"
-                        )}
-                        style={{
-                          width: `${Math.min(100, Math.max(0, limit.usedPercent))}%`,
-                        }}
-                      />
-                    </div>
-                    {formatReset(limit) && (
-                      <p className="mt-2.5 truncate text-[10px] text-muted-foreground/70">
-                        {formatReset(limit)}
-                      </p>
-                    )}
-                  </div>
+                  <UsageLimitRow key={limit.id} limit={limit} />
                 ))}
               </div>
-
               {limitGroups.groups.length > 0 && (
-                <div className="mt-6 border-t border-border/40 pt-5">
-                  <h3 className="text-[12px] font-medium">
-                    What is driving these limits
+                <div className="mt-5 space-y-3 border-t border-border/40 pt-4">
+                  <h3 className="flex items-center gap-2 text-[12px] font-medium">
+                    <ActivityIcon
+                      aria-hidden="true"
+                      className={DETAIL_ICON}
+                      strokeWidth={1.5}
+                    />
+                    What drives your usage
                   </h3>
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    {limitGroups.groups.map((group) => (
-                      <div
-                        key={group.title}
-                        className="rounded-xl bg-foreground/[0.03] p-4"
-                      >
-                        <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-                          <span className="text-[12px] font-medium">
-                            {group.title}
-                          </span>
-                          {group.meta.map((part) => (
-                            <span
-                              key={part}
-                              className="text-[10px] text-muted-foreground tabular-nums"
-                            >
-                              {part}
-                            </span>
-                          ))}
-                        </div>
-                        <div className="mt-3.5 space-y-3">
-                          {group.details.map((detail) => (
-                            <LimitDetailRow key={detail.text} detail={detail} />
-                          ))}
+                  {limitGroups.groups.map((group) => (
+                    <div
+                      key={group.title}
+                      className="overflow-hidden rounded-xl border border-border/40 bg-foreground/[0.02]"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border/30 px-4 py-3 text-[10px] text-muted-foreground">
+                        <span className="flex items-center gap-2 font-medium text-foreground">
+                          <CalendarDaysIcon
+                            aria-hidden="true"
+                            className={DETAIL_ICON}
+                            strokeWidth={1.5}
+                          />
+                          {group.title}
+                        </span>
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                          {group.meta.map((part) => {
+                            const Icon = /sessions|chats/i.test(part)
+                              ? MessagesSquareIcon
+                              : ActivityIcon
+                            return (
+                              <span
+                                key={part}
+                                className="flex items-center gap-1.5 tabular-nums"
+                              >
+                                <Icon
+                                  aria-hidden="true"
+                                  className="size-3"
+                                  strokeWidth={1.5}
+                                />
+                                {part}
+                              </span>
+                            )
+                          })}
                         </div>
                       </div>
+                      <div className="grid divide-y divide-border/30 @[760px]/usage:grid-cols-3 @[760px]/usage:divide-x @[760px]/usage:divide-y-0">
+                        {group.details
+                          .filter((detail) => !detail.label)
+                          .map((detail) => (
+                            <LimitDetailRow key={detail.text} detail={detail} />
+                          ))}
+                      </div>
+                      {group.details
+                        .filter((detail) => detail.label)
+                        .map((detail) => (
+                          <LimitDetailRow key={detail.text} detail={detail} />
+                        ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {limitGroups.intro.length > 0 && (
+                <div className="mt-3 flex items-start gap-2 text-muted-foreground">
+                  <InfoIcon
+                    aria-hidden="true"
+                    className="mt-0.5 size-3 shrink-0"
+                    strokeWidth={1.5}
+                  />
+                  <div className="space-y-1">
+                    {limitGroups.intro.map((line) => (
+                      <p key={line} className="text-[10px] leading-relaxed">
+                        {line}
+                      </p>
                     ))}
                   </div>
-                  {limitGroups.intro.map((line) => (
-                    <p
-                      key={line}
-                      className="mt-3 text-[10px] leading-relaxed text-muted-foreground/60"
-                    >
-                      {line}
-                    </p>
-                  ))}
                 </div>
               )}
             </section>
@@ -829,44 +894,61 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
             </div>
           </section>
 
+          {report && (report.pricing || hasTokens) && (
+            <div className={ENTER} style={enterDelay(section++)}>
+              {report.pricing ? (
+                <CostSection
+                  pricing={report.pricing}
+                  provider={providerLabel}
+                />
+              ) : (
+                <MissingRatesCard
+                  models={report.models.map((model) => model.label)}
+                  file={report.pricesFile}
+                  provider={report.label}
+                />
+              )}
+            </div>
+          )}
+
           <section
             style={enterDelay(section++)}
             // Masonry, not a grid: cards differ a lot in height, and a
             // two-column grid leaves a hole under every short one.
             className={cn(ENTER, "gap-3 [column-fill:balance] lg:columns-2")}
           >
-            {report?.pricing ? (
-              <CostCard pricing={report.pricing} />
-            ) : (
-              report &&
-              hasTokens && (
-                <MissingRatesCard
-                  models={report.models.map((model) => model.label)}
-                  file={report.pricesFile}
-                  provider={report.label}
-                />
-              )
-            )}
-
-            <Card title="Activity insights">
+            <Card title="Activity insights" icon={ActivityIcon}>
               {report && report.insights.length > 0 ? (
                 <dl className="divide-y divide-border/30">
-                  {report.insights.map((insight) => (
-                    <div
-                      key={insight.id}
-                      className="flex items-baseline justify-between gap-4 py-2.5 first:pt-0 last:pb-0"
-                    >
-                      <dt className="text-[12px] text-muted-foreground">
-                        {insight.label}
-                      </dt>
-                      <dd className="shrink-0 text-[13px] font-medium tabular-nums">
-                        {insight.value}
-                      </dd>
-                    </div>
-                  ))}
+                  {report.insights.map((insight) => {
+                    const Icon = INSIGHT_ICONS[insight.id] ?? ActivityIcon
+                    return (
+                      <div
+                        key={insight.id}
+                        className="flex items-center justify-between gap-4 py-2.5 first:pt-0 last:pb-0"
+                      >
+                        <dt className="flex min-w-0 items-center gap-2.5 text-[12px] text-muted-foreground">
+                          <Icon
+                            aria-hidden="true"
+                            className={DETAIL_ICON}
+                            strokeWidth={1.5}
+                          />
+                          <span>{insight.label}</span>
+                        </dt>
+                        <dd className="shrink-0 text-[13px] font-medium tabular-nums">
+                          {insight.value}
+                        </dd>
+                      </div>
+                    )
+                  })}
                   {summary && summary.cost !== null && (
-                    <div className="flex items-baseline justify-between gap-4 py-2.5 last:pb-0">
-                      <dt className="text-[12px] text-muted-foreground">
+                    <div className="flex items-center justify-between gap-4 py-2.5 last:pb-0">
+                      <dt className="flex items-center gap-2.5 text-[12px] text-muted-foreground">
+                        <CoinsIcon
+                          aria-hidden="true"
+                          className={DETAIL_ICON}
+                          strokeWidth={1.5}
+                        />
                         Recorded spend
                       </dt>
                       <dd className="shrink-0 text-[13px] font-medium tabular-nums">
@@ -883,30 +965,60 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
             </Card>
 
             {(report?.lists ?? []).map((list) => (
-              <Card key={list.id} title={list.title}>
+              <Card
+                key={list.id}
+                title={list.title}
+                icon={LIST_ICONS[list.id] ?? LayersIcon}
+              >
                 <BarList entries={list.entries} unit={list.unit} />
               </Card>
             ))}
 
             {(report?.models.length ?? 0) > 0 && (
-              <Card title="Models">
+              <Card title="Models" icon={BoxesIcon}>
                 <BarList
                   entries={report?.models ?? []}
                   unit={metric === "tokens" ? "" : "chats"}
+                  renderIcon={() => (
+                    <ProviderIcon
+                      provider={{ ...selectedProvider, name: providerLabel }}
+                      className="size-4 shrink-0"
+                    />
+                  )}
                 />
               </Card>
             )}
 
             {breakdown.length > 0 && (
-              <Card title="Token breakdown">
-                <BarList entries={breakdown} unit="" />
+              <Card title="Token breakdown" icon={LayersIcon}>
+                <BarList
+                  entries={breakdown}
+                  unit=""
+                  renderIcon={(entry) => {
+                    const Icon = TOKEN_ICONS[entry.id] ?? DatabaseIcon
+                    return (
+                      <Icon
+                        aria-hidden="true"
+                        className={DETAIL_ICON}
+                        strokeWidth={1.5}
+                      />
+                    )
+                  }}
+                />
                 {(summary?.tokens.reasoning ?? 0) > 0 && (
-                  <p className="mt-4 border-t border-border/30 pt-3 text-[11px] text-muted-foreground">
-                    Output includes{" "}
-                    <span className="text-foreground/80 tabular-nums">
-                      {formatCompact(summary?.tokens.reasoning ?? 0)}
-                    </span>{" "}
-                    reasoning tokens.
+                  <p className="mt-4 flex items-start gap-2.5 border-t border-border/30 pt-3 text-[11px] text-muted-foreground">
+                    <BrainIcon
+                      aria-hidden="true"
+                      className={DETAIL_ICON}
+                      strokeWidth={1.5}
+                    />
+                    <span>
+                      Output includes{" "}
+                      <span className="text-foreground/80 tabular-nums">
+                        {formatCompact(summary?.tokens.reasoning ?? 0)}
+                      </span>{" "}
+                      reasoning tokens.
+                    </span>
                   </p>
                 )}
               </Card>
@@ -921,41 +1033,78 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
             )}
           </section>
 
-          {report && report.notes.length > 0 && (
+          {report && (
             <section
+              aria-label="Data coverage"
               style={enterDelay(section++)}
               className={cn(
                 ENTER,
-                "space-y-2 rounded-2xl border border-border/40 bg-foreground/[0.02] p-5"
+                "overflow-hidden rounded-2xl border border-border/40 bg-foreground/[0.02]"
               )}
             >
-              {report.notes.map((note) => (
-                <p
-                  key={note}
-                  className="text-[11px] leading-relaxed text-muted-foreground"
-                >
-                  {note}
-                </p>
-              ))}
+              <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-4">
+                <h2 className="flex items-center gap-2 text-[12px] font-medium">
+                  <DatabaseIcon
+                    aria-hidden="true"
+                    className={DETAIL_ICON}
+                    strokeWidth={1.5}
+                  />
+                  About these numbers
+                </h2>
+                <span className="text-[10px] text-muted-foreground">
+                  {report.label}
+                </span>
+              </div>
+              {report.notes.length > 0 && (
+                <ul className="grid gap-x-6 gap-y-4 px-5 py-4 @[760px]/usage:grid-cols-2">
+                  {report.notes.map((note) => {
+                    const Icon = /per-message|transcript/i.test(note)
+                      ? FileTextIcon
+                      : HistoryIcon
+                    return (
+                      <li key={note} className="flex items-start gap-3">
+                        <span
+                          aria-hidden="true"
+                          className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-foreground/[0.04]"
+                        >
+                          <Icon className={DETAIL_ICON} strokeWidth={1.5} />
+                        </span>
+                        <p className="min-w-0 text-[11px] leading-relaxed text-muted-foreground">
+                          <NoteText text={note} />
+                        </p>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+              <div
+                className={cn(
+                  "flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-5 py-3 text-[10px] text-muted-foreground",
+                  report.notes.length > 0 && "border-t border-border/30"
+                )}
+              >
+                <span className="flex items-center gap-2">
+                  <HardDriveIcon
+                    aria-hidden="true"
+                    className="size-3"
+                    strokeWidth={1.5}
+                  />
+                  Based on CLI history stored on this device.
+                </span>
+                <span className="flex items-center gap-1.5" role="status">
+                  {loading && (
+                    <LoaderCircleIcon
+                      aria-hidden="true"
+                      className="size-3 motion-safe:animate-spin"
+                    />
+                  )}
+                  {loading
+                    ? "Updating…"
+                    : `Read ${formatAge(report.fetchedAt)}`}
+                </span>
+              </div>
             </section>
           )}
-
-          {error && (
-            <p className="mt-6 text-center text-[12px] text-muted-foreground">
-              {error}
-            </p>
-          )}
-
-          <p className="mt-4 mb-2 flex items-center justify-center gap-1.5 text-[10px] text-muted-foreground/60">
-            {loading && (
-              <LoaderCircleIcon
-                className="size-3 animate-spin"
-                strokeWidth={2}
-              />
-            )}
-            Read locally from each provider CLI's own store. Nothing leaves this
-            machine.
-          </p>
         </div>
       </div>
     </main>
@@ -969,18 +1118,22 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
  */
 function LimitDetailRow({ detail }: { detail: LimitDetail }) {
   if (detail.label) {
+    const Icon = /subagents/i.test(detail.label) ? WorkflowIcon : BookOpenIcon
     return (
-      <div>
-        <p className="text-[10px] text-muted-foreground/70">{detail.label}</p>
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border/30 px-4 py-3">
+        <p className="flex items-center gap-2 text-[10px] text-muted-foreground">
+          <Icon aria-hidden="true" className={DETAIL_ICON} strokeWidth={1.5} />
+          {detail.label}
+        </p>
+        <div className="flex flex-wrap gap-2">
           {detail.items.map((item) => (
             <span
               key={item.name}
-              className="flex items-baseline gap-1.5 rounded-md bg-foreground/[0.05] px-2 py-1 text-[10px]"
+              className="flex max-w-full items-baseline gap-2 rounded-md border border-border/40 bg-foreground/[0.03] px-2 py-1 text-[10px]"
             >
-              <span className="max-w-[190px] truncate">{item.name}</span>
+              <span className="min-w-0 break-words">{item.name}</span>
               {item.share && (
-                <span className="text-muted-foreground tabular-nums">
+                <span className="shrink-0 text-muted-foreground tabular-nums">
                   {item.share}
                 </span>
               )}
@@ -991,19 +1144,102 @@ function LimitDetailRow({ detail }: { detail: LimitDetail }) {
     )
   }
   if (detail.share) {
+    const driver = /context/i.test(detail.text)
+      ? { label: "Large context", icon: LayersIcon }
+      : /subagent/i.test(detail.text)
+        ? { label: "Subagent activity", icon: WorkflowIcon }
+        : /sessions active|hours/i.test(detail.text)
+          ? { label: "Long sessions", icon: TimerIcon }
+          : { label: "Usage pattern", icon: ActivityIcon }
+    const value = Math.max(0, Math.min(100, Number.parseFloat(detail.share)))
     return (
-      <p className="flex gap-2.5 text-[11px] leading-relaxed">
-        <span className="w-8 shrink-0 text-right font-medium tabular-nums">
+      <div className="flex min-w-0 flex-col p-4">
+        <p className="flex items-center gap-2 text-[11px] font-medium">
+          <driver.icon
+            aria-hidden="true"
+            className={DETAIL_ICON}
+            strokeWidth={1.5}
+          />
+          {driver.label}
+        </p>
+        <p className="mt-4 text-[26px] leading-none font-medium tracking-[-0.035em] tabular-nums">
           {detail.share}
-        </span>
-        <span className="text-muted-foreground">{detail.text}</span>
-      </p>
+        </p>
+        <p className="mt-2 flex-1 text-[11px] leading-relaxed text-muted-foreground">
+          {detail.text}
+        </p>
+        <div
+          aria-hidden="true"
+          className="mt-4 h-1 overflow-hidden rounded-full bg-foreground/[0.06]"
+        >
+          <span
+            className="block h-full origin-left rounded-full bg-primary/60"
+            style={{ transform: `scaleX(${value / 100})` }}
+          />
+        </div>
+      </div>
     )
   }
   return (
-    <p className="text-[11px] leading-relaxed text-muted-foreground">
+    <p className="p-4 text-[11px] leading-relaxed text-muted-foreground">
       {detail.text}
     </p>
+  )
+}
+
+/** Color supplements the status label; the meter also exposes its value to AT. */
+export function UsageLimitRow({ limit }: { limit: UsageLimit }) {
+  const value = Number.isFinite(limit.usedPercent)
+    ? Math.max(0, Math.min(100, limit.usedPercent))
+    : 0
+  const status =
+    value >= 100
+      ? "Limit reached"
+      : value >= 90
+        ? "Almost at limit"
+        : value >= 70
+          ? "Getting close"
+          : "Available"
+  const color =
+    value >= 90
+      ? "text-destructive"
+      : value >= 70
+        ? "text-warning"
+        : "text-muted-foreground"
+  return (
+    <div className="min-w-0 rounded-xl bg-foreground/[0.03] p-4">
+      <p className="text-[11px] text-muted-foreground">{limit.label}</p>
+      <div className="mt-2.5 flex items-baseline justify-between gap-3">
+        <span className="shrink-0 text-[22px] leading-none font-medium tracking-[-0.03em] tabular-nums">
+          {value}%
+        </span>
+        <span className={cn("text-[10px]", color)}>{status}</span>
+      </div>
+      <div
+        role="meter"
+        aria-label={limit.label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={value}
+        aria-valuetext={`${value}% used · ${status}`}
+        className="my-2.5 h-1.5 overflow-hidden rounded-full bg-foreground/[0.08]"
+      >
+        <div
+          className={cn(
+            "h-full origin-left rounded-full motion-safe:transition-transform motion-safe:duration-300",
+            value >= 90
+              ? "bg-destructive"
+              : value >= 70
+                ? "bg-warning"
+                : "bg-primary/70"
+          )}
+          style={{ transform: `scaleX(${value / 100})` }}
+        />
+      </div>
+      <p className="text-[10px] leading-relaxed text-muted-foreground">
+        {formatReset(limit) ?? "Reset time not reported"}
+      </p>
+    </div>
   )
 }
 
@@ -1013,14 +1249,21 @@ const CARD =
 
 function Card({
   title,
+  icon: Icon,
   children,
 }: {
   title: string
+  icon?: LucideIcon
   children: React.ReactNode
 }) {
   return (
     <section className={CARD}>
-      <h2 className="text-[13px] font-semibold">{title}</h2>
+      <h2 className="flex items-center gap-2 text-[13px] font-semibold">
+        {Icon && (
+          <Icon aria-hidden="true" className={DETAIL_ICON} strokeWidth={1.5} />
+        )}
+        {title}
+      </h2>
       <div className="mt-4">{children}</div>
     </section>
   )
@@ -1029,71 +1272,214 @@ function Card({
 /**
  * List-price cost of the recorded tokens. The provider bills a subscription
  * here, so this answers "what would this have cost on the API" — it is not a
- * bill, and the card says how much of the usage it actually covers.
+ * bill, and the section says how much of the usage it actually covers.
  */
-function CostCard({ pricing }: { pricing: UsagePricing }) {
+function CostSection({
+  pricing,
+  provider,
+}: {
+  pricing: UsagePricing
+  provider: string
+}) {
   const rows = [
-    ["Input", pricing.breakdown.input],
-    ["Output", pricing.breakdown.output],
-    ["Cache read", pricing.breakdown.cacheRead],
-    ["Cache write", pricing.breakdown.cacheWrite],
+    ["input", "Input", pricing.breakdown.input, "New prompt tokens"],
+    [
+      "output",
+      "Output",
+      pricing.breakdown.output,
+      "Generated responses & reasoning",
+    ],
+    [
+      "cache-read",
+      "Cache read",
+      pricing.breakdown.cacheRead,
+      "Reused context from cache",
+    ],
+    [
+      "cache-write",
+      "Cache write",
+      pricing.breakdown.cacheWrite,
+      "Context saved to cache",
+    ],
   ] as const
-  const max = rows.reduce((best, [, value]) => Math.max(best, value), 0)
   const recorded = pricing.pricedTokens + pricing.unpricedTokens
-  const covered = recorded > 0 ? pricing.pricedTokens / recorded : 1
+  const covered = recorded > 0 ? pricing.pricedTokens / recorded : 0
+  const percent = (value: number) =>
+    value > 0 && value < 0.001
+      ? "<0.1%"
+      : value > 0.999 && value < 1
+        ? ">99.9%"
+        : value.toLocaleString(undefined, {
+            style: "percent",
+            maximumFractionDigits: 1,
+          })
   return (
-    <section className={CARD}>
-      <div className="flex items-baseline justify-between gap-3">
-        <h2 className="text-[13px] font-semibold">At API list prices</h2>
-        <span className="text-[20px] font-medium tracking-[-0.03em] tabular-nums">
-          {formatMoney(pricing.total)}
-        </span>
-      </div>
-      <div className="mt-4 space-y-3">
-        {rows.map(([label, value]) => (
-          <div key={label}>
+    <section
+      aria-labelledby="usage-api-cost-heading"
+      className="overflow-hidden rounded-2xl border border-border/40 bg-foreground/[0.02]"
+    >
+      <div className="p-5 @[640px]/usage:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2
+            id="usage-api-cost-heading"
+            className="flex items-center gap-2.5 text-[16px] font-semibold tracking-tight"
+          >
+            <CoinsIcon
+              aria-hidden="true"
+              className="size-4 text-muted-foreground"
+              strokeWidth={1.5}
+            />
+            API cost equivalent
+          </h2>
+          <span className="rounded-md border border-border/40 px-2 py-1 text-[10px] font-medium text-muted-foreground">
+            {pricing.currency} ·{" "}
+            {pricing.hasOverrides ? "Custom rates included" : "API list prices"}
+          </span>
+        </div>
+
+        <div className="mt-6 grid gap-6 @[760px]/usage:grid-cols-[1.2fr_1fr] @[760px]/usage:items-center">
+          <div className="min-w-0">
+            <p className="text-[11px] text-muted-foreground">
+              {provider} · All recorded usage
+            </p>
+            <p className="mt-2 text-[38px] leading-none font-semibold tracking-[-0.055em] break-words tabular-nums @[640px]/usage:text-[52px]">
+              {formatMoney(pricing.total)}
+            </p>
+            <p className="mt-3 max-w-[42ch] text-[12px] leading-relaxed text-muted-foreground">
+              Estimated value of your tokens at API rates. For comparison only,
+              not your subscription bill.
+            </p>
+          </div>
+
+          <div className="border-t border-border/40 pt-5 @[760px]/usage:border-t-0 @[760px]/usage:border-l @[760px]/usage:pt-0 @[760px]/usage:pl-6">
             <div className="flex items-baseline justify-between gap-3">
-              <span className="text-[12px]">{label}</span>
-              <span className="shrink-0 text-[12px] text-muted-foreground tabular-nums">
-                {formatMoney(value)}
+              <h3 className="text-[12px] font-medium">Token coverage</h3>
+              <span className="text-[23px] leading-none font-medium tracking-tight tabular-nums">
+                {percent(covered)}
               </span>
             </div>
-            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-foreground/[0.06]">
+            <div
+              role="meter"
+              aria-label="Tokens included in the API cost estimate"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={covered * 100}
+              aria-valuetext={`${percent(covered)} of recorded tokens have a known rate`}
+              className="mt-3 h-1.5 overflow-hidden rounded-full bg-foreground/[0.06]"
+            >
               <span
-                className="block h-full rounded-full bg-emerald-500/70 transition-[width] duration-500 ease-out"
-                style={{
-                  width: `${max > 0 ? Math.max(2, (value / max) * 100) : 0}%`,
-                }}
+                className="block h-full origin-left rounded-full bg-primary/70"
+                style={{ transform: `scaleX(${covered})` }}
               />
             </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+              <span className="font-medium text-foreground/80 tabular-nums">
+                {formatCompact(pricing.pricedTokens)}
+              </span>
+              {" of "}
+              {formatCompact(recorded)} recorded tokens included.
+            </p>
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+              {pricing.unpricedTokens > 0
+                ? `${formatCompact(pricing.unpricedTokens)} tokens excluded because their model rates are missing.`
+                : "Every recorded token has a known model rate."}
+            </p>
           </div>
-        ))}
+        </div>
+
+        <dl className="mt-6 grid gap-3 @[440px]/usage:grid-cols-2 @[900px]/usage:grid-cols-4">
+          {rows.map(([id, label, value, description]) => {
+            const Icon = TOKEN_ICONS[id]
+            const share = pricing.total > 0 ? value / pricing.total : 0
+            return (
+              <div
+                key={id}
+                className="flex min-w-0 flex-col rounded-xl border border-border/40 bg-foreground/[0.02] p-4"
+              >
+                <dt className="flex items-center gap-2 text-[12px] font-medium">
+                  <Icon
+                    aria-hidden="true"
+                    className={DETAIL_ICON}
+                    strokeWidth={1.5}
+                  />
+                  {label}
+                </dt>
+                <dd className="mt-3 text-[24px] leading-none font-medium tracking-[-0.03em] break-words tabular-nums">
+                  {formatMoney(value)}
+                </dd>
+                <dd className="mt-2 flex flex-1 flex-col text-[10px] leading-relaxed text-muted-foreground">
+                  <span className="flex-1">{description}</span>
+                  <span className="mt-4 flex items-center justify-between gap-2">
+                    <span>Share of cost</span>
+                    <span className="font-medium text-foreground/80 tabular-nums">
+                      {percent(share)}
+                    </span>
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className="mt-1.5 block h-1 overflow-hidden rounded-full bg-foreground/[0.06]"
+                  >
+                    <span
+                      className="block h-full origin-left rounded-full bg-primary/70"
+                      style={{ transform: `scaleX(${share})` }}
+                    />
+                  </span>
+                </dd>
+              </div>
+            )
+          })}
+        </dl>
       </div>
-      <div className="mt-4 space-y-1.5 border-t border-border/30 pt-3">
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          What these tokens would cost on the API. This plan is a subscription,
-          so it is a comparison, not a bill.
-        </p>
-        {covered < 0.999 && (
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Covers {percentLabel(covered)} of the recorded tokens.{" "}
-            {pricing.unpricedModels.length} model
-            {pricing.unpricedModels.length === 1 ? "" : "s"} have no published
-            rate ({formatCompact(pricing.unpricedTokens)} tokens) — add them to{" "}
-            <code className="rounded bg-foreground/[0.06] px-1 py-0.5 text-[10px]">
-              model-prices.json
-            </code>{" "}
-            to include them.
+
+      <div className="flex items-start gap-3 border-t border-border/40 px-5 py-4 @[640px]/usage:px-6">
+        <ReceiptTextIcon
+          aria-hidden="true"
+          className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+          strokeWidth={1.5}
+        />
+        <div className="min-w-0 space-y-2 text-[11px] leading-relaxed text-muted-foreground">
+          <h3 className="text-[12px] font-medium text-foreground">
+            Pricing details
+          </h3>
+          <p>
+            Token counts are multiplied by each model’s API rates, then added
+            together.{" "}
+            {pricing.hasOverrides
+              ? "Your custom model rates are included in this estimate."
+              : "This estimate uses the app’s built-in model price table."}
           </p>
-        )}
-        {pricing.notes.map((note) => (
-          <p
-            key={note}
-            className="text-[11px] leading-relaxed text-muted-foreground"
-          >
-            {note}
-          </p>
-        ))}
+          {pricing.unpricedModels.length > 0 && (
+            <div>
+              <p>
+                {pricing.unpricedModels.length}{" "}
+                {pricing.unpricedModels.length === 1
+                  ? "model is"
+                  : "models are"}{" "}
+                missing rates. Add their per-million-token prices to{" "}
+                <code className="rounded bg-foreground/[0.06] px-1 py-0.5 text-[10px]">
+                  model-prices.json
+                </code>{" "}
+                to include them.
+              </p>
+              <ul
+                aria-label="Models without prices"
+                className="mt-2 flex flex-wrap gap-1.5"
+              >
+                {pricing.unpricedModels.map((model) => (
+                  <li
+                    key={model}
+                    className="max-w-full rounded-md bg-foreground/[0.04] px-2 py-1 text-[10px] break-words"
+                  >
+                    {model}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {pricing.notes.map((note) => (
+            <p key={note}>{note}</p>
+          ))}
+        </div>
       </div>
     </section>
   )
@@ -1124,10 +1510,19 @@ function MissingRatesCard({
     "}",
   ].join("\n")
   return (
-    <section className={CARD}>
+    <section className="rounded-2xl border border-border/40 bg-foreground/[0.02] p-5 @[640px]/usage:p-6">
       <div className="flex items-baseline justify-between gap-3">
-        <h2 className="text-[13px] font-semibold">At API list prices</h2>
-        <button
+        <h2 className="flex items-center gap-2.5 text-[16px] font-semibold tracking-tight">
+          <CoinsIcon
+            aria-hidden="true"
+            className={DETAIL_ICON}
+            strokeWidth={1.5}
+          />
+          API cost equivalent
+        </h2>
+        <Button
+          variant="ghost"
+          size="sm"
           type="button"
           onClick={() => {
             void navigator.clipboard
@@ -1135,15 +1530,15 @@ function MissingRatesCard({
               .then(() => setCopied(true))
               .catch(() => setCopied(false))
           }}
-          className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors duration-150 hover:bg-foreground/[0.06] hover:text-foreground active:scale-[0.96]"
+          className="gap-1.5 rounded-md text-[11px] text-muted-foreground"
         >
           {copied ? (
             <CheckIcon className="size-3.5" strokeWidth={2} />
           ) : (
             <CopyIcon className="size-3.5" strokeWidth={1.5} />
           )}
-          {copied ? "Copied" : "Copy"}
-        </button>
+          {copied ? "Copied" : "Copy template"}
+        </Button>
       </div>
       <p className="mt-3 text-[12px] leading-relaxed text-muted-foreground">
         No rate is published for {provider}&apos;s models, so there is nothing
@@ -1166,29 +1561,60 @@ function MissingRatesCard({
   )
 }
 
-function percentLabel(share: number): string {
-  const scaled = share * 100
-  return `${scaled >= 99.5 ? ">99" : scaled.toFixed(scaled >= 10 ? 0 : 1)}%`
-}
-
 function Empty({ children }: { children: React.ReactNode }) {
   return <p className="text-[12px] text-muted-foreground">{children}</p>
+}
+
+/** Make the coverage dates scannable without dropping any retention caveats. */
+function NoteText({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(/(\b\d{4}-\d{2}-\d{2}\b)/g).map((part, index) =>
+        /^\d{4}-\d{2}-\d{2}$/.test(part) ? (
+          <time
+            key={index}
+            dateTime={part}
+            className="font-medium text-foreground/85 tabular-nums"
+          >
+            {formatDay(part)}
+          </time>
+        ) : (
+          part
+        )
+      )}
+    </>
+  )
 }
 
 /**
  * Ranked rows with a share bar. The bar is relative to the largest entry, so
  * the shape of the list is readable at a glance even when one row dominates.
  */
-function BarList({ entries, unit }: { entries: UsageEntry[]; unit: string }) {
+function BarList({
+  entries,
+  unit,
+  renderIcon,
+}: {
+  entries: UsageEntry[]
+  unit: string
+  renderIcon?: (entry: UsageEntry) => React.ReactNode
+}) {
   const max = entries.reduce((best, entry) => Math.max(best, entry.value), 0)
   if (entries.length === 0) return <Empty>Nothing recorded yet.</Empty>
   return (
     <div className="space-y-3">
       {entries.map((entry) => (
         <div key={entry.id}>
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="truncate text-[12px]" title={entry.label}>
-              {entry.label}
+          <div className="flex items-center justify-between gap-3">
+            <span className="flex min-w-0 items-center gap-2.5 text-[12px]">
+              {renderIcon && (
+                <span className="flex size-4 shrink-0 items-center justify-center">
+                  {renderIcon(entry)}
+                </span>
+              )}
+              <span className="truncate" title={entry.label}>
+                {entry.label}
+              </span>
             </span>
             <span className="flex shrink-0 items-baseline gap-2 text-[12px] text-muted-foreground tabular-nums">
               {entry.cost !== undefined && (
@@ -1202,11 +1628,16 @@ function BarList({ entries, unit }: { entries: UsageEntry[]; unit: string }) {
               </span>
             </span>
           </div>
-          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-foreground/[0.06]">
+          <div
+            className={cn(
+              "mt-1.5 h-1 overflow-hidden rounded-full bg-foreground/[0.06]",
+              renderIcon && "ml-6.5"
+            )}
+          >
             <span
-              className="block h-full rounded-full bg-blue-500/70 transition-[width] duration-500 ease-out"
+              className="block h-full origin-left rounded-full bg-primary/70 motion-safe:transition-transform motion-safe:duration-300"
               style={{
-                width: `${max > 0 ? Math.max(2, (entry.value / max) * 100) : 0}%`,
+                transform: `scaleX(${max > 0 ? entry.value / max : 0})`,
               }}
             />
           </div>

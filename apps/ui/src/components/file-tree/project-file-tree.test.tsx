@@ -12,7 +12,6 @@ vi.mock("@/services/backend", () => ({
   createDirectory: vi.fn(),
   deleteWorkspacePath: vi.fn(),
   moveWorkspacePath: vi.fn(),
-  searchEntriesDetailed: vi.fn(async () => ({ entries: [], truncated: false })),
   writeFile: vi.fn(),
 }))
 vi.mock("@/services/backend/filesystem", () => ({
@@ -27,30 +26,13 @@ vi.mock("@/components/dialogs/confirm-provider", () => ({
 afterEach(() => vi.unstubAllGlobals())
 
 describe("fileTreeCountLabel", () => {
-  it("shows the plain total when the walk completed", () => {
-    expect(fileTreeCountLabel(1234, { truncated: false })).toEqual({
-      text: "1234",
-      title: undefined,
-    })
-    // A stray reason without the flag must not turn into a "+".
-    expect(
-      fileTreeCountLabel(3, { truncated: false, reason: "deadline" })
-    ).toEqual({ text: "3", title: undefined })
-  })
-
-  // 5,000 entries from a capped walk is a floor, not the project's size. The
-  // "+" is the only hint in the header; the title says why on hover.
-  it("marks a cut-short total as a lower bound and says why", () => {
-    expect(
-      fileTreeCountLabel(5000, { truncated: true, reason: "results" })
-    ).toEqual({
-      text: "5000+",
+  it("identifies loaded entries without claiming a project-wide total", () => {
+    expect(fileTreeCountLabel(5000)).toEqual({
+      text: "5000 loaded",
       title:
-        "Partial count — the workspace scan was cut short (result cap) — expand a folder to load the rest",
+        "Files and folders loaded so far. Open a folder to load its contents.",
     })
-    expect(fileTreeCountLabel(10, { truncated: true }).title).toContain(
-      "cut short (cap)"
-    )
+    expect(fileTreeCountLabel(0).text).toBe("0 loaded")
   })
 })
 

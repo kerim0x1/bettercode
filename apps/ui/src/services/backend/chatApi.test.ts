@@ -16,9 +16,9 @@ describe("workspaceRuleTargetPath", () => {
     expect(workspaceRuleTargetPath("/repo", "/repo/src/App.tsx")).toBe(
       "src/App.tsx"
     )
-    expect(
-      workspaceRuleTargetPath("C:\\Repo", "c:\\repo\\src\\App.tsx")
-    ).toBe("src/App.tsx")
+    expect(workspaceRuleTargetPath("C:\\Repo", "c:\\repo\\src\\App.tsx")).toBe(
+      "src/App.tsx"
+    )
   })
 
   it("preserves safe relative targets and rejects paths outside the workspace", () => {
@@ -252,7 +252,7 @@ describe("buildModelSelection", () => {
         reasoningEffort: "xHigh",
         capabilities,
       }).options
-    ).toEqual([{ id: "effort", value: "max" }])
+    ).toEqual([{ id: "effort", value: "xhigh" }])
 
     expect(
       buildModelSelection({

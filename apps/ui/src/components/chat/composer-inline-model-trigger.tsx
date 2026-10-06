@@ -42,6 +42,7 @@ const MAX_RECENT_MODELS = 5
 
 export function ComposerInlineModelTrigger(props: ComposerFooterProps) {
   const {
+    threadId,
     thinkingMode,
     setThinkingMode,
     fastMode,
@@ -221,6 +222,12 @@ export function ComposerInlineModelTrigger(props: ComposerFooterProps) {
           <ThinkingEffortSlider
             options={thinkingOptions}
             thinkingMode={thinkingMode}
+            modelName={currentModelName}
+            selectionKey={JSON.stringify([
+              threadId,
+              currentProvider?.id,
+              selectedModel,
+            ])}
             onSelect={(mode) => setThinkingMode(mode, currentProvider?.id)}
             className="w-full"
           />
