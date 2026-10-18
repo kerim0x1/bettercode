@@ -78,6 +78,6 @@ The release is not published, like any failed platform. Rerun Release on the sam
 
 ## What is not automated
 
-- **Code signing.** Desktop releases are unsigned by decision. See [code signing](development/code-signing.md) for what users see and how they get past the first-launch warnings. The phone app is signed; its keys are set up once (above).
+- **Code signing.** macOS releases are signed, notarized and stapled by the Release workflow once `BETTERC0DE_MACOS_SIGNING` is `true` and the `macos-signing` environment holds the Developer ID certificate and notarization key ([set up macOS signing](development/code-signing.md#set-up-macos-signing)); with signing on, a Mac build that is not notarized fails the release. Windows releases are unsigned. See [code signing](development/code-signing.md) for what users see. The phone app is signed; its keys are set up once (above).
 - **TestFlight distribution.** Adding each build to the public group, and Beta App Review, happen in App Store Connect.
 - **Hardware coverage.** CI runs on GitHub-hosted runners: Ubuntu 24.04, Windows Server 2025, and macOS 15 on arm64 and Intel. Windows on ARM, Linux arm64, other distributions and older macOS versions are not tested.

@@ -36,20 +36,19 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { findAndroidSdk, findJdk, resolveIos } from "./mobile-toolchain.mjs"
+import { MACOS_SIGNING_ENV, assessMacSigning, describeMacSigning } from "./macos-signing.mjs"
 
 const root = path.resolve(import.meta.dirname, "..")
 const require = createRequire(import.meta.url)
 
 const PLATFORM_FLAGS = { win32: "--win", darwin: "--mac", linux: "--linux" }
 const RUNNER_OS_NAMES = { win32: "Windows", darwin: "macOS", linux: "Linux" }
+// Workflows pass these as empty strings on legs without credentials; an
+// empty value must not count as configured.
 const SIGNING_ENV = [
-  "CSC_LINK",
-  "CSC_KEY_PASSWORD",
+  ...MACOS_SIGNING_ENV,
   "CSC_INSTALLER_LINK",
   "CSC_INSTALLER_KEY_PASSWORD",
-  "APPLE_ID",
-  "APPLE_APP_SPECIFIC_PASSWORD",
-  "APPLE_TEAM_ID",
   "WIN_CSC_LINK",
   "WIN_CSC_KEY_PASSWORD",
 ]
@@ -379,6 +378,14 @@ function preflight(plan, options, toolchains) {
     } else if (runs(id)) {
       note("ok", `${name} toolchain found for the phone app.`)
     }
+  }
+
+  if (process.platform === "darwin" && (runs("package") || runs("installers"))) {
+    // A build that should be signed must never fall back to an unsigned app,
+    // and a half-configured one must not reach notarization.
+    const signing = assessMacSigning(signingEnv())
+    for (const problem of signing.problems) note("error", problem)
+    if (signing.problems.length === 0) note("ok", describeMacSigning(signing))
   }
 
   if (options.arch !== process.arch) {

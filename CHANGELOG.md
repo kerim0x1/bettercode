@@ -14,6 +14,7 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 
 ### Added
 
+- **Signed and notarized macOS builds.** The Release workflow signs the Mac app with a Developer ID certificate and has Apple notarize and staple it once macOS signing is set up (docs/development/code-signing.md), so macOS opens it without "Apple could not verify "BetterC0de" is free of malware" and signed builds update themselves. With signing on, a release fails instead of publishing a Mac build that is not notarized; the installer smoke verifies the Developer ID, team, hardened runtime, stapled ticket and Gatekeeper's verdict. Unsigned Mac builds no longer download updates that macOS would refuse to install. The first signed version has to be installed manually once.
 - Anthropic, OpenAI, and Grok API providers support ordered encrypted backup keys, per-key checks and recovery status, and automatic recovery before a response starts. Provider settings group API access, CLI accounts, and local models and expose account-backed model visibility.
 - Linux AppImages include AppStream metadata with the BetterC0de website image, so the AppImage catalog can show the project overview instead of the first-run onboarding capture.
 - Successful merges to `main` now prepare and tag the next shared version after CI passes, then run the full Release workflow before publishing. The `Unreleased` section becomes that version's release notes.

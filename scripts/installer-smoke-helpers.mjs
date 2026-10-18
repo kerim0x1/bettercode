@@ -170,3 +170,73 @@ export function findLinuxExecutable(fileList, packageName) {
     })
   return single(matches, `/opt/<product>/${packageName} executable in the package`)
 }
+
+/**
+ * Fields of `codesign -dv --verbose=4 <app>` (printed on stderr) that decide
+ * whether Gatekeeper will open a downloaded app.
+ */
+export function parseCodesignDetails(output) {
+  const lines = String(output ?? "").split(/\r?\n/)
+  const value = (key) => {
+    const line = lines.find((candidate) => candidate.startsWith(`${key}=`))
+    return line ? line.slice(key.length + 1).trim() : null
+  }
+  // "CodeDirectory v=20500 size=… flags=0x10000(runtime) …" has no "=" after the key.
+  const codeDirectory = lines.find((line) => line.startsWith("CodeDirectory ")) ?? ""
+  const team = value("TeamIdentifier")
+  return {
+    identifier: value("Identifier"),
+    authorities: lines
+      .filter((line) => line.startsWith("Authority="))
+      .map((line) => line.slice("Authority=".length).trim()),
+    teamIdentifier: team && team !== "not set" ? team : null,
+    hardenedRuntime: /flags=0x[0-9a-f]+\([^)]*\bruntime\b[^)]*\)/i.test(codeDirectory),
+    timestamp: value("Timestamp"),
+    notarizationTicket: value("Notarization Ticket"),
+  }
+}
+
+/** `spctl --assess -vv <path>`: "<path>: accepted", then "source=…", "origin=…". */
+export function parseSpctlAssessment(output) {
+  const text = String(output ?? "")
+  const field = (key) => new RegExp(`^${key}=(.*)$`, "m").exec(text)?.[1]?.trim() ?? null
+  return {
+    accepted: /:\s*accepted\s*$/m.test(text),
+    source: field("source"),
+    origin: field("origin"),
+  }
+}
+
+/**
+ * Why a signed release would still trigger "Apple could not verify …":
+ * a non-Developer-ID signature, another team's certificate, a missing
+ * hardened runtime or secure timestamp, or a Gatekeeper verdict that is not
+ * "Notarized Developer ID". An empty list means users can open the app.
+ */
+export function macSignatureProblems(details, assessment, expected) {
+  const problems = []
+  const leaf = details.authorities[0] ?? ""
+  if (!leaf.startsWith("Developer ID Application:")) {
+    problems.push(`signed by "${leaf || "nobody"}", expected a Developer ID Application certificate`)
+  }
+  if (expected.teamId && details.teamIdentifier !== expected.teamId) {
+    problems.push(
+      `signed by team ${details.teamIdentifier ?? "(none)"}, expected ${expected.teamId}`
+    )
+  }
+  if (expected.identifier && details.identifier !== expected.identifier) {
+    problems.push(`bundle identifier ${details.identifier ?? "(none)"}, expected ${expected.identifier}`)
+  }
+  if (!details.hardenedRuntime) problems.push("the hardened runtime is off; notarization requires it")
+  if (!details.timestamp) problems.push("the signature has no secure timestamp")
+  if (expected.stapled && details.notarizationTicket !== "stapled") {
+    problems.push("no notarization ticket is stapled; offline first launches would be blocked")
+  }
+  if (assessment) {
+    if (!assessment.accepted) problems.push("Gatekeeper rejects the app")
+    else if (assessment.source !== "Notarized Developer ID") {
+      problems.push(`Gatekeeper accepts it as "${assessment.source ?? "unknown"}", not "Notarized Developer ID"`)
+    }
+  }
+  return problems
+}

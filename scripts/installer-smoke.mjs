@@ -8,8 +8,9 @@
 //                        launch → silent uninstall → files, registry entries
 //                        and shortcuts are gone
 //   macOS    .dmg        mount → copy the .app out → architecture and
-//                        signature checks → launch → delete; the auto-update
-//                        .zip gets the same architecture check
+//                        signature checks (Developer ID, notarization and
+//                        stapling when the build is signed) → launch →
+//                        delete; the auto-update .zip gets the same checks
 //   Linux    .deb        apt install (resolves the declared dependencies) →
 //                        launch with the Chromium sandbox on → apt purge →
 //                        files are gone
@@ -36,13 +37,17 @@ import {
   findLinuxExecutable,
   findUninstallEntries,
   isForeignNativeBuild,
+  macSignatureProblems,
   machOArchName,
   nsisInstallArgs,
+  parseCodesignDetails,
   parseLipoArchs,
   parseRegQuery,
+  parseSpctlAssessment,
   selectInstallers,
   single,
 } from "./installer-smoke-helpers.mjs"
+import { assessMacSigning } from "./macos-signing.mjs"
 
 const root = path.resolve(import.meta.dirname, "..")
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
@@ -264,8 +269,10 @@ async function smokeMac(installers) {
     detachDiskImage(mountPoint)
   }
 
+  const signing = assessMacSigning(process.env)
+  if (signing.signed) verifySignedDiskImage(dmg)
   verifyMacBundle(installedApp, "installed app")
-  verifyMacSignature(installedApp)
+  verifyMacSignature(installedApp, signing, "installed app")
   launchPackagedApp(path.join(installedApp, "Contents", "MacOS", productName))
 
   log("Removing the installed app")
@@ -277,6 +284,8 @@ async function smokeMac(installers) {
   const unzipped = path.join(workDir, "zip")
   run("ditto", ["-x", "-k", zip, unzipped])
   verifyMacBundle(path.join(unzipped, appName), "auto-update archive")
+  // Squirrel.Mac only installs an update signed like the running app.
+  if (signing.signed) verifyMacSignature(path.join(unzipped, appName), signing, "auto-update archive")
   log("Disk image install, launch and removal passed; update archive matches the architecture.")
 }
 
@@ -313,41 +322,71 @@ function verifyMacBundle(appPath, label) {
   log(`${label}: ${productName} and ${nativeModules.length} native module(s) are ${expected}.`)
 }
 
-function verifyMacSignature(appPath) {
-  const certificateConfigured = Boolean(process.env.CSC_LINK)
-  const notarizationConfigured = Boolean(
-    process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APPLE_TEAM_ID
-  )
+function verifyMacSignature(appPath, signing, label) {
   const verify = run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath], {
     capture: true,
     allowFailure: true,
   })
-  if (verify.status !== 0) {
-    if (certificateConfigured) {
-      throw new Error(`codesign verification failed:\n${verify.stderr.trim()}`)
+  if (!signing.signed) {
+    if (verify.status !== 0) {
+      // Without an identity electron-builder skips signing: the Electron
+      // binaries keep their linker signatures (so the app runs, as the
+      // launch test proves), but the bundle as a whole has no valid seal.
+      log(`${label}: not code-signed (no signing credentials configured): ${verify.stderr.trim().split("\n").at(-1)}`)
     }
-    // Without an identity electron-builder skips signing: the Electron
-    // binaries keep their linker signatures (so the app runs, as the launch
-    // test proves), but the bundle as a whole has no valid seal. Releases are
-    // unsigned by decision, so this is recorded, not flagged.
-    log(`Bundle not code-signed, as intended: ${verify.stderr.trim().split("\n").at(-1)}`)
+    const assess = run("spctl", ["--assess", "--type", "execute", "--verbose=2", appPath], {
+      capture: true,
+      allowFailure: true,
+    })
+    log(
+      assess.status === 0
+        ? `${label}: Gatekeeper accepts the app.`
+        : `${label}: Gatekeeper warns about the unsigned build; users allow it once on first launch ` +
+            "(docs/development/code-signing.md)."
+    )
+    return
   }
 
-  const assess = run("spctl", ["--assess", "--type", "execute", "--verbose=2", appPath], {
+  // A signed build must open without "Apple could not verify …".
+  if (verify.status !== 0) {
+    throw new Error(`${label}: codesign verification failed:\n${verify.stderr.trim()}`)
+  }
+  const details = parseCodesignDetails(
+    run("codesign", ["-dv", "--verbose=4", appPath], { capture: true }).stderr
+  )
+  const stapler = run("xcrun", ["stapler", "validate", appPath], { capture: true, allowFailure: true })
+  if (stapler.status !== 0) {
+    throw new Error(`${label}: the notarization ticket is not stapled:\n${(stapler.stdout + stapler.stderr).trim()}`)
+  }
+  const assess = run("spctl", ["--assess", "--type", "execute", "-vv", appPath], {
     capture: true,
     allowFailure: true,
   })
-  if (assess.status === 0) {
-    log("Gatekeeper accepts the app.")
-    return
+  const problems = macSignatureProblems(details, parseSpctlAssessment(assess.stdout + assess.stderr), {
+    teamId: process.env.APPLE_TEAM_ID?.trim() || null,
+    identifier: manifest.build.appId,
+    stapled: true,
+  })
+  if (problems.length > 0) {
+    throw new Error(`${label} would still trigger the Gatekeeper warning:\n- ${problems.join("\n- ")}`)
   }
-  if (notarizationConfigured) {
-    throw new Error(`Gatekeeper rejects the notarized app:\n${assess.stderr.trim()}`)
+  log(`${label}: signed with ${details.authorities[0]}, notarized and stapled; Gatekeeper accepts it.`)
+}
+
+function verifySignedDiskImage(dmg) {
+  const verify = run("codesign", ["--verify", "--verbose=2", dmg], { capture: true, allowFailure: true })
+  if (verify.status !== 0) {
+    throw new Error(`${path.basename(dmg)}: the disk image is not signed:\n${verify.stderr.trim()}`)
   }
-  log(
-    "Gatekeeper rejects the unsigned build, as expected; users allow it once on first launch " +
-      "(docs/development/code-signing.md)."
-  )
+  const details = parseCodesignDetails(run("codesign", ["-dv", "--verbose=4", dmg], { capture: true }).stderr)
+  const teamId = process.env.APPLE_TEAM_ID?.trim() || null
+  if (!details.authorities[0]?.startsWith("Developer ID Application:")) {
+    throw new Error(`${path.basename(dmg)}: signed by "${details.authorities[0] ?? "nobody"}", expected Developer ID`)
+  }
+  if (teamId && details.teamIdentifier !== teamId) {
+    throw new Error(`${path.basename(dmg)}: signed by team ${details.teamIdentifier ?? "(none)"}, expected ${teamId}`)
+  }
+  log(`${path.basename(dmg)}: signed with ${details.authorities[0]}.`)
 }
 
 function lipoArchs(file) {
