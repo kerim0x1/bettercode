@@ -14,24 +14,24 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.2.141",
-    "@anthropic-ai/sdk": "^0.105.0",
+    "@anthropic-ai/claude-agent-sdk": "0.3.303",
+    "@anthropic-ai/sdk": "^0.135.0",
     "@betterc0de/schema": "*",
-    "@hono/node-server": "^1.13.7",
-    "@modelcontextprotocol/sdk": "~1.29.0",
-    "better-sqlite3": "^12.9.0",
-    "hono": "^4.6.14",
-    "ignore": "^7.0.5",
+    "@hono/node-server": "^2.1.5",
+    "@modelcontextprotocol/sdk": "~1.32.1",
+    "better-sqlite3": "^13.0.3",
+    "hono": "^4.13.13",
+    "ignore": "^7.0.12",
     "node-pty": "^1.1.0",
-    "openai": "^6.34.0",
-    "pino": "^9.5.0",
-    "ws": "^8.18.0",
-    "zod": "^4.0.0"
+    "openai": "^7.38.0",
+    "pino": "^10.4.0",
+    "ws": "^8.22.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.12.0",
-    "@types/ws": "^8.5.13",
+    "@types/ws": "^8.18.2",
     "typescript": "~5.9.3",
     "vitest": "^4.1.4"
   }
