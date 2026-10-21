@@ -106,7 +106,6 @@ function setup(
     record: ThreadResume | null
     prompt: unknown
   }> = []
-  let scheduler!: ChatResumeScheduler
   const ports: ChatResumePorts = {
     store,
     now: () => Date.now(),
@@ -147,7 +146,7 @@ function setup(
     }),
     onError: vi.fn(),
   }
-  scheduler = new ChatResumeScheduler(ports)
+  const scheduler = new ChatResumeScheduler(ports)
   const userTurn = (turnId: string) => {
     scheduler.noteDispatch(sendBody(`message-${turnId}`), "user")
     scheduler.observe(event("turn_started", { turn_id: turnId }))

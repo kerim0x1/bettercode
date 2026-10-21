@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { ChevronDownIcon, SearchIcon, XIcon } from "lucide-react"
 import { groupVisits, pageLabel } from "@/lib/browser-address"
 import { useBrowserStore, type BrowserVisit } from "@/lib/browser-store"
@@ -26,30 +26,29 @@ export function BrowserHistorySidebar({
     page.url.toLowerCase().includes(needle) ||
     (page.title ?? "").toLowerCase().includes(needle)
   const shownFavorites = favorites.filter(matches)
-  const groups = useMemo(() => {
-    // One row per address and day group: the newest visit wins.
-    const seen = new Set<string>()
-    return groupVisits(history)
-      .map((group) => ({
-        ...group,
-        entries: group.entries.filter((visit) => {
-          const key = `${group.label}\0${visit.url}`
-          if (seen.has(key)) return false
-          seen.add(key)
-          return true
-        }),
-      }))
-      .map((group) => ({
-        ...group,
-        entries: group.entries.filter(
-          (visit) =>
-            !needle ||
-            visit.url.toLowerCase().includes(needle) ||
-            (visit.title ?? "").toLowerCase().includes(needle)
-        ),
-      }))
-      .filter((group) => group.entries.length > 0)
-  }, [history, needle])
+  // One row per address and day group: the newest visit wins. History holds
+  // at most a few hundred visits, so this runs on every render.
+  const seen = new Set<string>()
+  const groups = groupVisits(history)
+    .map((group) => ({
+      ...group,
+      entries: group.entries.filter((visit) => {
+        const key = `${group.label}\0${visit.url}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      }),
+    }))
+    .map((group) => ({
+      ...group,
+      entries: group.entries.filter(
+        (visit) =>
+          !needle ||
+          visit.url.toLowerCase().includes(needle) ||
+          (visit.title ?? "").toLowerCase().includes(needle)
+      ),
+    }))
+    .filter((group) => group.entries.length > 0)
 
   const toggle = (label: string) =>
     setCollapsed((current) => {

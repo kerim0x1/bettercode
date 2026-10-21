@@ -123,19 +123,12 @@ export function SettingsRulesSection() {
   const activeThread = useActiveThread()
   // The chat's own checkout, as the backend picks it when it prepares the
   // chat's turns: a ready worktree first, then the project folder.
-  const workspacePath = useMemo(
-    () =>
-      (activeThread?.worktreeState && activeThread.worktreeState !== "ready"
-        ? ""
-        : activeThread?.worktreePath?.trim()) ||
-      activeThread?.projectPath?.trim() ||
-      "",
-    [
-      activeThread?.projectPath,
-      activeThread?.worktreePath,
-      activeThread?.worktreeState,
-    ]
-  )
+  const workspacePath =
+    (activeThread?.worktreeState && activeThread.worktreeState !== "ready"
+      ? ""
+      : activeThread?.worktreePath?.trim()) ||
+    activeThread?.projectPath?.trim() ||
+    ""
   const [rulesText, setRulesText] = useState("")
   // What rules.md held when it was last read or saved.
   const [savedRulesText, setSavedRulesText] = useState("")

@@ -52,9 +52,17 @@ export function createSettingsKeyIntake(): SettingsKeyIntake {
     wait({ timeoutMs, signal }) {
       if (received !== null) return Promise.resolve(received)
       return new Promise<string>((resolve, reject) => {
-        let timer: ReturnType<typeof setTimeout> | undefined
+        const cancelled = () =>
+          signal?.reason instanceof Error
+            ? signal.reason
+            : new Error("Settings key intake was cancelled")
+        if (signal?.aborted) {
+          reject(cancelled())
+          return
+        }
+        // Every caller of cleanup runs after the timer below is set.
         const cleanup = () => {
-          if (timer) clearTimeout(timer)
+          clearTimeout(timer)
           signal?.removeEventListener("abort", onAbort)
           waiters.delete(onKey)
         }
@@ -64,19 +72,11 @@ export function createSettingsKeyIntake(): SettingsKeyIntake {
         }
         const onAbort = () => {
           cleanup()
-          reject(
-            signal?.reason instanceof Error
-              ? signal.reason
-              : new Error("Settings key intake was cancelled")
-          )
-        }
-        if (signal?.aborted) {
-          onAbort()
-          return
+          reject(cancelled())
         }
         waiters.add(onKey)
         signal?.addEventListener("abort", onAbort, { once: true })
-        timer = setTimeout(() => {
+        const timer = setTimeout(() => {
           cleanup()
           reject(
             new Error(

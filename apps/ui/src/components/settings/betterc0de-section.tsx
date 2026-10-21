@@ -1,11 +1,4 @@
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react"
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import {
   BotIcon,
   BracesIcon,
@@ -175,19 +168,12 @@ function brandMarks(ids: readonly string[]): ReactNode {
 export function SettingsBetterC0deSection() {
   const activeThread = useActiveThread()
   // The chat's own checkout, like Rules: a ready worktree first.
-  const workspacePath = useMemo(
-    () =>
-      (activeThread?.worktreeState && activeThread.worktreeState !== "ready"
-        ? ""
-        : activeThread?.worktreePath?.trim()) ||
-      activeThread?.projectPath?.trim() ||
-      "",
-    [
-      activeThread?.projectPath,
-      activeThread?.worktreePath,
-      activeThread?.worktreeState,
-    ]
-  )
+  const workspacePath =
+    (activeThread?.worktreeState && activeThread.worktreeState !== "ready"
+      ? ""
+      : activeThread?.worktreePath?.trim()) ||
+    activeThread?.projectPath?.trim() ||
+    ""
   const [state, setState] = useState<BetterC0deProjectState>(EMPTY_STATE)
   const [errors, setErrors] = useState<BlockErrors>({})
   const [loading, setLoading] = useState(false)
