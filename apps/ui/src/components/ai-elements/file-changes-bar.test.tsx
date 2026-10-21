@@ -23,6 +23,20 @@ vi.mock("@/lib/chat-store", async (original) => {
     ),
   }
 })
+// Static rendering reads a zustand store's initial snapshot, so the
+// checkpoint store's hook reads the live state the tests set.
+vi.mock("@/lib/checkpoint-store", async (original) => {
+  const actual = await original<typeof import("@/lib/checkpoint-store")>()
+  const store = actual.useCheckpointStore
+  return {
+    ...actual,
+    useCheckpointStore: Object.assign(
+      <T,>(selector: (state: ReturnType<typeof store.getState>) => T) =>
+        selector(store.getState()),
+      store
+    ),
+  }
+})
 vi.mock("@/components/file-mentions", () => ({ FileMentionMenu: () => null }))
 vi.mock("@/components/slash-commands", () => ({ SlashCommandMenu: () => null }))
 vi.mock("@/components/chat/pending-questions-panel", () => ({

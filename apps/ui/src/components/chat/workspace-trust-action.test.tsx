@@ -13,6 +13,21 @@ import {
 import { setAgentWorkspaceTrust } from "@/services/backend/chatApi"
 import { handleError } from "@/lib/errors"
 
+// Static rendering reads a zustand store's initial snapshot, so the prompt
+// store's hook reads the live state the tests register into.
+vi.mock("@/lib/workspace-trust-prompts", async (original) => {
+  const actual =
+    await original<typeof import("@/lib/workspace-trust-prompts")>()
+  const store = actual.useWorkspaceTrustPromptStore
+  return {
+    ...actual,
+    useWorkspaceTrustPromptStore: Object.assign(
+      <T,>(selector: (state: ReturnType<typeof store.getState>) => T) =>
+        selector(store.getState()),
+      store
+    ),
+  }
+})
 vi.mock("@/services/backend/chatApi", () => ({
   setAgentWorkspaceTrust: vi.fn(),
 }))

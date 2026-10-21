@@ -5,14 +5,18 @@ import type { ChatMessage } from "@/lib/chat-store"
 
 /**
  * The answer time has to be readable without hovering. It first shipped inside
- * the actions toolbar, which fades in on hover, so how long a turn took was
- * only discoverable by pointing at it — and a touch client never could.
+ * the actions toolbar, which then faded in on hover, so how long a turn took
+ * was only discoverable by pointing at it — and a touch client never could.
+ * The actions themselves are always visible now too.
  *
  * These tests assert the *structure* that keeps it visible, because "renders
  * the text somewhere" would have passed for the broken version too.
  */
 
 const HOVER_FADE = "opacity-0"
+const DURATION = "Total time for this turn"
+/** Copy is the first answer action; its accessible name marks the block. */
+const FIRST_ACTION = '<span class="sr-only">Copy</span>'
 
 function message(
   role: ChatMessage["role"],
@@ -36,12 +40,24 @@ function renderTurn(messages: ChatMessage[], idx: number): string {
   )
 }
 
-/** The markup of the hover-faded actions container itself. */
-function hoverBlock(html: string): string {
-  const start = html.indexOf(HOVER_FADE)
+/** Where the actions container opens, or -1 without actions. */
+function actionsStart(html: string): number {
+  const action = html.indexOf(FIRST_ACTION)
+  return action === -1 ? -1 : html.lastIndexOf("<div", action)
+}
+
+/** The markup of the actions container itself. */
+function actionsBlock(html: string): string {
+  const start = actionsStart(html)
   if (start === -1) return ""
   const tail = html.slice(start)
   return tail.slice(0, tail.indexOf("</div>"))
+}
+
+/** The row under an answer, from its opening tag through the actions. */
+function toolbarRow(html: string): string {
+  const start = html.lastIndexOf("<div", html.indexOf(DURATION))
+  return html.slice(start, actionsStart(html)) + actionsBlock(html)
 }
 
 const ANSWERED_IN_90_SECONDS = [
@@ -57,22 +73,29 @@ describe("turn duration under an answer", () => {
     expect(html).toContain("lucide-clock")
   })
 
-  it("keeps the duration outside the hover-faded actions block", () => {
-    // If the duration is ever moved back inside MessageActions, it inherits
-    // `opacity-0` and vanishes until hover.
+  it("keeps the duration outside the actions block", () => {
+    // If the duration is ever moved back inside MessageActions, it takes on
+    // whatever the actions do, which is how it once vanished until hover.
     const html = renderTurn(ANSWERED_IN_90_SECONDS, 1)
-    expect(html).toContain(HOVER_FADE)
-    expect(hoverBlock(html)).not.toContain("Total time for this turn")
+    expect(actionsBlock(html)).toContain("Revert to here")
+    expect(actionsBlock(html)).not.toContain(DURATION)
+  })
+
+  it("shows the actions without hovering", () => {
+    // Hover-only actions were easy to miss and never appeared on a touch
+    // screen, so neither the row nor the actions block may fade.
+    const html = renderTurn(ANSWERED_IN_90_SECONDS, 1)
+    expect(toolbarRow(html)).toContain(DURATION)
+    expect(toolbarRow(html)).toContain("Revert to here")
+    expect(toolbarRow(html)).not.toContain(HOVER_FADE)
   })
 
   it("puts the duration before the actions so it sits flush left", () => {
-    // `opacity-0` hides the actions but keeps their layout box. With the
-    // duration rendered after them it was pushed right by the width of buttons
-    // nobody could see, which is what made it look randomly indented.
+    // Rendered after the buttons, it was pushed right by their width and
+    // looked randomly indented; first, it lines up with the message text.
     const html = renderTurn(ANSWERED_IN_90_SECONDS, 1)
-    expect(html.indexOf("Total time for this turn")).toBeLessThan(
-      html.indexOf(HOVER_FADE)
-    )
+    expect(actionsStart(html)).toBeGreaterThan(-1)
+    expect(html.indexOf(DURATION)).toBeLessThan(actionsStart(html))
   })
 
   it("says nothing when the turn cannot be measured honestly", () => {

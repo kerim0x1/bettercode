@@ -400,6 +400,8 @@ describe("chat-store", () => {
       const sourceId = store.createThread("Source", "proj", "/repo")
 
       const forkPromise = store.forkThread(sourceId)
+      // The source's full transcript is read before the snapshot is written.
+      await vi.waitFor(() => expect(saveThreadDb).toHaveBeenCalledOnce())
 
       expect(useChatStore.getState().threads).toHaveLength(1)
       expect(useChatStore.getState().activeThreadId).toBe(sourceId)
@@ -586,7 +588,10 @@ describe("chat-store", () => {
       const thread = useChatStore.getState().threads.find((t) => t.id === id)
       expect(thread!.messages).toHaveLength(1)
       expect(thread!.messages[0].content).toBe("hello world")
-      expect(_saveThreadMessageDb).toHaveBeenCalledWith(id, msg)
+      // The save waits for the thread row, then for any omitted payloads.
+      await vi.waitFor(() =>
+        expect(_saveThreadMessageDb).toHaveBeenCalledWith(id, msg)
+      )
     })
 
     it("can apply a backend-persisted compaction message without overwriting metadata", () => {

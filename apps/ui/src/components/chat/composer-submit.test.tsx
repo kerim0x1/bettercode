@@ -1,9 +1,24 @@
 import { renderToStaticMarkup } from "react-dom/server"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { PromptInputProvider } from "@/components/ai-elements/prompt-input"
 import type { UiProvider } from "@/lib/provider-types"
 import { useSettingsStore } from "@/lib/settings-store"
 import { ComposerSubmit } from "./composer-submit"
+
+// Static rendering reads a zustand store's initial snapshot, so the settings
+// hook reads the live state and the tests can switch `whileWorkingEnter`.
+vi.mock("@/lib/settings-store", async (original) => {
+  const actual = await original<typeof import("@/lib/settings-store")>()
+  const store = actual.useSettingsStore
+  return {
+    ...actual,
+    useSettingsStore: Object.assign(
+      <T,>(selector: (state: ReturnType<typeof store.getState>) => T) =>
+        selector(store.getState()),
+      store
+    ),
+  }
+})
 
 describe("composer commands during a turn", () => {
   it.each(["/goal pause", "/goal continue", "/GOAL Fix the editor"])(

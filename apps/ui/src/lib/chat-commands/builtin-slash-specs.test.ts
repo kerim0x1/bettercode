@@ -113,8 +113,10 @@ describe("built-in slash command specs", () => {
 
   it("has a built-in command for every keybind slash alias", () => {
     const names = new Set(BUILTIN_SLASH_COMMAND_NAMES)
+    // An alias is what to type, so `/quick-switch 1` is the `quick-switch`
+    // command with its slot argument.
     const missing = BETTERC0DE_KEYBIND_DEFAULTS.flatMap((item) =>
-      item.slash && !names.has(item.slash.replace(/^\//, ""))
+      item.slash && !names.has(item.slash.split(/\s+/)[0]!.replace(/^\//, ""))
         ? [item.slash]
         : []
     )

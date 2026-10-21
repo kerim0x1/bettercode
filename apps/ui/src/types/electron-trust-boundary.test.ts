@@ -4,6 +4,7 @@ import { createRequire } from "node:module"
 import fs from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
+import { httpContracts } from "@betterc0de/schema/http-contracts"
 import { describe, expect, it } from "vitest"
 
 const requireCjs = createRequire(import.meta.url)
@@ -109,9 +110,15 @@ describe("Electron renderer trust boundary", () => {
       "window.electronAPI?.requestShellCapability"
     )
     expect(workspaceApiSource).toContain("if (!isRemoteRuntime())")
+    // A paired device mints through the typed shell contract, which pins the
+    // route it calls to `POST /shell/capability`.
     expect(workspaceApiSource).toMatch(
-      /httpInvoke<[^>]+>\(\s*["']\/shell\/capability/
+      /invokeContract\(\s*["']shellCapability["']/
     )
+    expect(httpContracts.shellCapability).toMatchObject({
+      method: "POST",
+      path: "/shell/capability",
+    })
     // A paired device asks the backend every time and, when refused, is told
     // which desktop switch grants it — it never decides locally.
     expect(workspaceApiSource).toContain("Allow terminal from remote devices")

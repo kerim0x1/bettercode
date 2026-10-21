@@ -4,6 +4,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ChatInputArea } from "@/components/chat/chat-input-area"
 import { useComposerMenuStore } from "@/lib/composer-menu-store"
 
+// Static rendering reads a zustand store's initial snapshot, so the menu
+// store's hook reads the live state instead.
+vi.mock("@/lib/composer-menu-store", async (original) => {
+  const actual = await original<typeof import("@/lib/composer-menu-store")>()
+  const store = actual.useComposerMenuStore
+  return {
+    ...actual,
+    useComposerMenuStore: Object.assign(
+      <T,>(selector: (state: ReturnType<typeof store.getState>) => T) =>
+        selector(store.getState()),
+      store
+    ),
+  }
+})
 vi.mock("@/components/ai-elements/file-changes-bar", () => ({
   FileChangesBar: () => null,
 }))

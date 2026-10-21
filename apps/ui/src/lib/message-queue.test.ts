@@ -150,11 +150,15 @@ describe("editing the queue", () => {
       .enqueueFirst("a", { text: "Steer this", files: [], browserElements: [] })
     expect(queue.getState().messages[0].id).toBe(steer.id)
     expect(queue.getState().claimForSteer(steer.id)?.status).toBe("sending")
-    const send = vi.fn()
+    // A sent message starts a turn, so the chat is busy until it ends.
+    const ready = new Set(["a"])
+    const send = vi.fn(async (entry) => {
+      ready.delete(entry.threadId)
+    })
     const stop = startMessageQueueRunner({
       queue,
       send,
-      isReady: () => true,
+      isReady: (id) => ready.has(id),
       subscribeReady: () => () => {},
       onError: vi.fn(),
     })
