@@ -162,6 +162,12 @@ export default defineConfig({
       // npm-workspaces without an explicit Vite alias.
       "@": path.resolve(__dirname, "./src"),
     },
+    // `@streamdown/code` depends on shiki 3 and installs its own copy, which
+    // shipped every TextMate grammar a second time (~12 MB of async
+    // chunks). It uses only `createHighlighter`, `bundledLanguages`,
+    // `bundledLanguagesInfo` and the JavaScript regex engine, which the app's
+    // shiki 4 provides unchanged, so both resolve to the one copy.
+    dedupe: ["shiki"],
   },
   optimizeDeps: {
     // Pin dep-scan entries so the scanner doesn't crawl nested HTML files

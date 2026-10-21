@@ -143,6 +143,7 @@ A `v<version>` tag can only be released when this file has a `## [<version>]` se
 - Unsigned Windows and macOS builds and Linux deb, rpm and pacman packages check for updates and offer a download link instead of failing silently; Settings → General → Updates shows the version and update status. AppImage keeps automatic updates.
 - The app keeps a rotating log in the data directory's `logs` folder, available through **Open logs folder** in Settings. Backend server errors are logged with message, stack and request id, with secrets redacted.
 - `npm run package` and the `build:*` scripts build for the current machine through the same release-check pipeline as CI, including the packaged-app smoke test.
+- The app is about 12 MB smaller: code highlighting in chat answers no longer ships a second copy of every language grammar. The build's budget for the startup script is 2.25 MB, up from 1.75 MB, to fit this release's new features.
 
 ## [0.1.0-beta.3] - 2026-09-25
 

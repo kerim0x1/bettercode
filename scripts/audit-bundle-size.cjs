@@ -8,7 +8,11 @@ const assetsDir = path.join(distDir, "assets")
 const mb = 1024 * 1024
 const budgets = {
   totalJs: Number(process.env.BUNDLE_TOTAL_JS_MB || "38") * mb,
-  entry: Number(process.env.BUNDLE_ENTRY_MB || "1.75") * mb,
+  // Raised from 1.75 MB when the terminal, steering, pull requests, chat
+  // find, model comparison, resume and the sidebar's folders, pins and
+  // snoozes landed (2.06 MB). On-demand pages and dialogs stay lazy; what
+  // the first paint needs (sidebar, composer, queue) is in the entry.
+  entry: Number(process.env.BUNDLE_ENTRY_MB || "2.25") * mb,
   markdown: Number(process.env.BUNDLE_MARKDOWN_MB || "2") * mb,
   typeScriptWorker: Number(process.env.BUNDLE_TS_WORKER_MB || "6.25") * mb,
   // What the browser must download and parse before the first frame. Total
