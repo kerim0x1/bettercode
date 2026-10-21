@@ -118,7 +118,7 @@ jobs:
         run: npm run release:check -- --arch ${{ matrix.arch }} --mobile none
 
       - name: Keep the verified installers
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.artifact }}
           path: |
@@ -206,7 +206,7 @@ jobs:
           script: node scripts/mobile-android.mjs e2e
 
       - name: Keep the verified APK
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: installers-android
           path: apps/mobile/build/android/BetterC0de-Remote-*.apk
@@ -215,7 +215,7 @@ jobs:
 
       - name: Keep the device-test evidence
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mobile-android-e2e
           path: apps/mobile/build/e2e/android
