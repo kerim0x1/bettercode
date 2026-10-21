@@ -73,14 +73,14 @@ test("the onboarding import asks before storing new MCP command lines", async ()
     { id: "new", command: "npx", args: ["server"], scope: "user", approval: { v: 1, alg: "sha256", digest: "forged" } },
     { id: "repo", command: "node", args: ["evil.js"], scope: "project" },
   ])
-  assert.deepEqual(result, { imported: 1, declined: 0 })
-  assert.deepEqual(approvals.map((call) => call.ids), [["new"]])
-  assert.deepEqual(approvals[0].existing, [null])
+  assert.deepEqual(plain(result), { imported: 1, declined: 0 })
+  assert.deepEqual(plain(approvals.map((call) => call.ids)), [["new"]])
+  assert.deepEqual(plain(approvals[0].existing), [null])
   // Merged into the list as stored when it is written: the server saved
   // meanwhile is kept.
-  assert.deepEqual(written.map((entry) => [entry.id, entry.approval?.digest]), [
+  assert.deepEqual(plain(written.map((entry) => [entry.id, entry.approval?.digest ?? null])), [
     ["same", "x"],
-    ["meanwhile", undefined],
+    ["meanwhile", null],
     ["new", "approved-new"],
   ])
 })
@@ -101,8 +101,8 @@ test("an injected reader and writer still receive the merged list", async () => 
       approveMcpLaunches: async (servers) => servers.map(() => ({ v: 1, alg: "sha256", digest: "ok" })),
     },
   })
-  assert.deepEqual(result, { imported: 1, declined: 0 })
-  assert.deepEqual(written.map((entry) => entry.id), ["kept", "new"])
+  assert.deepEqual(plain(result), { imported: 1, declined: 0 })
+  assert.deepEqual(plain(written.map((entry) => entry.id)), ["kept", "new"])
 })
 
 test("declining the MCP approval stores none of the imported servers", async () => {
@@ -119,7 +119,7 @@ test("declining the MCP approval stores none of the imported servers", async () 
     { id: "one", command: "a", scope: "user" },
     { id: "two", command: "b", scope: "user" },
   ])
-  assert.deepEqual(result, { imported: 0, declined: 2 })
+  assert.deepEqual(plain(result), { imported: 0, declined: 2 })
   assert.equal(written, null)
 })
 

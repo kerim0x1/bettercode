@@ -53,12 +53,15 @@ test("falls back to zsh for a missing or relative SHELL", async () => {
 
 test("a hanging profile times out and its process group is killed", async () => {
   const killed = []
+  // The resolver's timer is unref'd and the fake child holds nothing open,
+  // so keep the event loop alive until the timeout fires.
+  const keepAlive = setInterval(() => {}, 1_000)
   const value = await resolveLoginShellPath({
     shell: "/bin/bash",
     timeoutMs: 20,
     spawnImpl: fakeShell({ exit: false, output: () => "still loading..." }),
     killProcessGroup: (pid, signal) => killed.push([pid, signal]),
-  })
+  }).finally(() => clearInterval(keepAlive))
   assert.equal(value, null)
   assert.deepEqual(killed, [[4242, "SIGKILL"]])
 })

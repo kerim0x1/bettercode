@@ -41,8 +41,10 @@ test("the OAuth flow and its client are gone from the shell", () => {
 test("no provider sign-in channel exists; the remaining provider handlers are inert", async () => {
   const { handlers } = registerHandlers()
   assert.equal(handlers.has("provider:oauth-start"), false)
-  assert.deepEqual(await handlers.get("provider:auth-status")(), {})
-  assert.deepEqual(await handlers.get("provider:auth-clear")({}, { providerId: "openai" }), { ok: true })
+  // The handlers run in a vm context, so their objects have its prototypes.
+  const plain = (value) => JSON.parse(JSON.stringify(value))
+  assert.deepEqual(plain(await handlers.get("provider:auth-status")()), {})
+  assert.deepEqual(plain(await handlers.get("provider:auth-clear")({}, { providerId: "openai" })), { ok: true })
   await assert.rejects(handlers.get("provider:auth-clear")({}, {}), /providerId is required/)
 })
 

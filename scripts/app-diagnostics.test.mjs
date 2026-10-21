@@ -3,7 +3,9 @@ import { EventEmitter } from "node:events"
 import { createRequire } from "node:module"
 import test from "node:test"
 
-const { createAppDiagnostics } = createRequire(import.meta.url)("../apps/shell/shared/app-diagnostics.cjs")
+const require = createRequire(import.meta.url)
+const { createAppDiagnostics } = require("../apps/shell/shared/app-diagnostics.cjs")
+const { redactSensitiveText } = require("../apps/shell/shared/log-redaction.cjs")
 
 function setup(t, options = {}) {
   const forwarded = []
@@ -29,7 +31,8 @@ test("automatic errors include host identity, stack and the recent main-process 
   assert.equal(payloads.length, 1)
   const payload = payloads[0]
   assert.ok(payload.message.startsWith(error.message))
-  assert.equal(payload.stack, error.stack)
+  // Reports go out redacted: a home directory in a path becomes "~".
+  assert.equal(payload.stack, redactSensitiveText(error.stack))
   assert.match(payload.logs, /Opening project/)
   assert.equal(payload.installId, "persistent-installation")
   assert.equal(payload.arch, "x64")

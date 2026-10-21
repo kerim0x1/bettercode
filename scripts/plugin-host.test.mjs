@@ -227,10 +227,20 @@ function loopbackHosts({ frozenAfterInit = false } = {}) {
   return { spawnHost, spawned }
 }
 
+// The client unrefs its timers so they never keep the app alive. Loopback
+// hosts hold nothing open, so a call waiting for its deadline would leave an
+// empty event loop and node:test would cancel the run. These timers stay
+// referenced.
+const referencedTimers = {
+  setTimeout: (callback, ms) => ({ handle: setTimeout(callback, ms) }),
+  clearTimeout: (timer) => clearTimeout(timer?.handle),
+}
+
 function client(t, hosts, overrides = {}) {
   const crashes = []
   const faults = []
   const instance = createPluginHostClient({
+    timers: referencedTimers,
     spawnHost: hosts.spawnHost,
     onCrash: (crash) => crashes.push(crash),
     onFault: (pluginId, error) => faults.push({ pluginId, error }),
@@ -457,6 +467,7 @@ test("plugins run in a separate process; a crash there leaves this process runni
   const crashes = []
   const faults = []
   const host = createPluginHostClient({
+    timers: referencedTimers,
     spawnHost: () => spawnNodePluginHost(),
     onCrash: (crash) => crashes.push(crash),
     onFault: (pluginId, error) => faults.push({ pluginId, error }),
