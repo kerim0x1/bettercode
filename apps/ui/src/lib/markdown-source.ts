@@ -175,7 +175,9 @@ function markInline(text: string, offset: number, flags: Uint16Array) {
     at(end - open, end, F.marker)
     consume(match.index, end)
   })
-  pass(ESCAPE, (match) => consume(match.index + 1, match.index + 2))
+  pass(ESCAPE, (match) => {
+    consume(match.index + 1, match.index + 2)
+  })
   pass(LINK, (match) => {
     const textEnd = match.index + 1 + match[1].length
     at(match.index, match.index + 1, F.linkTarget)

@@ -10,6 +10,7 @@ import {
   SquareDashedIcon,
   TextCursorInputIcon,
   TypeIcon,
+  XIcon,
   type LucideIcon,
 } from "lucide-react"
 import {

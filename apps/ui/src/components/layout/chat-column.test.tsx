@@ -10,6 +10,9 @@ import type { UiProvider } from "@/lib/provider-types"
 const rendered = vi.hoisted(() => ({
   input: null as ComponentProps<typeof ChatInputArea> | null,
 }))
+// Read through a call, so `rendered.input = null` in a test does not narrow
+// later reads to null after another render.
+const lastInput = () => rendered.input
 vi.mock("@/components/layout/chat-top-bar", () => ({ ChatTopBar: () => null }))
 vi.mock("@/components/chat/chat-transcript", () => ({
   ChatTranscript: () => null,
@@ -194,7 +197,7 @@ describe("chat pane composer", () => {
         ?.codex.thinkingMode
     ).toBe("medium")
     expect(useChatStore.getState().settingsByThread.a).toBe(otherSettings)
-    rendered.input?.setPlanModalContent("Implement this plan")
+    rendered.input?.setPlanModalContent?.("Implement this plan")
     expect(props.setPlanModalContent).toHaveBeenCalledWith(
       expect.objectContaining({
         content: "Implement this plan",
@@ -225,7 +228,7 @@ describe("chat pane composer", () => {
     expect(design).toContain('aria-label="GPT-6 Astra"')
     expect(design).not.toContain("Conversation unavailable")
     expect(design).not.toContain("data-editor-empty-chat")
-    expect(rendered.input?.composerProps.appMode).toBe("design")
-    expect(rendered.input?.composerProps.minimalChat).toBe(true)
+    expect(lastInput()?.composerProps.appMode).toBe("design")
+    expect(lastInput()?.composerProps.minimalChat).toBe(true)
   })
 })

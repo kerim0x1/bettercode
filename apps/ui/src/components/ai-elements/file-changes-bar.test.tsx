@@ -2,7 +2,10 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { FileChangesBar, findTurnGitCheckpoint } from "./file-changes-bar"
-import { ChatInputArea } from "@/components/chat/chat-input-area"
+import {
+  ChatInputArea,
+  type ChatInputComposerProps,
+} from "@/components/chat/chat-input-area"
 import { ChatComposer } from "@/components/chat/chat-composer"
 import { emptyStreamState, useChatStore } from "@/lib/chat-store"
 import { useCheckpointStore, type Checkpoint } from "@/lib/checkpoint-store"
@@ -33,6 +36,11 @@ vi.mock("@/components/chat/thread-goal-card", () => ({
 vi.mock("@/components/chat/chat-composer", () => ({
   ChatComposer: vi.fn(() => null),
 }))
+
+// The composer is mocked, so these tests pass only the props they read.
+const composerProps = (props: Partial<ChatInputComposerProps> = {}) =>
+  props as ChatInputComposerProps
+const deepgram = { error: null, clearError: () => {} }
 
 const initialState = useChatStore.getState()
 const diff = (path: string) => ({
@@ -108,8 +116,8 @@ describe("file review ownership", () => {
     const html = renderToStaticMarkup(
       createElement(ChatInputArea, {
         activeThreadId: "right",
-        composerProps: {},
-        deepgram: {},
+        composerProps: composerProps(),
+        deepgram,
       })
     )
     expect(html).toContain("right-only.ts")
@@ -121,8 +129,8 @@ describe("file review ownership", () => {
       createElement(ChatInputArea, {
         activeThreadId: "left",
         permissionLevel: "bypass",
-        composerProps: {},
-        deepgram: {},
+        composerProps: composerProps(),
+        deepgram,
       })
     )
     expect(html).not.toContain("Review File Changes")
@@ -137,8 +145,8 @@ describe("file review ownership", () => {
       createElement(ChatInputArea, {
         activeThreadId: "left",
         permissionLevel: "ask-on-edit",
-        composerProps: {},
-        deepgram: {},
+        composerProps: composerProps(),
+        deepgram,
         activeProposedPlan: { id: "plan", content: "# My implementation plan" },
         setPlanModalContent: vi.fn(),
       })
@@ -156,8 +164,8 @@ describe("file review ownership", () => {
       renderToStaticMarkup(
         createElement(ChatInputArea, {
           activeThreadId: "right",
-          composerProps: { handleSubmit: submit, setChatMode },
-          deepgram: {},
+          composerProps: composerProps({ handleSubmit: submit, setChatMode }),
+          deepgram,
           activeProposedPlan: { id: "plan", content: "# Proposed plan" },
         })
       )
