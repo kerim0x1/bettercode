@@ -18,6 +18,8 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSendTurnInput,
   type ProviderSession,
+  type ProviderSteerTurnInput,
+  type ProviderSteerTurnResult,
   type ThreadId,
   threadId as toThreadId,
 } from "../contracts"
@@ -47,6 +49,11 @@ import { type CodexHomeLayout, resolveCodexHomeLayout } from "./CodexHomeLayout"
 import { codexProcessEnvironment } from "./CodexBinaryPath"
 import { buildCodexCollaborationMode } from "./CodexDeveloperInstructions"
 import { CodexRpcClient } from "./rpc"
+import { errorMessage } from "../errorMessage"
+import {
+  codexVersionAdvisory,
+  parseCodexInitializeVersion,
+} from "./codexVersion"
 import { translateCodexEvent } from "./translator"
 import { isCodexCliAuthenticatedAsync } from "../../../cli/detect"
 import type { EventNdjsonLogger } from "../EventNdjsonLogger"
@@ -100,7 +107,7 @@ interface ProbeCleanupContext {
   closeFailure: unknown
 }
 
-interface CodexNativePolicies {
+export interface CodexNativePolicies {
   readonly approvalPolicy: string
   readonly threadSandbox: string
   readonly turnSandboxPolicy: { readonly type: string }
@@ -409,15 +416,22 @@ export class CodexAdapter implements ProviderAdapterShape {
             8_000
           )
           const accountStatus = codexAccountProbeStatus(accountResponse)
+          // An outdated CLI stays usable but is named, instead of failing
+          // later mid-turn with an opaque method error.
+          const versionAdvisory = codexVersionAdvisory(version)
+          const message = [versionAdvisory, accountStatus.message]
+            .filter((part): part is string => Boolean(part))
+            .join(" ")
           const status: CodexProviderStatusProbe = {
             configured: accountStatus.status !== "error",
             installed: true,
             version,
-            status: accountStatus.status,
+            status:
+              versionAdvisory && accountStatus.status === "ready"
+                ? "warning"
+                : accountStatus.status,
             auth: accountStatus.auth,
-            ...(accountStatus.message
-              ? { message: accountStatus.message }
-              : {}),
+            ...(message ? { message } : {}),
           }
           return this.cacheStatus(status)
         } catch (error) {
@@ -893,11 +907,7 @@ export class CodexAdapter implements ProviderAdapterShape {
           model: modelId ?? "Codex default",
           effort: effortForThisModel,
         })
-    const images = imageAttachments(input.attachments).filter((attachment) => {
-      const parsed = parseBase64DataUrl(attachment.url)
-      if (parsed) return parsed.mediaType.startsWith("image/")
-      return /^https?:\/\//i.test(attachment.url.trim())
-    })
+    const images = codexImageInputs(input.attachments)
     const imageSet = new Set(images)
     const unsupportedAttachments = (input.attachments ?? []).filter(
       (attachment) => !imageSet.has(attachment)
@@ -933,6 +943,33 @@ export class CodexAdapter implements ProviderAdapterShape {
     const ctx = this.sessions.get(threadId as string)
     if (!ctx) return
     await ctx.runtime.interruptTurn()
+  }
+
+  /**
+   * Codex takes user input in the middle of a turn (`turn/steer`). Images go
+   * along as they do on `turn/start`; other files are listed in the text.
+   */
+  async steerTurn(
+    input: ProviderSteerTurnInput
+  ): Promise<ProviderSteerTurnResult> {
+    const ctx = this.sessions.get(input.threadId as string)
+    if (!ctx || !ctx.runtime.isAlive()) {
+      return { status: "not_running", reason: "No Codex session is running." }
+    }
+    const attachments = [...(input.attachments ?? [])]
+    const images = codexImageInputs(attachments)
+    const imageSet = new Set(images)
+    const unsupportedAttachments = attachments.filter(
+      (attachment) => !imageSet.has(attachment)
+    )
+    return ctx.runtime.steerTurn({
+      message:
+        input.message +
+        (buildUnsupportedAttachmentNotice(unsupportedAttachments) ?? ""),
+      ...(images.length > 0
+        ? { images: images.map((attachment) => ({ url: attachment.url })) }
+        : {}),
+    })
   }
 
   async rollbackThread(threadId: ThreadId, numTurns: number): Promise<void> {
@@ -1283,6 +1320,17 @@ export class CodexAdapter implements ProviderAdapterShape {
   }
 }
 
+/** Attachments Codex reads as images: inline image data or an http(s) URL. */
+function codexImageInputs(
+  attachments: Parameters<typeof imageAttachments>[0]
+): ReturnType<typeof imageAttachments> {
+  return imageAttachments(attachments).filter((attachment) => {
+    const parsed = parseBase64DataUrl(attachment.url)
+    if (parsed) return parsed.mediaType.startsWith("image/")
+    return /^https?:\/\//i.test(attachment.url.trim())
+  })
+}
+
 function codexNativePoliciesForTurn(
   permissionLevel: string | null | undefined,
   chatMode: string | null | undefined
@@ -1293,7 +1341,28 @@ function codexNativePoliciesForTurn(
   return codexNativePolicies(normalizeLevel(permissionLevel))
 }
 
-function codexNativePoliciesForSession(input: {
+/** Runtime-mode spellings the shared permission alias table understands. */
+const CODEX_LEVEL_RUNTIME_MODES: ReadonlySet<string> = new Set([
+  "read-only",
+  "read",
+  "ask",
+  "ask-on-edit",
+  "approval-required",
+  "allow-edits",
+  "auto-accept-edits",
+  "full",
+  "full-access",
+  "bypass",
+])
+
+/**
+ * Thread-level default policy. Interaction modes are mapped here; every
+ * level spelling goes through the shared alias table (`normalizeLevel`), so
+ * `full`/`full-access` mean allow-edits and only an explicit `bypass`
+ * opens the danger-full-access sandbox. The turn's own policy
+ * (`codexNativePoliciesForTurn`) still applies on every `turn/start`.
+ */
+export function codexNativePoliciesForSession(input: {
   readonly runtimeMode?: string | null
   readonly permissionLevel?: string | null
   readonly chatMode?: string | null
@@ -1301,24 +1370,13 @@ function codexNativePoliciesForSession(input: {
   if (input.chatMode) {
     return codexNativePoliciesForTurn(input.permissionLevel, input.chatMode)
   }
-  switch ((input.runtimeMode ?? "").trim().toLowerCase()) {
-    case "plan":
-    case "read-only":
-    case "ask":
-      return codexNativePolicies("read-only")
-    case "security":
-    case "approval-required":
-      return codexNativePolicies("ask-on-edit")
-    case "allow-edits":
-    case "auto-accept-edits":
-      return codexNativePolicies("allow-edits")
-    case "bypass":
-    case "full":
-    case "full-access":
-      return codexNativePolicies("bypass")
-    default:
-      return codexNativePolicies(normalizeLevel(input.permissionLevel))
+  const runtimeMode = (input.runtimeMode ?? "").trim().toLowerCase()
+  if (runtimeMode === "plan") return codexNativePolicies("read-only")
+  if (runtimeMode === "security") return codexNativePolicies("ask-on-edit")
+  if (CODEX_LEVEL_RUNTIME_MODES.has(runtimeMode)) {
+    return codexNativePolicies(normalizeLevel(runtimeMode))
   }
+  return codexNativePolicies(normalizeLevel(input.permissionLevel))
 }
 
 function codexNativePolicies(level: PermissionLevel): CodexNativePolicies {
@@ -1362,11 +1420,6 @@ export function parseCodexModelListResponse(
       },
     ]
   })
-}
-
-function parseCodexInitializeVersion(response: unknown): string | null {
-  const userAgent = readTrimmed(asRecord(response), "userAgent")
-  return userAgent?.match(/\/([^\s]+)/)?.[1] ?? null
 }
 
 function codexAccountProbeStatus(response: unknown): {
@@ -1560,10 +1613,6 @@ function isCommandMissingError(error: unknown): boolean {
   const code = (error as { code?: unknown }).code
   const message = errorMessage(error).toLowerCase()
   return code === "ENOENT" || message.includes("enoent")
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 function expandTilde(value: string): string {

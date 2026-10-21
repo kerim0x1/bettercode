@@ -11,11 +11,15 @@ export async function invokeContract<K extends HttpContractName>(
     body?: unknown
     args?: Record<string, unknown>
     id?: string
+    /** Path parameters other than `:id`, e.g. `{ messageId }`. */
+    params?: Readonly<Record<string, string>>
     query?: string
     method?: string
     signal?: AbortSignal
     timeoutMs?: number
     silentStatuses?: number[]
+    /** Extra request headers (e.g. `clientInstanceRequestOptions()`). */
+    headers?: Record<string, string>
   } = {}
 ): Promise<HttpContractResponse<K>> {
   // Keep validation schemas off the first-frame path; load them on the first request.

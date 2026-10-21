@@ -1,3 +1,5 @@
+import { isWholeWordMatch } from "@betterc0de/schema/search-text"
+
 export interface WorkspaceReplaceTextResult {
   content: string
   count: number
@@ -159,15 +161,4 @@ function regexReplacementOffsetIndex(args: unknown[]): number {
     typeof args[args.length - 1] === "object" &&
     args[args.length - 1] !== null
   return hasGroups ? args.length - 3 : args.length - 2
-}
-
-function isWholeWordMatch(content: string, index: number, length: number) {
-  return (
-    !isSearchWordChar(content[index - 1]) &&
-    !isSearchWordChar(content[index + length])
-  )
-}
-
-function isSearchWordChar(value: string | undefined): boolean {
-  return Boolean(value && /[A-Za-z0-9_$-]/.test(value))
 }

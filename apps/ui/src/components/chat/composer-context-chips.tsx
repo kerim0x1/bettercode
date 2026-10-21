@@ -38,14 +38,16 @@ import { useChatStore } from "@/lib/chat-store"
 import { resolveThreadRuntimePath } from "@/lib/thread-context"
 import {
   createThreadWorktree,
+  listProjects,
+  removeThreadWorktree,
+} from "@/services/backend/coreApi"
+import {
   gitCheckoutBranch,
   gitListBranches,
   gitStatus,
   isGitRepo,
-  listProjects,
-  pickFolder,
-  removeThreadWorktree,
-} from "@/services/backend"
+} from "@/services/backend/gitApi"
+import { pickFolder } from "@/services/backend/runtime"
 import {
   MENU_BUTTON,
   MENU_HEADING,

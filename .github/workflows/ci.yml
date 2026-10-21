@@ -27,6 +27,9 @@ env:
 permissions:
   contents: read
 
+# Every checkout sets persist-credentials: false. No job here pushes with
+# git, and the token should not sit in .git/config while npm runs the
+# lifecycle scripts of more than a thousand dependencies.
 jobs:
   contributor-contract:
     name: Contributor guidance and theme contract
@@ -35,6 +38,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -63,6 +68,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # The format check compares against main or the previous push.
           fetch-depth: 0
 
@@ -97,6 +103,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Prepare
@@ -119,6 +126,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Prepare
         uses: ./.github/actions/prepare
@@ -168,6 +177,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Prepare
         uses: ./.github/actions/prepare

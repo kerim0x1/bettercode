@@ -8,10 +8,7 @@ import { runInNewContext } from "node:vm"
 
 const require = createRequire(import.meta.url)
 const helperSource = fs.readFileSync(new URL("../apps/shell/shared/json-fs.cjs", import.meta.url), "utf8")
-const source = fs.readFileSync(new URL("../apps/shell/main.cjs", import.meta.url), "utf8")
-const begin = source.indexOf("function loadWindowState()")
-const end = source.indexOf("let windowStateSaveTimer", begin)
-assert.ok(begin >= 0 && end > begin)
+const { WINDOW_STATE_FILENAME, createWindowStateStore } = require("../apps/shell/shared/window-state.cjs")
 
 function helper(overrides = {}) {
   const module = { exports: {} }
@@ -21,14 +18,16 @@ function helper(overrides = {}) {
   return module.exports
 }
 
-function windowState(directory, helpers = helper()) {
-  return runInNewContext(`${source.slice(begin, end)}; ({ loadWindowState, writeWindowState })`, {
-    path, WINDOW_STATE_FILENAME: "window-state.json",
-    appConfig: { DEFAULT_WINDOW_WIDTH: 1400, DEFAULT_WINDOW_HEIGHT: 900 },
-    resolveBetterC0deUserDataDir: () => directory, console: { warn() {} },
-    require: name => name === "./shared/json-fs.cjs" ? helpers
-      : name === "electron" ? { screen: { getAllDisplays: () => [{ bounds: { x: 0, y: 0, width: 1920, height: 1080 } }] } }
-        : require(name),
+const oneDisplay = () => ({ getAllDisplays: () => [{ bounds: { x: 0, y: 0, width: 1920, height: 1080 } }] })
+
+function windowState(directory, helpers = helper(), options = {}) {
+  return createWindowStateStore({
+    resolveDataDir: () => directory,
+    jsonFs: helpers,
+    getScreen: oneDisplay,
+    defaults: { width: 1400, height: 900 },
+    log: { warn() {} },
+    ...options,
   })
 }
 
@@ -47,7 +46,8 @@ test("window state refuses oversized files and invalid native bounds", t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bc0de-window-state-"))
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
   const state = windowState(directory)
-  const file = path.join(directory, "window-state.json")
+  const file = path.join(directory, WINDOW_STATE_FILENAME)
+  assert.equal(WINDOW_STATE_FILENAME, "window-state.json")
   for (const width of [2147483648, 800.5]) {
     fs.writeFileSync(file, JSON.stringify({ width, height: 600 }))
     assert.equal(state.loadWindowState().width, 1400)
@@ -61,13 +61,56 @@ test("window state refuses oversized files and invalid native bounds", t => {
   assert.equal(valid.isMaximized, false)
 })
 
+test("a saved position off every connected display is dropped", t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bc0de-window-state-"))
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  fs.writeFileSync(path.join(directory, WINDOW_STATE_FILENAME), JSON.stringify({ width: 800, height: 600, x: 5000, y: 5000, isMaximized: true }))
+  const restored = windowState(directory).loadWindowState()
+  assert.deepEqual(restored, { width: 800, height: 600, x: undefined, y: undefined, isMaximized: true })
+})
+
 test("failed window state replacement preserves the previous snapshot", t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bc0de-window-state-"))
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
-  const file = path.join(directory, "window-state.json")
+  const file = path.join(directory, WINDOW_STATE_FILENAME)
   fs.writeFileSync(file, JSON.stringify({ width: 800, height: 600 }))
   const state = windowState(directory, helper({ fs: { ...fs, renameSync: () => { throw new Error("fixture replacement denied") } } }))
   state.writeWindowState({ width: 900, height: 700 })
   assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).width, 800)
-  assert.deepEqual(fs.readdirSync(directory), ["window-state.json"])
+  assert.deepEqual(fs.readdirSync(directory), [WINDOW_STATE_FILENAME])
+})
+
+test("resize saves are debounced, and the close path cancels the pending one", () => {
+  const writes = []
+  const pending = new Set()
+  const timers = {
+    setTimeout: (fn) => { const handle = { fn }; pending.add(handle); return handle },
+    clearTimeout: (handle) => pending.delete(handle),
+  }
+  const state = createWindowStateStore({
+    resolveDataDir: () => "/unused",
+    jsonFs: { readJson: () => null, writeJson: (_file, value) => writes.push(value) },
+    getScreen: oneDisplay,
+    timers,
+    log: { warn() {} },
+  })
+  const win = {
+    isDestroyed: () => false,
+    isMaximized: () => false,
+    getBounds: () => ({ x: 1, y: 2, width: 800, height: 600 }),
+    getNormalBounds: () => ({ x: 0, y: 0, width: 640, height: 480 }),
+  }
+  state.saveWindowStateDebounced(win)
+  state.saveWindowStateDebounced(win)
+  assert.equal(pending.size, 1)
+  state.cancelPendingSave()
+  assert.equal(pending.size, 0)
+  state.saveWindowStateDebounced(win)
+  for (const handle of [...pending]) { pending.delete(handle); handle.fn() }
+  assert.deepEqual(writes, [{ x: 1, y: 2, width: 800, height: 600, isMaximized: false }])
+  assert.deepEqual(
+    state.captureWindowState({ ...win, isMaximized: () => true }),
+    { x: 0, y: 0, width: 640, height: 480, isMaximized: true },
+  )
+  assert.equal(state.captureWindowState({ isDestroyed: () => true }), null)
 })

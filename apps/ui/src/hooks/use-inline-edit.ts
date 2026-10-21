@@ -1,6 +1,6 @@
 import { useCallback } from "react"
 import { useChatStore } from "@/lib/chat-store"
-import { sendChatMessage } from "@/services/backend"
+import { sendChatMessage } from "@/lib/chat/send-message"
 import { resolveProviderTarget } from "@/lib/resolve-provider-target"
 import { coerceThinkingModeForModel } from "@/lib/model-capabilities"
 import type { InlineEditRequest } from "@/components/monaco-editor-wrapper"

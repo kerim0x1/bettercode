@@ -227,7 +227,12 @@ function SimpleDropdown({
 
 interface SimpleDropdownItemProps {
   children: React.ReactNode
-  onClick?: () => void
+  /**
+   * Fires with the click, modifier keys included (Shift, Ctrl, ⌘; a key
+   * press on the row reports them too). Calling `event.preventDefault()`
+   * keeps the menu open for this click, as `keepOpen` does for every click.
+   */
+  onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void
   onContextMenu?: React.MouseEventHandler<HTMLButtonElement>
   className?: string
   active?: boolean
@@ -280,17 +285,18 @@ function SimpleDropdownItem({
       onContextMenu={disabled ? undefined : onContextMenu}
       className={cn(
         "flex min-h-7 w-full items-center gap-1.5 px-2 py-1 text-left text-[11px]",
-        "leading-none text-popover-foreground transition-colors",
+        // A Shift-click (Compare) must not select the menu's text.
+        "leading-none text-popover-foreground transition-colors select-none",
         !disabled && "hover:bg-accent/50",
         active && !disabled && "bg-accent/30 text-foreground",
         disabled && "cursor-not-allowed opacity-50",
         className
       )}
       style={{ borderRadius: "var(--radius)" }}
-      onClick={() => {
+      onClick={(event) => {
         if (disabled) return
-        onClick?.()
-        if (!keepOpen) close()
+        onClick?.(event)
+        if (!keepOpen && !event.defaultPrevented) close()
       }}
     >
       {children}
@@ -621,17 +627,18 @@ function SimpleDropdownSubItem({
       aria-pressed={ariaPressed}
       className={cn(
         "flex min-h-7 w-full items-center gap-1.5 px-2 py-1 text-left text-[11px]",
-        "leading-none text-popover-foreground transition-colors",
+        // A Shift-click (Compare) must not select the menu's text.
+        "leading-none text-popover-foreground transition-colors select-none",
         !disabled && "hover:bg-accent/50",
         active && !disabled && "bg-accent/30 text-foreground",
         disabled && "cursor-not-allowed opacity-50",
         className
       )}
       style={{ borderRadius: "var(--radius)" }}
-      onClick={() => {
+      onClick={(event) => {
         if (disabled) return
-        onClick?.()
-        if (!keepOpen) close()
+        onClick?.(event)
+        if (!keepOpen && !event.defaultPrevented) close()
       }}
     >
       {children}

@@ -1,5 +1,5 @@
 import { HttpError } from "@/lib/errors/types"
-import { createDirectory, writeFile } from "@/services/backend"
+import { createDirectory, writeFile } from "@/services/backend/workspaceApi"
 
 /**
  * "New file" and "New folder" in the Explorer. A new file never replaces an

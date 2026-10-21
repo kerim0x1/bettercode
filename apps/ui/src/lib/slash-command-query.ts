@@ -5,10 +5,10 @@
  */
 
 import { formatProviderSkillCommandDescription } from "@/lib/provider-skill-presentation"
-import {
-  type WorkspaceProjectCommand,
-  type WorkspaceProjectSkill,
-} from "@/services/backend"
+import type {
+  WorkspaceProjectCommand,
+  WorkspaceProjectSkill,
+} from "@/services/backend/workspaceApi"
 import type { ProviderSkill, ProviderSlashCommand } from "@betterc0de/schema"
 import {
   GOAL_SUBCOMMANDS,

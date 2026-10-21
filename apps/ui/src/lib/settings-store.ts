@@ -1,10 +1,11 @@
 import { create } from "zustand"
-import { getSettings, updateSettings, getCliStatus } from "@/services/backend"
+import { getSettings, updateSettings } from "@/services/backend/coreApi"
+import { getCliStatus } from "@/services/backend/providersApi"
 import {
   DEFAULT_DESIGN_DEFAULTS,
   type DesignDefaults,
 } from "@betterc0de/schema/design"
-import type { Skill, McpServer, Hook } from "@betterc0de/schema"
+import type { ChatFolder, SnoozedChat } from "@betterc0de/schema"
 import { handleError } from "@/lib/errors"
 
 /**
@@ -14,8 +15,6 @@ import { handleError } from "@/lib/errors"
  * newly added or removed key within a frame instead of the next poll tick.
  */
 export const SETTINGS_UPDATED_EVENT = "betterc0de:settings-updated"
-
-export type { Skill, McpServer, Hook }
 
 export interface CliStatus {
   installed: boolean
@@ -41,9 +40,17 @@ export interface SettingsState {
   showChatScrollbar: boolean
   showGenericToolOutput: boolean
   concealCodeBlocks: boolean
+  /** Agents may answer with ```html-render pages, shown live in the chat. */
+  visualReplies: boolean
   autoSaveConversations: boolean
+  /** Resume a chat by itself once the usage limit that stopped it resets. */
+  resumeAfterUsageLimit: boolean
+  /** Continue, once, a chat whose turn a quit or crash interrupted. */
+  continueAfterRestart: boolean
   diffWordWrap: boolean
   diffStyle: "auto" | "stacked"
+  /** What Enter does while the agent works; Ctrl/Cmd+Enter does the other. */
+  whileWorkingEnter: "queue" | "steer"
   confirmArchive: boolean
   confirmDelete: boolean
   autoTrustWorkspaces: boolean
@@ -59,28 +66,32 @@ export interface SettingsState {
   backendLogFormat: "simple" | "json"
   backendTraceHttp: boolean
   backendTraceProviderEvents: boolean
+  /** Opt-in: automatic crash and error reports. */
+  crashReportsEnabled: boolean
+  /** Opt-in: one anonymous usage ping per app start. */
+  usagePingEnabled: boolean
   defaultThreadEnvMode: string
   textGenerationModel: string | null
   remoteAccessEnabled: boolean
   remoteAccessCustomUrl: string
 
-  // Rules
-  customRules: string
-
-  // Skills
-  skills: Skill[]
-
-  // MCP Servers
-  mcpServers: McpServer[]
-
-  // Hooks
-  hooks: Hook[]
+  // Rules, skills, MCP servers and hooks are not settings: the desktop
+  // configuration lives in BetterC0de's settings folder (lib/runtime-config).
 
   // Canvas Mode
   designDefaults: DesignDefaults
 
   // Archived threads
   archivedThreadIds: string[]
+
+  // Folders of the compact chat list, in their order
+  chatFolders: ChatFolder[]
+
+  // Chats pinned to the top of the chat lists, in their order
+  pinnedThreadIds: string[]
+
+  // Chats snoozed out of the chat lists (lib/chat-snooze.ts)
+  snoozedThreads: SnoozedChat[]
 
   // Runtime
   cliStatus: { claude: CliStatus; codex: CliStatus } | null
@@ -111,12 +122,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   showChatScrollbar: false,
   showGenericToolOutput: false,
   concealCodeBlocks: false,
+  visualReplies: true,
   autoSaveConversations: true,
+  resumeAfterUsageLimit: true,
+  continueAfterRestart: true,
   diffWordWrap: true,
   diffStyle: "auto",
+  whileWorkingEnter: "queue",
   confirmArchive: true,
   confirmDelete: true,
-  autoTrustWorkspaces: true,
+  autoTrustWorkspaces: false,
   orchestratorEnabled: false,
   notificationAgent: true,
   notificationPermissions: true,
@@ -129,16 +144,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   backendLogFormat: "simple",
   backendTraceHttp: false,
   backendTraceProviderEvents: false,
+  crashReportsEnabled: false,
+  usagePingEnabled: false,
   defaultThreadEnvMode: "local",
   textGenerationModel: null,
   remoteAccessEnabled: false,
   remoteAccessCustomUrl: "",
-  customRules: "",
-  skills: [],
-  mcpServers: [],
-  hooks: [],
   designDefaults: DEFAULT_DESIGN_DEFAULTS,
   archivedThreadIds: [],
+  chatFolders: [],
+  pinnedThreadIds: [],
+  snoozedThreads: [],
   cliStatus: null,
   loaded: false,
 
@@ -294,8 +310,20 @@ const settingsFields = {
     key: "conceal_code_blocks",
     read: (value: unknown) => value === true,
   },
+  visualReplies: {
+    key: "visual_replies",
+    read: (value: unknown) => value !== false,
+  },
   autoSaveConversations: {
     key: "auto_save_conversations",
+    read: (value: unknown) => value !== false,
+  },
+  resumeAfterUsageLimit: {
+    key: "resume_after_usage_limit",
+    read: (value: unknown) => value !== false,
+  },
+  continueAfterRestart: {
+    key: "continue_after_restart",
     read: (value: unknown) => value !== false,
   },
   diffWordWrap: {
@@ -306,6 +334,10 @@ const settingsFields = {
     key: "diff_style",
     read: (value: unknown) =>
       value === "stacked" || value === "auto" ? value : "auto",
+  },
+  whileWorkingEnter: {
+    key: "while_working_enter",
+    read: (value: unknown) => (value === "steer" ? "steer" : "queue"),
   },
   confirmArchive: {
     key: "confirm_archive",
@@ -365,6 +397,15 @@ const settingsFields = {
     key: "backend_trace_provider_events",
     read: (value: unknown) => value === true,
   },
+  // Telemetry is opt-in: only an explicit `true` counts as consent.
+  crashReportsEnabled: {
+    key: "crash_reports_enabled",
+    read: (value: unknown) => value === true,
+  },
+  usagePingEnabled: {
+    key: "usage_ping_enabled",
+    read: (value: unknown) => value === true,
+  },
   defaultThreadEnvMode: {
     key: "default_thread_env_mode",
     read: (value: unknown) => value as string,
@@ -381,16 +422,6 @@ const settingsFields = {
     key: "remote_access_custom_url",
     read: (value: unknown) => (value as string) || "",
   },
-  customRules: {
-    key: "custom_rules",
-    read: (value: unknown) => value as string,
-  },
-  skills: { key: "skills", read: (value: unknown) => value as Skill[] },
-  mcpServers: {
-    key: "mcp_servers",
-    read: (value: unknown) => value as McpServer[],
-  },
-  hooks: { key: "hooks", read: (value: unknown) => value as Hook[] },
   designDefaults: {
     key: "design_defaults",
     read: (value: unknown) => value as DesignDefaults,
@@ -399,9 +430,27 @@ const settingsFields = {
     key: "archived_thread_ids",
     read: (value: unknown) => value as string[],
   },
+  chatFolders: {
+    key: "chat_folders",
+    read: (value: unknown) =>
+      Array.isArray(value) ? (value as ChatFolder[]) : [],
+  },
+  pinnedThreadIds: {
+    key: "pinned_thread_ids",
+    read: (value: unknown) =>
+      Array.isArray(value)
+        ? value.filter((id): id is string => typeof id === "string")
+        : [],
+  },
+  snoozedThreads: {
+    key: "snoozed_threads",
+    read: (value: unknown) =>
+      Array.isArray(value) ? (value as SnoozedChat[]) : [],
+  },
   autoTrustWorkspaces: {
     key: "auto_trust_workspaces",
-    read: (value: unknown) => value !== false,
+    // Opt-in: only an explicit `true` turns automatic workspace trust on.
+    read: (value: unknown) => value === true,
   },
 } satisfies {
   [K in keyof PersistedSettingsState]: {

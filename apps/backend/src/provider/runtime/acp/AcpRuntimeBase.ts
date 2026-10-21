@@ -2,15 +2,48 @@ import { asRecord, readString, readTrimmed } from "@betterc0de/schema"
 import { EventEmitter } from "node:events"
 import { randomUUID } from "node:crypto"
 import {
-  findCursorModelConfigOption as findAcpModelConfigOption,
-  resolveCursorAcpAdvertisedModelId as resolveAcpAdvertisedModelId,
-  type CursorAcpSessionConfigOption as AcpSessionConfigOption,
-} from "../cursor/CursorAcpSupport"
+  findAcpModelConfigOption,
+  resolveAcpAdvertisedModelId,
+  type AcpSessionConfigOption,
+} from "./AcpSessionConfig"
 import {
   ACP_PROMPT_IDLE_TIMEOUT_MS,
   AcpJsonRpcClient,
-} from "../cursor/AcpJsonRpcClient"
-import type { AcpMcpServer } from "../cursor/AcpMcpServers"
+} from "./AcpJsonRpcClient"
+import type { AcpMcpServer } from "./AcpMcpServers"
+import { logger } from "../../../observability/logger"
+import { errorMessage } from "../errorMessage"
+
+/** The ACP protocol version this client implements. */
+export const ACP_PROTOCOL_VERSION = 1
+
+/**
+ * After a `session/cancel` notification the agent ends the pending
+ * `session/prompt` with `stopReason: "cancelled"`. Agents that predate the
+ * notification form get the request form after this grace.
+ */
+export const ACP_CANCEL_NOTIFICATION_GRACE_MS = 1_500
+const ACP_CANCEL_REQUEST_TIMEOUT_MS = 3_000
+
+/** What the agent advertised it can read inside a prompt (ACP `promptCapabilities`). */
+export interface AcpPromptCapabilities {
+  readonly image: boolean
+  readonly audio: boolean
+  readonly embeddedContext: boolean
+}
+
+export function acpPromptCapabilities(
+  initializeResult: Record<string, unknown> | null | undefined
+): AcpPromptCapabilities {
+  const capabilities = asRecord(
+    asRecord(asRecord(initializeResult).agentCapabilities).promptCapabilities
+  )
+  return {
+    image: capabilities.image === true,
+    audio: capabilities.audio === true,
+    embeddedContext: capabilities.embeddedContext === true,
+  }
+}
 
 /**
  * Provider-neutral Agent Client Protocol runtime: one JSON-RPC child that
@@ -196,6 +229,8 @@ export interface AcpRuntime {
   }): Promise<Record<string, unknown>>
   cancel(): Promise<void>
   close(): Promise<void>
+  /** Redacted tail of the agent's stderr, for failure details. */
+  diagnostics?(): string
   onEvent(listener: (event: AcpEvent) => void): () => void
   onExit?(listener: (event: AcpExit) => void): () => void
   onPermissionRequest(
@@ -266,6 +301,8 @@ export class AcpRuntimeImpl<
   private activeAssistantItemId: string | null = null
   private nextAssistantSegment = 0
   private readonly toolCalls = new Map<string, AcpToolCallState>()
+  /** The in-flight `session/prompt`, so a cancel can tell when it landed. */
+  private promptInFlight: Promise<unknown> | null = null
 
   constructor(
     private readonly profile: AcpRuntimeProfile<TSettings>,
@@ -334,14 +371,14 @@ export class AcpRuntimeImpl<
       })
       client.setServerRequestHandler(
         (method, params, respond, respondError) => {
+          // The agent is blocked on this answer (a permission request or a
+          // question waiting for the user), so its silence meanwhile is not
+          // a wedge: the prompt's silence limit is held until we answer.
+          const releaseIdleHold = client.holdIdleTimeouts()
           void this.handleServerRequest(method, params)
             .then(respond)
-            .catch((error) =>
-              respondError(
-                -32000,
-                error instanceof Error ? error.message : String(error)
-              )
-            )
+            .catch((error) => respondError(-32000, errorMessage(error)))
+            .finally(releaseIdleHold)
         }
       )
       await client.spawnChild()
@@ -355,6 +392,7 @@ export class AcpRuntimeImpl<
         "initialize",
         initializePayload
       )
+      this.checkProtocolVersion(initializeResult)
 
       const { sessionId, sessionSetupResult, resumed } =
         this.profile.auth.strategy === "eager"
@@ -629,21 +667,86 @@ export class AcpRuntimeImpl<
     prompt: ReadonlyArray<Record<string, unknown>>
   }): Promise<Record<string, unknown>> {
     const started = await this.start()
-    const result = await this.requireClient().call<Record<string, unknown>>(
+    const pending = this.requireClient().call<Record<string, unknown>>(
       "session/prompt",
       { sessionId: started.sessionId, prompt: input.prompt },
       ACP_PROMPT_IDLE_TIMEOUT_MS,
       { resetTimeoutOnActivity: true }
     )
-    this.closeAssistantSegment()
-    return result
+    this.promptInFlight = pending
+    try {
+      const result = await pending
+      this.closeAssistantSegment()
+      return result
+    } finally {
+      if (this.promptInFlight === pending) this.promptInFlight = null
+      // Tool states are merged per call id within one turn; keeping them
+      // after the turn only pinned their (possibly whole-file) content.
+      this.toolCalls.clear()
+    }
   }
 
+  /**
+   * ACP defines `session/cancel` as a notification: the agent answers by
+   * ending the pending `session/prompt` with `stopReason: "cancelled"`.
+   * Sending it as a request made spec-following agents answer "method not
+   * found" without cancelling, so Stop escalated to killing the process.
+   * Agents that only understood the request form still get it after a short
+   * grace. Cancelling never starts an agent just to cancel it.
+   */
   async cancel(): Promise<void> {
-    const started = await this.start()
-    await this.requireClient().call("session/cancel", {
-      sessionId: started.sessionId,
-    })
+    const started = this.started
+    const client = this.client
+    if (!started || !client?.isAlive()) return
+    const params = { sessionId: started.sessionId }
+    client.notify("session/cancel", params)
+    const inFlight = this.promptInFlight
+    if (!inFlight) return
+    if (await settlesWithin(inFlight, ACP_CANCEL_NOTIFICATION_GRACE_MS)) return
+    if (this.client !== client || !client.isAlive()) return
+    await client
+      .call("session/cancel", params, ACP_CANCEL_REQUEST_TIMEOUT_MS)
+      .catch((error: unknown) => {
+        logger.debug(
+          { err: error, label: this.profile.label },
+          "acp session/cancel request fallback was not accepted"
+        )
+      })
+  }
+
+  diagnostics(): string {
+    return this.client?.stderrText() ?? ""
+  }
+
+  /**
+   * The agent answers `initialize` with the protocol version it will speak.
+   * An older one cannot work with this client, so it fails with an upgrade
+   * hint instead of opaque shape errors mid-turn; a newer one is logged and
+   * tried, since agents negotiate down to what the client asked for.
+   */
+  private checkProtocolVersion(
+    initializeResult: Record<string, unknown>
+  ): void {
+    const version = initializeResult.protocolVersion
+    if (typeof version !== "number" || !Number.isFinite(version)) return
+    if (version < ACP_PROTOCOL_VERSION) {
+      throw Object.assign(
+        new Error(
+          `${this.profile.label} speaks Agent Client Protocol v${version}, but BetterC0de needs v${ACP_PROTOCOL_VERSION}. Update the ${this.profile.label} CLI.`
+        ),
+        { code: "ACP_PROTOCOL_UNSUPPORTED" }
+      )
+    }
+    if (version > ACP_PROTOCOL_VERSION) {
+      logger.warn(
+        {
+          label: this.profile.label,
+          agentProtocolVersion: version,
+          clientProtocolVersion: ACP_PROTOCOL_VERSION,
+        },
+        "acp agent answered with a newer protocol version; continuing"
+      )
+    }
   }
 
   async close(): Promise<void> {
@@ -668,6 +771,7 @@ export class AcpRuntimeImpl<
 
   private resetRuntimeState(): void {
     this.started = null
+    this.promptInFlight = null
     this.configOptions = []
     this.modeState = undefined
     this.activeAssistantItemId = null
@@ -825,7 +929,7 @@ export class AcpRuntimeImpl<
  * auth-flavored message.
  */
 export function isAcpAuthRequiredError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = errorMessage(error)
   const codeMatch = /acp rpc error (-?\d+)\b/.exec(message)
   const code = codeMatch ? Number(codeMatch[1]) : undefined
   if (code === 401 || code === -32001) return true
@@ -1004,4 +1108,19 @@ function arrayField(
 ): ReadonlyArray<unknown> {
   const value = record[key]
   return Array.isArray(value) ? value : []
+}
+
+function settlesWithin(
+  promise: Promise<unknown>,
+  timeoutMs: number
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs)
+    timer.unref?.()
+    const done = () => {
+      clearTimeout(timer)
+      resolve(true)
+    }
+    promise.then(done, done)
+  })
 }

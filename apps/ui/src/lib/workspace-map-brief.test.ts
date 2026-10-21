@@ -3,7 +3,7 @@ import {
   buildWorkspaceMapBrief,
   formatWorkspaceBriefBytes,
 } from "@/lib/workspace-map-brief"
-import type { WorkspaceMapOverview } from "@/services/backend"
+import type { WorkspaceMapOverview } from "@/services/backend/workspaceApi"
 
 describe("buildWorkspaceMapBrief", () => {
   it("builds a compact markdown brief from workspace map data", () => {

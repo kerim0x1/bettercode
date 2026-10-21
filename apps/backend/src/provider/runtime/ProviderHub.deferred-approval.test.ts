@@ -9,11 +9,12 @@ import type {
 } from "./contracts"
 import { ProviderHub } from "./ProviderHub"
 import {
-  configureAgentPermissionRuntime,
+  AgentPermissionRuntime,
   currentAgentPermissionRuntimeContext,
+  setDefaultAgentPermissionRuntime,
 } from "../agent-permission-runtime"
 
-afterEach(() => configureAgentPermissionRuntime(null))
+afterEach(() => setDefaultAgentPermissionRuntime(null))
 
 /**
  * Regression cover for adapters that manage their own lifecycle.
@@ -267,7 +268,11 @@ describe("live permission changes with pending approvals", () => {
       normalizedPath: null,
       grant: null,
     }))
-    configureAgentPermissionRuntime({ evaluateTool, listGrants: () => [] })
+    setDefaultAgentPermissionRuntime(
+      new AgentPermissionRuntime({
+        policy: { evaluateTool, listGrants: () => [] },
+      })
+    )
     return evaluateTool
   }
 

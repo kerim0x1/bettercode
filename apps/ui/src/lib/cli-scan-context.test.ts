@@ -30,6 +30,24 @@ describe("resolveCliScanContext", () => {
     })
   })
 
+  it("does not treat the backend's compatibility default as trust", async () => {
+    const lookup = vi.fn(async () => ({
+      trust: {
+        workspacePath: "C:\\workspace",
+        state: "trusted" as const,
+        explicit: false,
+        updatedAt: null,
+      },
+    }))
+
+    await expect(
+      resolveCliScanContext("C:\\workspace", lookup)
+    ).resolves.toEqual({
+      projectPath: "C:\\workspace",
+      workspaceTrusted: false,
+    })
+  })
+
   it("fails closed when workspace trust cannot be resolved", async () => {
     const lookup = vi.fn(async () => {
       throw new Error("backend unavailable")
@@ -75,7 +93,7 @@ describe("resolveCliScanContext", () => {
         projectPath: "C:\\workspace",
         workspaceTrusted: false,
       })
-    ).toContain("workspace is untrusted")
+    ).toContain("workspace is not trusted")
     expect(
       describeCliScanProjectScope({
         status: "trusted",

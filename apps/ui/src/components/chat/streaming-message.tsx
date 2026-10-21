@@ -124,7 +124,13 @@ function StreamingMessageInner({
   )
   return (
     <Message from="assistant">
-      <MessageContent className={compact ? "text-xs" : undefined}>
+      <MessageContent
+        className={
+          compact
+            ? "text-[length:calc(var(--message-font-size)_-_1px)]"
+            : undefined
+        }
+      >
         {showThinking && (reasoning.text || isReasoning) && (
           <Reasoning
             data-slot="turn-reasoning"
@@ -212,6 +218,7 @@ function StreamingMessageInner({
             <MessageResponse
               concealCodeBlocks={concealCodeBlocks}
               workspaceRoot={workspaceRoot}
+              streaming
             >
               {streamingText}
             </MessageResponse>

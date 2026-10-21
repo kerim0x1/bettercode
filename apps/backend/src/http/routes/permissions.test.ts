@@ -8,7 +8,14 @@ import { createServerConfig } from "../../config"
 import { openDatabase } from "../../persistence/db"
 import { runMigrations } from "../../persistence/migrations"
 import { AgentPermissionPolicy } from "../../provider/agent-permission-policy"
-import { registerPermissionsRoutes } from "./permissions"
+import { registerPermissionsRoutes as registerPermissionsRoutesUnfilled } from "./permissions"
+import { withInertStateArgument } from "../../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const registerPermissionsRoutes = withInertStateArgument(
+  registerPermissionsRoutesUnfilled,
+  1
+)
 
 describe("permission routes", () => {
   it("confines remote Claude rule reads to registered workspaces while retaining desktop access", async () => {

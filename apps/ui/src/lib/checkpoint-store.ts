@@ -4,10 +4,9 @@ import {
   gitDiffCheckpoints,
   gitStatus,
   isGitRepo,
-  readFile,
-  revertThreadCheckpoint,
-  writeFile,
-} from "@/services/backend"
+} from "@/services/backend/gitApi"
+import { readFile, writeFile } from "@/services/backend/workspaceApi"
+import { revertThreadCheckpoint } from "@/services/backend/coreApi"
 import type { ToolCall } from "@/lib/chat-store"
 import {
   checkpointRefForThreadTurn,
@@ -15,8 +14,22 @@ import {
   type TurnDiffFileSummary,
 } from "@betterc0de/schema/checkpointing"
 import { createLogger } from "@/lib/logger"
+import { resolveWorkspaceFilePath } from "@/lib/editor-path"
 
 const log = createLogger("checkpoint-store")
+
+/**
+ * The store is an in-memory projection that only feeds the restore/undo UI;
+ * the backend keeps the durable checkpoint refs and diffs. Without limits it
+ * grew for the whole session with full file contents, so it is bounded:
+ * newest checkpoints win, per chat and overall.
+ */
+export const MAX_CHECKPOINTS_PER_THREAD = 50
+export const MAX_CHECKPOINTS_TOTAL = 300
+/** Characters of file snapshots kept across all checkpoints (newest first). */
+export const MAX_SNAPSHOT_CHARS_TOTAL = 32 * 1024 * 1024
+/** A file larger than this is not snapshotted at all. */
+export const MAX_SNAPSHOT_FILE_CHARS = 4 * 1024 * 1024
 
 export interface Checkpoint {
   id: string
@@ -24,6 +37,10 @@ export interface Checkpoint {
   messageId: string
   label: string
   timestamp: string
+  /**
+   * File snapshots for checkpoints without a Git ref. Git-backed checkpoints
+   * restore through the backend and may have this emptied by the limits.
+   */
   files: Record<string, string>
   gitBranch: string
   gitCommitHash?: string
@@ -32,8 +49,85 @@ export interface Checkpoint {
   baseCheckpointRef?: string
   turnId?: string | null
   turnNumber?: number
-  diff?: string
+  /** Per-file change counts. The full unified diff is not kept here. */
   diffFiles?: TurnDiffFileSummary[]
+}
+
+export interface CheckpointLimits {
+  readonly perThread: number
+  readonly total: number
+  readonly snapshotChars: number
+}
+
+const DEFAULT_CHECKPOINT_LIMITS: CheckpointLimits = {
+  perThread: MAX_CHECKPOINTS_PER_THREAD,
+  total: MAX_CHECKPOINTS_TOTAL,
+  snapshotChars: MAX_SNAPSHOT_CHARS_TOTAL,
+}
+
+function snapshotChars(files: Record<string, string>): number {
+  let size = 0
+  for (const content of Object.values(files)) size += content.length
+  return size
+}
+
+/**
+ * Applies the retention limits to a list ordered oldest → newest. Keeps the
+ * newest checkpoints per thread and overall. Once the snapshot budget is used
+ * up, older checkpoints lose their file snapshots: a Git-backed one still
+ * restores through its ref, a snapshot-only one is dropped because it could
+ * no longer restore anything. Returns the input when nothing changes.
+ */
+export function enforceCheckpointLimits(
+  checkpoints: Checkpoint[],
+  limits: CheckpointLimits = DEFAULT_CHECKPOINT_LIMITS
+): Checkpoint[] {
+  const perThread = new Map<string, number>()
+  let kept = 0
+  let snapshotBudget = limits.snapshotChars
+  let budgetExhausted = false
+  let changed = false
+  const keptNewestFirst: Checkpoint[] = []
+  for (let index = checkpoints.length - 1; index >= 0; index -= 1) {
+    const checkpoint = checkpoints[index]!
+    const threadCount = perThread.get(checkpoint.threadId) ?? 0
+    if (threadCount >= limits.perThread || kept >= limits.total) {
+      changed = true
+      continue
+    }
+    let next = checkpoint
+    const size = snapshotChars(checkpoint.files)
+    if (size > 0) {
+      if (!budgetExhausted && size <= snapshotBudget) {
+        snapshotBudget -= size
+      } else {
+        budgetExhausted = true
+        changed = true
+        if (!checkpoint.checkpointRef) continue
+        next = { ...checkpoint, files: {} }
+      }
+    }
+    perThread.set(checkpoint.threadId, threadCount + 1)
+    kept += 1
+    keptNewestFirst.push(next)
+  }
+  return changed ? keptNewestFirst.reverse() : checkpoints
+}
+
+function limitedCheckpointState(
+  checkpoints: Checkpoint[],
+  activeCheckpointId: string | null
+): { checkpoints: Checkpoint[]; activeCheckpointId: string | null } {
+  const limited = enforceCheckpointLimits(checkpoints)
+  return {
+    checkpoints: limited,
+    activeCheckpointId:
+      activeCheckpointId &&
+      (limited === checkpoints ||
+        limited.some((checkpoint) => checkpoint.id === activeCheckpointId))
+        ? activeCheckpointId
+        : null,
+  }
 }
 
 interface PendingTurnCheckpoint {
@@ -68,6 +162,10 @@ interface CheckpointState {
     turnId?: string | null
     turnNumber?: number
     label?: string
+    /**
+     * Accepted for event-payload compatibility but not stored: nothing in the
+     * renderer reads it, and the backend keeps the diff (turn_diffs).
+     */
     diff?: string
     diffFiles?: TurnDiffFileSummary[]
   }) => string | null
@@ -192,10 +290,9 @@ export const useCheckpointStore = create<CheckpointState>((set, get) => ({
       }))
     })
 
-    set((state) => ({
-      checkpoints: [...state.checkpoints, checkpoint],
-      activeCheckpointId: id,
-    }))
+    set((state) =>
+      limitedCheckpointState([...state.checkpoints, checkpoint], id)
+    )
 
     return id
   },
@@ -228,7 +325,6 @@ export const useCheckpointStore = create<CheckpointState>((set, get) => ({
                   input.baseCheckpointRef ?? checkpoint.baseCheckpointRef,
                 turnId: input.turnId ?? checkpoint.turnId,
                 turnNumber: input.turnNumber ?? checkpoint.turnNumber,
-                diff: input.diff ?? checkpoint.diff,
                 diffFiles: input.diffFiles ?? checkpoint.diffFiles,
               }
             : checkpoint
@@ -252,7 +348,6 @@ export const useCheckpointStore = create<CheckpointState>((set, get) => ({
       baseCheckpointRef: input.baseCheckpointRef,
       turnId: input.turnId ?? null,
       turnNumber: input.turnNumber,
-      diff: input.diff,
       diffFiles: input.diffFiles,
     }
 
@@ -264,10 +359,9 @@ export const useCheckpointStore = create<CheckpointState>((set, get) => ({
       }))
     })
 
-    set((state) => ({
-      checkpoints: [...state.checkpoints, checkpoint],
-      activeCheckpointId: id,
-    }))
+    set((state) =>
+      limitedCheckpointState([...state.checkpoints, checkpoint], id)
+    )
     return id
   },
 
@@ -451,7 +545,7 @@ export const useCheckpointStore = create<CheckpointState>((set, get) => ({
       return null
     }
 
-    let diff = ""
+    // Only the per-file summary is kept; the diff text itself stays in Git.
     let diffFiles: TurnDiffFileSummary[] = []
     try {
       const result = await gitDiffCheckpoints(
@@ -459,8 +553,7 @@ export const useCheckpointStore = create<CheckpointState>((set, get) => ({
         pending.baseCheckpointRef,
         pending.checkpointRef
       )
-      diff = result.diff
-      diffFiles = [...parseTurnDiffFilesFromUnifiedDiff(diff)]
+      diffFiles = [...parseTurnDiffFilesFromUnifiedDiff(result.diff)]
     } catch (error) {
       log.warn("Failed to diff git checkpoints:", error)
     }
@@ -479,7 +572,6 @@ export const useCheckpointStore = create<CheckpointState>((set, get) => ({
       baseCheckpointRef: pending.baseCheckpointRef,
       turnId: pending.turnId,
       turnNumber: pending.turnNumber,
-      diff,
       diffFiles,
     }
 
@@ -487,9 +579,8 @@ export const useCheckpointStore = create<CheckpointState>((set, get) => ({
       const nextPending = { ...current.pendingTurnCheckpoints }
       delete nextPending[pendingKey(threadId, pending.turnId)]
       return {
-        checkpoints: [...current.checkpoints, checkpoint],
+        ...limitedCheckpointState([...current.checkpoints, checkpoint], id),
         pendingTurnCheckpoints: nextPending,
-        activeCheckpointId: id,
       }
     })
     return id
@@ -542,18 +633,38 @@ function buildLabel(filePaths: string[]): string {
       ? parts.slice(-2).join("/")
       : parts[parts.length - 1]
   })
-  if (names.length === 1) return `Before editing ${names[0]}`
-  if (names.length <= 3) return `Before editing ${names.join(", ")}`
-  return `Before editing ${names.slice(0, 2).join(", ")} +${names.length - 2} more`
+  if (names.length === 1) return `After editing ${names[0]}`
+  if (names.length <= 3) return `After editing ${names.join(", ")}`
+  return `After editing ${names.slice(0, 2).join(", ")} +${names.length - 2} more`
 }
 
+/**
+ * Snapshots the files a finished turn's edit tools touched, for "Restore
+ * checkpoint" on that reply in a workspace without Git checkpoints.
+ *
+ * It runs when the turn's stream is finalized, so the snapshot holds the
+ * files as the turn left them, not as they were before it. Reverting a
+ * turn's edits needs the backend's Git checkpoint (its base ref); see
+ * `findTurnGitCheckpoint` in the file changes bar.
+ */
 export async function autoCheckpointFromToolCalls(
   threadId: string,
   messageId: string,
   toolCalls: ToolCall[],
   projectPath?: string | null
 ): Promise<string | null> {
-  const filePaths = extractFilePathsFromToolCalls(toolCalls)
+  const normalizedWorkspace = normalizeProjectPath(projectPath)
+  const workspace = normalizedWorkspace === "." ? null : normalizedWorkspace
+  // Tools may report project-relative paths. Resolve them against this
+  // chat's workspace (not whichever chat is active) so the snapshot is read
+  // from, and later restored to, the file the tool actually touched.
+  const filePaths = Array.from(
+    new Set(
+      extractFilePathsFromToolCalls(toolCalls).map((filePath) =>
+        workspace ? resolveWorkspaceFilePath(workspace, filePath) : filePath
+      )
+    )
+  )
   if (filePaths.length === 0) return null
 
   const files: Record<string, string> = {}
@@ -561,6 +672,10 @@ export async function autoCheckpointFromToolCalls(
   const reads = filePaths.map(async (filePath) => {
     try {
       const result = await readFile(filePath)
+      if (result.content.length > MAX_SNAPSHOT_FILE_CHARS) {
+        log.debug("Skipping oversized file snapshot:", filePath)
+        return
+      }
       files[filePath] = result.content
     } catch {
       // File doesn't exist yet (new file creation) — skip

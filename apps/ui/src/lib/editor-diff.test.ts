@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { readFile, writeFile } from "@/services/backend"
+import { readFile, writeFile } from "@/services/backend/workspaceApi"
 import { useEditorStore } from "./editor-store"
 import { editorDiffKey, type EditorDiffTarget } from "./editor-diff"
 import { buildOpenEditorContentSearch } from "./editor-content-search"
 import { buildOpenEditorReferenceSearch } from "./editor-reference-search"
 
-vi.mock("@/services/backend", () => ({
+vi.mock("@/services/backend/workspaceApi", () => ({
   readFile: vi.fn(async (path: string) => ({ path, content: "saved text" })),
   writeFile: vi.fn(async () => undefined),
 }))

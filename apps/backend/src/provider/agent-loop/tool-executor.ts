@@ -14,7 +14,10 @@
  */
 
 import { createHash } from "node:crypto"
-import { runShellCommand } from "../../services/shell"
+import {
+  preferredAgentShell,
+  type ShellCommandRunner,
+} from "../../services/shell"
 import {
   readFile,
   writeFile,
@@ -39,6 +42,12 @@ export interface ToolExecContext {
   signal?: AbortSignal
   /** Per-call ceiling, clamped to `DIRECT_TOOL_TIMEOUT_MS`. */
   timeoutMs?: number
+  /**
+   * The backend's shell sessions (`AppState.shellSessions`), which Bash runs
+   * its command in. Bootstrap hands them to every direct-provider adapter;
+   * without them Bash fails instead of starting an untracked process.
+   */
+  shell?: ShellCommandRunner
 }
 
 export type ToolExecTerminationStatus = "cancelled" | "timed_out"
@@ -66,6 +75,7 @@ export interface ToolMutationArtifact {
 }
 
 const NO_FOLDER = "No project folder is attached."
+const NO_SHELL = "No shell is available to run this command."
 const MAX_STRUCTURED_EDIT_CHARACTERS = 2_000_000
 const MAX_STRUCTURED_PATCH_BYTES = 512 * 1024
 
@@ -275,10 +285,12 @@ async function execWrite(
   const path = asString(args.path ?? args.file_path)
   if (!path) return fail("Write requires a 'path' string.")
   if (!ctx.cwd) return fail(NO_FOLDER)
-  const content =
-    typeof args.content === "string"
-      ? args.content
-      : (asString(args.content) ?? "")
+  // Never default a missing body to "": a tool call cut off at the output
+  // token limit arrives without `content`, and writing "" would empty the file.
+  if (typeof args.content !== "string") {
+    return fail("Write requires a 'content' string.")
+  }
+  const content = args.content
   throwIfTerminated(ctx)
   const previous = await readOptionalTextFile(ctx.cwd, path)
   throwIfTerminated(ctx)
@@ -302,10 +314,11 @@ async function execEdit(
   if (!ctx.cwd) return fail(NO_FOLDER)
   const oldString = asString(args.old_string)
   if (!oldString) return fail("Edit requires a non-empty 'old_string'.")
-  const newString =
-    typeof args.new_string === "string"
-      ? args.new_string
-      : (asString(args.new_string) ?? "")
+  // A missing `new_string` must not turn the edit into a deletion.
+  if (typeof args.new_string !== "string") {
+    return fail("Edit requires a 'new_string' string.")
+  }
+  const newString = args.new_string
   const replaceAll = args.replace_all === true
 
   throwIfTerminated(ctx)
@@ -348,16 +361,21 @@ async function execBash(
   const command = asString(args.command)
   if (!command) return fail("Bash requires a 'command' string.")
   if (!ctx.cwd) return fail(NO_FOLDER)
+  if (!ctx.shell) return fail(NO_SHELL)
   throwIfTerminated(ctx)
   const requestedTimeoutMs =
     typeof args.timeout_ms === "number" ? args.timeout_ms : ctx.timeoutMs
   const timeoutMs = Math.min(requestedTimeoutMs, ctx.timeoutMs)
-  const res = await runShellCommand({
+  // The tool is advertised as Bash: on Windows run it under Git Bash when it
+  // is installed instead of cmd.exe, which would misread POSIX commands.
+  const shell = preferredAgentShell()
+  const res = await ctx.shell.runCommand({
     command,
     cwd: ctx.cwd,
     timeoutMs,
     sessionId: ctx.toolId,
     signal: ctx.signal,
+    ...(shell ? { shell } : {}),
   })
   if (res.timedOut) {
     return terminated("timed_out", ctx.limits, res.combined)

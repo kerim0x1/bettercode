@@ -909,6 +909,7 @@ export class CheckpointDiffProjectionQuery {
 
 export class ThreadActivityProjectionQuery {
   private readonly payloadByIdStmt
+  private readonly findByIdStmt
   private readonly upsertStmt
   private readonly listNewestByThreadStmt
   private readonly listBeforeSequenceStmt
@@ -921,6 +922,21 @@ export class ThreadActivityProjectionQuery {
     this.payloadByIdStmt = db.prepare(
       "SELECT payload_json FROM projection_thread_activities WHERE thread_id = ? AND activity_id = ?"
     )
+    this.findByIdStmt = db.prepare(`
+      SELECT
+        activity_id,
+        thread_id,
+        turn_id,
+        provider_instance_id,
+        kind,
+        tone,
+        summary,
+        payload_json,
+        sequence,
+        created_at
+      FROM projection_thread_activities
+      WHERE thread_id = ? AND activity_id = ?
+    `)
     this.upsertStmt = db.prepare(`
       INSERT INTO projection_thread_activities
         (activity_id, thread_id, turn_id, provider_instance_id, kind, tone, summary, payload_json, sequence, created_at)
@@ -1178,6 +1194,29 @@ export class ThreadActivityProjectionQuery {
     )
       throw new Error("Invalid persisted activity payload")
     return JSON.parse(row.payload_json)
+  }
+
+  /** One activity of this thread, or null (also when the id belongs to another thread). */
+  findById(
+    threadId: string,
+    activityId: string
+  ): ThreadActivityProjection | null {
+    const row = this.findByIdStmt.get(threadId, activityId) as
+      | ThreadActivityRow
+      | undefined
+    if (!row) return null
+    return {
+      activity_id: row.activity_id,
+      thread_id: row.thread_id,
+      turn_id: row.turn_id,
+      provider_instance_id: row.provider_instance_id,
+      kind: row.kind,
+      tone: row.tone,
+      summary: row.summary,
+      payload: parseActivityPayload(row),
+      sequence: row.sequence,
+      created_at: row.created_at,
+    }
   }
 
   /**

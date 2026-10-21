@@ -1,4 +1,4 @@
-import type { ProviderRuntimeEvent } from "../provider/types"
+import type { LegacyProviderEvent } from "../provider/types"
 import {
   captureCheckpoint,
   deleteCheckpointRefs,
@@ -31,13 +31,13 @@ import type { CheckpointRefOperationGate } from "./CheckpointRefOperationGate"
 export interface ProviderRuntimeEventBusLike {
   on(
     eventName: "projected",
-    listener: (event: ProviderRuntimeEvent) => void
+    listener: (event: LegacyProviderEvent) => void
   ): unknown
   off(
     eventName: "projected",
-    listener: (event: ProviderRuntimeEvent) => void
+    listener: (event: LegacyProviderEvent) => void
   ): unknown
-  emitEvent?(event: ProviderRuntimeEvent): void
+  emitEvent?(event: LegacyProviderEvent): void
 }
 
 export interface CheckpointReactorThreadStore {
@@ -105,7 +105,7 @@ export interface CheckpointReactorOptions {
   }) => Promise<void>
   readonly isGitRepo?: (cwd: string) => Promise<boolean>
   readonly isSnapshotEnabled?: (cwd: string) => Promise<boolean>
-  readonly emitEvent?: (event: ProviderRuntimeEvent) => void
+  readonly emitEvent?: (event: LegacyProviderEvent) => void
   readonly cleanupJournal?: CheckpointRefCleanupJournal
   readonly refOperationGate?: CheckpointRefOperationGate
   readonly allocateTurnSlot?: (
@@ -213,7 +213,7 @@ export class CheckpointReactor {
     }
     this.stopped = false
     this.stopPromise = null
-    const listener = (event: ProviderRuntimeEvent) => {
+    const listener = (event: LegacyProviderEvent) => {
       void this.observe(event).catch((err) => {
         this.options.logger.error(
           { err, event_type: event.event_type, thread: event.thread_id },
@@ -359,7 +359,7 @@ export class CheckpointReactor {
             fallbackFromToHead: false,
             ignoreWhitespace: false,
           })
-        const recoveryEvent: ProviderRuntimeEvent = {
+        const recoveryEvent: LegacyProviderEvent = {
           event_type: "turn_interrupted",
           thread_id: pending.threadId,
           payload: {
@@ -407,7 +407,7 @@ export class CheckpointReactor {
     return recovered
   }
 
-  async ingest(event: ProviderRuntimeEvent): Promise<void> {
+  async ingest(event: LegacyProviderEvent): Promise<void> {
     await this.enqueueEvent(event, false, false, false)
   }
 
@@ -416,7 +416,7 @@ export class CheckpointReactor {
    * mutate the workspace. Unlike the event-bus observer, capture failures
    * propagate to the caller and prevent provider dispatch.
    */
-  async prepareTurn(event: ProviderRuntimeEvent): Promise<void> {
+  async prepareTurn(event: LegacyProviderEvent): Promise<void> {
     await this.enqueueEvent(event, true, false, false)
   }
 
@@ -425,16 +425,16 @@ export class CheckpointReactor {
    * terminal event first, so completion failures are retained long enough for
    * this durability barrier to report the original failure to the turn owner.
    */
-  async finalizeTurn(event: ProviderRuntimeEvent): Promise<void> {
+  async finalizeTurn(event: LegacyProviderEvent): Promise<void> {
     await this.enqueueEvent(event, false, true, false)
   }
 
-  private async observe(event: ProviderRuntimeEvent): Promise<void> {
+  private async observe(event: LegacyProviderEvent): Promise<void> {
     await this.enqueueEvent(event, false, false, true)
   }
 
   private async enqueueEvent(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     requireBaseline: boolean,
     propagateTerminalFailure: boolean,
     deferTerminalCapture: boolean
@@ -476,7 +476,7 @@ export class CheckpointReactor {
   }
 
   private async ingestSerial(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     generation: number,
     threadToken: symbol,
     requireBaseline: boolean,
@@ -529,7 +529,7 @@ export class CheckpointReactor {
   }
 
   private async captureBaseline(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     generation: number,
     threadToken: symbol,
     requireBaseline: boolean
@@ -699,7 +699,7 @@ export class CheckpointReactor {
   }
 
   private async captureCompletion(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     status: "ready" | "missing" | "error",
     generation: number,
     threadToken: symbol
@@ -988,7 +988,7 @@ export class CheckpointReactor {
     }
   }
 
-  private throwTerminalFailure(event: ProviderRuntimeEvent): void {
+  private throwTerminalFailure(event: LegacyProviderEvent): void {
     const key = turnKey(event)
     if (!key) return
     const mapKey = pendingMapKey(event.thread_id, key)
@@ -1045,7 +1045,7 @@ export class CheckpointReactor {
   }
 
   private emitDiffUpdated(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     pending: PendingCheckpoint,
     unifiedDiff: string,
     files: TurnDiffFileSummary[],
@@ -1079,7 +1079,7 @@ export class CheckpointReactor {
   }
 
   private emitCheckpointCaptured(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     pending: PendingCheckpoint,
     status: "ready" | "missing" | "error",
     files: TurnDiffFileSummary[],
@@ -1112,7 +1112,7 @@ export class CheckpointReactor {
     })
   }
 
-  private emit(event: ProviderRuntimeEvent): void {
+  private emit(event: LegacyProviderEvent): void {
     if (this.options.emitEvent) {
       this.options.emitEvent(event)
       return
@@ -1122,7 +1122,7 @@ export class CheckpointReactor {
 }
 
 function resolveCwd(
-  event: ProviderRuntimeEvent,
+  event: LegacyProviderEvent,
   threads: CheckpointReactorThreadStore
 ): string | null {
   const payloadCwd = payloadString(
@@ -1135,7 +1135,7 @@ function resolveCwd(
   return threads.getThreadProjectPath(event.thread_id)
 }
 
-function turnKey(event: ProviderRuntimeEvent): string | null {
+function turnKey(event: LegacyProviderEvent): string | null {
   const turnId = payloadString(
     event.payload,
     "dispatchTurnId",

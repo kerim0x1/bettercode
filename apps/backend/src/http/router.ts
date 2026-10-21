@@ -6,6 +6,7 @@ import { routePath } from "hono/route"
 import type { AppState } from "../appState"
 import type { ServerConfig } from "../config"
 import { getBackendLoggingSettings, logger } from "../observability/logger"
+import { runWithRequestContext } from "../observability/requestContext"
 import {
   backendMetrics,
   HTTP_REQUEST_DURATION_MS,
@@ -17,16 +18,26 @@ import { registerHealthRoute, registerRuntimeRoutes } from "./routes/runtime"
 import { registerSettingsRoutes } from "./routes/settings"
 import { registerThemesRoutes } from "./routes/themes"
 import { registerThreadsRoutes } from "./routes/threads"
+import { registerThreadRewindRoutes } from "./routes/thread-rewind"
 import { registerProjectsRoutes } from "./routes/projects"
 import { registerProvidersRoutes } from "./routes/providers"
 import { registerChatRoutes } from "./routes/chat"
 import { registerOrchestratorRoutes } from "./routes/orchestrator"
 import { registerPermissionsRoutes } from "./routes/permissions"
 import { registerGitRoutes } from "./routes/git"
+import { registerGitHubRoutes } from "./routes/github"
 import { registerWorkspaceRoutes } from "./routes/workspace"
 import { registerFilesystemRoutes } from "./routes/filesystem"
 import { registerShellRoutes } from "./routes/shell"
 import { registerUsageRoutes } from "./routes/usage"
+import { registerDesktopConfigRoutes } from "./routes/desktopConfig"
+import { registerConversationImportRoutes } from "./routes/conversationImport"
+import {
+  registerAutomationRoutes,
+  registerAutomationWebhookRoute,
+} from "./routes/automations"
+import { DESKTOP_CONFIG_LIMITS } from "@betterc0de/schema/http-contracts"
+import { AUTOMATION_WEBHOOK_PATH_PREFIX } from "@betterc0de/schema"
 import { sanitizeError } from "./errors"
 import { createRateLimiter, rateLimitMiddleware } from "./middleware/rateLimit"
 import {
@@ -122,16 +133,22 @@ function buildApiRoutes(
   registerSettingsRoutes(api, state)
   registerThemesRoutes(api, config)
   registerThreadsRoutes(api, state)
+  // After the thread routes: their recovery fence covers the rewind too.
+  registerThreadRewindRoutes(api, state)
   registerProjectsRoutes(api, state)
   registerProvidersRoutes(api, state)
   registerChatRoutes(api, state)
   registerOrchestratorRoutes(api, state)
   registerPermissionsRoutes(api, state)
   registerGitRoutes(api, state)
+  registerGitHubRoutes(api, state)
   registerWorkspaceRoutes(api, state)
   registerFilesystemRoutes(api, state)
   registerShellRoutes(api, config, state.remoteAccess, state)
   registerUsageRoutes(api, config)
+  registerDesktopConfigRoutes(api, state)
+  registerAutomationRoutes(api, state)
+  registerConversationImportRoutes(api, state)
   return api
 }
 
@@ -154,7 +171,10 @@ export function buildApp(
     // internal. Unknown failures become a generic 500; pino receives only
     // non-sensitive error metadata.
     const { message, statusCode, code } = sanitizeError(err, "request", {
-      path: c.req.path,
+      // An automation webhook's path carries its URL token: never log it.
+      path: c.req.path.startsWith(`${AUTOMATION_WEBHOOK_PATH_PREFIX}/`)
+        ? `${AUTOMATION_WEBHOOK_PATH_PREFIX}/…`
+        : c.req.path,
       method: c.req.method,
     })
     const body =
@@ -166,15 +186,15 @@ export function buildApp(
   // Register this before every route so keep-alive requests already accepted
   // by Node cannot start fresh work once graceful shutdown begins.
   app.use("*", async (c, next) => {
-    const release = state.requestAdmission?.tryEnter()
-    if (state.requestAdmission && !release) {
+    const release = state.requestAdmission.tryEnter()
+    if (!release) {
       c.header("Connection", "close")
       return c.json({ error: "service draining" }, 503)
     }
     try {
       return await next()
     } finally {
-      release?.()
+      release()
     }
   })
 
@@ -194,9 +214,20 @@ export function buildApp(
     "/api/v1/remote/mobile/pair",
     bodyLimit({ maxSize: PAIRING_BODY_LIMIT_BYTES, onError: bodyTooLarge })
   )
-  app.use(
-    "/api/*",
-    bodyLimit({ maxSize: API_BODY_LIMIT_BYTES, onError: bodyTooLarge })
+  // The desktop configuration routes take whole documents (the MCP store
+  // alone may hold 4 MB); every other API request keeps the general limit.
+  const apiBodyLimit = bodyLimit({
+    maxSize: API_BODY_LIMIT_BYTES,
+    onError: bodyTooLarge,
+  })
+  const desktopConfigBodyLimit = bodyLimit({
+    maxSize: DESKTOP_CONFIG_LIMITS.maxRequestBytes,
+    onError: bodyTooLarge,
+  })
+  app.use("/api/*", (c, next) =>
+    c.req.path.startsWith("/api/v1/config/")
+      ? desktopConfigBodyLimit(c, next)
+      : apiBodyLimit(c, next)
   )
 
   app.use("*", async (c, next) => {
@@ -212,7 +243,7 @@ export function buildApp(
         .some((header) => header.trim().toLowerCase() === "authorization")
     const allowed = isAllowedBrowserOrigin(origin, config.allowedOrigins, {
       requestHost: c.req.header("Host"),
-      allowSameHost: state.remoteAccess?.enabled() === true,
+      allowSameHost: state.remoteAccess.enabled(),
       allowLoopback: localProcessRequest || localBearerPreflight,
       allowOpaque: localProcessRequest,
     })
@@ -227,7 +258,7 @@ export function buildApp(
       )
       c.header(
         "Access-Control-Allow-Headers",
-        "Authorization, Content-Type, X-BetterC0de-Client"
+        "Authorization, Content-Type, X-BetterC0de-Client, X-BetterC0de-Client-Instance"
       )
     }
     if (c.req.method === "OPTIONS") return c.body(null, 204)
@@ -237,7 +268,7 @@ export function buildApp(
   // Validate origins before refusing work during shutdown, so trusted renderers
   // receive the actual 503 response instead of an opaque CORS failure.
   app.use("*", async (c, next) => {
-    if (state.taintedRef?.() || state.drainingRef?.()) {
+    if (state.taintedRef() || state.drainingRef()) {
       c.header("Connection", "close")
       return c.json({ error: "service draining" }, 503)
     }
@@ -294,6 +325,10 @@ export function buildApp(
   // middleware. They reveal only the auth posture and exchange a one-time,
   // short-lived pairing credential for an HttpOnly browser session.
   registerRemotePublicRoutes(app, config, state)
+  // Automation webhooks: no session, only the automation's own URL token
+  // (routes/automations.ts). Outside `/api/*`, so none of the API's
+  // credentials or routes are reachable through them.
+  registerAutomationWebhookRoute(app, state)
 
   app.use("/api/*", async (c, next) => {
     if (!isRemoteRequestTransportAllowed(c, config)) {
@@ -325,7 +360,7 @@ export function buildApp(
       // the header are served while the minimum still includes them.
       const client = requestClientInfo(c)
       if (client && identity.session) {
-        state.remoteAccess?.noteClient(identity.session.id, client)
+        state.remoteAccess.noteClient(identity.session.id, client)
       }
       if (remoteClientNeedsUpdate(client) && !isClientUpdateGateExempt(c)) {
         return c.json(clientUpdateRequiredBody(), 426)
@@ -363,7 +398,9 @@ export function buildApp(
     const start = performance.now()
 
     try {
-      await next()
+      // Bind the request id for the whole handler chain so failure logs
+      // (sanitizeError) carry the same id as this access-log line.
+      await runWithRequestContext({ reqId: id }, () => next())
     } catch (err) {
       const duration = Math.round(performance.now() - start)
       recordHttpMetrics(

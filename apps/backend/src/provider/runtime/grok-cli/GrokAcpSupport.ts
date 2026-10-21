@@ -1,18 +1,6 @@
-// The ACP config-option heuristics (effort/context/fast/thinking matching,
-// discovered-model extraction, capability descriptors) are protocol-generic —
-// they operate purely on the `configOptions` payload of `session/new` — so we
-// import them from the Cursor support module instead of duplicating ~400
-// lines. Grok-specific pieces (spawn shape and model cache) live
-// here. If Cursor ever needs cursor-only behavior in those helpers, fork them
-// into this file at that point.
-export {
-  buildCursorCapabilitiesFromConfigOptions as buildGrokCapabilitiesFromConfigOptions,
-  buildCursorDiscoveredModelsFromConfigOptions as buildGrokDiscoveredModelsFromConfigOptions,
-  mergeCursorCustomModels as mergeGrokCustomModels,
-  resolveCursorAcpBaseModelId as resolveGrokAcpBaseModelId,
-  resolveCursorAcpConfigUpdates as resolveGrokAcpConfigUpdates,
-  type CursorAcpSessionConfigOption as GrokAcpSessionConfigOption,
-} from "../cursor/CursorAcpSupport"
+// Grok-specific ACP pieces (spawn shape). The protocol-generic config-option
+// helpers (effort/context/fast/thinking matching, discovered-model
+// extraction, capability descriptors) live in `../acp/AcpSessionConfig`.
 
 export interface GrokAcpRuntimeSettings {
   readonly binaryPath?: string | null

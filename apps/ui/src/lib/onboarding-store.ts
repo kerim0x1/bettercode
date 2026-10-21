@@ -1,5 +1,9 @@
 import { create } from "zustand"
-import { getCliStatus, type CliStatusResponse } from "@/services/backend"
+import {
+  getCliStatus,
+  type CliStatusResponse,
+} from "@/services/backend/providersApi"
+import { getElectronApi } from "@/services/ipc-facade"
 
 export interface McpServer {
   id: string
@@ -120,7 +124,7 @@ interface OnboardingState {
   prevStep: () => void
 }
 
-const api = () => window.electronAPI
+const api = () => getElectronApi()
 
 /** `cli` is the authoritative per-provider map; `claude`/`codex` remain as
  *  top-level shortcuts for older backends that predate it. */
@@ -338,6 +342,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     set({ done: true })
   },
 
-  nextStep: () => set((s) => ({ step: Math.min(5, s.step + 1) })),
+  // Done is the seventh step (`STEPS` in components/onboarding/shared.tsx).
+  nextStep: () => set((s) => ({ step: Math.min(6, s.step + 1) })),
   prevStep: () => set((s) => ({ step: Math.max(0, s.step - 1) })),
 }))

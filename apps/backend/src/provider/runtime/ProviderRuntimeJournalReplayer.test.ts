@@ -5,7 +5,7 @@ import path from "node:path"
 import { openDatabase } from "../../persistence/db"
 import { EventStore } from "../../persistence/eventStore"
 import { runMigrations } from "../../persistence/migrations"
-import type { ProviderRuntimeEvent } from "../types"
+import type { LegacyProviderEvent } from "../types"
 import type { ProviderRuntimeJournalEntry } from "./journalEntry"
 import { ProviderRuntimeJournalReplayer } from "./ProviderRuntimeJournalReplayer"
 import { ProviderRuntimeProjectionReceiptStore } from "./ProviderRuntimeProjectionReceiptStore"
@@ -61,7 +61,7 @@ function legacyTurnId(entry: ProviderRuntimeJournalEntry): unknown {
 describe("ProviderRuntimeJournalReplayer", () => {
   it("replays valid unprojected events once and records receipts", () => {
     const { db, events, receipts, logger } = setup()
-    const event: ProviderRuntimeEvent = {
+    const event: LegacyProviderEvent = {
       event_type: "turn_completed",
       thread_id: "thread-1",
       payload: { turn_id: "turn-1", status: "completed" },
@@ -99,7 +99,7 @@ describe("ProviderRuntimeJournalReplayer", () => {
 
   it("feeds schema 2, schema 1 and unmarked rows to the projector as the same legacy event", () => {
     const { db, events, receipts, logger } = setup()
-    const event: ProviderRuntimeEvent = {
+    const event: LegacyProviderEvent = {
       event_type: "tool_result",
       thread_id: "thread-1",
       payload: { turn_id: "turn-1", tool_id: "tool-1", output: "ok" },
@@ -169,7 +169,7 @@ describe("ProviderRuntimeJournalReplayer", () => {
     const malformed = appendProviderEvent(events, {
       event: { event_type: "turn_completed" },
     })
-    const validEvent: ProviderRuntimeEvent = {
+    const validEvent: LegacyProviderEvent = {
       event_type: "turn_completed",
       thread_id: "thread-1",
       payload: { turn_id: "turn-2" },
@@ -694,7 +694,7 @@ describe("ProviderRuntimeJournalReplayer canonical rows", () => {
 
   it("interleaves schema 2 and schema 3 rows of one thread by sequence", () => {
     const { db, events, receipts, logger } = setup()
-    const legacy: ProviderRuntimeEvent = {
+    const legacy: LegacyProviderEvent = {
       event_type: "turn_started",
       thread_id: "thread-1",
       payload: { turn_id: "turn-1" },

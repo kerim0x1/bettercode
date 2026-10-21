@@ -1,11 +1,23 @@
 import { createRequire } from "node:module"
-import { spawn, type ChildProcess } from "node:child_process"
+import { type ChildProcess } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { Worker } from "node:worker_threads"
 import type { IPty } from "node-pty"
-import { sanitizedChildEnvironment } from "../../../security/childEnvironment"
+import { isUnsafeChildEnvironmentKey } from "../../../security/childEnvironment"
+import {
+  isAbsoluteExecutablePath,
+  resolveExecutableOnPath,
+} from "../../../security/executablePath"
+import {
+  ensurePosixProcessGroupTerminated,
+  runWindowsTaskkillDetailed,
+  signalPosixProcessGroup,
+  TASKKILL_NO_SUCH_PROCESS_EXIT_CODE,
+  waitForPosixProcessGroupExit,
+  type TaskkillSpawn,
+} from "../../../services/process-termination"
 
 const requireNodeModule = createRequire(__filename)
 
@@ -90,10 +102,19 @@ function spawnLoadedNativePty(
   command: { readonly command: string; readonly args: string[] },
   options: NativePtyRunOptions
 ): NativePtyHandle {
+  // The caller decides how wide the environment is: the integrated terminal
+  // passes the shell allowlist, the Claude Terminal driver the provider
+  // environment. Only loader-injection names are stripped here; adding the
+  // backend's own environment back would undo the terminal's allowlist.
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(options.env)) {
+    if (value !== undefined && !isUnsafeChildEnvironmentKey(key))
+      env[key] = value
+  }
   const proc: IPty = pty.spawn(command.command, command.args, {
     cwd: options.cwd,
     env: {
-      ...sanitizedChildEnvironment(options.env),
+      ...env,
       TERM: options.env.TERM ?? "xterm-256color",
       COLORTERM: options.env.COLORTERM ?? "truecolor",
     },
@@ -179,7 +200,7 @@ function spawnLoadedNativePty(
 }
 
 /** taskkill's exit code when it finds no process with the PID. */
-const TASKKILL_NO_SUCH_PROCESS = 128
+const TASKKILL_NO_SUCH_PROCESS = TASKKILL_NO_SUCH_PROCESS_EXIT_CODE
 
 /**
  * What a termination request does to a Windows PTY's process tree, given
@@ -247,7 +268,9 @@ async function terminateNativePtyProcessTree(
       )
     }
     try {
-      await runNativePtyWindowsTaskkill(pid, signal === "SIGKILL")
+      // Always forced: Windows refuses a graceful taskkill for console
+      // processes without a window, which is every process under ConPTY.
+      await runNativePtyWindowsTaskkill(pid, true)
       return
     } catch (error) {
       if (windowsTreeEndedMeanwhile(error, treeReached)) return
@@ -262,12 +285,9 @@ async function terminateNativePtyProcessTree(
     }
   }
 
-  const signalled = signalNativePtyPosixProcessGroup(pid, signal)
+  const signalled = signalPosixProcessGroup(pid, signal)
   if (!signalled && !rootExited) proc.kill(signal)
-  if (
-    signal === "SIGKILL" &&
-    !(await waitForNativePtyPosixProcessGroupExit(pid, 500))
-  ) {
+  if (signal === "SIGKILL" && !(await waitForPosixProcessGroupExit(pid, 500))) {
     throw Object.assign(
       new Error(`PTY process group ${pid} survived SIGKILL.`),
       {
@@ -281,54 +301,9 @@ async function terminateNativePtyProcessTree(
 export async function ensureNativePtyPosixProcessGroupTerminated(
   pid: number
 ): Promise<void> {
-  if (!isNativePtyPosixProcessGroupAlive(pid)) return
-  signalNativePtyPosixProcessGroup(pid, "SIGTERM")
-  if (await waitForNativePtyPosixProcessGroupExit(pid, 250)) return
-  signalNativePtyPosixProcessGroup(pid, "SIGKILL")
-  if (await waitForNativePtyPosixProcessGroupExit(pid, 500)) return
-  throw Object.assign(
-    new Error(`PTY process group ${pid} survived root-process exit.`),
-    {
-      code: "NATIVE_PTY_GROUP_SURVIVED_ROOT_EXIT",
-      pid,
-    }
-  )
-}
-
-function signalNativePtyPosixProcessGroup(
-  pid: number,
-  signal: NodeJS.Signals
-): boolean {
-  try {
-    process.kill(-pid, signal)
-    return true
-  } catch (error) {
-    if (isNoSuchProcessError(error)) return false
-    throw error
-  }
-}
-
-function isNativePtyPosixProcessGroupAlive(pid: number): boolean {
-  try {
-    process.kill(-pid, 0)
-    return true
-  } catch (error) {
-    if (isNoSuchProcessError(error)) return false
-    if ((error as NodeJS.ErrnoException).code === "EPERM") return true
-    throw error
-  }
-}
-
-async function waitForNativePtyPosixProcessGroupExit(
-  pid: number,
-  timeoutMs: number
-): Promise<boolean> {
-  const deadline = Date.now() + Math.max(0, timeoutMs)
-  while (Date.now() < deadline) {
-    if (!isNativePtyPosixProcessGroupAlive(pid)) return true
-    await new Promise<void>((resolve) => setTimeout(resolve, 25))
-  }
-  return !isNativePtyPosixProcessGroupAlive(pid)
+  await ensurePosixProcessGroupTerminated(pid, {
+    code: "NATIVE_PTY_GROUP_SURVIVED_ROOT_EXIT",
+  })
 }
 
 type NativePtyTaskkillSpawn = (
@@ -341,6 +316,10 @@ type NativePtyTaskkillSpawn = (
   }
 ) => ChildProcess
 
+/**
+ * `taskkill /T` through the shared helper (absolute System32 path, settles
+ * on the helper's close), reported with the PTY's own error codes.
+ */
 export async function runNativePtyWindowsTaskkill(
   pid: number,
   force: boolean,
@@ -349,89 +328,38 @@ export async function runNativePtyWindowsTaskkill(
     readonly timeoutMs?: number
   } = {}
 ): Promise<void> {
-  const spawnProcess = options.spawnProcess ?? (spawn as NativePtyTaskkillSpawn)
-  const timeoutMs = options.timeoutMs ?? 5_000
-  const killer = spawnProcess(
-    "taskkill.exe",
-    ["/pid", String(pid), "/T", ...(force ? ["/F"] : [])],
-    {
-      env: sanitizedChildEnvironment(),
-      stdio: "ignore",
-      windowsHide: true,
-    }
-  )
-
-  await new Promise<void>((resolve, reject) => {
-    let completed = false
-    let spawnError: Error | null = null
-    let timeoutError: Error | null = null
-    let forcedCloseTimer: NodeJS.Timeout | null = null
-    const finish = (error?: Error) => {
-      if (completed) return
-      completed = true
-      clearTimeout(timeout)
-      if (forcedCloseTimer) clearTimeout(forcedCloseTimer)
-      if (error) reject(error)
-      else resolve()
-    }
-    const timeout = setTimeout(
-      () => {
-        timeoutError = Object.assign(
-          new Error(`taskkill for PTY process tree ${pid} timed out.`),
-          { code: "NATIVE_PTY_TASKKILL_TIMEOUT", pid }
-        )
-        try {
-          killer.kill("SIGKILL")
-        } catch {
-          // The helper may already be closing.
-        }
-        forcedCloseTimer = setTimeout(
-          () => finish(spawnError ?? timeoutError ?? undefined),
-          1_000
-        )
-        forcedCloseTimer.unref?.()
-      },
-      Math.max(1, timeoutMs)
-    )
-    timeout.unref?.()
-
-    killer.once("error", (error) => {
-      spawnError = asError(error)
-    })
-    killer.once("close", (code, signal) => {
-      if (spawnError) {
-        finish(spawnError)
-        return
-      }
-      if (timeoutError) {
-        finish(timeoutError)
-        return
-      }
-      if (code === 0) {
-        finish()
-        return
-      }
-      finish(
-        Object.assign(
-          new Error(
-            `taskkill for PTY process tree ${pid} exited with code ${String(
-              code
-            )}${signal ? ` (${signal})` : ""}.`
-          ),
-          {
-            code: "NATIVE_PTY_TASKKILL_FAILED",
-            pid,
-            exitCode: code,
-            signal,
-          }
-        )
-      )
-    })
+  const result = await runWindowsTaskkillDetailed(pid, force, {
+    spawnProcess: options.spawnProcess as TaskkillSpawn | undefined,
+    timeoutMs: Math.max(1, options.timeoutMs ?? 5_000),
+    closeGraceMs: 1_000,
   })
-}
-
-function isNoSuchProcessError(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException).code === "ESRCH"
+  switch (result.status) {
+    case "closed":
+      if (result.code === 0) return
+      throw Object.assign(
+        new Error(
+          `taskkill for PTY process tree ${pid} exited with code ${String(
+            result.code
+          )}${result.signal ? ` (${result.signal})` : ""}.`
+        ),
+        {
+          code: "NATIVE_PTY_TASKKILL_FAILED",
+          pid,
+          exitCode: result.code,
+          signal: result.signal,
+        }
+      )
+    case "timeout":
+      throw Object.assign(
+        new Error(`taskkill for PTY process tree ${pid} timed out.`),
+        { code: "NATIVE_PTY_TASKKILL_TIMEOUT", pid }
+      )
+    case "error":
+      throw Object.assign(new Error(result.message), {
+        code: "NATIVE_PTY_TASKKILL_SPAWN_FAILED",
+        pid,
+      })
+  }
 }
 
 function asError(error: unknown): Error {
@@ -443,10 +371,39 @@ function resolvePtyCommand(
   args: string[],
   env: NodeJS.ProcessEnv
 ): { command: string; args: string[] } {
-  if (process.platform === "win32") return { command, args }
-  const executablePath = resolveExecutablePath(command, env.PATH)
+  if (process.platform === "win32") {
+    return resolveWindowsPtyCommand(command, args, env)
+  }
+  const executablePath = resolveExecutablePath(command, environmentPath(env))
   if (!executablePath) return { command, args }
-  const shebang = readShebang(executablePath)
+  return applyShebang(executablePath, readShebang(executablePath), args)
+}
+
+export async function prepareNativePtyCommand(
+  command: string,
+  args: string[],
+  env: NodeJS.ProcessEnv
+): Promise<{ command: string; args: string[] }> {
+  if (process.platform === "win32") {
+    return resolveWindowsPtyCommand(command, args, env)
+  }
+  const executablePath = await resolveExecutablePathAsync(
+    command,
+    environmentPath(env)
+  )
+  if (!executablePath) return { command, args }
+  return applyShebang(
+    executablePath,
+    await readShebangAsync(executablePath),
+    args
+  )
+}
+
+function applyShebang(
+  executablePath: string,
+  shebang: string | null,
+  args: string[]
+): { command: string; args: string[] } {
   if (!shebang) return { command: executablePath, args }
   const shebangParts = splitShebang(shebang)
   if (shebangParts.length === 0) return { command: executablePath, args }
@@ -458,24 +415,51 @@ function resolvePtyCommand(
   }
 }
 
-export async function prepareNativePtyCommand(
+/**
+ * node-pty starts the command with `CreateProcess` and no application name,
+ * which searches the backend's own directories before PATH, so a bare name
+ * is resolved to an absolute file first. A `.cmd`/`.bat` target is refused:
+ * Windows would run it through cmd.exe, which re-parses every argument (a
+ * prompt containing `&` runs a second command) and cuts each one at its
+ * first line break.
+ */
+function resolveWindowsPtyCommand(
   command: string,
   args: string[],
   env: NodeJS.ProcessEnv
-): Promise<{ command: string; args: string[] }> {
-  if (process.platform === "win32") return { command, args }
-  const executablePath = await resolveExecutablePathAsync(command, env.PATH)
-  if (!executablePath) return { command, args }
-  const shebang = await readShebangAsync(executablePath)
-  if (!shebang) return { command: executablePath, args }
-  const shebangParts = splitShebang(shebang)
-  if (shebangParts.length === 0) return { command: executablePath, args }
-  const [interpreter, ...interpreterArgs] = shebangParts
-  if (!interpreter) return { command: executablePath, args }
-  return {
-    command: interpreter,
-    args: [...interpreterArgs, executablePath, ...args],
+): { command: string; args: string[] } {
+  const resolved = isAbsoluteExecutablePath(command, "win32")
+    ? command
+    : resolveExecutableOnPath(command, {
+        pathValue: environmentPath(env),
+        allowScripts: true,
+      })
+  if (resolved && /\.(?:cmd|bat)$/i.test(resolved)) {
+    throw Object.assign(
+      new Error(
+        `${path.win32.basename(resolved)} is a batch shim, which a terminal session cannot start safely. Configure the program's .exe instead.`
+      ),
+      { code: "NATIVE_PTY_BATCH_SHIM_REFUSED", statusCode: 400 }
+    )
   }
+  return { command: resolved ?? command, args }
+}
+
+function environmentPath(env: NodeJS.ProcessEnv): string | undefined {
+  for (const [key, value] of Object.entries(env)) {
+    if (key.toUpperCase() === "PATH" && value !== undefined) return value
+  }
+  return process.env.PATH
+}
+
+/**
+ * POSIX lookup of a bare command on absolute PATH entries only: an empty or
+ * relative entry would resolve against the PTY's cwd, the workspace.
+ */
+function pathSearchDirectories(pathValue: string | undefined): string[] {
+  return (pathValue ?? process.env.PATH ?? "")
+    .split(path.delimiter)
+    .filter((entry) => entry && path.isAbsolute(entry))
 }
 
 function resolveExecutablePath(
@@ -485,10 +469,7 @@ function resolveExecutablePath(
   if (command.includes(path.sep) || path.isAbsolute(command)) {
     return command
   }
-  for (const entry of (pathValue ?? process.env.PATH ?? "").split(
-    path.delimiter
-  )) {
-    if (!entry) continue
+  for (const entry of pathSearchDirectories(pathValue)) {
     const candidate = path.join(entry, command)
     try {
       fs.accessSync(candidate, fs.constants.X_OK)
@@ -507,10 +488,7 @@ async function resolveExecutablePathAsync(
   if (command.includes(path.sep) || path.isAbsolute(command)) {
     return command
   }
-  for (const entry of (pathValue ?? process.env.PATH ?? "").split(
-    path.delimiter
-  )) {
-    if (!entry) continue
+  for (const entry of pathSearchDirectories(pathValue)) {
     const candidate = path.join(entry, command)
     try {
       await fs.promises.access(candidate, fs.constants.X_OK)

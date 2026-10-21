@@ -46,9 +46,11 @@ describe("chat-mode tool rules", () => {
     ])
   })
 
-  it("auto-allows imagegen only for explicit edit/bypass permission", () => {
-    expect(isImagegenAutoAllowed("agent", "allow-edits")).toBe(true)
-    expect(isImagegenAutoAllowed("agent", "full")).toBe(true)
+  it("auto-allows imagegen only for explicit bypass permission", () => {
+    // Execute-class work: allow-edits (and its "full" alias) still asks.
+    expect(isImagegenAutoAllowed("agent", "allow-edits")).toBe(false)
+    expect(isImagegenAutoAllowed("agent", "full")).toBe(false)
+    expect(isImagegenAutoAllowed("agent", "bypass")).toBe(true)
     expect(isImagegenAutoAllowed("agent", "read")).toBe(false)
     expect(isImagegenAutoAllowed("debug", "bypass")).toBe(true)
     expect(isImagegenAutoAllowed("agent", "default")).toBe(false)

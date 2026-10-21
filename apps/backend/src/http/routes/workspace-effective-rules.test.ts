@@ -9,7 +9,14 @@ import {
 import { Hono } from "hono"
 import { afterEach, describe, expect, it } from "vitest"
 import type { AppState } from "../../appState"
-import { registerWorkspaceRoutes } from "./workspace"
+import { registerWorkspaceRoutes as registerWorkspaceRoutesUnfilled } from "./workspace"
+import { withInertStateArgument } from "../../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const registerWorkspaceRoutes = withInertStateArgument(
+  registerWorkspaceRoutesUnfilled,
+  1
+)
 
 const tempRoots: string[] = []
 

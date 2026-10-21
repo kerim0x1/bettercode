@@ -1,10 +1,9 @@
-import { lazy, Suspense, useCallback, useEffect, useRef } from "react"
-import {
-  Dialog,
-  DialogContent as _DialogContent, // unused, but keeps the dialog primitive imported in case consumers want it
-} from "@/components/ui/dialog"
+import { lazy, memo, Suspense, useCallback, useEffect, useRef } from "react"
+import { useShallow } from "zustand/react/shallow"
 import { ErrorBoundary } from "@/components/error-boundary"
-import { useChatStore } from "@/lib/chat-store"
+import { PlanModalStreamSync } from "@/components/dialogs/plan-modal-stream-sync"
+import { appUiActions, useAppUiStore } from "@/lib/app-ui-store"
+import { useChatStore, type ChatThread } from "@/lib/chat-store"
 import { useMultiAgentStore } from "@/lib/multi-agent-store"
 import { buildSystemInstruction } from "@/lib/mode-instructions"
 import { executeComposerPlan } from "@/lib/execute-composer-plan"
@@ -13,13 +12,13 @@ import {
   hasNativeFolderPicker,
   pickFolder,
   openWorkspace,
-} from "@/services/backend"
+} from "@/services/backend/runtime"
 import { resolveProviderTarget } from "@/lib/resolve-provider-target"
 import type { UiProvider } from "@/lib/provider-types"
-import type {
-  SetPlanModalContent,
-  SourceProposedPlanReference,
-} from "@/lib/plan-modal"
+import type { EditorSidebarView } from "@/lib/preferences-store"
+import type { ChatSubmitPayload } from "@/hooks/use-chat-submit"
+
+type AppMode = "agent" | "editor" | "design"
 
 // ─── Lazy modal imports ─────────────────────────────────────────────────────
 // Every modal is mounted on-demand. Combined with the `{state && <Modal …>}`
@@ -64,11 +63,6 @@ const ApprovalRequestModal = lazy(() =>
 )
 const PlanModal = lazy(() =>
   import("@/components/plan-view").then((m) => ({ default: m.PlanModal }))
-)
-const SettingsModal = lazy(() =>
-  import("@/components/settings/settings-modal").then((m) => ({
-    default: m.SettingsModal,
-  }))
 )
 const SearchChatsDialog = lazy(() =>
   import("@/components/dialogs/search-chats-dialog").then((m) => ({
@@ -147,6 +141,28 @@ const SystemBrowserDialog = lazy(() =>
 )
 
 /**
+ * What the modals need from the shell. Their own open flags and inputs come
+ * from the app UI store.
+ */
+export interface AppModalsProps {
+  /** The focused chat; only its id and project root are used. */
+  activeThread: Pick<ChatThread, "id" | "projectPath"> | null
+  minimalChat: boolean
+  providers: UiProvider[]
+  handleSubmit: (payload: ChatSubmitPayload) => void
+  appMode: AppMode
+  setAppMode: (mode: AppMode) => void
+  setSidebarOpen: (open: boolean) => void
+  setFileTreeOpen: (open: boolean) => void
+  setEditorSidebarView: (view: EditorSidebarView) => void
+  terminalOpen: boolean
+  setTerminalOpen: (open: boolean) => void
+  voiceModalOpen: boolean
+  setVoiceModalOpen: (open: boolean) => void
+  startVoice: () => void
+}
+
+/**
  * Consolidates every "app-level modal" into one component so App.tsx's
  * JSX return tree doesn't carry ~200 lines of dialog wiring. Each modal
  * already owns its own presentation — this wrapper is pure plumbing.
@@ -154,7 +170,10 @@ const SystemBrowserDialog = lazy(() =>
  * **Performance note:** every modal below is `React.lazy`d and the mount is
  * guarded by the corresponding state flag so opening a feature is the only
  * trigger that downloads its code. Closed modals contribute zero bytes to
- * the initial bundle.
+ * the initial bundle. The flags and their inputs are read from
+ * {@link useAppUiStore} here, so opening a dialog or typing into one
+ * re-renders this component, not the app shell; the component is memoized
+ * against the few shell values it takes as props.
  *
  * The one non-trivial bit of logic here is PlanModal's `onExecute`
  * callback, which:
@@ -166,122 +185,126 @@ const SystemBrowserDialog = lazy(() =>
  * because its live render depends on the multi-agent store state which
  * can get into odd shapes during session transitions.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function AppModals(props: any) {
+function AppModalsImpl({
+  activeThread,
+  minimalChat,
+  providers,
+  handleSubmit,
+  appMode,
+  setAppMode,
+  setSidebarOpen,
+  setFileTreeOpen,
+  setEditorSidebarView,
+  terminalOpen,
+  setTerminalOpen,
+  voiceModalOpen,
+  setVoiceModalOpen,
+  startVoice,
+}: AppModalsProps) {
   const {
-    // Plan modal
     planModalContent,
     planModalSourceProposedPlan,
     planModalThreadId,
     planModalImplemented,
-    setPlanModalContent,
-    // Chat search
     chatSearch,
-    setChatSearch,
-    minimalChat,
-    // File editor / explorer / git
     editingFile,
-    setEditingFile,
-    activeThread,
     fileExplorerModal,
-    setFileExplorerModal,
     gitModal,
-    setGitModal,
-    // Marketplace / voice
     marketplaceOpen,
-    setMarketplaceOpen,
-    voiceModalOpen,
-    setVoiceModalOpen,
-    startVoice,
-    // Multi-agent
-    providers,
-    // Editor mode modal
     editorModeModalOpen,
-    setEditorModeModalOpen,
     editorModalPath,
-    setEditorModalPath,
-    appMode,
-    setAppMode,
-    setSidebarOpen,
-    setFileTreeOpen,
-    setEditorSidebarView,
-    terminalOpen,
-    setTerminalOpen,
-    // New thread modal
     newThreadModalOpen,
-    setNewThreadModalOpen,
     newThreadModalPath,
-    setNewThreadModalPath,
-    // New project wizard
     newProjectOpen,
-    setNewProjectOpen,
     newProjectStep,
-    setNewProjectStep,
     newProjectStatus,
-    setNewProjectStatus,
     newProjectLog,
-    setNewProjectLog,
     newProjectName,
-    setNewProjectName,
     newProjectPath,
-    setNewProjectPath,
     newProjectPM,
-    setNewProjectPM,
     newProjectTemplate,
-    setNewProjectTemplate,
     newProjectUI,
-    setNewProjectUI,
-    // Confirm action
     confirmAction,
-    setConfirmAction,
-    // Settings
-    settingsOpen,
-    setSettingsOpen,
-    settingsTab,
-    setSettingsTab,
-    // Keyboard shortcuts
     shortcutsOpen,
-    setShortcutsOpen,
-    // Command palette
     commandPaletteOpen,
-    setCommandPaletteOpen,
-    // Quick open
     quickOpenOpen,
-    setQuickOpenOpen,
-    // Go to line
     goToLineOpen,
-    setGoToLineOpen,
-    // Document symbols
     documentSymbolsOpen,
-    setDocumentSymbolsOpen,
-    // Workspace symbols
     workspaceSymbolsOpen,
-    setWorkspaceSymbolsOpen,
-    // Autonomous Work
     autonomousDialogOpen,
-    setAutonomousDialogOpen,
-    // System Browser
     systemBrowserOpen,
-    setSystemBrowserOpen,
     systemBrowserIntent,
+  } = useAppUiStore(
+    useShallow((s) => ({
+      planModalContent: s.planModalContent,
+      planModalSourceProposedPlan: s.planModalSourceProposedPlan,
+      planModalThreadId: s.planModalThreadId,
+      planModalImplemented: s.planModalImplemented,
+      chatSearch: s.chatSearch,
+      editingFile: s.editingFile,
+      fileExplorerModal: s.fileExplorerModal,
+      gitModal: s.gitModal,
+      marketplaceOpen: s.marketplaceOpen,
+      editorModeModalOpen: s.editorModeModalOpen,
+      editorModalPath: s.editorModalPath,
+      newThreadModalOpen: s.newThreadModalOpen,
+      newThreadModalPath: s.newThreadModalPath,
+      newProjectOpen: s.newProjectOpen,
+      newProjectStep: s.newProjectStep,
+      newProjectStatus: s.newProjectStatus,
+      newProjectLog: s.newProjectLog,
+      newProjectName: s.newProjectName,
+      newProjectPath: s.newProjectPath,
+      newProjectPM: s.newProjectPM,
+      newProjectTemplate: s.newProjectTemplate,
+      newProjectUI: s.newProjectUI,
+      confirmAction: s.confirmAction,
+      shortcutsOpen: s.shortcutsOpen,
+      commandPaletteOpen: s.commandPaletteOpen,
+      quickOpenOpen: s.quickOpenOpen,
+      goToLineOpen: s.goToLineOpen,
+      documentSymbolsOpen: s.documentSymbolsOpen,
+      workspaceSymbolsOpen: s.workspaceSymbolsOpen,
+      autonomousDialogOpen: s.autonomousDialogOpen,
+      systemBrowserOpen: s.systemBrowserOpen,
+      systemBrowserIntent: s.systemBrowserIntent,
+    }))
+  )
+  // Setters are created once with the store; reading them subscribes to nothing.
+  const {
+    setPlanModalContent,
+    setChatSearch,
+    setEditingFile,
+    setFileExplorerModal,
+    setGitModal,
+    setMarketplaceOpen,
+    setEditorModeModalOpen,
+    setEditorModalPath,
+    setNewThreadModalOpen,
+    setNewThreadModalPath,
+    setNewProjectOpen,
+    setNewProjectStep,
+    setNewProjectStatus,
+    setNewProjectLog,
+    setNewProjectName,
+    setNewProjectPath,
+    setNewProjectPM,
+    setNewProjectTemplate,
+    setNewProjectUI,
+    openNewProjectWizard,
+    setConfirmAction,
+    setSettingsOpen,
+    setSettingsTab,
+    setShortcutsOpen,
+    setCommandPaletteOpen,
+    setQuickOpenOpen,
+    setGoToLineOpen,
+    setDocumentSymbolsOpen,
+    setWorkspaceSymbolsOpen,
+    setAutonomousDialogOpen,
+    setSystemBrowserOpen,
     setSystemBrowserIntent,
-    handleSubmit,
-  } = props as {
-    planModalContent: string | null
-    planModalSourceProposedPlan: SourceProposedPlanReference | null
-    planModalThreadId: string | null
-    planModalImplemented: boolean
-    setPlanModalContent: SetPlanModalContent
-    selectedModel: string
-    selectedProvider: UiProvider | undefined
-    thinkingMode: string | null
-    permissionLevel: string
-    contextWindow?: string | null
-    fastMode?: boolean
-    setChatMode: (m: string) => void
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    [key: string]: any
-  }
+  } = appUiActions()
 
   // ── Multi-agent state checks for conditional mount ──
   const multiAgentConfigOpen = useMultiAgentStore((s) => s.isConfigOpen)
@@ -350,18 +373,6 @@ export function AppModals(props: any) {
     setSystemBrowserIntent,
   ])
 
-  const openNewProjectWizard = () => {
-    setNewProjectName("")
-    setNewProjectPath("")
-    setNewProjectTemplate(null)
-    setNewProjectUI(null)
-    setNewProjectPM("npm")
-    setNewProjectStep(0)
-    setNewProjectStatus("idle")
-    setNewProjectLog("")
-    setNewProjectOpen(true)
-  }
-
   const executePlan = (planContent: string, inNewThread = false) => {
     if (planModalImplemented) return
     setPlanModalContent(null)
@@ -376,16 +387,20 @@ export function AppModals(props: any) {
 
   return (
     <Suspense fallback={null}>
+      <PlanModalStreamSync
+        threadId={activeThread?.id ?? null}
+        planModalContent={planModalContent}
+        setPlanModalContent={setPlanModalContent}
+      />
       <ErrorBoundary label="Approval request modal">
         <ApprovalRequestModal />
       </ErrorBoundary>
-      {chatSearch !== null && chatSearch !== undefined && (
-        <SearchChatsDialog
-          chatSearch={chatSearch}
-          setChatSearch={setChatSearch}
-          minimalChat={minimalChat}
-        />
-      )}
+      {/* Stays mounted: the dialog is open while `chatSearch` is non-empty. */}
+      <SearchChatsDialog
+        chatSearch={chatSearch}
+        setChatSearch={setChatSearch}
+        minimalChat={minimalChat}
+      />
 
       {planModalContent !== null && (
         <PlanModal
@@ -529,18 +544,6 @@ export function AppModals(props: any) {
         />
       )}
 
-      {settingsOpen && (
-        <Dialog
-          open={settingsOpen}
-          onOpenChange={(open) => {
-            setSettingsOpen(open)
-            if (!open) setSettingsTab("general")
-          }}
-        >
-          <SettingsModal defaultTab={settingsTab} />
-        </Dialog>
-      )}
-
       {shortcutsOpen && (
         <KeyboardShortcutsDialog
           open={true}
@@ -644,6 +647,8 @@ export function AppModals(props: any) {
     </Suspense>
   )
 }
+
+export const AppModals = memo(AppModalsImpl)
 
 function basename(value: string): string {
   return value.replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop() ?? ""

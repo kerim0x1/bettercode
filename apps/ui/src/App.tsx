@@ -1,5 +1,7 @@
 import { AppShell } from "@/components/layout/app-shell"
+import { BackendStatusBanner } from "@/components/layout/backend-status-banner"
 import { SecretsEncryptionBanner } from "@/components/layout/secrets-encryption-banner"
+import { PullRequestWakeBridge } from "@/components/pull-requests/pull-request-wake-bridge"
 import { useAppShellBundles } from "@/hooks/use-app-shell-bundles"
 // NOTE: `monaco-setup` is intentionally NOT imported here. The ~4 MB monaco
 // bundle is lazy-loaded via the `MonacoEditorWrapper` (which itself is
@@ -19,6 +21,8 @@ export function App() {
     <>
       <SecretsEncryptionBanner />
       <AppShell {...bundles} />
+      <BackendStatusBanner />
+      <PullRequestWakeBridge />
     </>
   )
 }

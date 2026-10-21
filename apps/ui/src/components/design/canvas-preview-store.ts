@@ -20,6 +20,7 @@ import type {
   DomNode,
   SelectedElement,
 } from "@/components/browser-preview/types"
+import { hasElectronApi } from "@/services/ipc-facade"
 
 /**
  * What the canvas shares between its cards, its toolbar and the inspector
@@ -102,7 +103,7 @@ function post(
 }
 
 export const useCanvasPreviewStore = create<CanvasPreviewStore>((set, get) => ({
-  selectionMode: typeof window !== "undefined" && Boolean(window.electronAPI),
+  selectionMode: hasElectronApi(),
   inspectorOpen: false,
   focus: null,
   inspector: EMPTY_INSPECTOR_STATE,

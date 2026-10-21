@@ -216,5 +216,23 @@ describe("ProviderMaintenance", () => {
         maintenanceCapabilities: capabilities,
       }).status
     ).toBe("current")
+
+    // A prerelease is behind its release; an unreadable version is unknown.
+    expect(
+      createProviderVersionAdvisory({
+        driver: "codex",
+        currentVersion: "1.3.0-beta.2",
+        latestVersion: "1.3.0",
+        maintenanceCapabilities: capabilities,
+      }).status
+    ).toBe("behind_latest")
+    expect(
+      createProviderVersionAdvisory({
+        driver: "codex",
+        currentVersion: "nightly",
+        latestVersion: "1.3.0",
+        maintenanceCapabilities: capabilities,
+      }).status
+    ).toBe("unknown")
   })
 })

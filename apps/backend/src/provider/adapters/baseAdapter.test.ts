@@ -2,17 +2,17 @@ import { describe, it, expect, vi } from "vitest"
 import type {
   ModelDefinition,
   ProviderKind,
-  ProviderRuntimeEvent,
+  LegacyProviderEvent,
   ProviderSendTurnInput,
 } from "../types"
 import { BaseProviderAdapter } from "./baseAdapter"
-import { providerEventBus } from "../events"
+import { ProviderEventBus } from "../events"
 import { awaitApproval } from "../permissions"
 import { StalePendingProviderRequestError } from "../runtime/pendingRequestErrors"
 import { ProviderAdapterRegistry } from "../registry"
 
 class TestAdapter extends BaseProviderAdapter {
-  public emittedEvents: ProviderRuntimeEvent[] = []
+  public emittedEvents: LegacyProviderEvent[] = []
   public interruptCalls: string[] = []
   public sessions = new Set<string>()
 
@@ -43,7 +43,7 @@ class TestAdapter extends BaseProviderAdapter {
   }
 
   // Expose the protected emit for direct testing.
-  publicEmit(event: ProviderRuntimeEvent): void {
+  publicEmit(event: LegacyProviderEvent): void {
     this.emittedEvents.push(event)
     this.emit(event)
   }
@@ -91,24 +91,27 @@ describe("BaseProviderAdapter", () => {
     expect(emitter1).toBe(emitter2)
   })
 
-  it("emit fans out to both the local bus and the global providerEventBus", () => {
+  it("emit fans out to both the local bus and the connected provider event bus", () => {
     const adapter = new TestAdapter()
+    const bus = new ProviderEventBus()
     const localSpy = vi.fn()
-    const globalSpy = vi.fn()
+    const busSpy = vi.fn()
     adapter.subscribeEvents().on("event", localSpy)
-    providerEventBus.on("event", globalSpy)
-    try {
-      const event: ProviderRuntimeEvent = {
-        event_type: "turn_started",
-        thread_id: "t-1",
-        payload: {},
-      }
-      adapter.publicEmit(event)
-      expect(localSpy).toHaveBeenCalledWith(event)
-      expect(globalSpy).toHaveBeenCalledWith(event)
-    } finally {
-      providerEventBus.off("event", globalSpy)
+    bus.on("event", busSpy)
+    const event: LegacyProviderEvent = {
+      event_type: "turn_started",
+      thread_id: "t-1",
+      payload: {},
     }
+
+    adapter.publicEmit(event)
+    expect(localSpy).toHaveBeenCalledWith(event)
+    expect(busSpy).not.toHaveBeenCalled()
+
+    adapter.connectEventBus(bus)
+    adapter.publicEmit(event)
+    expect(localSpy).toHaveBeenCalledTimes(2)
+    expect(busSpy).toHaveBeenCalledExactlyOnceWith(event)
   })
 
   it("interruptAll iterates the active session ids and calls interrupt for each", async () => {

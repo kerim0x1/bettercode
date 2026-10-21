@@ -1,10 +1,15 @@
 {
+  // Type-checks every Electron main/preload .cjs file from its JSDoc, under
+  // the repository's strict settings. The shell is not clean under this yet,
+  // so this config backs editors and the NON-blocking
+  // `npm run typecheck:shell:checkjs`. The blocking `npm run typecheck:shell`
+  // (release:check, verify:source) uses tsconfig.gate.json.
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "module": "commonjs",
     "moduleResolution": "node",
     "allowJs": true,
-    "checkJs": false,
+    "checkJs": true,
     "noEmit": true,
     "types": ["node"]
   },

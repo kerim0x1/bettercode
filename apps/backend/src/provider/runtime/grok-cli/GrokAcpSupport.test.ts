@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest"
 import {
-  buildGrokAcpSpawnInput,
-  buildGrokDiscoveredModelsFromConfigOptions,
-  mergeGrokCustomModels,
-} from "./GrokAcpSupport"
+  buildAcpDiscoveredModelsFromConfigOptions,
+  mergeAcpCustomModels,
+} from "../acp/AcpSessionConfig"
+import { buildGrokAcpSpawnInput } from "./GrokAcpSupport"
 
 describe("GrokAcpSupport", () => {
   it("spawns `grok agent stdio` by default", () => {
@@ -29,7 +29,7 @@ describe("GrokAcpSupport", () => {
   })
 
   it("discovers models from a `category: model` config option", () => {
-    const models = buildGrokDiscoveredModelsFromConfigOptions([
+    const models = buildAcpDiscoveredModelsFromConfigOptions([
       {
         id: "model",
         name: "Model",
@@ -49,7 +49,7 @@ describe("GrokAcpSupport", () => {
   })
 
   it("merges custom models without duplicating discovered slugs", () => {
-    const merged = mergeGrokCustomModels([], ["grok-4.5", "grok-custom", " "])
+    const merged = mergeAcpCustomModels([], ["grok-4.5", "grok-custom", " "])
     expect(merged.map((model) => model.slug)).toEqual([
       "grok-4.5",
       "grok-custom",

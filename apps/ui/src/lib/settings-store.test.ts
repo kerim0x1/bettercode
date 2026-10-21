@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { useSettingsStore } from "@/lib/settings-store"
-import { getSettings, updateSettings } from "@/services/backend"
+import { getSettings, updateSettings } from "@/services/backend/coreApi"
 import { handleError } from "@/lib/errors"
 
 vi.mock("@/lib/errors", () => ({ handleError: vi.fn() }))
 
-vi.mock("@/services/backend", () => ({
+vi.mock("@/services/backend/coreApi", () => ({
   getSettings: vi.fn(),
   updateSettings: vi.fn().mockResolvedValue({}),
+}))
+vi.mock("@/services/backend/providersApi", () => ({
   getCliStatus: vi.fn(),
 }))
 
@@ -41,6 +43,8 @@ describe("settings-store", () => {
       backendLogFormat: "simple",
       backendTraceHttp: false,
       backendTraceProviderEvents: false,
+      crashReportsEnabled: false,
+      usagePingEnabled: false,
       remoteAccessEnabled: false,
       remoteAccessCustomUrl: "",
       archivedThreadIds: [],
@@ -213,6 +217,28 @@ describe("settings-store", () => {
       expect(useSettingsStore.getState().autoTrustWorkspaces).toBe(enabled)
     }
   )
+
+  it("treats crash reports and the usage ping as opt-in", async () => {
+    expect(useSettingsStore.getState().crashReportsEnabled).toBe(false)
+    expect(useSettingsStore.getState().usagePingEnabled).toBe(false)
+    vi.mocked(getSettings).mockResolvedValue({
+      crash_reports_enabled: "true",
+      usage_ping_enabled: 1,
+    })
+    await useSettingsStore.getState().init()
+    expect(useSettingsStore.getState().crashReportsEnabled).toBe(false)
+    expect(useSettingsStore.getState().usagePingEnabled).toBe(false)
+    vi.mocked(updateSettings).mockResolvedValue({
+      crash_reports_enabled: true,
+      usage_ping_enabled: true,
+    })
+    await useSettingsStore.getState().update({
+      crash_reports_enabled: true,
+      usage_ping_enabled: true,
+    })
+    expect(useSettingsStore.getState().crashReportsEnabled).toBe(true)
+    expect(useSettingsStore.getState().usagePingEnabled).toBe(true)
+  })
 
   it("ignores unknown response fields that collide with store actions and runtime state", async () => {
     const before = useSettingsStore.getState()

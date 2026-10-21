@@ -26,7 +26,14 @@ vi.mock("../../services/workspace", async (importOriginal) => {
   }
 })
 
-import { registerWorkspaceRoutes } from "./workspace"
+import { registerWorkspaceRoutes as registerWorkspaceRoutesUnfilled } from "./workspace"
+import { withInertStateArgument } from "../../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const registerWorkspaceRoutes = withInertStateArgument(
+  registerWorkspaceRoutesUnfilled,
+  1
+)
 
 /**
  * What either search route puts on the wire. Typed loosely on purpose: the

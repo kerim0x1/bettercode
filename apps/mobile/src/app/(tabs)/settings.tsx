@@ -224,12 +224,12 @@ export default function HostScreen() {
         ) : null}
 
         {readOnly ? (
-          <View style={styles.notice}>
+          <View style={styles.notice} testID="read-only-notice">
             <Eye size={19} color={colors.warning} />
             <Text style={styles.noticeText}>
-              This phone can only watch: it paired over plain HTTP from outside
-              your network. Pair it again over your Wi-Fi, Tailscale or HTTPS to
-              send messages and approve actions.
+              This phone can only watch: it is connected over plain HTTP. Pair
+              it again over Tailscale or HTTPS to send messages and approve
+              actions.
             </Text>
           </View>
         ) : null}
@@ -291,11 +291,12 @@ export default function HostScreen() {
         </View>
 
         {profile && !isSecureEndpoint(profile.baseUrl) ? (
-          <View style={styles.notice}>
+          <View style={styles.notice} testID="plain-http-notice">
             <ShieldCheck size={19} color={colors.warning} />
             <Text style={styles.noticeText}>
-              This LAN connection is not TLS-encrypted. Use it only on a trusted
-              network or behind your HTTPS tunnel.
+              {readOnly
+                ? "This connection is plain HTTP, which anyone on the same network can read. That is why the desktop gives this phone a read-only session that lasts one hour."
+                : "This address is plain HTTP. Tailscale encrypts it; over Wi-Fi or another local network, the desktop gives a phone only a read-only session that lasts one hour."}
             </Text>
           </View>
         ) : null}

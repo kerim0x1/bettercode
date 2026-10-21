@@ -4,11 +4,12 @@ import { DEFAULT_PORT, PORT_FALLBACK_COUNT } from "./constants"
 import { parseAllowedOrigins } from "./security/origin"
 
 /**
- * Server configuration. When Electron spawns or embeds the backend it passes
- * `dataDir` explicitly (resolved via `resolveBetterC0deUserDataDir()` in
- * `electron/main.cjs`); standalone `node dist/index.js` runs compute the
- * default here and land on the same path, so both entry points read and
- * write the same SQLite file.
+ * Server configuration. When the desktop app starts the backend it passes
+ * `dataDir` and `runtimeHome` explicitly (`BETTERC0DE_DATA_DIR` and
+ * `BETTERC0DE_RUNTIME_HOME`, both resolved by
+ * `apps/shell/shared/runtime-paths.cjs`); standalone `node dist/index.js`
+ * runs compute the defaults here and land on the same paths, so both entry
+ * points read and write the same SQLite file and desktop configuration.
  */
 export interface ServerConfig {
   /** HTTP/WS host. Loopback unless the user explicitly enables remote access. */
@@ -17,6 +18,14 @@ export interface ServerConfig {
   port: number
   /** Base data directory containing the SQLite DB + `settings.json`. */
   dataDir: string
+  /**
+   * The desktop configuration folder: `mcp-servers.json`, `hooks.json`,
+   * `rules.md`, `skills/` and `subagents/`. This backend owns those files
+   * (services/desktop-config); everything that reads them takes the folder
+   * from here. Resolved once by `createServerConfig`; absent only from
+   * hand-built test configs, which then have no desktop configuration.
+   */
+  runtimeHome?: string
   /** Full path to the SQLite database file. */
   dbPath: string
   /** Full path to `settings.json`. */
@@ -87,11 +96,59 @@ function defaultDataDir(): string {
   return path.join(base, "userdata")
 }
 
+/**
+ * The desktop configuration folder, decided once for the whole backend:
+ *
+ * 1. `explicit` (`BETTERC0DE_RUNTIME_HOME`): what the desktop resolved and
+ *    writes its configuration to. It must be an absolute path.
+ * 2. `BETTERC0DE_HOME`, the profile root a standalone run shares with the
+ *    desktop.
+ * 3. The parent of a data directory named `userdata` (the standard layout,
+ *    `<home>/userdata`).
+ * 4. The data directory itself, for a standalone run with a custom
+ *    `BETTERC0DE_DATA_DIR` and no home.
+ *
+ * Before this was resolved here, three readers guessed it separately from
+ * the data directory, so a desktop profile with a custom data directory lost
+ * its hooks, skills and rules while its MCP servers were read elsewhere.
+ */
+export function resolveRuntimeHome(
+  dataDir: string,
+  explicit?: string | null
+): string {
+  const configured = explicit?.trim()
+  if (configured) {
+    if (!path.isAbsolute(configured) || configured.includes("\0")) {
+      throw new Error(
+        "BETTERC0DE_RUNTIME_HOME must be an absolute filesystem path"
+      )
+    }
+    return path.resolve(configured)
+  }
+  const home = process.env.BETTERC0DE_HOME?.trim()
+  if (home && path.isAbsolute(home) && !home.includes("\0")) {
+    return path.resolve(home)
+  }
+  const resolvedDataDir = path.resolve(dataDir)
+  return path.basename(resolvedDataDir).toLowerCase() === "userdata"
+    ? path.dirname(resolvedDataDir)
+    : resolvedDataDir
+}
+
 export function createServerConfig(
-  options: { dataDir?: string; port?: number; host?: string } = {}
+  options: {
+    dataDir?: string
+    runtimeHome?: string
+    port?: number
+    host?: string
+  } = {}
 ): ServerConfig {
   const dataDir =
     options.dataDir ?? process.env.BETTERC0DE_DATA_DIR ?? defaultDataDir()
+  const runtimeHome = resolveRuntimeHome(
+    dataDir,
+    options.runtimeHome ?? process.env.BETTERC0DE_RUNTIME_HOME
+  )
   const port = options.port ?? DEFAULT_PORT
   const logsDir = path.join(dataDir, "logs")
   const providerLogsDir = path.join(logsDir, "provider")
@@ -99,6 +156,7 @@ export function createServerConfig(
     host: options.host ?? "127.0.0.1",
     port,
     dataDir,
+    runtimeHome,
     dbPath: path.join(dataDir, "betterc0de.db"),
     settingsPath: path.join(dataDir, "settings.json"),
     authPath: path.join(dataDir, "auth.json"),

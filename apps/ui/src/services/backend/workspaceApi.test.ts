@@ -8,18 +8,37 @@ const runtime = vi.hoisted(() => ({
 
 vi.mock("./runtime", () => runtime)
 
+// readFile reads the workspace roots from the chat store on demand.
+const chatState = vi.hoisted(() => ({
+  current: {
+    activeThreadId: null as string | null,
+    threads: [] as Array<{
+      id: string
+      projectPath: string
+      worktreePath?: string | null
+    }>,
+  },
+}))
+vi.mock("@/lib/chat-store", () => ({
+  useChatStore: { getState: () => chatState.current },
+}))
+
 import { HttpError } from "@/lib/errors"
 import {
   getContextArtifact,
   getEffectiveRules,
   isRemoteTerminalSwitchOffError,
+  readBinaryFile,
+  readFile,
   remoteShellCapabilityError,
+  runShellCommandDetailed,
   searchContent,
   searchContentDetailed,
   searchEntries,
   searchEntriesDetailed,
   splitReadPathForKnownRoots,
   splitReadPathForWorkspace,
+  workspaceReadRootsFromThreads,
   terminalOpen,
   unwrapContentSearchResponse,
   unwrapSearchEntriesResponse,
@@ -86,6 +105,69 @@ describe("workspace read paths", () => {
   })
 })
 
+describe("reading a file through the workspace roots", () => {
+  beforeEach(() => {
+    runtime.invoke.mockReset()
+    runtime.invoke.mockResolvedValue({ content: "", path: "" })
+    chatState.current = {
+      activeThreadId: "active",
+      threads: [
+        { id: "other", projectPath: "/other/proj" },
+        {
+          id: "active",
+          projectPath: "/repo",
+          worktreePath: "/repo/.worktrees/feature",
+        },
+      ],
+    }
+  })
+
+  it("resolves a relative path against the active thread worktree", async () => {
+    await readFile("src/app.ts")
+    expect(runtime.invoke).toHaveBeenCalledWith("/workspace/read", {
+      method: "POST",
+      body: { cwd: "/repo/.worktrees/feature", relativePath: "src/app.ts" },
+    })
+  })
+
+  it("sends an absolute path from another chat with that chat's root", async () => {
+    runtime.invoke.mockResolvedValueOnce({
+      base64: "",
+      path: "/other/proj/assets/logo.png",
+      size: 0,
+    })
+    await readBinaryFile("/other/proj/assets/logo.png")
+    expect(runtime.invoke).toHaveBeenCalledWith(
+      "/workspace/read-binary",
+      expect.objectContaining({
+        body: { cwd: "/other/proj", relativePath: "assets/logo.png" },
+      })
+    )
+  })
+
+  it("collects the active root first, then every other thread root once", () => {
+    expect(workspaceReadRootsFromThreads(chatState.current)).toEqual({
+      active: "/repo/.worktrees/feature",
+      known: ["/repo/.worktrees/feature", "/other/proj", "/repo"],
+    })
+  })
+})
+
+/** A terminal session as `/shell/pty/open` answers it. */
+function ptySnapshot(sessionId: string) {
+  return {
+    sessionId,
+    pid: 1,
+    cwd: "/repo",
+    shell: "bash",
+    command: "bash",
+    args: [],
+    status: "running",
+    events: [],
+    nextCursor: 0,
+  }
+}
+
 describe("remote terminal capabilities", () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -94,36 +176,45 @@ describe("remote terminal capabilities", () => {
 
   it("uses a paired remote session when Electron IPC is unavailable", async () => {
     runtime.isRemoteRuntime.mockReturnValue(true)
-    runtime.httpInvoke
+    runtime.invoke
       .mockResolvedValueOnce({ capability: "remote-operation-capability" })
-      .mockResolvedValueOnce({ sessionId: "terminal-1" })
+      .mockResolvedValueOnce(ptySnapshot("terminal-1"))
 
     await terminalOpen({ cwd: "/repo", command: "pwsh" })
 
-    expect(runtime.httpInvoke).toHaveBeenNthCalledWith(1, "/shell/capability", {
-      method: "POST",
-      body: {
-        operation: "pty-open",
-        cwd: "/repo",
-        sessionId: undefined,
-        command: "pwsh",
-      },
-    })
-    expect(runtime.httpInvoke).toHaveBeenNthCalledWith(2, "/shell/pty/open", {
-      method: "POST",
-      body: {
-        cwd: "/repo",
-        command: "pwsh",
-        humanOrigin: true,
-        permissionLevel: "bypass",
-        humanCapability: "remote-operation-capability",
-      },
-    })
+    expect(runtime.invoke).toHaveBeenNthCalledWith(
+      1,
+      "/shell/capability",
+      expect.objectContaining({
+        method: "POST",
+        body: {
+          operation: "pty-open",
+          cwd: "/repo",
+          sessionId: undefined,
+          command: "pwsh",
+          launch: {},
+        },
+      })
+    )
+    expect(runtime.invoke).toHaveBeenNthCalledWith(
+      2,
+      "/shell/pty/open",
+      expect.objectContaining({
+        method: "POST",
+        body: {
+          cwd: "/repo",
+          command: "pwsh",
+          humanOrigin: true,
+          permissionLevel: "bypass",
+          humanCapability: "remote-operation-capability",
+        },
+      })
+    )
   })
 
   it("names the desktop switch when the host refuses this device a terminal", async () => {
     runtime.isRemoteRuntime.mockReturnValue(true)
-    runtime.httpInvoke.mockRejectedValueOnce(
+    runtime.invoke.mockRejectedValueOnce(
       new HttpError(
         "Terminal access from paired devices is disabled on the desktop host.",
         403,
@@ -136,8 +227,8 @@ describe("remote terminal capabilities", () => {
       'Terminal access from paired devices is disabled on the desktop host. Enable "Allow terminal from remote devices" in Remote Access settings'
     )
     // The refusal comes from the backend, never from a local pre-check.
-    expect(runtime.httpInvoke).toHaveBeenCalledTimes(1)
-    expect(runtime.httpInvoke).toHaveBeenCalledWith(
+    expect(runtime.invoke).toHaveBeenCalledTimes(1)
+    expect(runtime.invoke).toHaveBeenCalledWith(
       "/shell/capability",
       expect.objectContaining({ method: "POST" })
     )
@@ -203,7 +294,7 @@ describe("remote terminal capabilities", () => {
 
   it("passes other capability failures through unchanged", async () => {
     runtime.isRemoteRuntime.mockReturnValue(true)
-    runtime.httpInvoke.mockRejectedValueOnce(
+    runtime.invoke.mockRejectedValueOnce(
       new HttpError(
         "workspace root is not registered",
         403,
@@ -216,7 +307,7 @@ describe("remote terminal capabilities", () => {
     await expect(terminalOpen({ cwd: "/elsewhere" })).rejects.toThrow(
       /^workspace root is not registered$/
     )
-    runtime.httpInvoke.mockRejectedValueOnce(
+    runtime.invoke.mockRejectedValueOnce(
       new HttpError(
         "This remote session is read-only; terminal access requires a full session.",
         403,
@@ -228,7 +319,7 @@ describe("remote terminal capabilities", () => {
       /^This remote session is read-only; terminal access requires a full session\.$/
     )
 
-    runtime.httpInvoke.mockRejectedValueOnce(
+    runtime.invoke.mockRejectedValueOnce(
       new HttpError("service draining", 503, "/shell/capability")
     )
     await expect(terminalOpen({ cwd: "/repo" })).rejects.toThrow(
@@ -242,7 +333,98 @@ describe("remote terminal capabilities", () => {
     await expect(terminalOpen({ cwd: "/repo" })).rejects.toThrow(
       "trusted desktop bridge or a paired remote session"
     )
-    expect(runtime.httpInvoke).not.toHaveBeenCalled()
+    expect(runtime.invoke).not.toHaveBeenCalled()
+  })
+})
+
+describe("desktop terminal capabilities", () => {
+  const clientInstanceId = "0f8fad5b-d9cb-469f-a165-70867728950e"
+  const requestShellCapability = vi.fn()
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    runtime.isRemoteRuntime.mockReturnValue(false)
+    requestShellCapability.mockResolvedValue("desktop-capability")
+    vi.stubGlobal("window", {
+      electronAPI: { requestShellCapability, clientInstanceId },
+    })
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it("binds a PTY capability to the launch it opens and names this page", async () => {
+    runtime.invoke.mockResolvedValueOnce(ptySnapshot("terminal-1"))
+    const input = {
+      cwd: "/repo",
+      shell: "bash",
+      command: "npm",
+      args: ["run", "dev"],
+      env: { PORT: "5173" },
+    }
+
+    await terminalOpen(input)
+
+    expect(requestShellCapability).toHaveBeenCalledWith({
+      operation: "pty-open",
+      cwd: "/repo",
+      sessionId: undefined,
+      command: "npm",
+      launch: { shell: "bash", args: ["run", "dev"], env: { PORT: "5173" } },
+    })
+    expect(runtime.invoke).toHaveBeenCalledWith(
+      "/shell/pty/open",
+      expect.objectContaining({
+        method: "POST",
+        body: {
+          ...input,
+          humanOrigin: true,
+          permissionLevel: "bypass",
+          humanCapability: "desktop-capability",
+        },
+        headers: { "X-BetterC0de-Client-Instance": clientInstanceId },
+      })
+    )
+  })
+
+  it("binds a human shell run to its shell and environment", async () => {
+    runtime.invoke.mockResolvedValueOnce({
+      success: true,
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      combined: "",
+    })
+
+    await runShellCommandDetailed(
+      "npm test",
+      "/repo",
+      "pwsh",
+      { CI: "1" },
+      { humanOrigin: true }
+    )
+
+    expect(requestShellCapability).toHaveBeenCalledWith({
+      operation: "run",
+      command: "npm test",
+      cwd: "/repo",
+      launch: { shell: "pwsh", env: { CI: "1" } },
+    })
+    expect(runtime.invoke).toHaveBeenCalledWith(
+      "/shell/run",
+      expect.objectContaining({
+        headers: { "X-BetterC0de-Client-Instance": clientInstanceId },
+      })
+    )
+  })
+
+  it("sends no client instance header without a valid preload id", async () => {
+    vi.stubGlobal("window", {
+      electronAPI: { requestShellCapability, clientInstanceId: "x" },
+    })
+    runtime.invoke.mockResolvedValueOnce(ptySnapshot("terminal-2"))
+
+    await terminalOpen({ cwd: "/repo" })
+
+    expect(runtime.invoke.mock.calls[0]?.[1]).not.toHaveProperty("headers")
   })
 })
 
@@ -298,9 +480,10 @@ describe("effective rules client", () => {
     }
     runtime.invoke.mockResolvedValue(result)
 
-    await expect(getEffectiveRules("/repo", "src/app.ts")).resolves.toBe(result)
+    await expect(getEffectiveRules("/repo", "src/app.ts")).resolves.toEqual(
+      result
+    )
     expect(runtime.invoke).toHaveBeenCalledWith("/workspace/effective-rules", {
-      args: { cwd: "/repo", targetPath: "src/app.ts" },
       method: "POST",
       body: { cwd: "/repo", targetPath: "src/app.ts" },
     })
@@ -322,7 +505,6 @@ describe("effective rules client", () => {
     await getEffectiveRules("/repo")
 
     expect(runtime.invoke).toHaveBeenCalledWith("/workspace/effective-rules", {
-      args: { cwd: "/repo", targetPath: "." },
       method: "POST",
       body: { cwd: "/repo", targetPath: "." },
     })
@@ -365,22 +547,8 @@ describe("context artifact client", () => {
           },
         ],
       })
-    ).resolves.toBe(result)
+    ).resolves.toEqual(result)
     expect(runtime.invoke).toHaveBeenCalledWith("/workspace/context-artifact", {
-      args: {
-        cwd: "/repo",
-        targetPath: ".",
-        threadId: "thread-1",
-        pendingMessageCharacters: 42,
-        pendingAttachments: [
-          {
-            id: "draft-file",
-            name: "notes.txt",
-            mediaType: "text/plain",
-            sizeBytes: null,
-          },
-        ],
-      },
       method: "POST",
       body: {
         cwd: "/repo",
@@ -420,7 +588,6 @@ describe("context artifact client", () => {
     await getContextArtifact("/repo", undefined, " ")
 
     expect(runtime.invoke).toHaveBeenCalledWith("/workspace/context-artifact", {
-      args: { cwd: "/repo", targetPath: "." },
       method: "POST",
       body: { cwd: "/repo", targetPath: "." },
     })
@@ -432,7 +599,16 @@ describe("workspace search results", () => {
   const hit = {
     path: "src/a.ts",
     name: "a.ts",
-    matches: [{ line: 1, column: 1, preview: "needle" }],
+    matches: [
+      {
+        line: 1,
+        column: 1,
+        length: 6,
+        previewColumn: 1,
+        previewLength: 6,
+        preview: "needle",
+      },
+    ],
   }
 
   beforeEach(() => {
@@ -475,22 +651,27 @@ describe("workspace search results", () => {
     ).not.toHaveProperty("truncatedReason")
   })
 
-  // The dev backend is not hot-reloaded, so a renderer can meet a `dist`
-  // that still answers with the old bare array. All such a backend can say
-  // is "here is what I found", which is reported as complete, not as broken.
-  it("accepts the legacy bare-array wire shape as a complete result", () => {
-    expect(unwrapSearchEntriesResponse([entry])).toEqual({
-      entries: [entry],
-      truncated: false,
-    })
-    expect(unwrapContentSearchResponse([hit])).toEqual({
-      results: [hit],
-      truncated: false,
-    })
+  // The wire's reason is free text so a newer desktop can add one; the
+  // renderer keeps only the reasons it can name.
+  it("drops a content search reason this client does not know", () => {
+    expect(
+      unwrapContentSearchResponse({
+        results: [hit],
+        truncated: true,
+        truncatedReason: "quota",
+      })
+    ).toEqual({ results: [hit], truncated: true })
+  })
+
+  it("rejects the old bare-array wire shape instead of guessing", async () => {
+    runtime.invoke.mockResolvedValueOnce([entry])
+    await expect(searchEntriesDetailed("/repo", "a")).rejects.toThrow(
+      "Invalid backend response for POST /workspace/search"
+    )
   })
 
   it("treats garbage as an empty, complete result rather than throwing", () => {
-    for (const raw of [null, undefined, 42, "x", {}, { entries: "no" }]) {
+    for (const raw of [null, undefined, 42, "x", {}, { entries: "no" }, []]) {
       expect(unwrapSearchEntriesResponse(raw)).toEqual({
         entries: [],
         truncated: false,
@@ -520,7 +701,7 @@ describe("workspace search results", () => {
       expect(call).toEqual([
         "/workspace/search",
         {
-          args: { cwd: "/repo", query: "a" },
+          args: undefined,
           method: "POST",
           body: { cwd: "/repo", query: "a" },
         },
@@ -545,7 +726,7 @@ describe("workspace search results", () => {
       expect(call).toEqual([
         "/workspace/search-content",
         {
-          args: { cwd: "/repo", query: "needle", limit: 1 },
+          args: undefined,
           method: "POST",
           body: { cwd: "/repo", query: "needle", limit: 1 },
         },

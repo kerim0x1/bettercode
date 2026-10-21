@@ -19,13 +19,14 @@ import {
   type TurnId,
 } from "../contracts"
 import type { EventNdjsonLogger } from "../EventNdjsonLogger"
-import { acpTurnFailureMessage } from "../cursor/AcpJsonRpcClient"
+import { acpTurnFailureMessage } from "./AcpJsonRpcClient"
 import {
-  mergeCursorCustomModels as mergeAcpCustomModels,
-  resolveCursorAcpAdvertisedModelId as resolveAcpAdvertisedModelId,
-  resolveCursorAcpConfigUpdates as resolveAcpConfigUpdates,
-} from "../cursor/CursorAcpSupport"
+  mergeAcpCustomModels,
+  resolveAcpAdvertisedModelId,
+  resolveAcpConfigUpdates,
+} from "./AcpSessionConfig"
 import {
+  acpPromptCapabilities,
   createAcpRuntime,
   type AcpEvent,
   type AcpExit,
@@ -44,12 +45,16 @@ import {
   resolveAcpMcpServers,
   type AcpMcpServer,
   type AcpMcpServerResolver,
-} from "../cursor/AcpMcpServers"
+} from "./AcpMcpServers"
 import {
   pendingRequestKindFromDecisionKind,
   StalePendingProviderRequestError,
 } from "../pendingRequestErrors"
 import { prependProviderHistoryForFreshSession } from "../ProviderHistoryPrompt"
+import {
+  attachmentNotice,
+  splitAttachmentsForImageInput,
+} from "../attachmentContent"
 import {
   newCleanupQuarantineState,
   recordCleanupQuarantineFailure,
@@ -61,6 +66,7 @@ import {
   configuredAgentAllowMayAutoApprove,
   evaluateConfiguredAgentToolPermission,
 } from "../../agent-permission-runtime"
+import { providerRuntimeModeForLevel } from "../../permissions"
 
 /**
  * Provider-neutral adapter over an {@link AcpRuntime}: session lifecycle,
@@ -166,7 +172,6 @@ export interface AcpEventBase {
 export interface AcpExtensionContext {
   readonly threadKey: string
   readonly pendingUserInputs: Map<string, PendingUserInput>
-  readonly pendingRequestTimeoutMs: number
   /** False before the session exists and after it was stopped. */
   isActive(): boolean
   activeTurnId(): TurnId | undefined
@@ -196,7 +201,6 @@ export interface AcpProviderProfile<
   readonly errorCodePrefix: string
   /** Thread id stamped on native-event logs of the model-discovery probe. */
   readonly modelProbeThreadId: string
-  readonly pendingRequestTimeoutMs: number
   readonly isConfigured: (options: TOptions) => boolean
   /**
    * Runtime settings for a fresh child. May reject (e.g. the CLI binary
@@ -265,6 +269,14 @@ export interface AcpProviderProfile<
       }
     | { readonly behaviour: "keep-native" }
 }
+
+/**
+ * Turn snapshots only back `readThread`/`rollbackThread`. They keep the
+ * user's own prompt (never the replayed history prefix) and a bounded number
+ * of turns, so a long session does not pin every prompt it ever sent.
+ */
+const MAX_RETAINED_ACP_TURNS = 50
+const MAX_RETAINED_ACP_PROMPT_CHARS = 2_000
 
 interface SessionContext {
   permissionRuntimeMode: string | null
@@ -625,8 +637,7 @@ export class AcpAdapterBase<
       const decisionPromise = waitForApprovalDecision(
         pendingApprovals,
         requestId,
-        permissionRequest,
-        this.profile.pendingRequestTimeoutMs
+        permissionRequest
       )
       try {
         this.emitEvent({
@@ -682,7 +693,6 @@ export class AcpAdapterBase<
     this.profile.registerExtensions?.(runtime, {
       threadKey: key,
       pendingUserInputs,
-      pendingRequestTimeoutMs: this.profile.pendingRequestTimeoutMs,
       isActive: () => Boolean(context && !context.stopped),
       activeTurnId: () => context?.activeTurnId ?? undefined,
       eventBase: () => this.eventBase(key),
@@ -820,8 +830,11 @@ export class AcpAdapterBase<
 
     const turnId = randomUUID() as TurnId
     const modelSelection = this.modelSelectionForInstance(input.modelSelection)
-    const runtimeMode =
-      runtimeModeForAcpTurn(input) ?? context.session.runtimeMode ?? null
+    // A turn without a permission level never inherits the session's stored
+    // mode: a session started at full access must not keep auto-approving
+    // for a later caller that did not ask for it. No mode means every
+    // permission request is forwarded to the user.
+    const runtimeMode = runtimeModeForAcpTurn(input)
     // Install the current ceiling before configuration can invoke callbacks.
     context.permissionRuntimeMode = runtimeMode
     await this.applySessionConfiguration({
@@ -865,19 +878,64 @@ export class AcpAdapterBase<
       const started = await context.runtime.start()
       const seeded =
         started.resumed || context.historySeededSessionId === started.sessionId
+      // Images go to the agent as ACP image blocks when it advertised
+      // `promptCapabilities.image`; anything it cannot read is listed in the
+      // prompt and announced to the user instead of vanishing.
+      const attachmentContent = splitAttachmentsForImageInput(
+        input.attachments,
+        { acceptsImages: acpPromptCapabilities(started.initializeResult).image }
+      )
+      if (attachmentContent.unsupported.length > 0) {
+        this.emitEvent({
+          ...this.eventBase(key),
+          turnId,
+          type: "runtime.warning",
+          willRetry: false,
+          payload: {
+            message: `${this.profile.displayName} cannot receive ${
+              attachmentContent.unsupported.length === 1
+                ? "this attachment"
+                : `these ${attachmentContent.unsupported.length} attachments`
+            } directly; only ${
+              attachmentContent.unsupported.length === 1
+                ? "its name was"
+                : "their names were"
+            } sent.`,
+          },
+        })
+      }
       const prompt = prependProviderHistoryForFreshSession({
         history: input.history,
-        currentPrompt,
+        currentPrompt:
+          currentPrompt + attachmentNotice(attachmentContent.unsupported),
         resumed: seeded,
       })
       const result = await context.runtime.prompt({
-        prompt: [{ type: "text", text: prompt }],
+        prompt: [
+          { type: "text", text: prompt },
+          ...attachmentContent.images.map((image) => ({
+            type: "image",
+            mimeType: image.mediaType,
+            data: image.base64,
+          })),
+        ],
       })
       context.historySeededSessionId = started.sessionId
       context.turns.push({
         id: turnId,
-        items: [{ prompt, result }],
+        items: [
+          {
+            prompt:
+              currentPrompt.length > MAX_RETAINED_ACP_PROMPT_CHARS
+                ? `${currentPrompt.slice(0, MAX_RETAINED_ACP_PROMPT_CHARS)}…`
+                : currentPrompt,
+            stopReason: readTrimmed(result, "stopReason") ?? null,
+          },
+        ],
       })
+      if (context.turns.length > MAX_RETAINED_ACP_TURNS) {
+        context.turns.splice(0, context.turns.length - MAX_RETAINED_ACP_TURNS)
+      }
       context.activeTurnId = null
       this.updateSession(context, { status: "ready", activeTurnId: null })
       this.emitEvent({
@@ -901,6 +959,18 @@ export class AcpAdapterBase<
       context.activeTurnId = null
       this.updateSession(context, { status: "error", activeTurnId: null })
       const publicMessage = acpTurnFailureMessage(error, this.profile.label)
+      // The agent's own explanation (expired login, crash) is on its stderr;
+      // it goes to the log and the diagnostic detail, not the transcript.
+      const stderr = context.runtime.diagnostics?.() ?? ""
+      logger.warn(
+        {
+          err: error,
+          thread: key,
+          label: this.profile.label,
+          ...(stderr ? { stderr } : {}),
+        },
+        "acp turn failed"
+      )
       this.emitEvent({
         ...this.eventBase(key),
         turnId,
@@ -917,7 +987,11 @@ export class AcpAdapterBase<
       this.emitEvent({
         ...this.eventBase(key),
         type: "runtime.error",
-        payload: { message: publicMessage, class: "provider_error" },
+        payload: {
+          message: publicMessage,
+          class: "provider_error",
+          ...(stderr ? { detail: { stderr } } : {}),
+        },
       })
       throw error
     }
@@ -1698,27 +1772,26 @@ function readAcpResumeSessionId(raw: unknown): string | null {
   return readTrimmed(record, "providerThreadId") ?? null
 }
 
+/**
+ * Parks a permission request until the user decides. There is deliberately
+ * no timer (as for Claude, Codex and the direct API path): an approval never
+ * resolves on its own. It settles on the user's answer, or as "deny" when
+ * the turn is interrupted or the session stops (`settlePending`). The
+ * runtime holds the prompt's silence limit while the agent waits for it.
+ */
 function waitForApprovalDecision(
   pendingApprovals: Map<string, PendingApproval>,
   requestId: string,
-  permissionRequest: AcpPermissionRequest,
-  timeoutMs: number
+  permissionRequest: AcpPermissionRequest
 ): Promise<ProviderApprovalDecision> {
   return new Promise((resolve) => {
     let settled = false
-    let timer: ReturnType<typeof setTimeout> | null = null
     const finish = (decision: ProviderApprovalDecision) => {
       if (settled) return
       settled = true
-      if (timer) clearTimeout(timer)
       pendingApprovals.delete(requestId)
       resolve(decision)
     }
-    timer = setTimeout(
-      () => finish({ kind: "tool_approval", decision: "deny" }),
-      timeoutMs
-    )
-    timer.unref?.()
     pendingApprovals.set(requestId, {
       permissionRequest,
       resolve: finish,
@@ -1727,27 +1800,24 @@ function waitForApprovalDecision(
 }
 
 /**
- * Parks a vendor user-input request until the user answers or the timeout
- * defaults it to "no answers". Exported for profile extension modules.
+ * Parks a vendor user-input request until the user answers. Like approvals,
+ * a question never resolves on its own (an unanswered one used to count as
+ * answered with no answers); it settles with no answers only when the turn
+ * is interrupted or the session stops. Exported for profile extension modules.
  */
 export function waitForUserInputAnswers(
   pendingUserInputs: Map<string, PendingUserInput>,
   requestId: string,
-  questions: UserInputQuestion[],
-  timeoutMs: number
+  questions: UserInputQuestion[]
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
     let settled = false
-    let timer: ReturnType<typeof setTimeout> | null = null
     const finish = (answers: Record<string, unknown>) => {
       if (settled) return
       settled = true
-      if (timer) clearTimeout(timer)
       pendingUserInputs.delete(requestId)
       resolve(answers)
     }
-    timer = setTimeout(() => finish({}), timeoutMs)
-    timer.unref?.()
     pendingUserInputs.set(requestId, { questions, resolve: finish })
   })
 }
@@ -1798,7 +1868,10 @@ function runtimeModeForAcpTurn(
     case "security":
       return "security"
     default:
-      return normalizeProviderRuntimeMode(input.permissionLevel)
+      // The shared alias table: `full`/`full-access` levels mean
+      // allow-edits and only an explicit `bypass` yields the auto-approving
+      // `full-access` runtime mode. An unknown spelling fails closed.
+      return providerRuntimeModeForLevel(input.permissionLevel) ?? null
   }
 }
 

@@ -35,28 +35,11 @@ export function extractProposedPlanMarkdown(text: string): string | null {
   return planMarkdown ? planMarkdown : null
 }
 
-const PROPOSED_PLAN_OPEN_REGEX = /<proposed_plan>/i
-const PROPOSED_PLAN_CLOSE_REGEX = /<\/proposed_plan>/i
-
-/**
- * Return just the plan body, dropping any model preamble and the
- * `<proposed_plan>` wrapper — tolerant of an UNCLOSED opening tag (the model
- * streams "…here's the plan for review.\n<proposed_plan>\n## …" and may not
- * emit the closing tag). Unlike {@link extractProposedPlanMarkdown} this
- * never returns null: text without the wrapper is returned trimmed as-is, so
- * it is safe to run on any plan markdown before display.
- */
-export function stripProposedPlanWrapper(text: string): string {
-  const openMatch = text.match(PROPOSED_PLAN_OPEN_REGEX)
-  if (!openMatch || openMatch.index === undefined) return text.trim()
-  const afterOpen = text.slice(openMatch.index + openMatch[0].length)
-  const closeMatch = afterOpen.match(PROPOSED_PLAN_CLOSE_REGEX)
-  const inner =
-    closeMatch && closeMatch.index !== undefined
-      ? afterOpen.slice(0, closeMatch.index)
-      : afterOpen
-  return inner.trim()
-}
+// `stripProposedPlanWrapper` returns just the plan body, dropping any model
+// preamble and the `<proposed_plan>` wrapper, tolerant of an unclosed
+// opening tag; unlike `extractProposedPlanMarkdown` it never returns null.
+// It is shared with the phone app, so both show a plan the same way.
+export { stripProposedPlanWrapper } from "@betterc0de/schema/pending-requests"
 
 export function wrapProposedPlanMarkdown(planMarkdown: string): string {
   const existing = extractProposedPlanMarkdown(planMarkdown)

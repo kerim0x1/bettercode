@@ -5,8 +5,6 @@ import { createHash } from "node:crypto"
 import { setTimeout as delay } from "node:timers/promises"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
-  activeWorkspaceProcessCount,
-  beginWorkspaceProcessShutdown,
   createDirectory,
   deletePath,
   formatProjectFile,
@@ -27,23 +25,52 @@ import {
   listProjectTools,
   movePath,
   quickOpenFiles,
-  queuedWorkspaceProcessCount,
   readBinaryFile,
   readFile,
-  resumeWorkspaceProcessAdmissions,
   searchContent,
   searchEntries,
-  shutdownAllWorkspaceProcesses,
+  setDefaultWorkspaceProcessService,
   writeFile,
   workspaceMap,
+  WorkspaceProcessService,
 } from "./workspace"
-import {
-  __projectFormatterAdmissionCountsForTests,
-  __reserveProjectFormatterOperationForTests,
-  __runBoundedWorkspaceCommandForTests,
-} from "./workspace/processes"
+import { sanitizedShellEnvironment } from "../security/childEnvironment"
 import { __setWorkspaceMutationTestHookForTests } from "./workspace/files"
 import { __setRemoteProjectFetchDependenciesForTests } from "./workspace/resources"
+
+/**
+ * Each test gets its own formatter and config-helper processes, installed as
+ * the default the workspace helpers under test run through.
+ */
+let workspaceProcesses: WorkspaceProcessService
+
+beforeEach(() => {
+  workspaceProcesses = new WorkspaceProcessService()
+  setDefaultWorkspaceProcessService(workspaceProcesses)
+})
+
+afterEach(() => {
+  setDefaultWorkspaceProcessService(null)
+})
+
+/** A bounded command with the defaults these tests share. */
+function runTestCommand(input: {
+  command: string
+  args?: string[]
+  timeoutMs?: number
+  outputLimitBytes?: number
+  signal?: AbortSignal
+}) {
+  return workspaceProcesses.runBoundedCommand({
+    command: input.command,
+    args: input.args ?? [],
+    env: sanitizedShellEnvironment(),
+    timeoutMs: input.timeoutMs ?? 10_000,
+    outputLimitBytes: input.outputLimitBytes ?? 64_000,
+    label: "workspace-process-test",
+    signal: input.signal,
+  })
+}
 
 const tempRoots: string[] = []
 let previousXdgConfigHome: string | undefined
@@ -1915,6 +1942,7 @@ describe("workspace project MCP servers", () => {
         enabled: true,
         sourcePath: "BetterC0de.jsonc#mcp.local-demo",
         timeoutMs: 3000,
+        workspaceControlled: true,
       },
       {
         id: "remote-demo",
@@ -1931,6 +1959,7 @@ describe("workspace project MCP servers", () => {
         oauth: "configured",
         oauthKeys: ["clientId", "scope"],
         authStatus: "not_authenticated",
+        workspaceControlled: true,
       },
     ])
   })
@@ -3230,11 +3259,11 @@ describe("workspace BetterC0de execution config", () => {
       code: "PROJECT_FORMATTER_INPUT_TOO_LARGE",
       limitBytes: 16 * 1024 * 1024,
     })
-    expect(__projectFormatterAdmissionCountsForTests()).toEqual({
+    expect(workspaceProcesses.formatterAdmissionCounts()).toEqual({
       active: 0,
       queued: 0,
     })
-    expect(activeWorkspaceProcessCount()).toBe(0)
+    expect(workspaceProcesses.activeProcessCount()).toBe(0)
   })
 
   it("rejects oversized formatter output before accepting or copying it", async () => {
@@ -3274,7 +3303,7 @@ describe("workspace BetterC0de execution config", () => {
       "Formatter file output exceeded 16777216 bytes"
     )
     await expect(fs.readFile(target, "utf8")).resolves.toBe("original\n")
-    expect(__projectFormatterAdmissionCountsForTests()).toEqual({
+    expect(workspaceProcesses.formatterAdmissionCounts()).toEqual({
       active: 0,
       queued: 0,
     })
@@ -3322,8 +3351,8 @@ describe("workspace BetterC0de execution config", () => {
       "Formatter file output exceeded 16777216 bytes"
     )
     await expect(fs.readFile(target, "utf8")).resolves.toBe("original\n")
-    expect(activeWorkspaceProcessCount()).toBe(0)
-    expect(__projectFormatterAdmissionCountsForTests()).toEqual({
+    expect(workspaceProcesses.activeProcessCount()).toBe(0)
+    expect(workspaceProcesses.formatterAdmissionCounts()).toEqual({
       active: 0,
       queued: 0,
     })
@@ -3336,16 +3365,16 @@ describe("workspace BetterC0de execution config", () => {
     const workspaceD = path.join(os.tmpdir(), `formatter-d-${Date.now()}`)
     const workspaceE = path.join(os.tmpdir(), `formatter-e-${Date.now()}`)
     const active = [
-      await __reserveProjectFormatterOperationForTests(workspaceA),
-      await __reserveProjectFormatterOperationForTests(workspaceA),
-      await __reserveProjectFormatterOperationForTests(workspaceB),
-      await __reserveProjectFormatterOperationForTests(workspaceB),
+      await workspaceProcesses.reserveFormatterOperation(workspaceA),
+      await workspaceProcesses.reserveFormatterOperation(workspaceA),
+      await workspaceProcesses.reserveFormatterOperation(workspaceB),
+      await workspaceProcesses.reserveFormatterOperation(workspaceB),
     ]
     const queued: Promise<void>[] = []
     const queueReservation = (workspace: string) => {
-      const draining = __reserveProjectFormatterOperationForTests(
-        workspace
-      ).then((reservation) => reservation.release())
+      const draining = workspaceProcesses
+        .reserveFormatterOperation(workspace)
+        .then((reservation) => reservation.release())
       queued.push(draining)
     }
     let admissionsClosed = false
@@ -3355,7 +3384,7 @@ describe("workspace BetterC0de execution config", () => {
         queueReservation(workspaceA)
       }
       await expect(
-        __reserveProjectFormatterOperationForTests(workspaceA)
+        workspaceProcesses.reserveFormatterOperation(workspaceA)
       ).rejects.toMatchObject({
         statusCode: 503,
         code: "PROJECT_FORMATTER_OVERLOADED",
@@ -3367,43 +3396,43 @@ describe("workspace BetterC0de execution config", () => {
         }
       }
       await expect(
-        __reserveProjectFormatterOperationForTests(workspaceE)
+        workspaceProcesses.reserveFormatterOperation(workspaceE)
       ).rejects.toMatchObject({
         statusCode: 503,
         code: "PROJECT_FORMATTER_OVERLOADED",
       })
-      expect(__projectFormatterAdmissionCountsForTests()).toEqual({
+      expect(workspaceProcesses.formatterAdmissionCounts()).toEqual({
         active: 4,
         queued: 32,
       })
-      expect(__projectFormatterAdmissionCountsForTests(workspaceA)).toEqual({
+      expect(workspaceProcesses.formatterAdmissionCounts(workspaceA)).toEqual({
         active: 2,
         queued: 8,
       })
 
       for (const reservation of active) reservation.release()
       await Promise.all(queued)
-      expect(__projectFormatterAdmissionCountsForTests()).toEqual({
+      expect(workspaceProcesses.formatterAdmissionCounts()).toEqual({
         active: 0,
         queued: 0,
       })
     } finally {
       for (const reservation of active) reservation.release()
-      const counts = __projectFormatterAdmissionCountsForTests()
+      const counts = workspaceProcesses.formatterAdmissionCounts()
       if (counts.active > 0 || counts.queued > 0) {
         admissionsClosed = true
-        beginWorkspaceProcessShutdown()
+        workspaceProcesses.beginShutdown()
         await Promise.allSettled(queued)
       }
-      const afterCleanup = __projectFormatterAdmissionCountsForTests()
+      const afterCleanup = workspaceProcesses.formatterAdmissionCounts()
       if (
         admissionsClosed &&
         afterCleanup.active === 0 &&
         afterCleanup.queued === 0 &&
-        activeWorkspaceProcessCount() === 0 &&
-        queuedWorkspaceProcessCount() === 0
+        workspaceProcesses.activeProcessCount() === 0 &&
+        workspaceProcesses.queuedProcessCount() === 0
       ) {
-        resumeWorkspaceProcessAdmissions()
+        workspaceProcesses.resumeAdmissions()
       }
     }
   })
@@ -3606,7 +3635,7 @@ describe("workspace BetterC0de execution config", () => {
     expect(
       Buffer.byteLength(result.results[0]?.stdout ?? "", "utf8")
     ).toBeLessThanOrEqual(64_000)
-    expect(activeWorkspaceProcessCount()).toBe(0)
+    expect(workspaceProcesses.activeProcessCount()).toBe(0)
   })
 
   it("closes formatter admission during shutdown", async () => {
@@ -3625,7 +3654,7 @@ describe("workspace BetterC0de execution config", () => {
     )
     await fs.writeFile(path.join(root, "note.txt"), "hello\n", "utf8")
 
-    beginWorkspaceProcessShutdown()
+    workspaceProcesses.beginShutdown()
     try {
       const result = await formatProjectFile({
         allowWorkspaceCommands: true,
@@ -3637,9 +3666,9 @@ describe("workspace BetterC0de execution config", () => {
         exitCode: null,
       })
       expect(result.results[0]?.stderr).toContain("shutting down")
-      expect(activeWorkspaceProcessCount()).toBe(0)
+      expect(workspaceProcesses.activeProcessCount()).toBe(0)
     } finally {
-      resumeWorkspaceProcessAdmissions()
+      workspaceProcesses.resumeAdmissions()
     }
   })
 
@@ -3684,7 +3713,7 @@ describe("workspace BetterC0de execution config", () => {
       // this wait if startup hangs; an early formatter exit must fail the test.
       await Promise.race([
         (async () => {
-          while (activeWorkspaceProcessCount() === 0) {
+          while (workspaceProcesses.activeProcessCount() === 0) {
             await delay(5, undefined, { signal: startupSignal })
           }
         })(),
@@ -3694,22 +3723,22 @@ describe("workspace BetterC0de execution config", () => {
           )
         }),
       ])
-      expect(activeWorkspaceProcessCount()).toBe(1)
-      await expect(shutdownAllWorkspaceProcesses()).resolves.toBe(1)
+      expect(workspaceProcesses.activeProcessCount()).toBe(1)
+      await expect(workspaceProcesses.shutdownAll()).resolves.toBe(1)
       const result = await formatting
       expect(result.results[0]?.success).toBe(false)
-      expect(activeWorkspaceProcessCount()).toBe(0)
+      expect(workspaceProcesses.activeProcessCount()).toBe(0)
     } finally {
       startup.abort()
-      await shutdownAllWorkspaceProcesses()
+      await workspaceProcesses.shutdownAll()
       await formatting.catch(() => undefined)
-      resumeWorkspaceProcessAdmissions()
+      workspaceProcesses.resumeAdmissions()
     }
   })
 
   it("caps workspace helpers, bounds the FIFO queue, and aborts queued work", async () => {
     const runWaiting = (signal?: AbortSignal) =>
-      __runBoundedWorkspaceCommandForTests({
+      runTestCommand({
         command: process.execPath,
         args: ["-e", "setInterval(()=>{},1000)"],
         timeoutMs: 20_000,
@@ -3719,10 +3748,13 @@ describe("workspace BetterC0de execution config", () => {
     const allQueued: Array<ReturnType<typeof runWaiting>> = []
     try {
       const activeDeadline = Date.now() + 3_000
-      while (activeWorkspaceProcessCount() < 4 && Date.now() < activeDeadline) {
+      while (
+        workspaceProcesses.activeProcessCount() < 4 &&
+        Date.now() < activeDeadline
+      ) {
         await new Promise<void>((resolve) => setTimeout(resolve, 5))
       }
-      expect(activeWorkspaceProcessCount()).toBe(4)
+      expect(workspaceProcesses.activeProcessCount()).toBe(4)
 
       const controller = new AbortController()
       const aborted = runWaiting(controller.signal)
@@ -3731,10 +3763,13 @@ describe("workspace BetterC0de execution config", () => {
         allQueued.push(runWaiting())
       }
       const queueDeadline = Date.now() + 3_000
-      while (queuedWorkspaceProcessCount() < 32 && Date.now() < queueDeadline) {
+      while (
+        workspaceProcesses.queuedProcessCount() < 32 &&
+        Date.now() < queueDeadline
+      ) {
         await new Promise<void>((resolve) => setTimeout(resolve, 5))
       }
-      expect(queuedWorkspaceProcessCount()).toBe(32)
+      expect(workspaceProcesses.queuedProcessCount()).toBe(32)
 
       const overloaded = await runWaiting()
       expect(overloaded.exitCode).toBeNull()
@@ -3743,25 +3778,25 @@ describe("workspace BetterC0de execution config", () => {
       controller.abort()
       await expect(aborted).resolves.toMatchObject({ exitCode: null })
       expect((await aborted).stderr).toContain("aborted while queued")
-      expect(queuedWorkspaceProcessCount()).toBe(31)
-      expect(activeWorkspaceProcessCount()).toBe(4)
+      expect(workspaceProcesses.queuedProcessCount()).toBe(31)
+      expect(workspaceProcesses.activeProcessCount()).toBe(4)
 
-      await expect(shutdownAllWorkspaceProcesses()).resolves.toBe(4)
+      await expect(workspaceProcesses.shutdownAll()).resolves.toBe(4)
       await Promise.all([...active, ...allQueued])
-      expect(activeWorkspaceProcessCount()).toBe(0)
-      expect(queuedWorkspaceProcessCount()).toBe(0)
+      expect(workspaceProcesses.activeProcessCount()).toBe(0)
+      expect(workspaceProcesses.queuedProcessCount()).toBe(0)
     } finally {
       if (
-        activeWorkspaceProcessCount() > 0 ||
-        queuedWorkspaceProcessCount() > 0
+        workspaceProcesses.activeProcessCount() > 0 ||
+        workspaceProcesses.queuedProcessCount() > 0
       ) {
-        await shutdownAllWorkspaceProcesses().catch(() => undefined)
+        await workspaceProcesses.shutdownAll().catch(() => undefined)
       }
       if (
-        activeWorkspaceProcessCount() === 0 &&
-        queuedWorkspaceProcessCount() === 0
+        workspaceProcesses.activeProcessCount() === 0 &&
+        workspaceProcesses.queuedProcessCount() === 0
       ) {
-        resumeWorkspaceProcessAdmissions()
+        workspaceProcesses.resumeAdmissions()
       }
     }
   })
@@ -3829,8 +3864,8 @@ describe("workspace BetterC0de execution config", () => {
       })
     ).rejects.toThrow("workspace path crosses a symbolic link or junction")
     expect(swapped).toBe(true)
-    expect(activeWorkspaceProcessCount()).toBe(0)
-    expect(queuedWorkspaceProcessCount()).toBe(0)
+    expect(workspaceProcesses.activeProcessCount()).toBe(0)
+    expect(workspaceProcesses.queuedProcessCount()).toBe(0)
     await expect(
       fs.readFile(path.join(outside, "note.txt"), "utf8")
     ).resolves.toBe("outside\n")

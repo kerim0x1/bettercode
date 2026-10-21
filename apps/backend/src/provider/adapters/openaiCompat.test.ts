@@ -38,7 +38,7 @@ import { ApiKeyPool } from "../../auth/apiKeyPool"
 import { defaultSettings } from "../../settings/schema"
 import { executeTool } from "../agent-loop/tool-executor"
 import { probeLmStudioBaseUrl } from "../../constants"
-import type { ProviderRuntimeEvent, ProviderSendTurnInput } from "../types"
+import type { LegacyProviderEvent, ProviderSendTurnInput } from "../types"
 
 function stream(chunks: unknown[]): AsyncIterable<unknown> {
   return {
@@ -189,7 +189,7 @@ describe("OpenAiCompatAdapter agent loop", () => {
       undefined,
       pool
     )
-    const events: ProviderRuntimeEvent[] = []
+    const events: LegacyProviderEvent[] = []
     adapter.subscribeEvents().on("event", (event) => events.push(event))
     await expect(adapter.sendMessage(baseInput())).rejects.toThrow("Temporary")
     expect(createMock).toHaveBeenCalledTimes(1)
@@ -217,6 +217,26 @@ describe("OpenAiCompatAdapter agent loop", () => {
       })
     }
   )
+  it("asks OpenRouter for reasoning through its own reasoning object", async () => {
+    createMock.mockReturnValueOnce(stream(textTurn("done")))
+    const adapter = new OpenAiCompatAdapter(
+      {
+        providerKind: "openrouter",
+        displayName: "OpenRouter",
+        defaultModels: [],
+      },
+      "sk-or-test"
+    )
+    await adapter.sendMessage(
+      baseInput({
+        model_id: "google/gemini-4-argon",
+        reasoning_effort: "medium",
+      })
+    )
+    const params = createMock.mock.calls[0][0] as Record<string, unknown>
+    expect(params).toMatchObject({ reasoning: { effort: "medium" } })
+    expect(params).not.toHaveProperty("reasoning_effort")
+  })
   it.each(["plan", "ask"])(
     "blocks an unadvertised mutation in %s mode even with bypass",
     async (chatMode) => {
@@ -229,10 +249,10 @@ describe("OpenAiCompatAdapter agent loop", () => {
         { providerKind: "openai", displayName: "OpenAI", defaultModels: [] },
         "sk-test"
       )
-      const events: ProviderRuntimeEvent[] = []
+      const events: LegacyProviderEvent[] = []
       adapter
         .subscribeEvents()
-        .on("event", (event: ProviderRuntimeEvent) => events.push(event))
+        .on("event", (event: LegacyProviderEvent) => events.push(event))
 
       await adapter.sendMessage(
         baseInput({ chat_mode: chatMode, permission_level: "bypass" })
@@ -298,10 +318,10 @@ describe("OpenAiCompatAdapter agent loop", () => {
       { providerKind: "openai", displayName: "OpenAI", defaultModels: [] },
       "sk-test"
     )
-    const events: ProviderRuntimeEvent[] = []
+    const events: LegacyProviderEvent[] = []
     adapter
       .subscribeEvents()
-      .on("event", (e: ProviderRuntimeEvent) => events.push(e))
+      .on("event", (e: LegacyProviderEvent) => events.push(e))
 
     await adapter.sendMessage(baseInput())
 
@@ -370,10 +390,10 @@ describe("OpenAiCompatAdapter agent loop", () => {
       { providerKind: "openai", displayName: "OpenAI", defaultModels: [] },
       "sk-test"
     )
-    const events: ProviderRuntimeEvent[] = []
+    const events: LegacyProviderEvent[] = []
     adapter
       .subscribeEvents()
-      .on("event", (event: ProviderRuntimeEvent) => events.push(event))
+      .on("event", (event: LegacyProviderEvent) => events.push(event))
 
     await adapter.sendMessage(baseInput())
 
@@ -427,10 +447,10 @@ describe("OpenAiCompatAdapter agent loop", () => {
       { providerKind: "openai", displayName: "OpenAI", defaultModels: [] },
       "sk-test"
     )
-    const events: ProviderRuntimeEvent[] = []
+    const events: LegacyProviderEvent[] = []
     adapter
       .subscribeEvents()
-      .on("event", (event: ProviderRuntimeEvent) => events.push(event))
+      .on("event", (event: LegacyProviderEvent) => events.push(event))
 
     const pending = adapter.sendMessage(baseInput())
     await vi.waitFor(() => expect(executeTool).toHaveBeenCalledOnce())
@@ -456,10 +476,10 @@ describe("OpenAiCompatAdapter agent loop", () => {
       { providerKind: "openai", displayName: "OpenAI", defaultModels: [] },
       "sk-test"
     )
-    const events: ProviderRuntimeEvent[] = []
+    const events: LegacyProviderEvent[] = []
     adapter
       .subscribeEvents()
-      .on("event", (e: ProviderRuntimeEvent) => events.push(e))
+      .on("event", (e: LegacyProviderEvent) => events.push(e))
 
     await adapter.sendMessage(baseInput({ message: "hi" }))
 
@@ -483,10 +503,10 @@ describe("OpenAiCompatAdapter agent loop", () => {
       { providerKind: "openai", displayName: "OpenAI", defaultModels: [] },
       "sk-test"
     )
-    const events: ProviderRuntimeEvent[] = []
+    const events: LegacyProviderEvent[] = []
     adapter
       .subscribeEvents()
-      .on("event", (event: ProviderRuntimeEvent) => events.push(event))
+      .on("event", (event: LegacyProviderEvent) => events.push(event))
 
     await adapter.sendMessage(baseInput({ permission_level: "read-only" }))
 
@@ -655,6 +675,91 @@ describe("OpenAiCompatAdapter agent loop", () => {
     expect(toolMsg).toMatchObject({ tool_call_id: "c1", content: "FILE BODY" })
   })
 
+  it("never runs a tool call cut off by finish_reason length", async () => {
+    createMock
+      .mockReturnValueOnce(
+        stream([
+          {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "w1",
+                      function: {
+                        name: "Write",
+                        arguments: '{"path":"big.ts","content":"partial',
+                      },
+                    },
+                  ],
+                },
+                finish_reason: null,
+              },
+            ],
+          },
+          { choices: [{ delta: {}, finish_reason: "length" }] },
+        ])
+      )
+      .mockReturnValueOnce(stream(textTurn("done")))
+    const adapter = new OpenAiCompatAdapter(
+      { providerKind: "openai", displayName: "OpenAI", defaultModels: [] },
+      "sk-test"
+    )
+    const events: LegacyProviderEvent[] = []
+    adapter
+      .subscribeEvents()
+      .on("event", (event: LegacyProviderEvent) => events.push(event))
+
+    await adapter.sendMessage(baseInput())
+
+    expect(executeTool).not.toHaveBeenCalled()
+    expect(
+      events.find((event) => event.event_type === "tool_result")?.payload
+    ).toMatchObject({
+      tool_id: "w1",
+      error: expect.stringContaining("output token limit"),
+    })
+    const second = createMock.mock.calls[1][0] as {
+      messages: Array<{
+        role: string
+        content?: unknown
+        tool_calls?: Array<{ function: { arguments: string } }>
+      }>
+    }
+    const assistant = second.messages.find((m) => m.tool_calls)
+    expect(assistant?.tool_calls?.[0].function.arguments).toBe("{}")
+    expect(second.messages.find((m) => m.role === "tool")?.content).toContain(
+      "smaller"
+    )
+  })
+
+  it("never runs a tool call whose arguments are malformed JSON", async () => {
+    createMock
+      .mockReturnValueOnce(
+        stream(toolCallTurn("w2", "Write", '{"path":"a.ts","content":'))
+      )
+      .mockReturnValueOnce(stream(textTurn("done")))
+    const adapter = new OpenAiCompatAdapter(
+      { providerKind: "openai", displayName: "OpenAI", defaultModels: [] },
+      "sk-test"
+    )
+    const events: LegacyProviderEvent[] = []
+    adapter
+      .subscribeEvents()
+      .on("event", (event: LegacyProviderEvent) => events.push(event))
+
+    await adapter.sendMessage(baseInput())
+
+    expect(executeTool).not.toHaveBeenCalled()
+    expect(
+      events.find((event) => event.event_type === "tool_result")?.payload
+    ).toMatchObject({
+      tool_id: "w2",
+      error: expect.stringContaining("not valid JSON"),
+    })
+  })
+
   it("falls back to plain chat when the model rejects the tools param", async () => {
     createMock
       .mockRejectedValueOnce(
@@ -668,10 +773,10 @@ describe("OpenAiCompatAdapter agent loop", () => {
       { providerKind: "lmstudio", displayName: "LM Studio", defaultModels: [] },
       "sk-test"
     )
-    const events: ProviderRuntimeEvent[] = []
+    const events: LegacyProviderEvent[] = []
     adapter
       .subscribeEvents()
-      .on("event", (e: ProviderRuntimeEvent) => events.push(e))
+      .on("event", (e: LegacyProviderEvent) => events.push(e))
 
     await adapter.sendMessage(baseInput())
 

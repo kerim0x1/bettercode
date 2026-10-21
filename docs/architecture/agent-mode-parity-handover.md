@@ -84,7 +84,7 @@ Primary seams:
 - `apps/backend/src/provider/agent-loop/direct-mcp-tools.ts`
 - `apps/backend/src/provider/adapters/openaiCompat.ts`
 - `apps/backend/src/provider/adapters/claudeApi.ts`
-- `apps/backend/src/provider/runtime/cursor/AcpMcpServers.ts`
+- `apps/backend/src/provider/runtime/acp/AcpMcpServers.ts`
 - `apps/backend/src/inProcess.ts`
 
 Delivered behavior:

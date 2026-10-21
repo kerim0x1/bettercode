@@ -1,30 +1,37 @@
 import type {
   ChatMessage,
   ChatThread,
+  FilesystemListEntry,
+  FilesystemListResult,
+  FilesystemSearchResult,
   PermissionUpdate,
   ThreadActivity,
   ProviderInstanceSnapshot,
 } from "@betterc0de/schema"
+import type { ProjectSummary } from "@betterc0de/schema/http-contracts"
 import type {
   RemoteAccessLevel,
+  RemoteBootstrapResponse,
+  RemoteMobilePairResponse,
   RemoteProtocol,
+  RemoteSession,
+  RemoteStatus,
 } from "@betterc0de/schema/remote-protocol"
 
 export type { ChatMessage, ChatThread, ThreadActivity }
-export type { RemoteAccessLevel, RemoteProtocol }
+export type { RemoteAccessLevel, RemoteProtocol, RemoteStatus }
 
-export interface RemoteSessionSummary {
-  id: string
-  label: string
-  createdAt: string
-  lastSeenAt: string
-  expiresAt: string
-  /**
-   * `read_only` for sessions paired over public plain HTTP. Profiles stored
-   * before the field existed read as `full`, which is what they were.
-   */
-  accessLevel?: RemoteAccessLevel
-}
+/**
+ * The part of the desktop's session record (`RemoteSession`) this app keeps.
+ * `accessLevel` is `read_only` for sessions paired over plain HTTP (a local
+ * network, or a public address the desktop allows), which last one hour.
+ * Profiles stored before the field existed read as `full`, which is what
+ * they were.
+ */
+export type RemoteSessionSummary = Pick<
+  RemoteSession,
+  "id" | "label" | "createdAt" | "lastSeenAt" | "expiresAt" | "accessLevel"
+>
 
 export interface ConnectionProfile {
   baseUrl: string
@@ -34,53 +41,27 @@ export interface ConnectionProfile {
   pairedAt: string
 }
 
-export interface RemoteBootstrap {
-  enabled: boolean
-  authenticated: boolean
-  authentication: "local" | "remote" | null
-  environmentId: string | null
+/** `/remote/bootstrap` as `parseRemoteBootstrap` reads it. */
+export interface RemoteBootstrap extends Omit<
+  RemoteBootstrapResponse,
+  "session" | "protocol"
+> {
   session: RemoteSessionSummary | null
   /** `null` from desktops that predate protocol negotiation. */
   protocol: RemoteProtocol | null
 }
 
-export interface RemotePairResponse {
-  enabled: true
-  authenticated: true
-  authentication: "remote"
-  environmentId: string
-  tokenType: "Bearer"
-  sessionToken: string
+/** `/remote/mobile/pair` as `parseRemotePairResponse` reads it. */
+export interface RemotePairResponse extends Omit<
+  RemoteMobilePairResponse,
+  "session" | "protocol"
+> {
   session: RemoteSessionSummary
   protocol: RemoteProtocol | null
 }
 
-export interface RemoteStatus {
-  enabled: boolean
-  listeningOnNetwork: boolean
-  environmentId: string
-  host: string
-  port: number
-  authentication: "local" | "remote" | null
-  currentSessionId: string | null
-  endpoints: Array<{
-    id: string
-    label: string
-    httpBaseUrl: string
-    wsBaseUrl: string
-    reachability: string
-    hostedHttpsCompatible: boolean
-    isDefault: boolean
-  }>
-}
-
-export interface ProjectSummary {
-  id?: string
-  name: string
-  path: string
-  createdAt?: string
-  updatedAt?: string
-}
+/** A project on the desktop (`/projects`). */
+export type { ProjectSummary }
 
 export type ProviderModel = Pick<
   ProviderInstanceSnapshot["models"][number],
@@ -117,32 +98,14 @@ export interface ModelOption {
   capabilities: NonNullable<ProviderModel["capabilities"]> | null
 }
 
-export interface DirectoryEntry {
-  name: string
-  path: string
-  isDir: boolean
-  isSymlink: boolean
-  size: number | null
-  mtime: number | null
-}
+/** One child of a folder on the desktop (`/filesystem/list`). */
+export type DirectoryEntry = FilesystemListEntry
 
-export interface DirectoryResult {
-  path: string
-  parent: string | null
-  entries: DirectoryEntry[]
-  truncated: boolean
-}
+/** A folder on the desktop and its children (`/filesystem/list`). */
+export type DirectoryResult = FilesystemListResult
 
-export interface FileSearchResult {
-  entries: Array<{
-    path: string
-    name: string
-    isDir: boolean
-    score: number
-  }>
-  truncated: boolean
-  tookMs: number
-}
+/** Name matches below a folder on the desktop (`/filesystem/search`). */
+export type FileSearchResult = FilesystemSearchResult
 
 export interface ThreadDiffs {
   turnDiffs: Array<{
@@ -175,9 +138,9 @@ export interface PendingRequest {
   title: string
   detail?: string
   input?: unknown
-  /** The tool a tool approval is for, which "Always allow" scopes its rule to. */
+  /** The tool a tool approval is for, which "Allow for this session" scopes its rule to. */
   toolName?: string
-  /** The provider's own "Always allow" suggestion, validated. */
+  /** The provider's own "always allow" suggestion, validated. */
   suggestions?: PermissionUpdate[]
   questions?: Array<{
     id: string

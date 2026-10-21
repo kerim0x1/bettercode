@@ -1,10 +1,11 @@
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { FileChangesBar } from "./file-changes-bar"
+import { FileChangesBar, findTurnGitCheckpoint } from "./file-changes-bar"
 import { ChatInputArea } from "@/components/chat/chat-input-area"
 import { ChatComposer } from "@/components/chat/chat-composer"
 import { emptyStreamState, useChatStore } from "@/lib/chat-store"
+import { useCheckpointStore, type Checkpoint } from "@/lib/checkpoint-store"
 
 vi.mock("@/lib/chat-store", async (original) => {
   const actual = await original<typeof import("@/lib/chat-store")>()
@@ -170,4 +171,80 @@ describe("file review ownership", () => {
       expect(setChatMode).not.toHaveBeenCalled()
     }
   )
+})
+
+describe("rejecting a turn's file change", () => {
+  const gitCheckpoint: Checkpoint = {
+    id: "cp-git",
+    threadId: "right",
+    messageId: "message-right",
+    label: "After assistant turn",
+    timestamp: "2026-09-05",
+    files: {},
+    gitBranch: "main",
+    projectPath: "C:/shared",
+    checkpointRef: "refs/betterc0de/checkpoints/right/turn/1",
+    baseCheckpointRef: "refs/betterc0de/checkpoints/right/turn/0",
+    turnNumber: 0,
+  }
+  // Read when the turn's stream ended, i.e. after the edits.
+  const afterEditSnapshot: Checkpoint = {
+    id: "cp-snapshot",
+    threadId: "right",
+    messageId: "message-right",
+    label: "After editing right-only.ts",
+    timestamp: "2026-09-05",
+    files: { "C:/shared/right-only.ts": "after" },
+    gitBranch: "main",
+    projectPath: "C:/shared",
+  }
+  afterEach(() => useCheckpointStore.setState({ checkpoints: [] }))
+
+  it("offers Reject only once the turn's Git checkpoint exists", () => {
+    useCheckpointStore.setState({ checkpoints: [afterEditSnapshot] })
+    const withoutGit = renderToStaticMarkup(
+      createElement(FileChangesBar, { threadId: "right" })
+    )
+    expect(withoutGit).toContain("Accept all")
+    expect(withoutGit).not.toContain("Reject all")
+    expect(withoutGit).not.toContain("Reject &amp; revert changes")
+
+    useCheckpointStore.setState({
+      checkpoints: [afterEditSnapshot, gitCheckpoint],
+    })
+    const withGit = renderToStaticMarkup(
+      createElement(FileChangesBar, { threadId: "right" })
+    )
+    expect(withGit).toContain("Reject all")
+    expect(withGit).toContain("Reject &amp; revert changes")
+  })
+
+  it("reverts from the turn's Git base, never from an after-edit snapshot", () => {
+    const turn = {
+      threadId: "right",
+      turnId: undefined,
+      messageId: "message-right",
+      workspacePath: "C:/shared",
+    }
+    expect(findTurnGitCheckpoint([afterEditSnapshot], turn)).toBeUndefined()
+    expect(
+      findTurnGitCheckpoint([gitCheckpoint, afterEditSnapshot], turn)
+    ).toBe(gitCheckpoint)
+    expect(
+      findTurnGitCheckpoint([gitCheckpoint], {
+        ...turn,
+        workspacePath: "C:/elsewhere",
+      })
+    ).toBeUndefined()
+    expect(
+      findTurnGitCheckpoint(
+        [{ ...gitCheckpoint, turnId: "turn-2", messageId: "other" }],
+        {
+          ...turn,
+          turnId: "turn-1",
+          messageId: undefined,
+        }
+      )
+    ).toBeUndefined()
+  })
 })

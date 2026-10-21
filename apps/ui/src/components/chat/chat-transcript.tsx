@@ -1,3 +1,4 @@
+import { nonEmptyString } from "@betterc0de/schema/json-read"
 import { asRecord } from "@betterc0de/schema"
 import { cn } from "@/lib/utils"
 import { providerHandoffMessageIds } from "@/lib/chat-context"
@@ -7,7 +8,10 @@ import {
 } from "@/lib/provider-handoff"
 import { ProviderHandoffStatus } from "@/components/chat/provider-handoff-status"
 import { OrchestratorTeamStatus } from "@/components/chat/orchestrator-team-status"
+import { ImportedThreadNote } from "@/components/chat/imported-thread-note"
+import { AutomaticResumeNote } from "@/components/chat/automatic-resume-note"
 import { runtimeFailurePresentation } from "@/lib/execution-diagnostics"
+import { withActivityOutputBounds } from "@/lib/tool-full-output"
 import {
   activityCorrelationFields,
   buildActivityTools,
@@ -17,7 +21,7 @@ import {
   providerKindFromActivityPayload,
   type ActivityTool,
 } from "@betterc0de/schema/activity-tools"
-import { useEffect, useMemo, useState, useId } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useId } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { CubeIcon } from "@hugeicons/core-free-icons"
 import { getModelInfo } from "@/lib/get-model-info"
@@ -75,7 +79,21 @@ import type {
   SourceProposedPlanReference,
 } from "@/lib/plan-modal"
 import type { ChatSubmitPayload } from "@/hooks/use-chat-submit"
-import { windowTranscriptEntries } from "@/components/chat/transcript-window"
+import {
+  TRANSCRIPT_WINDOW_SIZE,
+  growTranscriptWindow,
+  revealWholeTranscript,
+  transcriptWindowStart,
+  windowTranscriptEntries,
+  type TranscriptHistoryAnchor,
+} from "@/components/chat/transcript-window"
+import {
+  TRANSCRIPT_ENTRY_ID_ATTRIBUTE,
+  TranscriptHistoryControl,
+} from "@/components/chat/transcript-history-control"
+import { ChatFindBar } from "@/components/chat/chat-find-bar"
+import { chatFindTargets } from "@/lib/chat-find"
+import { turnDurationMs } from "@/lib/turn-duration"
 
 type StreamingTool = {
   id: string
@@ -192,24 +210,6 @@ export function ChatTranscript({
     reasoningSegments?.length ||
     streamingTools.length
   )
-  const timeline = useMemo(
-    () =>
-      deriveTranscriptTimeline(messages, activities, {
-        showSessionProgressBar,
-        isStreaming,
-        hasProviderOutput,
-      }),
-    [
-      messages,
-      activities,
-      showSessionProgressBar,
-      isStreaming,
-      hasProviderOutput,
-    ]
-  )
-  const isCompactingPreviousContext = timeline.some(
-    (entry) => entry.kind === "context-handoff" && entry.status === "compacting"
-  )
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(activities),
     [activities]
@@ -218,12 +218,127 @@ export function ChatTranscript({
     () => derivePendingPlanApprovals(activities),
     [activities]
   )
+  const timeline = useMemo(
+    () =>
+      deriveTranscriptTimeline(messages, activities, {
+        showSessionProgressBar,
+        isStreaming,
+        hasProviderOutput,
+        pendingPlanApprovals,
+      }),
+    [
+      messages,
+      activities,
+      showSessionProgressBar,
+      isStreaming,
+      hasProviderOutput,
+      pendingPlanApprovals,
+    ]
+  )
+  const isCompactingPreviousContext = timeline.some(
+    (entry) => entry.kind === "context-handoff" && entry.status === "compacting"
+  )
   const activeThreadSession = useChatStore((state) =>
     activeThreadId
       ? state.threads.find((thread) => thread.id === activeThreadId)?.session
       : null
   )
+  const hasOlderOnServer = useChatStore((state) =>
+    activeThreadId
+      ? state.olderMessagesCursorByThread[activeThreadId] !== undefined
+      : false
+  )
+  const loadingOlder = useChatStore((state) =>
+    activeThreadId
+      ? state.olderMessagesLoadingByThread[activeThreadId] === true
+      : false
+  )
   const transcriptId = useId()
+
+  // Mounted window: the newest TRANSCRIPT_WINDOW_SIZE entries until the user
+  // asks for more. The anchor belongs to one thread, so switching threads
+  // falls back to the tail window.
+  const [historyAnchor, setHistoryAnchor] =
+    useState<TranscriptHistoryAnchor | null>(null)
+  const windowStart = transcriptWindowStart(
+    timeline,
+    historyAnchor,
+    activeThreadId
+  )
+  const windowedTimeline = useMemo(
+    () =>
+      windowTranscriptEntries(
+        timeline,
+        windowStart === undefined ? {} : { startIndex: windowStart }
+      ),
+    [timeline, windowStart]
+  )
+  const firstMountedMessageId =
+    windowedTimeline.visible.find((entry) => entry.kind === "message")?.id ??
+    null
+
+  const showEarlier = useCallback(() => {
+    const start = windowedTimeline.startIndex
+    const anchor = growTranscriptWindow(timeline, start, activeThreadId)
+    if (anchor) setHistoryAnchor(anchor)
+    // The window now reaches the first loaded entry: read the next older
+    // page. The anchor above already makes room for it.
+    const reachesFirstLoaded = start - TRANSCRIPT_WINDOW_SIZE <= 0
+    if (reachesFirstLoaded && hasOlderOnServer && activeThreadId) {
+      void useChatStore.getState().loadOlderThreadMessages(activeThreadId)
+    }
+  }, [activeThreadId, hasOlderOnServer, timeline, windowedTimeline.startIndex])
+
+  const revealAll = useCallback(() => {
+    const anchor = revealWholeTranscript(timeline, activeThreadId)
+    if (anchor) setHistoryAnchor(anchor)
+    if (hasOlderOnServer && activeThreadId) {
+      // Only the rows: diffs and attachments load when they are shown.
+      void useChatStore
+        .getState()
+        .ensureFullThreadMessages(activeThreadId, { payloads: false })
+    }
+  }, [activeThreadId, hasOlderOnServer, timeline])
+
+  // The scroll command listener is registered once per thread; it reads the
+  // current window through this ref.
+  const historyRef = useRef({
+    canShowEarlier: false,
+    showEarlier,
+    revealAll,
+  })
+  useEffect(() => {
+    historyRef.current = {
+      canShowEarlier: windowedTimeline.hiddenBefore > 0 || hasOlderOnServer,
+      showEarlier,
+      revealAll,
+    }
+  })
+  // Find in chat (Ctrl/Cmd+F) searches every loaded entry, not just the
+  // mounted window, and asks to mount the entry it goes to. A page loaded
+  // for a match may not be in the timeline yet, so the request waits for it.
+  const findTargets = useMemo(() => chatFindTargets(timeline), [timeline])
+  const [findReveal, setFindReveal] = useState<string | null>(null)
+  useEffect(() => {
+    if (!findReveal) return
+    const index = timeline.findIndex((entry) => entry.id === findReveal)
+    if (index < 0) return
+    setFindReveal(null)
+    // One entry of context above it; one already mounted stays as it is.
+    if (index < windowedTimeline.startIndex) {
+      setHistoryAnchor({
+        threadId: activeThreadId,
+        entryId: findReveal,
+        extra: 1,
+      })
+    }
+  }, [activeThreadId, findReveal, timeline, windowedTimeline.startIndex])
+
+  // A scroll command that first had to mount (or load) older entries.
+  const pendingScrollRef = useRef<
+    { kind: "first" } | { kind: "before"; entryId: string } | null
+  >(null)
+
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (
@@ -235,17 +350,63 @@ export function ChatTranscript({
           : detail.threadId
       if (owner !== activeThreadId) return
       const scope = document.getElementById(transcriptId)
-      if (scope) scrollChatMessageTarget(scope, detail?.target)
+      if (!scope) return
+      const target = detail?.target
+      const history = historyRef.current
+      if (history.canShowEarlier && target === "first") {
+        pendingScrollRef.current = { kind: "first" }
+        history.revealAll()
+        return
+      }
+      if (history.canShowEarlier && target === "previous") {
+        const nodes = chatMessageNodes(scope)
+        const first = nodes[0]
+        const firstId = first?.getAttribute(TRANSCRIPT_ENTRY_ID_ATTRIBUTE)
+        if (first && firstId && nearestVisibleChatMessageIndex(nodes) === 0) {
+          pendingScrollRef.current = { kind: "before", entryId: firstId }
+          history.showEarlier()
+          return
+        }
+      }
+      scrollChatMessageTarget(scope, target)
     }
     window.addEventListener("betterc0de:chat-scroll-message", handler)
     return () =>
       window.removeEventListener("betterc0de:chat-scroll-message", handler)
   }, [activeThreadId, transcriptId])
 
-  const windowedTimeline = useMemo(
-    () => windowTranscriptEntries(timeline),
-    [timeline]
-  )
+  // Finish a pending scroll command once the entries it needs are mounted.
+  useEffect(() => {
+    const pending = pendingScrollRef.current
+    if (!pending || loadingOlder) return
+    if (
+      pending.kind === "first" &&
+      (windowedTimeline.startIndex > 0 || hasOlderOnServer)
+    ) {
+      return
+    }
+    pendingScrollRef.current = null
+    const scope = document.getElementById(transcriptId)
+    if (!scope) return
+    if (pending.kind === "first") {
+      scrollChatMessageTarget(scope, "first")
+      return
+    }
+    const nodes = chatMessageNodes(scope)
+    const index = nodes.findIndex(
+      (node) =>
+        node.getAttribute(TRANSCRIPT_ENTRY_ID_ATTRIBUTE) === pending.entryId
+    )
+    nodes[Math.max(0, index - 1)]?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    })
+  }, [
+    hasOlderOnServer,
+    loadingOlder,
+    transcriptId,
+    windowedTimeline.startIndex,
+  ])
   const isEmptyThread =
     timeline.length === 0 &&
     !isStreaming &&
@@ -255,6 +416,8 @@ export function ChatTranscript({
   return (
     <Conversation
       id={transcriptId}
+      data-betterc0de-chat-find-scope="true"
+      data-betterc0de-chat-find-thread={activeThreadId ?? ""}
       className={cn(
         "min-h-0 flex-1",
         showChatScrollbar ? "chat-scrollbar-visible" : "chat-scrollbar-hidden"
@@ -288,28 +451,53 @@ export function ChatTranscript({
           <EmptyStateHero variant={appMode} threadId={activeThreadId} />
         ) : (
           <>
-            {windowedTimeline.hiddenBefore > 0 ? (
-              <div
-                aria-hidden
-                data-betterc0de-transcript-hidden-before={
-                  windowedTimeline.hiddenBefore
-                }
-                style={{ height: windowedTimeline.hiddenBefore * 72 }}
-              />
+            {/* Only at the true start of the chat, above its first message. */}
+            {activeThreadId &&
+            !hasOlderOnServer &&
+            windowedTimeline.hiddenBefore === 0 ? (
+              <ImportedThreadNote threadId={activeThreadId} />
             ) : null}
+            <TranscriptHistoryControl
+              hiddenCount={windowedTimeline.hiddenBefore}
+              hasOlderOnServer={hasOlderOnServer}
+              loading={loadingOlder}
+              firstEntryId={firstMountedMessageId}
+              onShowEarlier={showEarlier}
+            />
             {windowedTimeline.visible.map((entry) =>
-              entry.kind === "message" ? (
+              entry.kind === "message" && entry.msg.automatic ? (
+                // A message BetterC0de sent by itself to resume the chat.
                 <div
                   key={entry.id}
                   data-betterc0de-chat-message="true"
                   data-chat-message-role={entry.msg.role}
                   data-chat-message-index={entry.idx}
+                  data-transcript-entry-id={entry.id}
+                  // Find in chat counts its text; the note is marked whole.
+                  data-chat-find-entry={entry.id}
+                >
+                  <AutomaticResumeNote message={entry.msg} />
+                </div>
+              ) : entry.kind === "message" ? (
+                <div
+                  key={entry.id}
+                  data-betterc0de-chat-message="true"
+                  data-chat-message-role={entry.msg.role}
+                  data-chat-message-index={entry.idx}
+                  data-transcript-entry-id={entry.id}
+                  data-chat-find-entry={entry.id}
                 >
                   <ErrorBoundary label={`Message ${entry.msg.id}`}>
                     <ChatMessageItem
                       msg={entry.msg}
                       idx={entry.idx}
                       messages={messages}
+                      isLastMessage={entry.idx === messages.length - 1}
+                      turnDuration={
+                        entry.msg.role === "assistant"
+                          ? turnDurationMs(messages, entry.idx)
+                          : null
+                      }
                       activeThreadId={activeThreadId}
                       providerSkills={selectedProvider?.skills}
                       providerInstanceId={
@@ -333,6 +521,7 @@ export function ChatTranscript({
                       onRetry={(content) =>
                         handleSubmit({ text: content, files: [] })
                       }
+                      onResend={handleSubmit}
                       onOpenConfirm={setConfirmAction}
                       onOpenPlanModal={setPlanModalContent}
                     />
@@ -371,15 +560,21 @@ export function ChatTranscript({
                       approve/feedback. The tool group above stays either way,
                       so it doesn't flicker across the decision. */}
                   {!entry.awaitingApproval && (
-                    <PlanImplementationCard
-                      content={entry.content}
-                      sourceProposedPlan={entry.sourceProposedPlan}
-                      implemented={entry.implemented}
-                      implementedAt={entry.implementedAt}
-                      implementationThreadId={entry.implementationThreadId}
-                      onOpenPlanModal={setPlanModalContent}
-                      workspaceRoot={activeProjectPath}
-                    />
+                    // Find in chat outlines the collapsed card as a whole.
+                    <div
+                      data-chat-find-entry={entry.id}
+                      data-chat-find-frame="child"
+                    >
+                      <PlanImplementationCard
+                        content={entry.content}
+                        sourceProposedPlan={entry.sourceProposedPlan}
+                        implemented={entry.implemented}
+                        implementedAt={entry.implementedAt}
+                        implementationThreadId={entry.implementationThreadId}
+                        onOpenPlanModal={setPlanModalContent}
+                        workspaceRoot={activeProjectPath}
+                      />
+                    </div>
                   )}
                 </ErrorBoundary>
               )
@@ -437,6 +632,12 @@ export function ChatTranscript({
         )}
       </ConversationContent>
       <ConversationScrollButton />
+      <ChatFindBar
+        scopeId={transcriptId}
+        threadId={activeThreadId}
+        targets={findTargets}
+        revealEntry={setFindReveal}
+      />
     </Conversation>
   )
 }
@@ -450,13 +651,18 @@ function scrollChatMessageTarget(
     return
   }
 
-  const nodes = Array.from(
-    scope.querySelectorAll<HTMLElement>("[data-betterc0de-chat-message]")
-  )
+  const nodes = chatMessageNodes(scope)
   if (nodes.length === 0) return
 
   const targetNode = resolveChatMessageScrollNode(nodes, target)
   targetNode?.scrollIntoView({ behavior: "smooth", block: "center" })
+}
+
+/** Mounted message rows, oldest first. */
+function chatMessageNodes(scope: HTMLElement): HTMLElement[] {
+  return Array.from(
+    scope.querySelectorAll<HTMLElement>("[data-betterc0de-chat-message]")
+  )
 }
 
 function resolveChatMessageScrollNode(
@@ -619,13 +825,21 @@ export function deriveTranscriptTimeline(
     showSessionProgressBar?: boolean
     isStreaming?: boolean
     hasProviderOutput?: boolean
+    /** Precomputed `derivePendingPlanApprovals(activities)`, when the caller has it. */
+    pendingPlanApprovals?: ReturnType<typeof derivePendingPlanApprovals>
   } = {}
 ) {
   const toolsByTurn = new Map<string, ActivityTool[]>()
   for (const [turnId, turnActivities] of groupToolActivitiesByTurn(
     activities
   )) {
-    toolsByTurn.set(turnId, buildActivityTools(turnActivities))
+    toolsByTurn.set(
+      turnId,
+      withActivityOutputBounds(
+        buildActivityTools(turnActivities),
+        turnActivities
+      )
+    )
   }
   const workByTurn = groupWorkActivitiesByTurn(activities, options)
   const implementedPlans = new Map<
@@ -639,17 +853,19 @@ export function deriveTranscriptTimeline(
     if (!source) continue
     implementedPlans.set(sourceProposedPlanKey(source), {
       implementedAt:
-        stringFrom(payload.implementedAt) ?? stringFrom(payload.implemented_at),
+        nonEmptyString(payload.implementedAt) ??
+        nonEmptyString(payload.implemented_at),
       implementationThreadId:
-        stringFrom(payload.implementationThreadId) ??
-        stringFrom(payload.implementation_thread_id),
+        nonEmptyString(payload.implementationThreadId) ??
+        nonEmptyString(payload.implementation_thread_id),
     })
   }
   // Plans whose approval request is still open. Derived here rather than
   // passed in so this function stays pure over (messages, activities).
   const pendingApprovalTurnIds = new Set<string>()
   const pendingApprovalFingerprints = new Set<string>()
-  for (const approval of derivePendingPlanApprovals(activities)) {
+  for (const approval of options.pendingPlanApprovals ??
+    derivePendingPlanApprovals(activities)) {
     if (approval.turnId) pendingApprovalTurnIds.add(approval.turnId)
     const fingerprint = planFingerprint(approval.planMarkdown)
     if (fingerprint) pendingApprovalFingerprints.add(fingerprint)
@@ -659,16 +875,16 @@ export function deriveTranscriptTimeline(
     .map((activity) => {
       const payload = asRecord(activity.payload)
       const content =
-        stringFrom(payload.planMarkdown) ??
-        stringFrom(payload.plan_markdown) ??
-        stringFrom(payload.detail) ??
+        nonEmptyString(payload.planMarkdown) ??
+        nonEmptyString(payload.plan_markdown) ??
+        nonEmptyString(payload.detail) ??
         ""
       const turnId = activity.turnId
       const sourceProposedPlan = {
         threadId: activity.threadId,
         planId:
-          stringFrom(payload.planId) ??
-          stringFrom(payload.plan_id) ??
+          nonEmptyString(payload.planId) ??
+          nonEmptyString(payload.plan_id) ??
           activity.id,
       }
       const implementation = implementedPlans.get(
@@ -744,9 +960,10 @@ export function deriveTranscriptTimeline(
       if (activity.kind !== "session.model.switched") return []
       const payload = asRecord(activity.payload)
       const from =
-        stringFrom(payload.fromModelId) ?? stringFrom(payload.from_model_id)
+        nonEmptyString(payload.fromModelId) ??
+        nonEmptyString(payload.from_model_id)
       const to =
-        stringFrom(payload.toModelId) ?? stringFrom(payload.to_model_id)
+        nonEmptyString(payload.toModelId) ?? nonEmptyString(payload.to_model_id)
       if (!from || !to || from === to) return []
       return [
         {
@@ -905,8 +1122,9 @@ function sourceProposedPlanFromPayload(
   const source = asRecord(
     payload.sourceProposedPlan ?? payload.source_proposed_plan
   )
-  const threadId = stringFrom(source.threadId) ?? stringFrom(source.thread_id)
-  const planId = stringFrom(source.planId) ?? stringFrom(source.plan_id)
+  const threadId =
+    nonEmptyString(source.threadId) ?? nonEmptyString(source.thread_id)
+  const planId = nonEmptyString(source.planId) ?? nonEmptyString(source.plan_id)
   return threadId && planId ? { threadId, planId } : null
 }
 
@@ -916,7 +1134,9 @@ function groupWorkActivitiesByTurn(
 ) {
   const showSessionProgressBar = options.showSessionProgressBar !== false
   const groups = new Map<string, ActivityWorkEntry[]>()
-  for (const activity of [...activities].sort(compareActivities)) {
+  // The chat store keeps activities in this order already; copy and sort only
+  // when a caller hands in an unsorted list.
+  for (const activity of sortedActivities(activities)) {
     if (!activity.turnId) continue
     const entry = deriveActivityWorkEntry(activity)
     if (!entry) continue
@@ -926,6 +1146,17 @@ function groupWorkActivitiesByTurn(
     groups.set(activity.turnId, existing)
   }
   return groups
+}
+
+function sortedActivities(
+  activities: ReadonlyArray<ThreadActivity>
+): ReadonlyArray<ThreadActivity> {
+  for (let index = 1; index < activities.length; index += 1) {
+    if (compareActivities(activities[index - 1], activities[index]) > 0) {
+      return [...activities].sort(compareActivities)
+    }
+  }
+  return activities
 }
 
 export function deriveActivityWorkEntry(
@@ -944,14 +1175,14 @@ export function deriveActivityWorkEntry(
   }
   if (activity.kind === "task.started" || activity.kind === "task.progress") {
     const label =
-      stringFrom(payload.summary) ??
-      stringFrom(payload.detail) ??
+      nonEmptyString(payload.summary) ??
+      nonEmptyString(payload.detail) ??
       activity.summary
     return {
       id: activity.id,
       label,
-      detail: stringFrom(payload.lastToolName)
-        ? `Last tool: ${stringFrom(payload.lastToolName)}`
+      detail: nonEmptyString(payload.lastToolName)
+        ? `Last tool: ${nonEmptyString(payload.lastToolName)}`
         : undefined,
       ...providerFields,
       ...correlationFields,
@@ -963,8 +1194,8 @@ export function deriveActivityWorkEntry(
   if (activity.kind === "task.completed") {
     return {
       id: activity.id,
-      label: stringFrom(payload.detail) ?? activity.summary,
-      detail: stringFrom(payload.status),
+      label: nonEmptyString(payload.detail) ?? activity.summary,
+      detail: nonEmptyString(payload.status),
       ...providerFields,
       ...correlationFields,
       kind: activity.kind,
@@ -989,15 +1220,15 @@ export function deriveActivityWorkEntry(
     activity.kind === "runtime.error"
   ) {
     const label =
-      stringFrom(payload.summary) ??
-      stringFrom(payload.message) ??
+      nonEmptyString(payload.summary) ??
+      nonEmptyString(payload.message) ??
       activity.summary
     const detail =
-      stringFrom(payload.detail) ??
-      stringFrom(payload.reason) ??
-      stringFrom(payload.path) ??
-      stringFrom(payload.status) ??
-      stringFrom(payload.outcome)
+      nonEmptyString(payload.detail) ??
+      nonEmptyString(payload.reason) ??
+      nonEmptyString(payload.path) ??
+      nonEmptyString(payload.status) ??
+      nonEmptyString(payload.outcome)
     return {
       id: activity.id,
       label,
@@ -1168,10 +1399,6 @@ function workEntryProviderFields(
     ...(providerInstanceId ? { providerInstanceId } : {}),
     ...(providerLabel ? { providerLabel } : {}),
   }
-}
-
-function stringFrom(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined
 }
 
 /**

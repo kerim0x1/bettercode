@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process"
 import fs from "node:fs"
+import https from "node:https"
 import { isIP } from "node:net"
 import { stripVTControlCharacters } from "node:util"
 import { logger } from "../observability/logger"
@@ -13,11 +14,15 @@ import { logger } from "../observability/logger"
  * traffic and Tailscale already authenticated the peer, so
  * `remote/http.ts` treats a request that arrived on one of our tailnet
  * addresses from a tailnet peer as private transport (full session, no
- * TLS). Optionally `tailscale serve` additionally publishes the backend as
- * `https://<machine>.<tailnet>.ts.net` with a certificate Tailscale issues —
- * useful for browsers that want a secure context. That proxy connects from
- * 127.0.0.1 with `X-Forwarded-*`, trusted only while the serve setting is on
- * (`ServerConfig.trustLoopbackProxyHeaders`).
+ * TLS). `tailscale serve` publishes the backend as
+ * `https://<machine>.<tailnet>.ts.net` with a certificate Tailscale issues:
+ * the recommended way, because tailscaled itself accepts the connection, so
+ * it works while the backend listens on loopback only — no firewall rule, no
+ * network listener. That proxy connects from 127.0.0.1 with
+ * `X-Forwarded-*`, trusted only while the serve setting is on
+ * (`ServerConfig.trustLoopbackProxyHeaders`). After turning it on, the name
+ * is probed until it answers as this desktop: Tailscale issues the
+ * certificate on the first request, which can take a few seconds.
  *
  * The CLI is spawned directly (never through a shell) and its stderr is never
  * logged or returned: `tailscale` prints auth keys and node names there.
@@ -26,7 +31,15 @@ import { logger } from "../observability/logger"
 export const DEFAULT_TAILSCALE_SERVE_PORT = 443
 const STATUS_TIMEOUT_MS = 2_000
 const SERVE_TIMEOUT_MS = 10_000
+/** Shutdown must not wait long for a CLI that hangs. */
+const RELEASE_TIMEOUT_MS = 3_000
 const STATUS_CACHE_TTL_MS = 3_000
+const PROBE_TIMEOUT_MS = 2_500
+/** A name that answered stays good for a while; a miss is retried soon. */
+const PROBE_HIT_TTL_MS = 15_000
+const PROBE_MISS_TTL_MS = 2_000
+/** Public and unauthenticated: answers with this desktop's environment id. */
+const PROBE_PATH = "/api/v1/remote/bootstrap"
 
 export type TailscaleBackendState =
   | "running"
@@ -43,6 +56,10 @@ export interface TailscaleStatus {
   selfAddresses: string[]
   /** The tailnet issues HTTPS certificates (admin console → DNS → HTTPS). */
   httpsCertificates: boolean
+  /** The Tailscale service answered the CLI. */
+  serviceRunning: boolean
+  /** `CurrentTailnet.MagicDNSEnabled`, when this Tailscale reports it. */
+  magicDnsEnabled: boolean | null
 }
 
 /** What the desktop shows and the endpoint discovery advertises. */
@@ -53,12 +70,19 @@ export interface TailscaleRemoteState extends TailscaleStatus {
   serveActive: boolean
   servePort: number
   httpsBaseUrl: string | null
+  /** The HTTPS name answered as this desktop; `null` when not checked. */
+  serveReachable: boolean | null
+  /** Why turning on Serve failed last, or what answers instead of us. */
+  serveError: string | null
+  /** Tailscale's page for allowing Serve on this tailnet. */
+  serveConsentUrl: string | null
 }
 
 export type TailscaleStderrDiagnostic =
   | "no-existing-handler"
   | "not-logged-in"
   | "permission-denied"
+  | "not-running"
   | "unknown"
 
 export type TailscaleCommandResult =
@@ -68,6 +92,12 @@ export type TailscaleCommandResult =
       reason: "not-installed" | "timeout" | "exit"
       exitCode?: number
       diagnostic?: TailscaleStderrDiagnostic
+      /**
+       * The CLI asked for Serve or HTTPS to be allowed on the tailnet first
+       * and printed Tailscale's page for that. Only ever this exact shape of
+       * URL leaves the runner, never other CLI text.
+       */
+      consentUrl?: string
     }
 
 export type TailscaleCommandRunner = (
@@ -101,7 +131,30 @@ export function classifyTailscaleStderr(
     ].some(contains)
   )
     return "permission-denied"
+  // "failed to connect to local tailscaled process; is the Tailscale service
+  // running?" (Windows), "...; it doesn't appear to be running" (Linux),
+  // "failed to connect to local Tailscale service" (macOS).
+  if (
+    [
+      "failed to connect to local",
+      "is the tailscale service running",
+      "doesn't appear to be running",
+    ].some(contains)
+  )
+    return "not-running"
   return "unknown"
+}
+
+const CONSENT_URL =
+  /https:\/\/login\.tailscale\.com\/f\/[a-z][a-z0-9-]{0,31}\?node=[A-Za-z0-9_-]{1,64}/
+
+/**
+ * When Serve (or HTTPS) is not yet allowed on the tailnet, `tailscale serve`
+ * prints Tailscale's page for allowing it and waits. Only a URL of exactly
+ * that shape is taken from the output; everything else stays unread.
+ */
+export function findTailscaleConsentUrl(output: string): string | undefined {
+  return CONSENT_URL.exec(stripVTControlCharacters(output))?.[0]
 }
 
 /**
@@ -164,8 +217,13 @@ export function createTailscaleCommandRunner(
         (error, stdout, stderr) => {
           if (error) {
             if (isSpawnNotFound(error)) return resolve("not-found")
+            const consentUrl = findTailscaleConsentUrl(
+              `${String(stdout ?? "")}\n${String(stderr ?? "")}`
+            )
+            const consent = consentUrl ? { consentUrl } : {}
             if ((error as { killed?: boolean }).killed) {
-              return resolve({ ok: false, reason: "timeout" })
+              // A serve that waits for the tailnet's consent ends here.
+              return resolve({ ok: false, reason: "timeout", ...consent })
             }
             const exitCode =
               typeof (error as { code?: unknown }).code === "number"
@@ -177,6 +235,7 @@ export function createTailscaleCommandRunner(
               reason: "exit",
               exitCode,
               ...(diagnostic ? { diagnostic } : {}),
+              ...consent,
             })
           }
           resolve({ ok: true, stdout: String(stdout ?? "") })
@@ -249,11 +308,14 @@ export function parseTailscaleStatus(rawJson: string): TailscaleStatus {
       tailnetIpv4Addresses: [],
       selfAddresses: [],
       httpsCertificates: false,
+      serviceRunning: true,
+      magicDnsEnabled: null,
     }
   }
   const record = (parsed ?? {}) as {
     BackendState?: unknown
     CertDomains?: unknown
+    CurrentTailnet?: { MagicDNSEnabled?: unknown } | null
     Self?: { DNSName?: unknown; TailscaleIPs?: unknown } | null
   }
   const backendState =
@@ -277,6 +339,7 @@ export function parseTailscaleStatus(rawJson: string): TailscaleStatus {
   const certDomains = Array.isArray(record.CertDomains)
     ? record.CertDomains.filter((entry) => typeof entry === "string")
     : []
+  const magicDnsEnabled = record.CurrentTailnet?.MagicDNSEnabled
   return {
     installed: true,
     state,
@@ -284,6 +347,9 @@ export function parseTailscaleStatus(rawJson: string): TailscaleStatus {
     tailnetIpv4Addresses,
     selfAddresses,
     httpsCertificates: certDomains.length > 0,
+    serviceRunning: true,
+    magicDnsEnabled:
+      typeof magicDnsEnabled === "boolean" ? magicDnsEnabled : null,
   }
 }
 
@@ -371,15 +437,109 @@ export function tailscaleServeOffArgs(
   return ["serve", `--https=${servePort}`, "off"]
 }
 
+// ── HTTPS probe ───────────────────────────────────────────────────────
+
+export type TailscaleProbeResult = "reachable" | "unreachable" | "other"
+
+export interface TailscaleProbeInput {
+  magicDnsName: string
+  servePort: number
+  /**
+   * This machine's tailnet address to dial. Tailscale Serve listens on it,
+   * and dialing it directly keeps the check independent of whether MagicDNS
+   * resolves on this computer; the certificate is still checked against the
+   * name.
+   */
+  address: string | null
+  /** This desktop's id; another BetterC0de answering counts as `other`. */
+  environmentId: string | null
+  timeoutMs: number
+}
+
+export type TailscaleHttpsProbe = (
+  input: TailscaleProbeInput
+) => Promise<TailscaleProbeResult>
+
+/**
+ * Asks `https://<name>/api/v1/remote/bootstrap` who answers. A bad-gateway
+ * answer means Serve is up but proxies to a backend that is gone, which is
+ * a mapping still settling, not someone else's service.
+ */
+export const probeTailscaleHttps: TailscaleHttpsProbe = (input) =>
+  new Promise((resolve) => {
+    let settled = false
+    const done = (result: TailscaleProbeResult) => {
+      if (settled) return
+      settled = true
+      resolve(result)
+    }
+    const hostHeader =
+      input.servePort === DEFAULT_TAILSCALE_SERVE_PORT
+        ? input.magicDnsName
+        : `${input.magicDnsName}:${input.servePort}`
+    let request: ReturnType<typeof https.request>
+    try {
+      request = https.request(
+        {
+          host: input.address ?? input.magicDnsName,
+          servername: input.magicDnsName,
+          port: input.servePort,
+          path: PROBE_PATH,
+          method: "GET",
+          headers: { Host: hostHeader, Accept: "application/json" },
+          timeout: input.timeoutMs,
+          // A fresh connection per probe: a pooled one could outlive the
+          // certificate Tailscale was still issuing.
+          agent: false,
+        },
+        (response) => {
+          const status = response.statusCode ?? 0
+          let body = ""
+          response.setEncoding("utf8")
+          response.on("data", (chunk: string) => {
+            if (body.length < 64 * 1024) body += chunk
+          })
+          response.on("error", () => done("unreachable"))
+          response.on("end", () => {
+            if (status === 502 || status === 503 || status === 504) {
+              return done("unreachable")
+            }
+            if (status < 200 || status >= 300) return done("other")
+            if (!input.environmentId) return done("reachable")
+            try {
+              const answered = (JSON.parse(body) as { environmentId?: unknown })
+                .environmentId
+              done(answered === input.environmentId ? "reachable" : "other")
+            } catch {
+              done("other")
+            }
+          })
+        }
+      )
+    } catch {
+      done("unreachable")
+      return
+    }
+    request.on("timeout", () => {
+      request.destroy()
+      done("unreachable")
+    })
+    request.on("error", () => done("unreachable"))
+    request.end()
+  })
+
 // ── Service ───────────────────────────────────────────────────────────
 
 export class TailscaleCommandError extends Error {
+  readonly consentUrl: string | null
+
   constructor(
     readonly subcommand: "status" | "serve",
     readonly result: Exclude<TailscaleCommandResult, { ok: true }>
   ) {
     super(describeFailure(subcommand, result))
     this.name = "TailscaleCommandError"
+    this.consentUrl = result.consentUrl ?? null
   }
 }
 
@@ -387,6 +547,9 @@ function describeFailure(
   subcommand: string,
   result: Exclude<TailscaleCommandResult, { ok: true }>
 ): string {
+  if (result.consentUrl) {
+    return "Tailscale Serve is not allowed on this tailnet yet. Allow it in Tailscale, then try again."
+  }
   switch (result.reason) {
     case "not-installed":
       return "Tailscale is not installed on this computer"
@@ -398,6 +561,8 @@ function describeFailure(
           return "Tailscale is installed but not logged in"
         case "permission-denied":
           return "Tailscale refused the command for this user"
+        case "not-running":
+          return "The Tailscale service is not running on this computer"
         case "no-existing-handler":
           return "Tailscale Serve had no mapping to remove"
         default:
@@ -418,10 +583,28 @@ export interface TailscaleRemoteAccess {
   describe(input: {
     localPort: number
     serveEnabled: boolean
+    /** Check that the HTTPS name answers as this desktop (cached briefly). */
+    probe?: boolean
+    environmentId?: string | null
   }): Promise<TailscaleRemoteState>
   /** Idempotent: re-applies the mapping to the current backend port. */
   enableServe(localPort: number): Promise<void>
   disableServe(): Promise<void>
+  /**
+   * Probes the HTTPS name until it answers as this desktop. Tailscale
+   * issues the certificate on the first request to a new mapping, which can
+   * take a few seconds. `true` once it answered.
+   */
+  waitForServe(input: {
+    environmentId: string | null
+    attempts?: number
+    intervalMs?: number
+  }): Promise<boolean>
+  /**
+   * Shutdown: removes the mapping this process applied, so the name stops
+   * pointing at a backend that is gone. Never throws.
+   */
+  releaseServe(): Promise<void>
 }
 
 const NOT_INSTALLED: TailscaleStatus = {
@@ -431,6 +614,8 @@ const NOT_INSTALLED: TailscaleStatus = {
   tailnetIpv4Addresses: [],
   selfAddresses: [],
   httpsCertificates: false,
+  serviceRunning: false,
+  magicDnsEnabled: null,
 }
 
 /** How long the synchronous address snapshot may age before a refresh. */
@@ -439,15 +624,30 @@ const SELF_ADDRESS_REFRESH_MS = 60_000
 export function createTailscaleRemoteAccess(
   options: {
     run?: TailscaleCommandRunner
+    probe?: TailscaleHttpsProbe
     now?: () => number
+    sleep?: (ms: number) => Promise<void>
     servePort?: number
   } = {}
 ): TailscaleRemoteAccess {
   const run = options.run ?? createTailscaleCommandRunner()
+  const probe = options.probe ?? probeTailscaleHttps
   const now = options.now ?? Date.now
+  const sleep =
+    options.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
   const servePort = options.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT
   let cachedStatus: { at: number; value: TailscaleStatus } | null = null
   let inflightStatus: Promise<TailscaleStatus> | null = null
+  let cachedProbe: {
+    key: string
+    at: number
+    result: TailscaleProbeResult
+  } | null = null
+  let lastServeFailure: { message: string; consentUrl: string | null } | null =
+    null
+  /** This process put a mapping in place that shutdown should take down. */
+  let appliedServe = false
 
   const status = async (): Promise<TailscaleStatus> => {
     if (cachedStatus && now() - cachedStatus.at < STATUS_CACHE_TTL_MS) {
@@ -468,7 +668,10 @@ export function createTailscaleRemoteAccess(
           state:
             result.diagnostic === "not-logged-in"
               ? "needs-login"
-              : "unavailable",
+              : result.diagnostic === "not-running"
+                ? "stopped"
+                : "unavailable",
+          serviceRunning: result.diagnostic === "not-logged-in",
         }
       }
       cachedStatus = { at: now(), value }
@@ -487,6 +690,32 @@ export function createTailscaleRemoteAccess(
     return findTailscaleServeMapping(result.stdout, localPort)
   }
 
+  const probeOnce = async (
+    current: TailscaleStatus,
+    port: number,
+    environmentId: string | null,
+    useCache: boolean
+  ): Promise<TailscaleProbeResult> => {
+    if (!current.magicDnsName) return "unreachable"
+    const key = `${current.magicDnsName}:${port}:${environmentId ?? ""}`
+    if (useCache && cachedProbe?.key === key) {
+      const ttl =
+        cachedProbe.result === "unreachable"
+          ? PROBE_MISS_TTL_MS
+          : PROBE_HIT_TTL_MS
+      if (now() - cachedProbe.at < ttl) return cachedProbe.result
+    }
+    const result = await probe({
+      magicDnsName: current.magicDnsName,
+      servePort: port,
+      address: current.tailnetIpv4Addresses[0] ?? null,
+      environmentId,
+      timeoutMs: PROBE_TIMEOUT_MS,
+    }).catch((): TailscaleProbeResult => "unreachable")
+    cachedProbe = { key, at: now(), result }
+    return result
+  }
+
   return {
     status,
     selfAddresses() {
@@ -503,6 +732,20 @@ export function createTailscaleRemoteAccess(
       const mapping =
         current.state === "running" ? await serveMapping(input.localPort) : null
       const activePort = mapping?.servePort ?? servePort
+      let serveReachable: boolean | null = null
+      let serveError = lastServeFailure?.message ?? null
+      if (input.probe && input.serveEnabled && mapping) {
+        const probed = await probeOnce(
+          current,
+          activePort,
+          input.environmentId ?? null,
+          true
+        )
+        serveReachable = probed === "reachable"
+        if (probed === "other") {
+          serveError = `Something other than this desktop answers on https://${current.magicDnsName}${activePort === DEFAULT_TAILSCALE_SERVE_PORT ? "" : `:${activePort}`}.`
+        }
+      }
       return {
         ...current,
         serveEnabled: input.serveEnabled,
@@ -511,6 +754,9 @@ export function createTailscaleRemoteAccess(
         httpsBaseUrl: current.magicDnsName
           ? buildTailscaleHttpsBaseUrl(current.magicDnsName, activePort)
           : null,
+        serveReachable,
+        serveError,
+        serveConsentUrl: lastServeFailure?.consentUrl ?? null,
       }
     },
     async enableServe(localPort) {
@@ -519,7 +765,17 @@ export function createTailscaleRemoteAccess(
         SERVE_TIMEOUT_MS
       )
       cachedStatus = null
-      if (!result.ok) throw new TailscaleCommandError("serve", result)
+      cachedProbe = null
+      if (!result.ok) {
+        const error = new TailscaleCommandError("serve", result)
+        lastServeFailure = {
+          message: error.message,
+          consentUrl: error.consentUrl,
+        }
+        throw error
+      }
+      lastServeFailure = null
+      appliedServe = true
     },
     async disableServe() {
       const result = await run(
@@ -527,9 +783,40 @@ export function createTailscaleRemoteAccess(
         SERVE_TIMEOUT_MS
       )
       cachedStatus = null
+      cachedProbe = null
       // Nothing to remove is the state we wanted.
       if (!result.ok && result.diagnostic !== "no-existing-handler") {
         throw new TailscaleCommandError("serve", result)
+      }
+      lastServeFailure = null
+      appliedServe = false
+    },
+    async waitForServe(input) {
+      const attempts = Math.max(1, input.attempts ?? 5)
+      const intervalMs = input.intervalMs ?? 1_000
+      const current = await status()
+      if (current.state !== "running" || !current.magicDnsName) return false
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const result = await probeOnce(
+          current,
+          servePort,
+          input.environmentId,
+          false
+        )
+        if (result === "reachable") return true
+        if (result === "other") return false
+        if (attempt < attempts - 1) await sleep(intervalMs)
+      }
+      return false
+    },
+    async releaseServe() {
+      if (!appliedServe) return
+      appliedServe = false
+      cachedProbe = null
+      try {
+        await run(tailscaleServeOffArgs(servePort), RELEASE_TIMEOUT_MS)
+      } catch {
+        // Best effort: the next start re-points or removes the mapping.
       }
     },
   }

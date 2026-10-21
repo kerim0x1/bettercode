@@ -17,7 +17,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { AppState } from "../appState"
 import type { ServerConfig } from "../config"
-import { buildApp } from "../http/router"
+import { buildApp as buildAppUnfilled } from "../http/router"
 import { openDatabase } from "../persistence/db"
 import { runMigrations } from "../persistence/migrations"
 import { readBackendVersion } from "../version"
@@ -27,6 +27,11 @@ import {
   publicRemoteProtocol,
 } from "./protocol"
 import { RemoteAccessService } from "./service"
+import { routerLifecycleServices } from "../testUtils/routing-services"
+import { withInertStateArgument } from "../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const buildApp = withInertStateArgument(buildAppUnfilled, 1)
 
 describe("release versions", () => {
   it("orders prereleases before their release, numerically where numeric", () => {
@@ -257,6 +262,7 @@ function fixture(options: { allowInsecureRemoteAccess?: boolean } = {}) {
     isEnabled: () => values.remote_access_enabled,
   })
   const state = {
+    ...routerLifecycleServices(),
     config,
     db,
     settings,
@@ -279,6 +285,11 @@ function fixture(options: { allowInsecureRemoteAccess?: boolean } = {}) {
 
 const LAN = "http://192.168.1.20:3773"
 const lanPeer = { incoming: { socket: { remoteAddress: "192.168.1.40" } } }
+// The same phone with TLS to the backend: the transport that earns a full session.
+const TLS_LAN = "https://192.168.1.20:3773"
+const tlsLanPeer = {
+  incoming: { socket: { remoteAddress: "192.168.1.40", encrypted: true } },
+}
 const publicPeer = { incoming: { socket: { remoteAddress: "198.51.100.7" } } }
 const APP = "betterc0de-remote/0.1.0-beta.3 (android)"
 const TOO_OLD = "betterc0de-remote/0.0.9 (ios)"
@@ -336,7 +347,7 @@ describe("remote protocol over HTTP", () => {
 
   it("describes the protocol when pairing and on every bootstrap", async () => {
     const { app, settings } = fixture()
-    const paired = await pairPhone(app)
+    const paired = await pairPhone(app, { peer: tlsLanPeer, origin: TLS_LAN })
     expect(paired.status).toBe(200)
     const pairing = (await paired.json()) as {
       sessionToken: string
@@ -349,16 +360,16 @@ describe("remote protocol over HTTP", () => {
       terminalGranted: false,
     })
 
-    const bootstrap = async () => {
+    const bootstrap = async (origin = TLS_LAN, peer: object = tlsLanPeer) => {
       const response = await app.request(
-        `${LAN}/api/v1/remote/bootstrap`,
+        `${origin}/api/v1/remote/bootstrap`,
         {
           headers: {
             Authorization: `Bearer ${pairing.sessionToken}`,
             "X-BetterC0de-Client": APP,
           },
         },
-        lanPeer
+        peer
       )
       return (await response.json()) as {
         protocol: ReturnType<typeof describeRemoteProtocol>
@@ -371,6 +382,30 @@ describe("remote protocol over HTTP", () => {
     expect((await bootstrap()).protocol.capabilities?.terminalGranted).toBe(
       true
     )
+    // The same session over plaintext LAN is told it is read-only for that
+    // connection, terminal grant or not.
+    expect((await bootstrap(LAN, lanPeer)).protocol).toEqual(
+      describeRemoteProtocol({
+        accessLevel: "read_only",
+        terminalAllowed: true,
+      })
+    )
+  })
+
+  it("pairs plaintext LAN phones as read-only and says so in the protocol", async () => {
+    const { app, settings } = fixture()
+    await settings.updatePublic({ remote_access_allow_terminal: true })
+    const paired = await pairPhone(app)
+    expect(paired.status).toBe(200)
+    const pairing = (await paired.json()) as {
+      session: { accessLevel: string }
+      protocol: { capabilities: Record<string, unknown> }
+    }
+    expect(pairing.session.accessLevel).toBe("read_only")
+    expect(pairing.protocol.capabilities).toMatchObject({
+      accessLevel: "read_only",
+      terminalGranted: false,
+    })
   })
 
   it("shows the desktop which app and version each paired phone runs", async () => {

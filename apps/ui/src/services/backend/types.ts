@@ -32,33 +32,12 @@ export interface BackendTransport {
   request<T>(path: string, opts?: RequestOptions): Promise<T>
 }
 
-export interface ShellCommandResult {
-  success: boolean
-  stdout: string
-  stderr: string
-  exitCode: number | null
-  combined: string
-}
-
-export interface TerminalPtyEvent {
-  seq: number
-  type: "data" | "exit" | "system"
-  data?: string
-  exitCode?: number | null
-  signal?: number | string | null
-  at: number
-}
-
-export interface TerminalPtySnapshot {
-  sessionId: string
-  pid: number
-  cwd: string
-  shell: string
-  command: string
-  args: string[]
-  status: "running" | "exited"
-  events: TerminalPtyEvent[]
-  nextCursor: number
-}
+// The shell and terminal read models are the shared contracts' own
+// (`@betterc0de/schema/http-contracts`, `shell-contracts.ts`).
+export type {
+  ShellCommandResult,
+  TerminalPtyEvent,
+  TerminalPtySnapshot,
+} from "@betterc0de/schema/http-contracts"
 
 export type WsEventHandler = (event: { channel: string; data: unknown }) => void

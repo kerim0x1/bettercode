@@ -1,8 +1,3 @@
-import {
-  workspaceContextArtifactSchema,
-  workspaceEffectiveRulesSchema,
-  workspaceTrustGetSchema,
-} from "@betterc0de/schema"
 import type { Hono } from "hono"
 import type { AppState } from "../../appState"
 import { requestIdentity } from "../../remote/http"
@@ -18,43 +13,22 @@ import {
   resolveApprovedWorkspaceRoot,
 } from "../../services/workspace/authorization"
 import { withCheckpointRecoveryMutation } from "../checkpointRecoveryFence"
-import { parseAndHandle } from "../routeHelpers"
-import {
-  workspaceAdoptScratchSchema,
-  workspaceContentSearchSchema,
-  workspaceDeleteSchema,
-  workspaceMapSchema,
-  workspaceMkdirSchema,
-  workspaceMoveSchema,
-  workspaceProjectAgentsSchema,
-  workspaceProjectCommandsSchema,
-  workspaceProjectConfigSchema,
-  workspaceProjectFormatSchema,
-  workspaceProjectFormattersSchema,
-  workspaceProjectInstructionsSchema,
-  workspaceProjectLspServersSchema,
-  workspaceProjectMcpServersSchema,
-  workspaceProjectPermissionsSchema,
-  workspaceProjectPluginsSchema,
-  workspaceProjectProvidersSchema,
-  workspaceProjectReferencesSchema,
-  workspaceProjectSkillsSchema,
-  workspaceProjectToolsSchema,
-  workspaceQuickOpenSchema,
-  workspaceReadSchema,
-  workspaceSearchSchema,
-  workspaceWriteSchema,
-} from "../validation"
+import { handleHttpContract } from "../contracts"
 export {
   resolveApprovedWorkspaceRoot,
   resolveChatWorkspaceRoot,
 } from "../../services/workspace/authorization"
 
+/**
+ * Every route here answers with its shared contract
+ * (`@betterc0de/schema/http-contracts`): the request is parsed with the
+ * contract's schema and the response validated before it is sent.
+ */
 export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   api.post("/workspace/open", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceTrustGetSchema,
+      "workspaceOpen",
       (body) => openWorkspaceRoot(state, body.workspacePath),
       { operation: "open workspace" }
     )
@@ -65,9 +39,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   // deadline, and a client that only receives the array cannot tell a small
   // workspace from a cut-short scan. The renderer's `workspaceApi` unwraps.
   api.post("/workspace/search", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceSearchSchema,
+      "workspaceSearch",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.searchEntriesDetailed(cwd, b.query)
@@ -77,9 +51,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/search-content", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceContentSearchSchema,
+      "workspaceSearchContent",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.searchContentDetailed(cwd, b.query, {
@@ -96,9 +70,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/quick-open", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceQuickOpenSchema,
+      "workspaceQuickOpen",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.quickOpenFiles(cwd, b.query, {
@@ -111,9 +85,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/map", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceMapSchema,
+      "workspaceMap",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.workspaceMap(cwd, { maxFiles: b.maxFiles })
@@ -123,9 +97,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/project-commands", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceProjectCommandsSchema,
+      "workspaceProjectCommands",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.listProjectCommands(cwd)
@@ -135,9 +109,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/project-agents", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceProjectAgentsSchema,
+      "workspaceProjectAgents",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.listProjectAgents(cwd)
@@ -147,9 +121,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/project-skills", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceProjectSkillsSchema,
+      "workspaceProjectSkills",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.listProjectSkills(cwd)
@@ -159,9 +133,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/project-mcp-servers", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceProjectMcpServersSchema,
+      "workspaceProjectMcpServers",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         const servers = await workspace.listProjectMcpServers(cwd)
@@ -186,9 +160,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/project-instructions", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceProjectInstructionsSchema,
+      "workspaceProjectInstructions",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.listProjectInstructions(cwd)
@@ -198,9 +172,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/effective-rules", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceEffectiveRulesSchema,
+      "workspaceEffectiveRules",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return resolveAppEffectiveRules(state, {
@@ -213,9 +187,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/context-artifact", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceContextArtifactSchema,
+      "workspaceContextArtifact",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return buildWorkspaceContextArtifact(state, {
@@ -231,9 +205,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/project-references", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceProjectReferencesSchema,
+      "workspaceProjectReferences",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.listProjectReferences(cwd)
@@ -243,9 +217,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/project-formatters", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceProjectFormattersSchema,
+      "workspaceProjectFormatters",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.listProjectFormatters(cwd)
@@ -255,9 +229,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/project-format", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceProjectFormatSchema,
+      "workspaceProjectFormat",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         state.agentPermissions.assertWorkspaceTrusted({
@@ -288,9 +262,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/project-lsp-servers", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceProjectLspServersSchema,
+      "workspaceProjectLspServers",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.listProjectLspServers(cwd)
@@ -300,9 +274,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/project-permissions", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceProjectPermissionsSchema,
+      "workspaceProjectPermissions",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.listProjectPermissions(cwd)
@@ -312,9 +286,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/project-config", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceProjectConfigSchema,
+      "workspaceProjectConfig",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.listProjectConfigSettings(cwd)
@@ -324,9 +298,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/project-providers", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceProjectProvidersSchema,
+      "workspaceProjectProviders",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.listProjectProviders(cwd)
@@ -336,9 +310,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/project-plugins", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceProjectPluginsSchema,
+      "workspaceProjectPlugins",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.listProjectPlugins(cwd)
@@ -348,9 +322,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/project-tools", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceProjectToolsSchema,
+      "workspaceProjectTools",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.listProjectTools(cwd)
@@ -360,9 +334,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/read", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceReadSchema,
+      "workspaceRead",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.readFile({ cwd, relative_path: b.relativePath })
@@ -372,9 +346,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/read-binary", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceReadSchema,
+      "workspaceReadBinary",
       async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         return workspace.readBinaryFile({ cwd, relative_path: b.relativePath })
@@ -384,10 +358,10 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/write", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceWriteSchema,
-      async (b, ctx) => {
+      "workspaceWrite",
+      async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         state.agentPermissions.assertWorkspaceTrusted({
           workspacePath: cwd,
@@ -398,7 +372,6 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
             expectedContentHash: b.expectedSha256,
           })
         )
-        return ctx.body(null, 204)
       },
       { operation: "workspace write" }
     )
@@ -408,9 +381,9 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   // agent built in that chat's scratch workspace. Existing files in the
   // destination are left untouched and reported back rather than overwritten.
   api.post("/workspace/scratch/adopt", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceAdoptScratchSchema,
+      "workspaceScratchAdopt",
       async (b) => {
         const destination = await resolveApprovedWorkspaceRoot(
           state,
@@ -438,10 +411,10 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/workspace/mkdir", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceMkdirSchema,
-      async (b, ctx) => {
+      "workspaceMkdir",
+      async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         state.agentPermissions.assertWorkspaceTrusted({
           workspacePath: cwd,
@@ -450,17 +423,16 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
         await withCheckpointRecoveryMutation(state, { workspaces: [cwd] }, () =>
           workspace.createDirectory(cwd, b.relativePath)
         )
-        return ctx.body(null, 204)
       },
       { operation: "workspace mkdir" }
     )
   )
 
   api.post("/workspace/move", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceMoveSchema,
-      async (b, ctx) => {
+      "workspaceMove",
+      async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         state.agentPermissions.assertWorkspaceTrusted({
           workspacePath: cwd,
@@ -469,17 +441,16 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
         await withCheckpointRecoveryMutation(state, { workspaces: [cwd] }, () =>
           workspace.movePath(cwd, b.fromRelativePath, b.toRelativePath)
         )
-        return ctx.body(null, 204)
       },
       { operation: "workspace move" }
     )
   )
 
   api.post("/workspace/delete", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      workspaceDeleteSchema,
-      async (b, ctx) => {
+      "workspaceDelete",
+      async (b) => {
         const cwd = await resolveApprovedWorkspaceRoot(state, b.cwd)
         state.agentPermissions.assertWorkspaceTrusted({
           workspacePath: cwd,
@@ -490,7 +461,6 @@ export function registerWorkspaceRoutes(api: Hono, state: AppState): void {
             recursive: b.recursive,
           })
         )
-        return ctx.body(null, 204)
       },
       { operation: "workspace delete" }
     )

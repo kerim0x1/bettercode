@@ -30,7 +30,7 @@ import {
   searchContentDetailed,
   type WorkspaceContentSearchResult,
   type WorkspaceQuickOpenFile,
-} from "@/services/backend"
+} from "@/services/backend/workspaceApi"
 import { SearchTruncationNotice } from "@/components/search-truncation-notice"
 
 const SYMBOL_SEARCH_LIMIT = 80

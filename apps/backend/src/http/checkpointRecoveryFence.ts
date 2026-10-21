@@ -5,5 +5,7 @@ export {
   recoveryWorkspacesForThread,
   withCheckpointRecoveryExclusiveMutation,
   withCheckpointRecoveryMutation,
+  type CheckpointRecoveryFenceState,
   type CheckpointRecoveryMutationScope,
+  type ThreadWorkspaceLookup,
 } from "../services/checkpoint-recovery-fence"

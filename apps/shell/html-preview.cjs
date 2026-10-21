@@ -1,9 +1,15 @@
 const fs = require("node:fs/promises")
 const path = require("node:path")
+const { Readable } = require("node:stream")
 const { randomUUID } = require("node:crypto")
 
 const HTML_PREVIEW_SCHEME = "betterc0de-html"
+// Documents, scripts, styles, images and fonts. Responses are streamed, so
+// this bounds what a page may make the preview load, not memory.
 const MAX_ASSET_BYTES = 32 * 1024 * 1024
+// Audio and video are streamed in ranges as the element seeks.
+const MAX_MEDIA_BYTES = 4 * 1024 * 1024 * 1024
+const MEDIA_EXTENSIONS = new Set([".mp4", ".webm", ".mp3", ".wav"])
 const MIME = new Map(Object.entries({
   ".html": "text/html", ".htm": "text/html", ".css": "text/css",
   ".js": "text/javascript", ".mjs": "text/javascript", ".json": "application/json",
@@ -14,6 +20,29 @@ const MIME = new Map(Object.entries({
   ".mp4": "video/mp4", ".webm": "video/webm", ".mp3": "audio/mpeg",
   ".wav": "audio/wav", ".wasm": "application/wasm",
 }))
+
+/**
+ * A single `bytes=` range against a file of `size` bytes: null for no (or an
+ * unsupported multi-) range, "unsatisfiable" when it lies outside the file.
+ */
+function parseByteRange(header, size) {
+  if (typeof header !== "string") return null
+  const match = /^\s*bytes\s*=\s*(\d*)\s*-\s*(\d*)\s*$/i.exec(header)
+  if (!match) return null
+  const [, first, last] = match
+  if (!first && !last) return null
+  if (!first) {
+    const suffix = Number(last)
+    if (!Number.isSafeInteger(suffix) || suffix === 0 || size === 0) return "unsatisfiable"
+    return { start: Math.max(0, size - suffix), end: size - 1 }
+  }
+  const start = Number(first)
+  const end = last ? Math.min(Number(last), size - 1) : size - 1
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= size || end < start) {
+    return "unsatisfiable"
+  }
+  return { start, end }
+}
 
 function inside(root, file) {
   const relative = path.relative(root, file)
@@ -68,27 +97,37 @@ function createHtmlPreviewRegistry() {
       if (!inside(grant.root, candidate)) return new Response(null, { status: 403 })
       const file = await fs.realpath(candidate)
       if (!inside(grant.root, file) || !publicAsset(path.relative(grant.root, file))) return new Response(null, { status: 403 })
-      // Read through the same opened descriptor we stat; cap allocation before reading.
+      // Serve from the same opened descriptor we stat, as a stream: nothing
+      // is buffered in the main process, whatever the file size.
       const descriptor = await fs.open(file, "r")
+      let streaming = false
       try {
         const stat = await descriptor.stat()
-        if (!stat.isFile() || stat.size > MAX_ASSET_BYTES) return new Response(null, { status: 413 })
-        const bytes = Buffer.alloc(stat.size)
-        let bytesRead = 0
-        while (request.method !== "HEAD" && bytesRead < bytes.length) {
-          const chunk = await descriptor.read(bytes, bytesRead, bytes.length - bytesRead, bytesRead)
-          if (!chunk.bytesRead) break
-          bytesRead += chunk.bytesRead
+        const extension = path.extname(file).toLowerCase()
+        const limit = MEDIA_EXTENSIONS.has(extension) ? MAX_MEDIA_BYTES : MAX_ASSET_BYTES
+        if (!stat.isFile() || stat.size > limit) return new Response(null, { status: 413 })
+        const headers = {
+          "Content-Type": MIME.get(extension),
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+          "Referrer-Policy": "no-referrer",
+          "Accept-Ranges": "bytes",
         }
-        return new Response(request.method === "HEAD" ? null : bytes.subarray(0, bytesRead), {
-          headers: {
-            "Content-Type": MIME.get(path.extname(file).toLowerCase()),
-            "Cache-Control": "no-store",
-            "X-Content-Type-Options": "nosniff",
-            "Referrer-Policy": "no-referrer",
-          },
-        })
-      } finally { await descriptor.close() }
+        const range = parseByteRange(request.headers.get("range"), stat.size)
+        if (range === "unsatisfiable") {
+          return new Response(null, { status: 416, headers: { ...headers, "Content-Range": `bytes */${stat.size}` } })
+        }
+        const start = range ? range.start : 0
+        const end = range ? range.end : stat.size - 1
+        const length = stat.size === 0 ? 0 : end - start + 1
+        const status = range ? 206 : 200
+        if (range) headers["Content-Range"] = `bytes ${start}-${end}/${stat.size}`
+        headers["Content-Length"] = String(length)
+        if (request.method === "HEAD" || length === 0) return new Response(null, { status, headers })
+        const stream = descriptor.createReadStream({ start, end, autoClose: true })
+        streaming = true
+        return new Response(Readable.toWeb(stream), { status, headers })
+      } finally { if (!streaming) await descriptor.close() }
     } catch { return new Response(null, { status: 404 }) }
   }
 
@@ -97,4 +136,4 @@ function createHtmlPreviewRegistry() {
   } }
 }
 
-module.exports = { HTML_PREVIEW_SCHEME, createHtmlPreviewRegistry }
+module.exports = { HTML_PREVIEW_SCHEME, createHtmlPreviewRegistry, parseByteRange }

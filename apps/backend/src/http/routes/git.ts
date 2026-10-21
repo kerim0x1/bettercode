@@ -6,6 +6,7 @@ import type {
   GitHunkActionResult,
 } from "@betterc0de/schema"
 import * as git from "../../services/git"
+import { listPullRequests } from "../../services/github-pull-requests"
 import {
   detectOpenTargets,
   launchOpenTarget,
@@ -14,27 +15,7 @@ import {
 } from "../../services/openTargets"
 import { resolveRequestIdentity } from "../../remote/http"
 import { remoteTerminalRefusal } from "../remoteTerminalPolicy"
-import {
-  gitCwdSchema,
-  gitProfileSchema,
-  gitCommitSchema,
-  gitDiscardSchema,
-  gitOpenEditorSchema,
-  gitLogSchema,
-  gitCheckoutSchema,
-  gitStashSchema,
-  gitBranchRenameSchema,
-  gitWorktreeCreateSchema,
-  gitWorktreeRemoveSchema,
-  gitPathsSchema,
-  gitHunkActionSchema,
-  gitPushSchema,
-  gitRemoteAddSchema,
-  gitCheckpointSchema,
-  gitCheckpointDiffSchema,
-  gitCheckpointDeleteSchema,
-} from "../validation"
-import { parseAndHandle } from "../routeHelpers"
+import { contractJson, handleHttpContract } from "../contracts"
 import type { AppState } from "../../appState"
 import { withCheckpointRecoveryMutation } from "../checkpointRecoveryFence"
 import { HttpError } from "../errors"
@@ -43,6 +24,12 @@ import { resolveApprovedWorkspaceRoot } from "./workspace"
 
 const hunkOperationLocks = new Map<string, Promise<void>>()
 
+/**
+ * Every route here answers with its shared contract
+ * (`@betterc0de/schema/http-contracts`): the request is parsed with the
+ * contract's schema and the response validated before it is sent, so the
+ * renderer and the phone read the same shapes the backend writes.
+ */
 export function registerGitRoutes(api: Hono, state: AppState): void {
   // `resolveApprovedWorkspaceRoot` throws a nominal HttpError
   // (`workspace_not_registered`); parseAndHandle surfaces it unchanged.
@@ -79,9 +66,9 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
       return await handler(confined)
     }
   api.post("/git/status", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCwdSchema,
+      "gitStatus",
       read((b) => git.status(b.cwd)),
       {
         operation: "git status",
@@ -89,37 +76,33 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
     )
   )
   api.post("/git/profile", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitProfileSchema,
+      "gitProfile",
       read((b) => git.userProfile(b.cwd)),
-      {
-        operation: "git profile",
-      }
+      { operation: "git profile" }
     )
   )
   api.post("/git/branches", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCwdSchema,
+      "gitBranches",
       read((b) => git.listBranches(b.cwd)),
-      {
-        operation: "git branches",
-      }
+      { operation: "git branches" }
     )
   )
   api.post("/git/commit", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCommitSchema,
+      "gitCommit",
       mutate((b) => git.commit(b.cwd, b.message)),
       { operation: "git commit" }
     )
   )
   api.post("/git/push", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitPushSchema,
+      "gitPush",
       mutate((b) =>
         git.push(b.cwd, {
           setUpstream: b.setUpstream,
@@ -131,28 +114,29 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
     )
   )
   api.post("/git/fetch", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCwdSchema,
+      "gitFetch",
       mutate((b) => git.fetchRemote(b.cwd)),
-      {
-        operation: "git fetch",
-      }
+      { operation: "git fetch" }
     )
   )
   api.post("/git/pull", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCwdSchema,
+      "gitPull",
       mutate((b) => git.pull(b.cwd)),
       { operation: "git pull" }
     )
   )
   api.post("/git/discard", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitDiscardSchema,
-      mutate((b) => git.discard(b.cwd, b.path)),
+      "gitDiscard",
+      mutate(async (b) => {
+        await git.discard(b.cwd, b.path)
+        return { ok: true as const }
+      }),
       { operation: "git discard" }
     )
   )
@@ -160,7 +144,7 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
   // Terminal, …). Detection is async, cached, deadline-bounded, and explicit
   // refresh requests are single-flighted and rate-limited.
   api.get("/git/open-targets", async (c) =>
-    c.json({
+    contractJson(c, "gitOpenTargets", {
       targets: await detectOpenTargets({
         refresh: c.req.query("refresh") === "true",
       }),
@@ -183,9 +167,9 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
       )
     }
   api.post("/git/open-editor", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitOpenEditorSchema,
+      "gitOpenEditor",
       async (b) => {
         // `launchOpenTarget` also rejects unknown ids, but only after
         // stat-ing the project directory; refuse first so a bad id is a
@@ -233,17 +217,17 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
     )
   )
   api.post("/git/init", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCwdSchema,
+      "gitInit",
       mutate((b) => git.gitInit(b.cwd)),
       { operation: "git init" }
     )
   )
   api.post("/git/is-repo", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCwdSchema,
+      "gitIsRepo",
       read((b) => git.isRepo(b.cwd)),
       {
         operation: "git is-repo",
@@ -251,9 +235,9 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
     )
   )
   api.post("/git/diff", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCwdSchema,
+      "gitDiff",
       read((b) => git.diff(b.cwd)),
       {
         operation: "git diff",
@@ -261,92 +245,96 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
     )
   )
   api.post("/git/diff-staged", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCwdSchema,
+      "gitDiffStaged",
       read((b) => git.diffStaged(b.cwd)),
-      {
-        operation: "git diff-staged",
-      }
+      { operation: "git diff-staged" }
     )
   )
   api.post("/git/remotes", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCwdSchema,
+      "gitRemotes",
       read((b) => git.listRemotes(b.cwd)),
-      {
-        operation: "git remotes",
-      }
+      { operation: "git remotes" }
+    )
+  )
+  api.post("/git/pull-requests", (c) =>
+    handleHttpContract(
+      c,
+      "gitPullRequests",
+      read((b) => listPullRequests(b.cwd)),
+      { operation: "git pull requests" }
     )
   )
   api.post("/git/remotes/add", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitRemoteAddSchema,
+      "gitRemoteAdd",
       mutate(async (b) => {
         await git.addRemote(b.cwd, b.name, b.url)
-        return { ok: true }
+        return { ok: true as const }
       }),
       { operation: "git remotes/add" }
     )
   )
   api.post("/git/stage", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitPathsSchema,
+      "gitStage",
       mutate(async (b) => {
         await git.stage(b.cwd, b.paths)
-        return { ok: true }
+        return { ok: true as const }
       }),
       { operation: "git stage" }
     )
   )
   api.post("/git/unstage", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitPathsSchema,
+      "gitUnstage",
       mutate(async (b) => {
         await git.unstage(b.cwd, b.paths)
-        return { ok: true }
+        return { ok: true as const }
       }),
       { operation: "git unstage" }
     )
   )
   api.post("/git/stage-all", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCwdSchema,
+      "gitStageAll",
       mutate(async (b) => {
         await git.stageAll(b.cwd)
-        return { ok: true }
+        return { ok: true as const }
       }),
       { operation: "git stage-all" }
     )
   )
   api.post("/git/unstage-all", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCwdSchema,
+      "gitUnstageAll",
       mutate(async (b) => {
         await git.unstageAll(b.cwd)
-        return { ok: true }
+        return { ok: true as const }
       }),
       { operation: "git unstage-all" }
     )
   )
   api.post("/git/hunks/apply", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitHunkActionSchema,
+      "gitHunkApply",
       mutate((body) => applyHunkWithReceipt(state, body)),
       { operation: "git hunk apply" }
     )
   )
   api.post("/git/log", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitLogSchema,
+      "gitLog",
       read((b) => git.log(b.cwd, b.count)),
       {
         operation: "git log",
@@ -354,63 +342,61 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
     )
   )
   api.post("/git/checkout", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCheckoutSchema,
+      "gitCheckout",
       mutate(async (b) => {
         await git.checkout(b.cwd, b.branch, b.create)
-        return { ok: true }
+        return { ok: true as const }
       }),
       { operation: "git checkout" }
     )
   )
   api.post("/git/branch/rename", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitBranchRenameSchema,
+      "gitBranchRename",
       mutate(async (b) => {
         await git.renameBranch(b.cwd, b.oldName, b.newName)
-        return { ok: true }
+        return { ok: true as const }
       }),
       { operation: "git branch rename" }
     )
   )
   api.post("/git/stash", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitStashSchema,
+      "gitStash",
       mutate(async (b) => {
         await git.stash(b.cwd, b.message)
-        return { ok: true }
+        return { ok: true as const }
       }),
       { operation: "git stash" }
     )
   )
   api.post("/git/stash-pop", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCwdSchema,
+      "gitStashPop",
       mutate(async (b) => {
         await git.stashPop(b.cwd)
-        return { ok: true }
+        return { ok: true as const }
       }),
       { operation: "git stash-pop" }
     )
   )
   api.post("/git/worktrees", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCwdSchema,
+      "gitWorktrees",
       read((b) => git.listWorktrees(b.cwd)),
-      {
-        operation: "git worktrees",
-      }
+      { operation: "git worktrees" }
     )
   )
   api.post("/git/worktrees/create", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitWorktreeCreateSchema,
+      "gitWorktreeCreate",
       mutate(async (b) => {
         await resolveApprovedWorkspaceRoot(
           state,
@@ -422,35 +408,35 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
     )
   )
   api.post("/git/worktrees/remove", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitWorktreeRemoveSchema,
+      "gitWorktreeRemove",
       mutate(async (b) => {
         await resolveApprovedWorkspaceRoot(
           state,
           path.resolve(b.cwd, b.worktreePath)
         )
         await git.removeWorktree(b.cwd, b.worktreePath, { force: b.force })
-        return { ok: true }
+        return { ok: true as const }
       }),
       { operation: "git worktree remove" }
     )
   )
   api.post("/git/worktrees/prune", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCwdSchema,
+      "gitWorktreePrune",
       mutate(async (b) => {
         await git.pruneWorktrees(b.cwd)
-        return { ok: true }
+        return { ok: true as const }
       }),
       { operation: "git worktree prune" }
     )
   )
   api.post("/git/checkpoints/capture", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCheckpointSchema,
+      "gitCheckpointCapture",
       async () => {
         throw new HttpError(
           410,
@@ -462,17 +448,17 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
     )
   )
   api.post("/git/checkpoints/has", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCheckpointSchema,
+      "gitCheckpointHas",
       read(async (b) => ({ exists: await git.hasCheckpointRef(b) })),
       { operation: "git checkpoint has" }
     )
   )
   api.post("/git/checkpoints/restore", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCheckpointSchema,
+      "gitCheckpointRestore",
       async () => {
         throw new HttpError(
           410,
@@ -484,19 +470,17 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
     )
   )
   api.post("/git/checkpoints/diff", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCheckpointDiffSchema,
+      "gitCheckpointDiff",
       read((b) => git.diffCheckpoints(b)),
-      {
-        operation: "git checkpoint diff",
-      }
+      { operation: "git checkpoint diff" }
     )
   )
   api.post("/git/checkpoints/delete", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      gitCheckpointDeleteSchema,
+      "gitCheckpointDelete",
       async () => {
         throw new HttpError(
           410,

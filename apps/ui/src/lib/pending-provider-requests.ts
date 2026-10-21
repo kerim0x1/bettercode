@@ -1,60 +1,13 @@
-import { asRecord } from "@betterc0de/schema"
 import type { ThreadActivity } from "@betterc0de/schema"
+import { isStalePendingRequestFailureActivity } from "@betterc0de/schema/pending-requests"
 
-const STALE_PENDING_REQUEST_DETAILS = [
-  "stale pending approval request",
-  "stale pending user-input request",
-  "stale pending plan-approval request",
-  "unknown pending approval request",
-  "unknown pending permission request",
-  "unknown pending user-input request",
-  "unknown pending plan-approval request",
-] as const
-
-function stringFrom(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined
-}
-
-export function isStalePendingRequestFailureDetail(detail: unknown): boolean {
-  const normalized = stringFrom(detail)?.toLowerCase()
-  if (!normalized) return false
-  return STALE_PENDING_REQUEST_DETAILS.some((needle) =>
-    normalized.includes(needle)
-  )
-}
-
-export function requestIdFromActivity(
-  activity: Pick<ThreadActivity, "payload">
-): string | undefined {
-  const payload = asRecord(activity.payload)
-  const direct = stringFrom(payload.requestId) ?? stringFrom(payload.request_id)
-  if (direct) return direct
-
-  const data = asRecord(payload.data)
-  const item = asRecord(payload.item)
-  return (
-    stringFrom(data.requestId) ??
-    stringFrom(data.request_id) ??
-    stringFrom(item.requestId) ??
-    stringFrom(item.request_id)
-  )
-}
-
-function failureDetailFromActivity(
-  activity: Pick<ThreadActivity, "payload" | "summary">
-): string | undefined {
-  const payload = asRecord(activity.payload)
-  const data = asRecord(payload.data)
-  return (
-    stringFrom(payload.detail) ??
-    stringFrom(payload.error) ??
-    stringFrom(payload.message) ??
-    stringFrom(data.detail) ??
-    stringFrom(data.error) ??
-    stringFrom(data.message) ??
-    stringFrom(activity.summary)
-  )
-}
+// Which requests are open, and what settles one, is shared with the phone
+// (`@betterc0de/schema/pending-requests`); these re-exports keep the
+// renderer's existing import sites.
+export {
+  isStalePendingRequestFailureDetail,
+  requestIdFromActivity,
+} from "@betterc0de/schema/pending-requests"
 
 /**
  * Human-readable detail for a request response that the backend refused
@@ -138,7 +91,7 @@ export function isStalePendingApprovalFailureActivity(
 ): boolean {
   return (
     activity.kind === "provider.approval.respond.failed" &&
-    isStalePendingRequestFailureDetail(failureDetailFromActivity(activity))
+    isStalePendingRequestFailureActivity(activity)
   )
 }
 
@@ -147,6 +100,6 @@ export function isStalePendingUserInputFailureActivity(
 ): boolean {
   return (
     activity.kind === "provider.user-input.respond.failed" &&
-    isStalePendingRequestFailureDetail(failureDetailFromActivity(activity))
+    isStalePendingRequestFailureActivity(activity)
   )
 }

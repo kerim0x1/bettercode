@@ -8,6 +8,7 @@ import {
   BYPASS_CONFIRM_TITLE,
 } from "@betterc0de/schema/chat-controls"
 import ChatScreen from "@/app/chat/[id]"
+import { BYPASS_UNAVAILABLE_HINT } from "@/lib/bypass"
 import { useAppStore } from "@/store/app-store"
 import { useComposerSettings } from "@/store/composer-settings-store"
 import { useQueueStore } from "@/store/queue-store"
@@ -138,9 +139,50 @@ describe("chat controls", () => {
   )
 })
 
-describe("always allow", () => {
+describe("Bypass without the desktop's terminal grant", () => {
+  /** The paired test desktop states `terminalGranted: false`. */
+  async function openPairedChat() {
+    pairWithTestDesktop()
+    await renderRouter(
+      { "chat/[id]": ChatScreen },
+      { initialUrl: `/chat/${THREAD}` }
+    )
+  }
+
+  it("is listed with the reason, but cannot be chosen", async () => {
+    const alert = jest.spyOn(Alert, "alert").mockImplementation(() => undefined)
+    await openPairedChat()
+    await fireEvent.press(await screen.findByTestId("composer-permissions"))
+    const bypass = await screen.findByTestId("permission-option-bypass")
+    expect(bypass.props.accessibilityState).toMatchObject({ disabled: true })
+    expect(screen.getByText(BYPASS_UNAVAILABLE_HINT)).toBeTruthy()
+    expect(
+      screen.getByTestId("permission-option-allow-edits").props
+        .accessibilityState
+    ).toMatchObject({ disabled: false })
+
+    await fireEvent.press(bypass)
+    expect(alert).not.toHaveBeenCalled()
+    expect(
+      useComposerSettings.getState().settingsFor(THREAD).permissionLevel
+    ).toBe("ask-on-edit")
+  })
+
+  it("moves a chat saved on Bypass to Ask first, and says why", async () => {
+    useComposerSettings.getState().update(THREAD, { permissionLevel: "bypass" })
+    await openPairedChat()
+    expect(await screen.findByTestId("permission-notice")).toBeTruthy()
+    expect(screen.getByText("Bypass is off for this phone")).toBeTruthy()
+    expect(await screen.findByLabelText("Permissions: Ask first")).toBeTruthy()
+    expect(
+      useComposerSettings.getState().settingsFor(THREAD).permissionLevel
+    ).toBe("ask-on-edit")
+  })
+})
+
+describe("allow for this session", () => {
   it(
-    "stores the exact rule it shows, where the user chose",
+    "applies the exact rule it shows to this session only",
     async () => {
       const api = await openDemoChat()
       const respond = jest.spyOn(api, "respondApproval")
@@ -148,11 +190,16 @@ describe("always allow", () => {
       await fireEvent.press(screen.getByTestId("chat-send"))
       expect(await screen.findByText("Run npm test", {}, STREAMED)).toBeTruthy()
 
-      await fireEvent.press(screen.getByTestId("request-always-allow"))
-      expect(await screen.findByText("This session")).toBeTruthy()
-      expect(screen.getByText("All projects")).toBeTruthy()
-      expect(screen.getAllByText("Bash(npm:*)")).toHaveLength(3)
-      await fireEvent.press(screen.getByText("This project"))
+      // The desktop drops lasting rules from a paired phone, so the phone
+      // does not offer them.
+      await fireEvent.press(screen.getByTestId("request-allow-session"))
+      expect(
+        await screen.findByText(/does not save rules from a paired phone/)
+      ).toBeTruthy()
+      expect(screen.queryByText("This project")).toBeNull()
+      expect(screen.queryByText("All projects")).toBeNull()
+      expect(screen.getAllByText("Bash(npm:*)")).toHaveLength(1)
+      await fireEvent.press(screen.getByTestId("request-allow-session-confirm"))
 
       await waitFor(() => expect(respond).toHaveBeenCalledTimes(1))
       expect(respond.mock.calls[0]![0]).toMatchObject({
@@ -163,7 +210,7 @@ describe("always allow", () => {
             type: "addRules",
             rules: [{ toolName: "Bash", ruleContent: "npm:*" }],
             behavior: "allow",
-            destination: "localSettings",
+            destination: "session",
           },
         ],
       })
@@ -185,7 +232,7 @@ describe("always allow", () => {
       await fireEvent.press(screen.getByTestId("chat-send"))
       expect(await screen.findByText("Run npm test", {}, STREAMED)).toBeTruthy()
       expect(screen.getByTestId("request-approve")).toBeTruthy()
-      expect(screen.queryByTestId("request-always-allow")).toBeNull()
+      expect(screen.queryByTestId("request-allow-session")).toBeNull()
     },
     FLOW_TIMEOUT_MS
   )

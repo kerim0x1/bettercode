@@ -177,6 +177,17 @@ export function normalizeGatePermissionLevel(
   return normalizeLevel(key)
 }
 
+/**
+ * The one alias table for permission levels. Every accepted spelling maps to
+ * one of the four presets; anything else fails closed to `ask-on-edit`.
+ *
+ * `full` and `full-access` are the old picker's "Full Access" label, which
+ * meant `allow-edits` (edits without asking, the provider's own guardrails
+ * kept) — never `bypass`. The runtime-mode spellings `auto-accept-edits`
+ * and `approval-required` are accepted too, so no caller needs a private
+ * switch statement that could disagree. Only an explicit `bypass` grants
+ * bypass.
+ */
 export function normalizeLevel(
   level: PermissionLevel | string | null | undefined
 ): PermissionLevel {
@@ -186,17 +197,84 @@ export function normalizeLevel(
     case "allow-edits":
     case "full":
     case "full-access":
+    case "auto-accept-edits":
       return "allow-edits"
     case "read-only":
     case "read":
       return "read-only"
     case "ask-on-edit":
     case "ask":
+    case "approval-required":
       return "ask-on-edit"
     default:
       // Fail-closed on unknown/missing levels — users who want auto-execute
       // must explicitly pick "bypass" or "allow-edits".
       return "ask-on-edit"
+  }
+}
+
+/** Whether a requested level (any accepted spelling) is full bypass. */
+export function isBypassPermissionLevel(
+  level: string | null | undefined
+): boolean {
+  return normalizeGatePermissionLevel(level) === "bypass"
+}
+
+/** Permission modes the provider hub can switch a live session to. */
+export type ProviderPermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "bypassPermissions"
+  | "plan"
+
+/**
+ * Live provider permission mode for a requested level. `plan` is an
+ * interaction mode rather than a level and is passed through; every other
+ * value goes through the shared alias table, so `full-access` can never mean
+ * bypass here while meaning `allow-edits` to the tool gates.
+ */
+export function providerPermissionModeForLevel(
+  level: string | null | undefined
+): ProviderPermissionMode {
+  if ((level ?? "").toString().toLowerCase().trim() === "plan") return "plan"
+  switch (normalizeGatePermissionLevel(level)) {
+    case "bypass":
+      return "bypassPermissions"
+    case "allow-edits":
+      return "acceptEdits"
+    default:
+      return "default"
+  }
+}
+
+/** Provider-neutral runtime mode names stored on provider session bindings. */
+export type ProviderRuntimeModeForLevel =
+  | "full-access"
+  | "auto-accept-edits"
+  | "approval-required"
+  | "read-only"
+
+/**
+ * Runtime mode for a requested level, through the shared alias table. A
+ * missing level, or `default` ("the provider decides"), yields `undefined`
+ * so the caller keeps its own default; an unknown spelling fails closed to
+ * `approval-required` rather than inheriting a broader persisted mode.
+ */
+export function providerRuntimeModeForLevel(
+  level: string | null | undefined
+): ProviderRuntimeModeForLevel | undefined {
+  if (!(level ?? "").toString().trim()) return undefined
+  switch (normalizeGatePermissionLevel(level)) {
+    case "default":
+      return undefined
+    case "bypass":
+      return "full-access"
+    case "allow-edits":
+      return "auto-accept-edits"
+    case "read-only":
+      return "read-only"
+    case "ask-on-edit":
+      return "approval-required"
   }
 }
 
@@ -224,11 +302,12 @@ export function describeBlock(
 // so HTTP backstops (shell.ts / workspace.ts) can consult the current policy
 // without threading it through every provider adapter.
 //
-// Populated by the /chat/send route on every turn; consumers read but never
-// mutate it directly. A simple Map is enough — this state is ephemeral per
-// IDE session, and threads are short-lived.
+// Populated by the /chat/send route on every turn and dropped when a thread
+// is deleted; the map itself stays private so that is the only way it
+// changes. A simple Map is enough — this state is ephemeral per IDE session,
+// and threads are short-lived.
 
-export const sessionPermissions = new Map<string, PermissionLevel>()
+const sessionPermissions = new Map<string, PermissionLevel>()
 
 export function setSessionPermission(
   threadId: string,
@@ -241,23 +320,81 @@ export function getSessionPermission(threadId: string): PermissionLevel {
   return sessionPermissions.get(threadId) ?? "ask-on-edit"
 }
 
+/**
+ * The level a turn or a live change set for this thread in this process,
+ * or `null` when none has (after a restart, until the next turn). Callers
+ * fall back to the level kept with the chat (services/chat/thread-settings).
+ */
+export function peekSessionPermission(
+  threadId: string
+): PermissionLevel | null {
+  return sessionPermissions.get(threadId) ?? null
+}
+
+/** Drops a deleted thread's level; the thread reads as ask-on-edit again. */
+export function forgetSessionPermission(threadId: string): void {
+  sessionPermissions.delete(threadId)
+}
+
 // ─── Pending approvals ──────────────────────────────────────────────────────
 // The `ask-on-edit` path emits `tool_approval_requested` and waits for the
 // renderer to POST `/chat/approval` — the HTTP route routes the decision
 // back here via `resolveApproval`, which resolves the promise handed out by
 // `awaitApproval`. Adapters then inspect the decision to decide whether to
 // proceed with the tool call.
+//
+// An approval waits for the user without a deadline, like the Claude, Codex
+// and ACP runtimes: it settles on the user's answer, or as "deny" when the
+// turn is interrupted (`cancelPendingApprovals`). The turn watchdog pauses
+// its inactivity limit meanwhile (`pendingApprovalCount`).
 
 type ApprovalDecision = "approve" | "deny"
 type ApprovalResolver = (decision: ApprovalDecision) => void
 
 interface PendingApproval {
+  readonly threadId: string
   readonly resolve: ApprovalResolver
-  readonly timer: ReturnType<typeof setTimeout>
+  readonly timer: ReturnType<typeof setTimeout> | null
 }
 
-const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60_000
 const pendingApprovals = new Map<string, PendingApproval>()
+const approvalSettledListeners = new Set<(threadId: string) => void>()
+
+function settleApproval(
+  key: string,
+  pending: PendingApproval,
+  decision: ApprovalDecision
+): void {
+  pendingApprovals.delete(key)
+  if (pending.timer) clearTimeout(pending.timer)
+  pending.resolve(decision)
+  for (const listener of approvalSettledListeners) {
+    try {
+      listener(pending.threadId)
+    } catch {
+      // A watcher must not keep the decision from reaching the adapter.
+    }
+  }
+}
+
+/** Approvals of the thread still waiting for the user. */
+export function pendingApprovalCount(threadId: string): number {
+  let count = 0
+  for (const pending of pendingApprovals.values()) {
+    if (pending.threadId === threadId) count += 1
+  }
+  return count
+}
+
+/** Called with the thread id whenever one of its approvals settles. */
+export function onApprovalSettled(
+  listener: (threadId: string) => void
+): () => void {
+  approvalSettledListeners.add(listener)
+  return () => {
+    approvalSettledListeners.delete(listener)
+  }
+}
 
 function approvalKey(threadId: string, requestId: string): string {
   return `${threadId}::${requestId}`
@@ -272,29 +409,32 @@ export function generateApprovalRequestId(): string {
   return `perm-${randomUUID()}`
 }
 
+/**
+ * Waits for the user's decision. Without `timeoutMs` there is no deadline;
+ * with one, an unanswered approval is denied when it expires.
+ */
 export function awaitApproval(
   threadId: string,
   requestId: string,
-  timeoutMs = DEFAULT_APPROVAL_TIMEOUT_MS
+  timeoutMs?: number
 ): Promise<ApprovalDecision> {
   return new Promise((resolve) => {
     const key = approvalKey(threadId, requestId)
     const previous = pendingApprovals.get(key)
-    if (previous) {
-      clearTimeout(previous.timer)
-      previous.resolve("deny")
+    if (previous) settleApproval(key, previous, "deny")
+    let timer: ReturnType<typeof setTimeout> | null = null
+    if (timeoutMs !== undefined && Number.isFinite(timeoutMs)) {
+      timer = setTimeout(
+        () => {
+          const current = pendingApprovals.get(key)
+          if (!current || current.resolve !== resolve) return
+          settleApproval(key, current, "deny")
+        },
+        Math.min(2_147_483_647, Math.max(1, timeoutMs))
+      )
+      timer.unref?.()
     }
-    const timer = setTimeout(
-      () => {
-        const current = pendingApprovals.get(key)
-        if (!current || current.resolve !== resolve) return
-        pendingApprovals.delete(key)
-        resolve("deny")
-      },
-      Math.max(1, timeoutMs)
-    )
-    timer.unref?.()
-    pendingApprovals.set(key, { resolve, timer })
+    pendingApprovals.set(key, { threadId, resolve, timer })
   })
 }
 
@@ -306,9 +446,7 @@ export function resolveApproval(
   const key = approvalKey(threadId, requestId)
   const pending = pendingApprovals.get(key)
   if (!pending) return false
-  pendingApprovals.delete(key)
-  clearTimeout(pending.timer)
-  pending.resolve(decision)
+  settleApproval(key, pending, decision)
   return true
 }
 
@@ -316,11 +454,9 @@ export function resolveApproval(
  *  the turn so no awaiting adapter hangs forever. */
 export function cancelPendingApprovals(threadId: string): number {
   let count = 0
-  for (const [key, pending] of pendingApprovals) {
-    if (key.startsWith(`${threadId}::`)) {
-      pendingApprovals.delete(key)
-      clearTimeout(pending.timer)
-      pending.resolve("deny")
+  for (const [key, pending] of [...pendingApprovals]) {
+    if (pending.threadId === threadId) {
+      settleApproval(key, pending, "deny")
       count += 1
     }
   }

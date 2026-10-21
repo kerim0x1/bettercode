@@ -6,6 +6,7 @@
   "main": "main.cjs",
   "description": "Electron main + preload + IPC handlers for BetterC0de.",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit -p tsconfig.gate.json",
+    "typecheck:checkjs": "tsc --noEmit -p tsconfig.json"
   }
 }

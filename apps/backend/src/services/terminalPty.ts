@@ -12,12 +12,24 @@ import {
   isSafeShellEnvironmentOverrideKey,
   sanitizedShellEnvironment,
 } from "../security/childEnvironment"
+import {
+  resolveExecutableOnPath,
+  windowsSystemExecutable,
+} from "../security/executablePath"
+import { resolveComSpec } from "../security/windowsCommandLine"
+import { trackProcessTree } from "./child-process-registry"
 
 const MAX_EVENTS = 5_000
 export const TERMINAL_PTY_MAX_EVENT_DATA_BYTES = 256 * 1024
 export const TERMINAL_PTY_MAX_BUFFER_BYTES = 4 * 1024 * 1024
 export const TERMINAL_PTY_MAX_ACTIVE_SESSIONS = 16
 export const TERMINAL_PTY_MAX_ACTIVE_SESSIONS_PER_OWNER = 4
+/**
+ * The desktop's own renderer keeps several terminals per chat (tabs and
+ * split panes) next to its dev servers, so its owner gets more than a
+ * paired device; the rest of the global cap stays free for devices.
+ */
+export const TERMINAL_PTY_MAX_ACTIVE_SESSIONS_FOR_DESKTOP = 12
 export const TERMINAL_PTY_MAX_RETAINED_SESSIONS = 64
 const SESSION_TTL_MS = 60_000
 /**
@@ -32,7 +44,18 @@ export const TERMINAL_PTY_KILLED_EXIT_REPORT_MS = 3_000
 export interface OpenTerminalPtyInput {
   readonly sessionId?: string
   readonly ownerId?: string
+  /**
+   * `ownerId` is the desktop app itself, which may run
+   * `TERMINAL_PTY_MAX_ACTIVE_SESSIONS_FOR_DESKTOP` terminals instead of the
+   * per-caller default. The global cap still applies.
+   */
+  readonly ownerIsDesktop?: boolean
   readonly ownerExpiresAt?: number
+  /**
+   * The renderer instance that opened the terminal, when it identified
+   * itself, so its terminals can be closed when that renderer goes away.
+   */
+  readonly clientInstanceId?: string
   readonly cwd: string
   readonly shell?: string
   readonly command?: string
@@ -82,6 +105,7 @@ interface TerminalPtySession {
   readonly args: readonly string[]
   readonly handle: NativePtyHandle
   readonly ownerId?: string
+  readonly clientInstanceId?: string
   readonly exitPromise: Promise<void>
   terminationTail: Promise<void>
   terminationPendingCount: number
@@ -101,345 +125,515 @@ interface TerminalPtySession {
   readonly onProcessTreeFailure?: (error: Error) => void
 }
 
-const sessions = new Map<string, TerminalPtySession>()
-let terminalPtyAdmissionsOpen = true
-
-export function resumeTerminalPtyAdmissions(): void {
-  terminalPtyAdmissionsOpen = true
-}
-
-export function beginTerminalPtyShutdown(): void {
-  terminalPtyAdmissionsOpen = false
-}
-
-export function openTerminalPtySession(
-  input: OpenTerminalPtyInput
-): TerminalPtySnapshot {
-  if (!terminalPtyAdmissionsOpen) {
-    throw Object.assign(new Error("Terminal service is shutting down."), {
-      statusCode: 503,
-    })
-  }
-  if (
-    input.ownerExpiresAt !== undefined &&
-    (!Number.isFinite(input.ownerExpiresAt) ||
-      input.ownerExpiresAt <= Date.now())
-  ) {
-    throw Object.assign(
-      new Error("Terminal session owner is no longer active."),
-      {
-        statusCode: 403,
-        code: "TERMINAL_PTY_OWNER_INACTIVE",
-      }
-    )
-  }
-  const sessionId = input.sessionId ?? randomUUID()
-  if (sessions.has(sessionId)) {
-    throw Object.assign(
-      new Error(`Terminal session already exists: ${sessionId}`),
-      {
-        statusCode: 409,
-      }
-    )
-  }
-  pruneExitedSessionsForCapacity()
-  const activeSessionCount = countActiveSessions()
-  if (activeSessionCount >= TERMINAL_PTY_MAX_ACTIVE_SESSIONS) {
-    throw Object.assign(
-      new Error(
-        `Too many active terminal sessions (${TERMINAL_PTY_MAX_ACTIVE_SESSIONS} maximum).`
-      ),
-      { statusCode: 429 }
-    )
-  }
-  if (
-    input.ownerId &&
-    countActiveSessions(input.ownerId) >=
-      TERMINAL_PTY_MAX_ACTIVE_SESSIONS_PER_OWNER
-  ) {
-    throw Object.assign(
-      new Error(
-        `Too many active terminal sessions for this caller (${TERMINAL_PTY_MAX_ACTIVE_SESSIONS_PER_OWNER} maximum).`
-      ),
-      { statusCode: 429 }
-    )
-  }
-
-  const cwd = resolveCwd(input.cwd)
-  const launch = input.command
-    ? {
-        shell: "custom",
-        command: input.command,
-        args: [...(input.args ?? [])],
-      }
-    : resolveTerminalShellLaunch(input.shell)
-  const displayArgs = formatLaunchArgs(launch.args)
-  const env = makeTerminalEnv(input.env)
-  const handle = spawnNativePty({
-    command: launch.command,
-    args: launch.args,
-    cwd,
-    env,
-    cols: input.cols,
-    rows: input.rows,
-    onData: (data) => pushEvent(sessionId, { type: "data", data }),
-  })
-  const nativeExitPromise = handle.waitForExit()
-  let settleExitPromise!: () => void
-  const exitPromise = new Promise<void>((resolve) => {
-    settleExitPromise = resolve
-  })
-  const session: TerminalPtySession = {
-    sessionId,
-    pid: handle.pid,
-    cwd,
-    shell: launch.shell,
-    command: launch.command,
-    args: displayArgs,
-    handle,
-    ownerId: input.ownerId,
-    exitPromise,
-    terminationTail: Promise.resolve(),
-    terminationPendingCount: 0,
-    terminationErrors: [],
-    exitError: null,
-    status: "running",
-    closeRequested: false,
-    nextSeq: 0,
-    events: [],
-    bufferedBytes: 0,
-    cleanupTimer: null,
-    terminationTimer: null,
-    ownerExpiryTimer: null,
-    processExitNotified: false,
-    listeners: new Set(),
-    onProcessExit: input.onProcessExit,
-    onProcessTreeFailure: input.onProcessTreeFailure,
-  }
-  sessions.set(sessionId, session)
-  scheduleTerminalPtyOwnerExpiry(session, input.ownerExpiresAt)
-  pushEvent(sessionId, {
-    type: "system",
-    data: formatLaunchCommand(launch.command, displayArgs),
-  })
-  void nativeExitPromise.then(
-    (exit) => {
-      markExited(session, exit)
-      settleExitPromise()
-    },
-    (error) => {
-      markExitFailed(session, error)
-      settleExitPromise()
-    }
-  )
-
-  return snapshot(session, 0)
-}
-
-export function readTerminalPtySession(
-  sessionId: string,
-  cursor = 0,
-  ownerId?: string
-): TerminalPtySnapshot | null {
-  const session = sessions.get(sessionId)
-  if (!session || !ownerMatches(session, ownerId)) return null
-  return snapshot(session, cursor)
-}
-
 /**
- * Calls `listener` with each event the terminal records from now on, until
- * the returned function is called. Null for a terminal that does not exist
- * or belongs to another owner. A listener only observes: one that throws
- * stops neither the others nor the terminal.
+ * The terminals of one backend instance: the PTY sessions it opened, their
+ * buffered output and listeners, and whether it admits new ones.
+ *
+ * Bootstrap creates one (`BootRoot.terminalPtys`, `AppState.terminalPtys`)
+ * and every route, channel and lifecycle step that opens, reads or ends a
+ * terminal goes through it, so two backends in one process (the in-process
+ * host, tests) no longer share a session table and a test builds its own
+ * instead of resetting a module-level one.
  */
-export function subscribeTerminalPtySession(
-  sessionId: string,
-  listener: TerminalPtyListener,
-  ownerId?: string
-): (() => void) | null {
-  const session = sessions.get(sessionId)
-  if (!session || !ownerMatches(session, ownerId)) return null
-  session.listeners.add(listener)
-  return () => {
-    session.listeners.delete(listener)
-  }
-}
+export class TerminalPtyService {
+  private readonly sessions = new Map<string, TerminalPtySession>()
+  private admissionsOpen = true
 
-export function writeTerminalPtySession(
-  sessionId: string,
-  data: string,
-  ownerId?: string
-): boolean {
-  const session = sessions.get(sessionId)
-  if (
-    !session ||
-    !ownerMatches(session, ownerId) ||
-    session.status !== "running" ||
-    session.closeRequested
-  ) {
-    return false
+  resumeAdmissions(): void {
+    this.admissionsOpen = true
   }
-  session.handle.write(data)
-  return true
-}
 
-export function terminalPtySessionCwd(
-  sessionId: string,
-  ownerId?: string
-): string | null {
-  const session = sessions.get(sessionId)
-  return session && ownerMatches(session, ownerId) ? session.cwd : null
-}
-
-export function resizeTerminalPtySession(
-  sessionId: string,
-  cols: number,
-  rows: number,
-  ownerId?: string
-): boolean {
-  const session = sessions.get(sessionId)
-  if (
-    !session ||
-    !ownerMatches(session, ownerId) ||
-    session.status !== "running" ||
-    session.closeRequested
-  ) {
-    return false
+  beginShutdown(): void {
+    this.admissionsOpen = false
   }
-  session.handle.resize(cols, rows)
-  return true
-}
 
-export function closeTerminalPtySession(
-  sessionId: string,
-  ownerId?: string
-): boolean {
-  const session = sessions.get(sessionId)
-  if (!session || !ownerMatches(session, ownerId)) return false
-  if (session.cleanupTimer) clearTimeout(session.cleanupTimer)
-  if (session.ownerExpiryTimer) {
-    clearTimeout(session.ownerExpiryTimer)
-    session.ownerExpiryTimer = null
-  }
-  session.closeRequested = true
-  if (session.status !== "exited") {
-    if (!session.terminationTimer && session.terminationPendingCount === 0) {
-      queueTerminalPtyTermination(session, "SIGTERM")
-      session.terminationTimer = setTimeout(() => {
-        session.terminationTimer = null
-        if (session.status !== "exited") {
-          queueTerminalPtyTermination(session, "SIGKILL")
+  openSession(input: OpenTerminalPtyInput): TerminalPtySnapshot {
+    if (!this.admissionsOpen) {
+      throw Object.assign(new Error("Terminal service is shutting down."), {
+        statusCode: 503,
+      })
+    }
+    if (
+      input.ownerExpiresAt !== undefined &&
+      (!Number.isFinite(input.ownerExpiresAt) ||
+        input.ownerExpiresAt <= Date.now())
+    ) {
+      throw Object.assign(
+        new Error("Terminal session owner is no longer active."),
+        {
+          statusCode: 403,
+          code: "TERMINAL_PTY_OWNER_INACTIVE",
         }
-      }, 2_000)
-      session.terminationTimer.unref?.()
+      )
     }
-  } else {
-    sessions.delete(sessionId)
+    const sessionId = input.sessionId ?? randomUUID()
+    if (this.sessions.has(sessionId)) {
+      throw Object.assign(
+        new Error(`Terminal session already exists: ${sessionId}`),
+        {
+          statusCode: 409,
+        }
+      )
+    }
+    this.pruneExitedSessionsForCapacity()
+    const activeSessionCount = this.countActiveSessions()
+    if (activeSessionCount >= TERMINAL_PTY_MAX_ACTIVE_SESSIONS) {
+      throw Object.assign(
+        new Error(
+          `Too many active terminal sessions (${TERMINAL_PTY_MAX_ACTIVE_SESSIONS} maximum).`
+        ),
+        { statusCode: 429 }
+      )
+    }
+    const ownerLimit = input.ownerIsDesktop
+      ? TERMINAL_PTY_MAX_ACTIVE_SESSIONS_FOR_DESKTOP
+      : TERMINAL_PTY_MAX_ACTIVE_SESSIONS_PER_OWNER
+    if (
+      input.ownerId &&
+      this.countActiveSessions(input.ownerId) >= ownerLimit
+    ) {
+      throw Object.assign(
+        new Error(
+          `Too many active terminal sessions for this caller (${ownerLimit} maximum).`
+        ),
+        { statusCode: 429 }
+      )
+    }
+
+    const cwd = resolveCwd(input.cwd)
+    const launch = input.command
+      ? {
+          shell: "custom",
+          command: input.command,
+          args: [...(input.args ?? [])],
+        }
+      : resolveTerminalShellLaunch(input.shell)
+    const displayArgs = formatLaunchArgs(launch.args)
+    const env = makeTerminalEnv(input.env)
+    const handle = spawnNativePty({
+      command: launch.command,
+      args: launch.args,
+      cwd,
+      env,
+      cols: input.cols,
+      rows: input.rows,
+      onData: (data) => this.pushEvent(sessionId, { type: "data", data }),
+    })
+    const nativeExitPromise = handle.waitForExit()
+    let settleExitPromise!: () => void
+    const exitPromise = new Promise<void>((resolve) => {
+      settleExitPromise = resolve
+    })
+    const session: TerminalPtySession = {
+      sessionId,
+      pid: handle.pid,
+      cwd,
+      shell: launch.shell,
+      command: launch.command,
+      args: displayArgs,
+      handle,
+      ownerId: input.ownerId,
+      ...(input.clientInstanceId
+        ? { clientInstanceId: input.clientInstanceId }
+        : {}),
+      exitPromise,
+      terminationTail: Promise.resolve(),
+      terminationPendingCount: 0,
+      terminationErrors: [],
+      exitError: null,
+      status: "running",
+      closeRequested: false,
+      nextSeq: 0,
+      events: [],
+      bufferedBytes: 0,
+      cleanupTimer: null,
+      terminationTimer: null,
+      ownerExpiryTimer: null,
+      processExitNotified: false,
+      listeners: new Set(),
+      onProcessExit: input.onProcessExit,
+      onProcessTreeFailure: input.onProcessTreeFailure,
+    }
+    this.sessions.set(sessionId, session)
+    // Kill the PTY's tree if the backend exits without closing it (see
+    // child-process-registry). node-pty starts POSIX PTYs in a new session, so
+    // the PID is also the process-group ID.
+    const untrackTree = trackProcessTree({
+      pid: handle.pid,
+      label: "terminal",
+      processGroup: process.platform !== "win32",
+      isRunning: () => session.status === "running",
+    })
+    void exitPromise.then(() => {
+      if (session.status === "exited") untrackTree()
+    })
+    this.scheduleOwnerExpiry(session, input.ownerExpiresAt)
+    this.pushEvent(sessionId, {
+      type: "system",
+      data: formatLaunchCommand(launch.command, displayArgs),
+    })
+    void nativeExitPromise.then(
+      (exit) => {
+        this.markExited(session, exit)
+        settleExitPromise()
+      },
+      (error) => {
+        this.markExitFailed(session, error)
+        settleExitPromise()
+      }
+    )
+
+    return snapshot(session, 0)
   }
-  return true
-}
 
-export function closeAllTerminalPtySessions(): number {
-  const sessionIds = [...sessions.keys()]
-  for (const sessionId of sessionIds) closeTerminalPtySession(sessionId)
-  return sessionIds.length
-}
+  readSession(
+    sessionId: string,
+    cursor = 0,
+    ownerId?: string
+  ): TerminalPtySnapshot | null {
+    const session = this.sessions.get(sessionId)
+    if (!session || !ownerMatches(session, ownerId)) return null
+    return snapshot(session, cursor)
+  }
 
-/**
- * Stops all retained PTYs and waits for their native processes to exit.
- * Shutdown remains bounded even when a PTY implementation never resolves its
- * exit promise.
- */
-export async function shutdownAllTerminalPtySessions(
-  graceMs = 2_000
-): Promise<number> {
-  const retained = [...sessions.values()]
-  return shutdownTerminalPtySessions(retained, graceMs)
-}
+  /**
+   * Calls `listener` with each event the terminal records from now on, until
+   * the returned function is called. Null for a terminal that does not exist
+   * or belongs to another owner. A listener only observes: one that throws
+   * stops neither the others nor the terminal.
+   */
+  subscribeSession(
+    sessionId: string,
+    listener: TerminalPtyListener,
+    ownerId?: string
+  ): (() => void) | null {
+    const session = this.sessions.get(sessionId)
+    if (!session || !ownerMatches(session, ownerId)) return null
+    session.listeners.add(listener)
+    return () => {
+      session.listeners.delete(listener)
+    }
+  }
 
-export async function shutdownTerminalPtySessionsForWorkspace(
-  workspace: string,
-  graceMs = 2_000
-): Promise<number> {
-  const retained = [...sessions.values()].filter((session) =>
-    isSameOrDescendantPath(workspace, session.cwd)
-  )
-  return shutdownTerminalPtySessions(retained, graceMs)
-}
+  writeSession(sessionId: string, data: string, ownerId?: string): boolean {
+    const session = this.sessions.get(sessionId)
+    if (
+      !session ||
+      !ownerMatches(session, ownerId) ||
+      session.status !== "running" ||
+      session.closeRequested
+    ) {
+      return false
+    }
+    session.handle.write(data)
+    return true
+  }
 
-export async function shutdownTerminalPtySessionsForOwner(
-  ownerId: string,
-  graceMs = 2_000
-): Promise<number> {
-  const retained = [...sessions.values()].filter(
-    (session) => session.ownerId === ownerId
-  )
-  return shutdownTerminalPtySessions(retained, graceMs)
-}
+  sessionCwd(sessionId: string, ownerId?: string): string | null {
+    const session = this.sessions.get(sessionId)
+    return session && ownerMatches(session, ownerId) ? session.cwd : null
+  }
 
-async function shutdownTerminalPtySessions(
-  retained: TerminalPtySession[],
-  graceMs: number
-): Promise<number> {
-  if (retained.length === 0) return 0
+  resizeSession(
+    sessionId: string,
+    cols: number,
+    rows: number,
+    ownerId?: string
+  ): boolean {
+    const session = this.sessions.get(sessionId)
+    if (
+      !session ||
+      !ownerMatches(session, ownerId) ||
+      session.status !== "running" ||
+      session.closeRequested
+    ) {
+      return false
+    }
+    session.handle.resize(cols, rows)
+    return true
+  }
 
-  const gracefulTerminations: Promise<void>[] = []
-  for (const session of retained) {
+  closeSession(sessionId: string, ownerId?: string): boolean {
+    const session = this.sessions.get(sessionId)
+    if (!session || !ownerMatches(session, ownerId)) return false
+    if (session.cleanupTimer) clearTimeout(session.cleanupTimer)
+    if (session.ownerExpiryTimer) {
+      clearTimeout(session.ownerExpiryTimer)
+      session.ownerExpiryTimer = null
+    }
     session.closeRequested = true
+    if (session.status !== "exited") {
+      if (!session.terminationTimer && session.terminationPendingCount === 0) {
+        queueTerminalPtyTermination(session, "SIGTERM")
+        session.terminationTimer = setTimeout(() => {
+          session.terminationTimer = null
+          if (session.status !== "exited") {
+            queueTerminalPtyTermination(session, "SIGKILL")
+          }
+        }, 2_000)
+        session.terminationTimer.unref?.()
+      }
+    } else {
+      this.sessions.delete(sessionId)
+    }
+    return true
+  }
+
+  closeAllSessions(): number {
+    const sessionIds = [...this.sessions.keys()]
+    for (const sessionId of sessionIds) this.closeSession(sessionId)
+    return sessionIds.length
+  }
+
+  /**
+   * Stops all retained PTYs and waits for their native processes to exit.
+   * Shutdown remains bounded even when a PTY implementation never resolves its
+   * exit promise.
+   */
+  async shutdownAll(graceMs = 2_000): Promise<number> {
+    const retained = [...this.sessions.values()]
+    return this.shutdownSessions(retained, graceMs)
+  }
+
+  async shutdownForWorkspace(
+    workspace: string,
+    graceMs = 2_000
+  ): Promise<number> {
+    const retained = [...this.sessions.values()].filter((session) =>
+      isSameOrDescendantPath(workspace, session.cwd)
+    )
+    return this.shutdownSessions(retained, graceMs)
+  }
+
+  async shutdownForOwner(ownerId: string, graceMs = 2_000): Promise<number> {
+    const retained = [...this.sessions.values()].filter(
+      (session) => session.ownerId === ownerId
+    )
+    return this.shutdownSessions(retained, graceMs)
+  }
+
+  async shutdownForClientInstance(
+    ownerId: string,
+    clientInstanceId: string,
+    graceMs = 2_000
+  ): Promise<number> {
+    const retained = [...this.sessions.values()].filter(
+      (session) =>
+        session.ownerId === ownerId &&
+        session.clientInstanceId === clientInstanceId
+    )
+    return this.shutdownSessions(retained, graceMs)
+  }
+
+  private async shutdownSessions(
+    retained: TerminalPtySession[],
+    graceMs: number
+  ): Promise<number> {
+    if (retained.length === 0) return 0
+
+    const gracefulTerminations: Promise<void>[] = []
+    for (const session of retained) {
+      session.closeRequested = true
+      if (session.terminationTimer) {
+        clearTimeout(session.terminationTimer)
+        session.terminationTimer = null
+      }
+      if (session.cleanupTimer) {
+        clearTimeout(session.cleanupTimer)
+        session.cleanupTimer = null
+      }
+      if (session.ownerExpiryTimer) {
+        clearTimeout(session.ownerExpiryTimer)
+        session.ownerExpiryTimer = null
+      }
+      if (session.status === "exited") continue
+      gracefulTerminations.push(queueTerminalPtyTermination(session, "SIGTERM"))
+    }
+
+    await Promise.all(gracefulTerminations)
+    await waitForTerminalPtySessions(retained, graceMs)
+    const running = retained.filter((session) => session.status !== "exited")
+    await Promise.all(
+      running.map((session) => queueTerminalPtyTermination(session, "SIGKILL"))
+    )
+    if (running.length > 0) {
+      await waitForTerminalPtySessions(
+        running,
+        TERMINAL_PTY_KILLED_EXIT_REPORT_MS
+      )
+    }
+
+    for (const session of retained) {
+      if (
+        session.status === "exited" &&
+        this.sessions.get(session.sessionId) === session
+      ) {
+        this.sessions.delete(session.sessionId)
+      }
+    }
+    const survivors = retained.filter((session) => session.status !== "exited")
+    if (survivors.length > 0) {
+      throw Object.assign(
+        new Error(
+          `${survivors.length} terminal session(s) did not exit during shutdown.`
+        ),
+        {
+          code: "TERMINAL_PTY_SHUTDOWN_INCOMPLETE",
+          sessionIds: survivors.map((session) => session.sessionId),
+          causes: survivors.flatMap((session) => [
+            ...session.terminationErrors,
+            ...(session.exitError ? [session.exitError] : []),
+          ]),
+        }
+      )
+    }
+    return retained.length
+  }
+
+  private markExited(session: TerminalPtySession, exit: NativePtyExit): void {
+    session.status = "exited"
+    session.exitError = null
+    session.terminationErrors.length = 0
+    if (!session.processExitNotified) {
+      session.processExitNotified = true
+      try {
+        session.onProcessExit?.()
+      } catch {
+        // A lifecycle observer must not prevent PTY cleanup.
+      }
+    }
     if (session.terminationTimer) {
       clearTimeout(session.terminationTimer)
       session.terminationTimer = null
-    }
-    if (session.cleanupTimer) {
-      clearTimeout(session.cleanupTimer)
-      session.cleanupTimer = null
     }
     if (session.ownerExpiryTimer) {
       clearTimeout(session.ownerExpiryTimer)
       session.ownerExpiryTimer = null
     }
-    if (session.status === "exited") continue
-    gracefulTerminations.push(queueTerminalPtyTermination(session, "SIGTERM"))
-  }
-
-  await Promise.all(gracefulTerminations)
-  await waitForTerminalPtySessions(retained, graceMs)
-  const running = retained.filter((session) => session.status !== "exited")
-  await Promise.all(
-    running.map((session) => queueTerminalPtyTermination(session, "SIGKILL"))
-  )
-  if (running.length > 0) {
-    await waitForTerminalPtySessions(
-      running,
-      TERMINAL_PTY_KILLED_EXIT_REPORT_MS
-    )
-  }
-
-  for (const session of retained) {
-    if (
-      session.status === "exited" &&
-      sessions.get(session.sessionId) === session
-    ) {
-      sessions.delete(session.sessionId)
+    if (this.sessions.get(session.sessionId) !== session) return
+    this.pushEvent(session.sessionId, {
+      type: "exit",
+      exitCode: exit.exitCode,
+      signal: exit.signal ?? null,
+    })
+    if (session.closeRequested) {
+      this.sessions.delete(session.sessionId)
+    } else {
+      this.scheduleCleanup(session)
     }
   }
-  const survivors = retained.filter((session) => session.status !== "exited")
-  if (survivors.length > 0) {
-    throw Object.assign(
-      new Error(
-        `${survivors.length} terminal session(s) did not exit during shutdown.`
-      ),
-      {
-        code: "TERMINAL_PTY_SHUTDOWN_INCOMPLETE",
-        sessionIds: survivors.map((session) => session.sessionId),
-        causes: survivors.flatMap((session) => [
-          ...session.terminationErrors,
-          ...(session.exitError ? [session.exitError] : []),
-        ]),
-      }
-    )
+
+  private markExitFailed(session: TerminalPtySession, error: unknown): void {
+    session.exitError = asError(error)
+    session.status = "cleanup_failed"
+    session.closeRequested = true
+    try {
+      session.onProcessTreeFailure?.(session.exitError)
+    } catch {
+      // The session remains quarantined even if the fatal observer itself fails.
+    }
+    if (this.sessions.get(session.sessionId) !== session) return
+    this.pushEvent(session.sessionId, {
+      type: "system",
+      data: `Terminal process-tree cleanup failed: ${session.exitError.message}`,
+    })
   }
-  return retained.length
+
+  private pushEvent(
+    sessionId: string,
+    event: Omit<TerminalPtyEvent, "seq" | "at">
+  ): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    session.nextSeq += 1
+    const boundedEvent =
+      typeof event.data === "string"
+        ? { ...event, data: boundTerminalPtyData(event.data) }
+        : event
+    const stored = {
+      ...boundedEvent,
+      seq: session.nextSeq,
+      at: Date.now(),
+    }
+    session.events.push(stored)
+    session.bufferedBytes += terminalEventBytes(stored)
+    while (
+      session.events.length > MAX_EVENTS ||
+      session.bufferedBytes > TERMINAL_PTY_MAX_BUFFER_BYTES
+    ) {
+      const removed = session.events.shift()
+      if (!removed) break
+      session.bufferedBytes = Math.max(
+        0,
+        session.bufferedBytes - terminalEventBytes(removed)
+      )
+    }
+    for (const listener of session.listeners) {
+      try {
+        listener(stored)
+      } catch {
+        // An observer must not break the terminal's output.
+      }
+    }
+  }
+
+  private scheduleCleanup(session: TerminalPtySession): void {
+    if (session.cleanupTimer) return
+    session.cleanupTimer = setTimeout(() => {
+      if (this.sessions.get(session.sessionId) === session) {
+        this.sessions.delete(session.sessionId)
+      }
+    }, SESSION_TTL_MS)
+    session.cleanupTimer.unref?.()
+  }
+
+  private scheduleOwnerExpiry(
+    session: TerminalPtySession,
+    expiresAt: number | undefined
+  ): void {
+    if (expiresAt === undefined || session.status === "exited") return
+    const remaining = expiresAt - Date.now()
+    if (remaining <= 0) {
+      this.closeSession(session.sessionId, session.ownerId)
+      return
+    }
+    session.ownerExpiryTimer = setTimeout(
+      () => {
+        session.ownerExpiryTimer = null
+        this.scheduleOwnerExpiry(session, expiresAt)
+      },
+      Math.min(remaining, 2_147_000_000)
+    )
+    session.ownerExpiryTimer.unref?.()
+  }
+
+  private countActiveSessions(ownerId?: string): number {
+    let count = 0
+    for (const session of this.sessions.values()) {
+      if (
+        session.status !== "exited" &&
+        (ownerId === undefined || session.ownerId === ownerId)
+      ) {
+        count += 1
+      }
+    }
+    return count
+  }
+
+  /** Running terminals: all of them, or those of one owner. */
+  activeSessionCount(ownerId?: string): number {
+    return this.countActiveSessions(ownerId)
+  }
+
+  private pruneExitedSessionsForCapacity(): void {
+    if (this.sessions.size < TERMINAL_PTY_MAX_RETAINED_SESSIONS) return
+    for (const [sessionId, session] of this.sessions) {
+      if (session.status !== "exited") continue
+      if (session.cleanupTimer) clearTimeout(session.cleanupTimer)
+      this.sessions.delete(sessionId)
+      if (this.sessions.size < TERMINAL_PTY_MAX_RETAINED_SESSIONS) return
+    }
+  }
 }
 
 async function waitForTerminalPtySessions(
@@ -526,95 +720,8 @@ function comparablePath(value: string): string {
   return process.platform === "win32" ? resolved.toLowerCase() : resolved
 }
 
-function markExited(session: TerminalPtySession, exit: NativePtyExit): void {
-  session.status = "exited"
-  session.exitError = null
-  session.terminationErrors.length = 0
-  if (!session.processExitNotified) {
-    session.processExitNotified = true
-    try {
-      session.onProcessExit?.()
-    } catch {
-      // A lifecycle observer must not prevent PTY cleanup.
-    }
-  }
-  if (session.terminationTimer) {
-    clearTimeout(session.terminationTimer)
-    session.terminationTimer = null
-  }
-  if (session.ownerExpiryTimer) {
-    clearTimeout(session.ownerExpiryTimer)
-    session.ownerExpiryTimer = null
-  }
-  if (sessions.get(session.sessionId) !== session) return
-  pushEvent(session.sessionId, {
-    type: "exit",
-    exitCode: exit.exitCode,
-    signal: exit.signal ?? null,
-  })
-  if (session.closeRequested) {
-    sessions.delete(session.sessionId)
-  } else {
-    scheduleCleanup(session)
-  }
-}
-
-function markExitFailed(session: TerminalPtySession, error: unknown): void {
-  session.exitError = asError(error)
-  session.status = "cleanup_failed"
-  session.closeRequested = true
-  try {
-    session.onProcessTreeFailure?.(session.exitError)
-  } catch {
-    // The session remains quarantined even if the fatal observer itself fails.
-  }
-  if (sessions.get(session.sessionId) !== session) return
-  pushEvent(session.sessionId, {
-    type: "system",
-    data: `Terminal process-tree cleanup failed: ${session.exitError.message}`,
-  })
-}
-
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error))
-}
-
-function pushEvent(
-  sessionId: string,
-  event: Omit<TerminalPtyEvent, "seq" | "at">
-): void {
-  const session = sessions.get(sessionId)
-  if (!session) return
-  session.nextSeq += 1
-  const boundedEvent =
-    typeof event.data === "string"
-      ? { ...event, data: boundTerminalPtyData(event.data) }
-      : event
-  const stored = {
-    ...boundedEvent,
-    seq: session.nextSeq,
-    at: Date.now(),
-  }
-  session.events.push(stored)
-  session.bufferedBytes += terminalEventBytes(stored)
-  while (
-    session.events.length > MAX_EVENTS ||
-    session.bufferedBytes > TERMINAL_PTY_MAX_BUFFER_BYTES
-  ) {
-    const removed = session.events.shift()
-    if (!removed) break
-    session.bufferedBytes = Math.max(
-      0,
-      session.bufferedBytes - terminalEventBytes(removed)
-    )
-  }
-  for (const listener of session.listeners) {
-    try {
-      listener(stored)
-    } catch {
-      // An observer must not break the terminal's output.
-    }
-  }
 }
 
 export function boundTerminalPtyData(data: string): string {
@@ -642,69 +749,11 @@ function terminalEventBytes(event: TerminalPtyEvent): number {
     : 0
 }
 
-function scheduleCleanup(session: TerminalPtySession): void {
-  if (session.cleanupTimer) return
-  session.cleanupTimer = setTimeout(() => {
-    if (sessions.get(session.sessionId) === session) {
-      sessions.delete(session.sessionId)
-    }
-  }, SESSION_TTL_MS)
-  session.cleanupTimer.unref?.()
-}
-
-function scheduleTerminalPtyOwnerExpiry(
-  session: TerminalPtySession,
-  expiresAt: number | undefined
-): void {
-  if (expiresAt === undefined || session.status === "exited") return
-  const remaining = expiresAt - Date.now()
-  if (remaining <= 0) {
-    closeTerminalPtySession(session.sessionId, session.ownerId)
-    return
-  }
-  session.ownerExpiryTimer = setTimeout(
-    () => {
-      session.ownerExpiryTimer = null
-      scheduleTerminalPtyOwnerExpiry(session, expiresAt)
-    },
-    Math.min(remaining, 2_147_000_000)
-  )
-  session.ownerExpiryTimer.unref?.()
-}
-
-function countActiveSessions(ownerId?: string): number {
-  let count = 0
-  for (const session of sessions.values()) {
-    if (
-      session.status !== "exited" &&
-      (ownerId === undefined || session.ownerId === ownerId)
-    ) {
-      count += 1
-    }
-  }
-  return count
-}
-
-/** Running terminals: all of them, or those of one owner. */
-export function activeTerminalPtySessionCount(ownerId?: string): number {
-  return countActiveSessions(ownerId)
-}
-
 function ownerMatches(
   session: TerminalPtySession,
   ownerId: string | undefined
 ): boolean {
   return ownerId === undefined || session.ownerId === ownerId
-}
-
-function pruneExitedSessionsForCapacity(): void {
-  if (sessions.size < TERMINAL_PTY_MAX_RETAINED_SESSIONS) return
-  for (const [sessionId, session] of sessions) {
-    if (session.status !== "exited") continue
-    if (session.cleanupTimer) clearTimeout(session.cleanupTimer)
-    sessions.delete(sessionId)
-    if (sessions.size < TERMINAL_PTY_MAX_RETAINED_SESSIONS) return
-  }
 }
 
 function resolveCwd(cwd: string): string {
@@ -719,14 +768,31 @@ export function resolveTerminalShellLaunch(shellId: string | undefined): {
   command: string
   args: string[]
 } {
+  // Windows shells are addressed by absolute path: the terminal's cwd is the
+  // workspace, and a repository can pick these shell ids in its project
+  // config. POSIX bare names are resolved by NativePty on absolute PATH
+  // entries only.
   if (process.platform === "win32") {
     const normalized = normalizeShellId(shellId)
-    if (normalized === "powershell" || normalized === "pwsh") {
+    if (normalized === "powershell") {
       return {
         shell: normalized,
-        command: normalized === "pwsh" ? "pwsh.exe" : "powershell.exe",
+        command: windowsSystemExecutable(
+          "WindowsPowerShell",
+          "v1.0",
+          "powershell.exe"
+        ),
         args: ["-NoLogo"],
       }
+    }
+    if (normalized === "pwsh") {
+      const pwsh = locateWindowsPwsh()
+      if (!pwsh) {
+        throw Object.assign(new Error("PowerShell 7 (pwsh) not found."), {
+          statusCode: 404,
+        })
+      }
+      return { shell: normalized, command: pwsh, args: ["-NoLogo"] }
     }
     if (normalized === "gitbash") {
       const gitBash = findGitBash()
@@ -738,9 +804,13 @@ export function resolveTerminalShellLaunch(shellId: string | undefined): {
       return { shell: "gitbash", command: gitBash, args: ["--login"] }
     }
     if (normalized === "wsl") {
-      return { shell: "wsl", command: "wsl.exe", args: [] }
+      return {
+        shell: "wsl",
+        command: windowsSystemExecutable("wsl.exe"),
+        args: [],
+      }
     }
-    return { shell: "cmd", command: "cmd.exe", args: [] }
+    return { shell: "cmd", command: resolveComSpec(), args: [] }
   }
 
   if (shellId && path.isAbsolute(shellId)) {
@@ -807,6 +877,17 @@ function detectDefaultUnixShell(): "bash" | "zsh" | string {
 
 function findGitBash(): string | null {
   return resolveGitBashPath()
+}
+
+function locateWindowsPwsh(): string | null {
+  const onPath = resolveExecutableOnPath("pwsh")
+  if (onPath) return onPath
+  for (const root of [process.env.ProgramW6432, process.env.ProgramFiles]) {
+    if (!root) continue
+    const candidate = path.win32.join(root, "PowerShell", "7", "pwsh.exe")
+    if (fs.existsSync(candidate)) return candidate
+  }
+  return null
 }
 
 function makeTerminalEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {

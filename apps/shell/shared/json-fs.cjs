@@ -7,7 +7,8 @@
  * a `fallback` param, a third threw. Centralizing here removes that
  * drift: callers pick the fallback and an optional warn tag.
  *
- * These are still `fs.*Sync` calls and block their caller. JSON reads are
+ * These are still `fs.*Sync` calls and block their caller (the `*Async`
+ * readers are the fs/promises equivalents for scans). JSON reads are
  * size-bounded; JSON writes stage, fsync, and rename a private temporary
  * file. Atomic replacement prevents partial files, but does not coordinate
  * read-modify-write transactions with other processes. Text helpers are
@@ -69,6 +70,55 @@ function readBoundedRegularFile(filePath, maxBytes) {
   }
 }
 
+/**
+ * `readBoundedRegularFile` on fs/promises: the same no-follow, size and
+ * identity checks, without blocking the caller's thread while it reads.
+ */
+async function readBoundedRegularFileAsync(filePath, maxBytes) {
+  const initial = await fs.promises.lstat(filePath)
+  if (
+    !initial.isFile() ||
+    initial.isSymbolicLink() ||
+    initial.size > maxBytes
+  ) {
+    throw new Error(`Unsafe or oversized JSON file: ${filePath}`)
+  }
+
+  const noFollow =
+    typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0
+  const handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | noFollow)
+  try {
+    const opened = await handle.stat()
+    if (
+      !opened.isFile() ||
+      opened.size > maxBytes ||
+      (process.platform !== "win32" && opened.dev !== initial.dev) ||
+      opened.ino !== initial.ino
+    ) {
+      throw new Error(`JSON file changed while opening: ${filePath}`)
+    }
+
+    const bytes = Buffer.allocUnsafe(opened.size)
+    let offset = 0
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        bytes.length - offset,
+        offset,
+      )
+      if (bytesRead === 0) break
+      offset += bytesRead
+    }
+    if (offset !== bytes.length) {
+      throw new Error(`JSON file was truncated while reading: ${filePath}`)
+    }
+    return bytes
+  } finally {
+    await handle.close()
+  }
+}
+
 function fsyncDirectoryBestEffort(directory) {
   if (process.platform === "win32") return
   let handle
@@ -104,6 +154,31 @@ function readJson(filePath, fallback = null, opts) {
       ),
     )
     return JSON.parse(readBoundedRegularFile(filePath, maxBytes).toString("utf-8"))
+  } catch (err) {
+    if (err?.code === "ENOENT") return fallback
+    if (opts?.warn) {
+      console.warn(
+        `[${opts.warn}] failed to read JSON at ${filePath}:`,
+        err?.message || err,
+      )
+    }
+    if (opts?.strict) throw err
+    return fallback
+  }
+}
+
+/** `readJson` on fs/promises (same fallback, warn and strict options). */
+async function readJsonAsync(filePath, fallback = null, opts) {
+  try {
+    const maxBytes = Math.max(
+      1,
+      Math.min(
+        Number(opts?.maxBytes) || DEFAULT_MAX_JSON_BYTES,
+        DEFAULT_MAX_JSON_BYTES,
+      ),
+    )
+    const bytes = await readBoundedRegularFileAsync(filePath, maxBytes)
+    return JSON.parse(bytes.toString("utf-8"))
   } catch (err) {
     if (err?.code === "ENOENT") return fallback
     if (opts?.warn) {
@@ -215,8 +290,10 @@ function writeText(filePath, value, opts) {
 
 module.exports = {
   readJson,
+  readJsonAsync,
   writeJson,
   readText,
   writeText,
   readBoundedRegularFile,
+  readBoundedRegularFileAsync,
 }

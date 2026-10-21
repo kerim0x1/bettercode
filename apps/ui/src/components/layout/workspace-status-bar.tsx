@@ -7,7 +7,7 @@ import {
   RefreshCwIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { gitInit, gitStatus, isGitRepo } from "@/services/backend"
+import { gitInit, gitStatus, isGitRepo } from "@/services/backend/gitApi"
 import { useChatStore, getThreadStream } from "@/lib/chat-store"
 import { useVisibilityInterval } from "@/hooks/use-visibility-interval"
 import { createLogger } from "@/lib/logger"

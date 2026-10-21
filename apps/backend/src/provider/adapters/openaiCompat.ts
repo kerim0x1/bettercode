@@ -35,6 +35,11 @@ import {
   type ToolMutationArtifact,
 } from "../agent-loop/tool-executor"
 import { gateToolCall } from "../agent-loop/tool-gate"
+import {
+  malformedToolArgumentsError,
+  truncatedToolCallError,
+} from "../agent-loop/output-limit"
+import { withTransientRetry } from "./transientRetry"
 import { filterToolsForBetterC0deProjectPolicy } from "../project-tool-policy"
 import {
   getProjectToolOutputLimits,
@@ -116,11 +121,13 @@ function mapCompatReasoningEffort(
   if (key === "minimal") return "minimal"
   if (key === "low" || key === "medium" || key === "high") return key
   if (key === "xhigh" || key === "extrahigh")
-    return providerKind === "openai" || providerKind === "grok"
+    return providerKind === "openai" ||
+      providerKind === "grok" ||
+      providerKind === "openrouter"
       ? "xhigh"
       : "high"
   if (key === "max" || key === "ultra" || key === "ultrathink")
-    return providerKind === "openai"
+    return providerKind === "openai" || providerKind === "openrouter"
       ? "max"
       : providerKind === "grok"
         ? "xhigh"
@@ -359,12 +366,19 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
         messages,
         ...(toolsEnabled ? { tools, tool_choice: "auto" as const } : {}),
         ...(reasoningEnabled && reasoningEffort
-          ? {
-              // The locked SDK types predate OpenAI's "max" effort, which the
-              // API accepts for newer models.
-              reasoning_effort:
-                reasoningEffort as ChatCompletionCreateParamsStreaming["reasoning_effort"],
-            }
+          ? this.config.providerKind === "openrouter"
+            ? // OpenRouter's own reasoning object reaches every model it
+              // routes to (Gemini, Claude, DeepSeek…) and makes the stream
+              // carry the thinking as `delta.reasoning`.
+              ({
+                reasoning: { effort: reasoningEffort },
+              } as unknown as Partial<ChatCompletionCreateParamsStreaming>)
+            : {
+                // The locked SDK types predate OpenAI's "max" effort, which
+                // the API accepts for newer models.
+                reasoning_effort:
+                  reasoningEffort as ChatCompletionCreateParamsStreaming["reasoning_effort"],
+              }
           : {}),
       })
 
@@ -431,17 +445,24 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
             started
           )
         }
-        const { text, toolCalls, usage } = keySession
+        // The pool disables SDK retries so it can fail over between keys;
+        // transient 429/5xx answers are retried on the same key first.
+        const { text, toolCalls, usage, finishReason } = keySession
           ? await keySession.run(
               (key, started) =>
-                requestCompletion(
-                  new OpenAI({
-                    apiKey: key.key,
-                    baseURL: this.config.baseUrl,
-                    maxRetries: 0,
-                    timeout: 60_000,
-                  }),
-                  started
+                withTransientRetry(
+                  (attemptStarted) =>
+                    requestCompletion(
+                      new OpenAI({
+                        apiKey: key.key,
+                        baseURL: this.config.baseUrl,
+                        maxRetries: 0,
+                        timeout: 60_000,
+                      }),
+                      attemptStarted
+                    ),
+                  started,
+                  { signal: controller.signal }
                 ),
               controller.signal
             )
@@ -464,10 +485,26 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
         }
 
         if (controller.signal.aborted) break
+        // finish_reason "length" means the completion ended inside its last
+        // tool call, whose arguments are therefore incomplete.
+        const stoppedAtOutputLimit = finishReason === "length"
+        if (stoppedAtOutputLimit) {
+          logger.warn(
+            {
+              thread: input.thread_id,
+              provider: this.config.providerKind,
+              truncatedToolCall: toolCalls.length > 0,
+            },
+            "Completion stopped at the output token limit"
+          )
+        }
         if (toolCalls.length === 0) {
           receivedFinalAnswer = true
           break
         }
+        const truncatedCall = stoppedAtOutputLimit
+          ? toolCalls[toolCalls.length - 1]
+          : undefined
 
         messages.push({
           role: "assistant",
@@ -475,20 +512,32 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
           tool_calls: toolCalls.map((tc) => ({
             id: tc.id,
             type: "function",
-            function: { name: tc.name, arguments: tc.argsRaw || "{}" },
+            // Some endpoints reject a history entry whose arguments are not
+            // JSON; the rejected call's error result explains what happened.
+            function: {
+              name: tc.name,
+              arguments: isJsonText(tc.argsRaw) ? tc.argsRaw : "{}",
+            },
           })),
         })
 
         for (const call of toolCalls) {
           if (controller.signal.aborted) break
           let parsedInput: unknown = {}
-          try {
-            parsedInput = call.argsRaw ? JSON.parse(call.argsRaw) : {}
-          } catch {
-            logger.warn(
-              { tool: call.name },
-              "Malformed tool arguments JSON; falling back to {}"
-            )
+          // Never dispatch a call whose arguments are cut off or unparseable:
+          // a fallback object would run the tool with missing fields.
+          let rejection: string | null =
+            call === truncatedCall ? truncatedToolCallError(call.name) : null
+          if (!rejection) {
+            try {
+              parsedInput = call.argsRaw ? JSON.parse(call.argsRaw) : {}
+            } catch {
+              logger.warn(
+                { tool: call.name },
+                "Malformed tool arguments JSON; the call was not executed"
+              )
+              rejection = malformedToolArgumentsError(call.name)
+            }
           }
 
           this.emit({
@@ -501,22 +550,27 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
             },
           })
 
-          const gate = await gateToolCall({
-            emit: (event) => this.emit(event),
-            providerKind: this.config.providerKind,
-            threadId: input.thread_id,
-            level,
-            mode,
-            toolName: call.name,
-            input: parsedInput,
-            projectPermissionRules: projectToolPolicy.permissionRules,
-          })
+          const gate = rejection
+            ? null
+            : await gateToolCall({
+                emit: (event) => this.emit(event),
+                providerKind: this.config.providerKind,
+                threadId: input.thread_id,
+                level,
+                mode,
+                toolName: call.name,
+                input: parsedInput,
+                projectPermissionRules: projectToolPolicy.permissionRules,
+              })
 
           let output: string
           let toolError: string | undefined
           let toolStatus: "cancelled" | "timed_out" | undefined
           let mutation: ToolMutationArtifact | undefined
-          if (!gate.allow) {
+          if (!gate) {
+            toolError = rejection ?? malformedToolArgumentsError(call.name)
+            output = `Error: ${toolError}`
+          } else if (!gate.allow) {
             toolError = gate.reason ?? "Permission denied."
             output = `Tool call blocked: ${toolError}`
             this.emit({
@@ -540,6 +594,7 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
                   limits,
                   signal: controller.signal,
                   timeoutMs: DIRECT_TOOL_TIMEOUT_MS,
+                  shell: this.agentTools.shellSessions,
                 })
             output = res.output
             toolError = res.error
@@ -663,9 +718,11 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
     text: string
     toolCalls: Array<{ id: string; name: string; argsRaw: string }>
     usage: { inputTokens: number; outputTokens: number } | null
+    finishReason: string | null
   }> {
     let text = ""
     let usage: { inputTokens: number; outputTokens: number } | null = null
+    let finishReason: string | null = null
     const pending = new Map<
       number,
       { id: string; name: string; args: string }
@@ -676,6 +733,9 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
       started?.()
       const choice = chunk.choices?.[0]
       const delta = choice?.delta
+      if (typeof choice?.finish_reason === "string") {
+        finishReason = choice.finish_reason
+      }
 
       if (delta?.content) {
         text += delta.content
@@ -731,6 +791,16 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
         name: e.name,
         argsRaw: e.args,
       }))
-    return { text, toolCalls, usage }
+    return { text, toolCalls, usage, finishReason }
+  }
+}
+
+function isJsonText(value: string): boolean {
+  if (!value) return false
+  try {
+    JSON.parse(value)
+    return true
+  } catch {
+    return false
   }
 }

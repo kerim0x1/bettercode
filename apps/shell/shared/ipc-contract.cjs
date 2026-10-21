@@ -1,7 +1,9 @@
 /**
- * IPC channel names — authoritative source for the `.cjs` (preload/main)
- * side of the bridge. The TypeScript twin in `ipc-contract.ts` MUST export
- * the same literal values. A vitest parity test enforces this.
+ * IPC channel names — the single registry for the bridge. The preload
+ * (`preload.cjs`, which cannot require this file) repeats the strings, and
+ * `apps/ui/src/types/ipc-contract.parity.test.ts` checks that the preload
+ * exposes every channel and event here and that the main process registers
+ * every channel exactly once.
  *
  * Use these constants everywhere in .cjs code instead of string literals so
  * rename-refactors actually rename all references.
@@ -12,6 +14,9 @@ const IpcChannel = Object.freeze({
   AppInfo: "app:info",
   BugReportSend: "bug-report:send",
   BackendRestart: "backend:restart",
+  // Backend port and preview settings for the renderer (replaces the old
+  // executeJavaScript injection of window.__BETTERC0DE__).
+  RuntimeConfigGet: "runtime:config",
   WindowMinimize: "window:minimize",
   WindowMaximize: "window:maximize",
   WindowClose: "window:close",
@@ -24,9 +29,19 @@ const IpcChannel = Object.freeze({
   OpenPath: "open-path",
   PickFolder: "pick-folder",
   OpenHtmlPreview: "preview:open-html",
+  // A window starts/stops receiving its preview guests' request feed
+  // (IpcEvent.PreviewRequest). Nothing is captured while nobody subscribes.
+  PreviewRequestSubscribe: "preview:request-subscribe",
   ClipboardWriteText: "clipboard:write-text",
+  // Right after real input only: the terminal pastes on right-click, and
+  // Chromium's clipboard read permission stays denied.
+  ClipboardReadText: "clipboard:read-text",
   ConfirmDialog: "confirm-dialog",
   ShellCapability: "shell:capability",
+  // The preload reports the random id of the page it just loaded; terminals
+  // and shell runs that page starts are released with it (renderer crash,
+  // reload, window close).
+  RendererClientInstance: "renderer:client-instance",
 
   // Onboarding
   OnboardingIsDone: "onboarding:is-done",
@@ -89,10 +104,9 @@ const IpcChannel = Object.freeze({
   PluginConfigSet: "plugin:config-set",
   PluginSend: "plugin:send",
 
-  // Provider catalog + OAuth (PR1–PR4)
+  // Provider catalog
   ProviderList: "provider:list",
   ProviderAuthStatus: "provider:auth-status",
-  ProviderOauthStart: "provider:oauth-start",
   ProviderAuthClear: "provider:auth-clear",
 })
 
@@ -100,8 +114,139 @@ const IpcChannel = Object.freeze({
 const IpcEvent = Object.freeze({
   BackendStatus: "backend:status",
   PluginEvent: "plugin:event",
-  /** One finished request of a preview guest (canvas runtime pane). */
+  /**
+   * Finished requests of the preview guests a window hosts (canvas runtime
+   * pane), as an array per flush; sent only to subscribed owner windows.
+   */
   PreviewRequest: "preview:request",
+  /**
+   * A preview guest this window hosted was destroyed (`{ webContentsId }`),
+   * so state kept per guest id can be dropped.
+   */
+  PreviewGuestDestroyed: "preview:guest-destroyed",
+  /** The computer woke from sleep; reconnect and refresh what went stale. */
+  SystemResumed: "system:resumed",
 })
 
-module.exports = { IpcChannel, IpcEvent }
+/**
+ * The bridge the preload exposes as `window.electronAPI`, member by member:
+ *  - `invoke`: the method calls `ipcRenderer.invoke` on this channel;
+ *  - `events`: the method subscribes to this event and returns an
+ *    unsubscribe function;
+ *  - `values`: plain properties;
+ *  - `internal`: channels the preload invokes on its own (page-load client
+ *    id, preview request subscription), not exposed as methods.
+ *
+ * The sandboxed preload cannot require this file, so it repeats the strings.
+ * `scripts/preload-api-contract.test.mjs` runs the real preload and fails
+ * when its members or channels differ from this registry, or when the
+ * renderer's hand-written `apps/ui/src/types/electron-api.d.ts` names a
+ * different set of members. Add a bridge method here first.
+ */
+const PreloadApi = Object.freeze({
+  invoke: Object.freeze({
+    // App / window
+    getAppInfo: IpcChannel.AppInfo,
+    sendBugReport: IpcChannel.BugReportSend,
+    restartBackend: IpcChannel.BackendRestart,
+    getRuntimeConfig: IpcChannel.RuntimeConfigGet,
+    windowMinimize: IpcChannel.WindowMinimize,
+    windowMaximize: IpcChannel.WindowMaximize,
+    windowClose: IpcChannel.WindowClose,
+    windowIsMaximized: IpcChannel.WindowIsMaximized,
+    windowToggleDevTools: IpcChannel.WindowToggleDevTools,
+    windowOpenWith: IpcChannel.WindowOpenWith,
+    openExternal: IpcChannel.OpenExternal,
+    openPath: IpcChannel.OpenPath,
+    pickFolder: IpcChannel.PickFolder,
+    openHtmlPreview: IpcChannel.OpenHtmlPreview,
+    writeClipboardText: IpcChannel.ClipboardWriteText,
+    readClipboardText: IpcChannel.ClipboardReadText,
+    confirmDialog: IpcChannel.ConfirmDialog,
+    requestShellCapability: IpcChannel.ShellCapability,
+    // Onboarding and CLI auto-sync
+    onboardingIsDone: IpcChannel.OnboardingIsDone,
+    onboardingScan: IpcChannel.OnboardingScan,
+    onboardingImport: IpcChannel.OnboardingImport,
+    onboardingComplete: IpcChannel.OnboardingComplete,
+    onboardingReset: IpcChannel.OnboardingReset,
+    cliAutoSync: IpcChannel.CliAutoSync,
+    // Checkpoint / rewind goes through the plugin bridge.
+    rewindFiles: IpcChannel.PluginSend,
+    // MCP servers
+    mcpList: IpcChannel.McpList,
+    mcpInstall: IpcChannel.McpInstall,
+    mcpRemove: IpcChannel.McpRemove,
+    mcpUpdateEnv: IpcChannel.McpUpdateEnv,
+    mcpSetEnabled: IpcChannel.McpSetEnabled,
+    mcpProbe: IpcChannel.McpProbe,
+    // Custom skills and skills.sh
+    skillList: IpcChannel.SkillList,
+    skillSave: IpcChannel.SkillSave,
+    skillDelete: IpcChannel.SkillDelete,
+    skillImportUrl: IpcChannel.SkillImportUrl,
+    skillsShPreview: IpcChannel.SkillsShPreview,
+    skillsShAdd: IpcChannel.SkillsShAdd,
+    skillsShSearch: IpcChannel.SkillsShSearch,
+    // Rules, hooks, subagents
+    rulesGet: IpcChannel.RulesGet,
+    rulesSave: IpcChannel.RulesSave,
+    hookList: IpcChannel.HookList,
+    hookSave: IpcChannel.HookSave,
+    hookDelete: IpcChannel.HookDelete,
+    hookUpdateRun: IpcChannel.HookUpdateRun,
+    subagentList: IpcChannel.SubagentList,
+    subagentSave: IpcChannel.SubagentSave,
+    subagentDelete: IpcChannel.SubagentDelete,
+    // Provider catalog
+    providerList: IpcChannel.ProviderList,
+    providerAuthStatus: IpcChannel.ProviderAuthStatus,
+    providerAuthClear: IpcChannel.ProviderAuthClear,
+    // CLI plugins
+    cliPluginInventory: IpcChannel.CliPluginInventory,
+    cliPluginAvailable: IpcChannel.CliPluginAvailable,
+    cliPluginToggle: IpcChannel.CliPluginToggle,
+    cliPluginInstall: IpcChannel.CliPluginInstall,
+    cliPluginUninstall: IpcChannel.CliPluginUninstall,
+    // Plugin system
+    pluginList: IpcChannel.PluginList,
+    pluginInstall: IpcChannel.PluginInstall,
+    pluginInstallDefault: IpcChannel.PluginInstallDefault,
+    pluginRemove: IpcChannel.PluginRemove,
+    pluginToggle: IpcChannel.PluginToggle,
+    pluginConfigGet: IpcChannel.PluginConfigGet,
+    pluginConfigSet: IpcChannel.PluginConfigSet,
+    pluginSend: IpcChannel.PluginSend,
+  }),
+  events: Object.freeze({
+    onBackendStatus: IpcEvent.BackendStatus,
+    onSystemResume: IpcEvent.SystemResumed,
+    onPreviewGuestDestroyed: IpcEvent.PreviewGuestDestroyed,
+    onPreviewRequest: IpcEvent.PreviewRequest,
+    onPluginEvent: IpcEvent.PluginEvent,
+  }),
+  values: Object.freeze(["platform", "clientInstanceId"]),
+  internal: Object.freeze({
+    clientInstance: IpcChannel.RendererClientInstance,
+    previewRequestSubscription: IpcChannel.PreviewRequestSubscribe,
+  }),
+})
+
+/**
+ * The type of the preload's `window.electronAPI` object, generated from
+ * `PreloadApi`: preload.cjs annotates its object with it, so under checkJs a
+ * member missing from (or not in) the registry is a type error. Payloads are
+ * not modelled here yet; the renderer's view of them is
+ * apps/ui/src/types/electron-api.d.ts.
+ *
+ * @typedef {{
+ *   [K in keyof typeof PreloadApi.invoke]: (...args: any[]) => Promise<any>
+ * } & {
+ *   [K in keyof typeof PreloadApi.events]: (callback: (payload: any) => void) => () => void
+ * } & {
+ *   platform: NodeJS.Platform
+ *   clientInstanceId: string
+ * }} PreloadElectronApi
+ */
+
+module.exports = { IpcChannel, IpcEvent, PreloadApi }

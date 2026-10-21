@@ -71,7 +71,7 @@ Not sure which Mac you have? Open **About This Mac** — an "Apple M…" chip me
 
 BetterC0de installers are not code-signed, so your operating system warns before the first launch:
 
-- **Windows:** SmartScreen shows "Windows protected your PC". Choose **More info → Run anyway**. Unsigned Windows builds do not update themselves; install a newer version by running its installer.
+- **Windows:** SmartScreen shows "Windows protected your PC". Choose **More info → Run anyway**. Unsigned Windows builds do not update themselves: they show a new version with a download link under **Settings → General → Updates**, and you install it by running its installer.
 - **macOS:** open the `.dmg` and drag BetterC0de to **Applications**. If macOS blocks the first launch, open **System Settings → Privacy & Security** and choose **Open Anyway**. If it reports that the app is damaged, run `xattr -dr com.apple.quarantine /Applications/BetterC0de.app` in Terminal.
 - **Linux:** install the `.deb` with `sudo apt install ./betterc0de_<version>_amd64.deb` or the `.rpm` with `sudo dnf install ./betterc0de-<version>.x86_64.rpm`. Either one installs the libraries the app needs. For the AppImage, run `chmod +x BetterC0de-<version>.AppImage` first.
 
@@ -81,7 +81,7 @@ Each release lists SHA-256 checksums of its files in `SHA256SUMS.txt`. Known pro
 
 1. [Download](#download) BetterC0de for your platform.
 2. Install BetterC0de and connect a supported AI provider.
-3. Open a project folder and start your first conversation.
+3. Open a project folder and start your first conversation. For Agent mode, trust the folder first under **Settings → Permissions → Trust project**.
 4. Review the resulting files and changes in your workspace.
 
 Follow the [getting-started guide](GETTING_STARTED.md) for a walkthrough without terminal commands.
@@ -131,19 +131,19 @@ On Windows, run the same commands in PowerShell. On macOS and Linux, `./setup.sh
 
 ### Setup
 
-No `.env` file or account is needed to build, test or start the app. Optional environment variables, such as a separate profile directory or turning off the diagnostic heartbeat during development, are listed in [.env.example](.env.example). Set them in the shell that starts the app. Development data lives in `~/.betterc0de-dev`; installed builds use `~/.betterc0de`. To use AI features, connect a provider in **Settings → Providers**.
+No `.env` file or account is needed to build, test or start the app. Optional environment variables, such as a separate profile directory or forcing the usage ping and crash reports off, are listed in [.env.example](.env.example). Set them in the shell that starts the app. Development data lives in `~/.betterc0de-dev`; installed builds use `~/.betterc0de`. To use AI features, connect a provider in **Settings → Providers**.
 
 ### Commands
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | Development app with the backend watcher, Vite and Electron. |
+| `npm run dev` | Development app with the schema and backend watchers, Vite and Electron. |
 | `npm run verify:source` | Fast source gate: versions, type-checks, format check, lint and all test suites. |
 | `npm test` / `npm run test:backend` / `npm run test:mobile` / `npm run test:packaging` | One test suite. |
 | `npm run lint` / `npm run typecheck` | Lint, or type-check the UI (`typecheck:backend`, `typecheck:shell` and `typecheck:mobile` cover the rest). |
 | `npm run format:check` / `npm run format:changed` | Check or apply Prettier on the TS/TSX files you changed. |
 | `npm run build` | Production build of the backend and renderer, with bundle budgets. |
-| `npm run build:win` / `build:mac` / `build:linux` | Installers for the current OS in `release/`. |
+| `npm run build:win` / `build:mac` / `build:linux` | Installers for the current OS in `release/`, through `release:check`'s package, packaged-app launch and installer steps. Naming another OS fails. |
 | `npm run release:check` | **The release gate.** Clean install → versions → format → lint → type-check → tests → production build → phone app builds and device tests → package → launch the packaged app → installers → install/launch/uninstall test. Exits non-zero on the first failure. |
 
 `npm run release:check -- --list` shows the steps. Locally, the install/uninstall test is skipped because it would change your machine (and replace an installed BetterC0de); CI runs it on clean runners. Pass `--installer-smoke` to run it anyway.
@@ -180,7 +180,7 @@ You can sponsor BetterC0de with contributions starting at **$500 USD**. Please r
 
 Visit [betterc0de.com](https://betterc0de.com) for product information, join the [Discord community](https://discord.gg/bettercode), or read the [terms and data information](https://betterc0de.com/terms#data).
 
-BetterC0de is in beta and was open-sourced on 21 September 2026. Available installers and features may vary by release. AI provider access, usage limits, and billing depend on the provider you connect. The app also sends a periodic heartbeat and diagnostic reports; see [Diagnostics and data](PRODUCT_GUIDE.md#diagnostics-and-data).
+BetterC0de is in beta and was open-sourced on 21 September 2026. Available installers and features may vary by release. AI provider access, usage limits, and billing depend on the provider you connect. Automatic crash reports and a usage ping are available but off unless you turn them on in **Settings → General → Privacy & Diagnostics**; see [Diagnostics and data](PRODUCT_GUIDE.md#diagnostics-and-data).
 
 ---
 

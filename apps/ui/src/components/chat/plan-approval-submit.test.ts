@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest"
 
 // The default deps pull in the backend client and the stores; the helper is
 // exercised with injected ones so the decision flow is tested on its own.
-vi.mock("@/services/backend", () => ({ respondToPlanApproval: vi.fn() }))
+vi.mock("@/services/backend/chatApi", () => ({
+  respondToPlanApproval: vi.fn(),
+}))
 vi.mock("@/lib/preferences-store", () => ({
   usePreferencesStore: { getState: () => ({ set: vi.fn() }) },
 }))

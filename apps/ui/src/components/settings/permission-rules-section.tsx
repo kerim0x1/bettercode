@@ -18,10 +18,12 @@ import {
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { SettingsSection, SettingsRow } from "@/components/settings/atoms"
+import { BrandMark } from "@/components/settings/brand-mark"
 import { useConfirm } from "@/components/dialogs/confirm-provider"
 import { useChatStore } from "@/lib/chat-store"
 import { useSettingsStore } from "@/lib/settings-store"
 import { handleError } from "@/lib/errors"
+import { WORKSPACE_TRUST_DESCRIPTION } from "@/lib/workspace-trust-prompts"
 import {
   deleteClaudePermissionRule,
   deleteAgentPermissionGrant,
@@ -36,7 +38,7 @@ import {
   type WorkspaceTrustRecord,
   type ClaudePermissionRuleEntry,
   type SessionPermissionRuleEntry,
-} from "@/services/backend"
+} from "@/services/backend/chatApi"
 
 const SOURCE_LABELS: Record<ClaudePermissionRuleEntry["source"], string> = {
   userSettings: "All projects (~/.claude/settings.json)",
@@ -91,6 +93,8 @@ export function SettingsPermissionsSection() {
     "workspace" | "user"
   >(activeProjectPath ? "workspace" : "user")
   const [loading, setLoading] = useState(false)
+  // Until the first load finishes, empty lists mean "not read yet".
+  const [loaded, setLoaded] = useState(false)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -115,6 +119,7 @@ export function SettingsPermissionsSection() {
       handleError(err, { source: "permission-rules" })
     } finally {
       setLoading(false)
+      setLoaded(true)
     }
   }, [activeProjectPath])
 
@@ -220,7 +225,7 @@ export function SettingsPermissionsSection() {
           : "Mark this workspace untrusted?",
       description:
         nextState === "trusted"
-          ? "Agent Mode and approved workspace mutations will be allowed for this exact project root."
+          ? WORKSPACE_TRUST_DESCRIPTION
           : "Agent Mode and workspace mutations will be blocked for this project until it is trusted again.",
       confirmLabel:
         nextState === "trusted" ? "Trust workspace" : "Mark untrusted",
@@ -244,9 +249,9 @@ export function SettingsPermissionsSection() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">
-          Rules created via “Always allow” on approval requests. Deny rules
-          always win over allow rules.
+        <p className="text-[12.5px] text-muted-foreground">
+          Who can do what: project trust, your own rules, and Claude Code's
+          saved approvals.
         </p>
         <Button
           variant="outline"
@@ -269,9 +274,10 @@ export function SettingsPermissionsSection() {
       >
         <SettingsRow
           label="Trust opened workspaces automatically"
-          description="Treat opening a folder as the trust decision. Turn this off to confirm each project here before Agent Mode runs in it."
+          description="Treat opening a folder as the trust decision, including running the MCP servers, formatters and Claude hooks it declares. Off by default: confirm each project here before Agent Mode runs in it."
         >
           <Switch
+            aria-label="Trust opened workspaces automatically"
             checked={settings.autoTrustWorkspaces}
             onCheckedChange={(value) =>
               settings.update({ auto_trust_workspaces: value })
@@ -293,7 +299,7 @@ export function SettingsPermissionsSection() {
                 ? activeProjectPath
                 : settings.autoTrustWorkspaces
                   ? "Will be trusted automatically on the first Agent Mode turn."
-                  : "Confirm trust before broad Agent Mode operations."
+                  : "Agent Mode and the project's own MCP servers, formatters and Claude hooks stay off until you trust it."
           }
         >
           {activeProjectPath && workspaceTrust ? (
@@ -323,20 +329,20 @@ export function SettingsPermissionsSection() {
       </SettingsSection>
 
       <SettingsSection
-        title="Shared Agent Mode grants"
-        description="Provider-neutral tool and path rules. Deny wins over ask, and ask wins over allow."
+        title="Your rules"
+        description="Tool and path rules for every provider in Agent Mode. Deny wins over ask, and ask wins over allow."
       >
         <div className="grid gap-2 p-3 sm:grid-cols-2">
           <Input
             value={grantTool}
             onChange={(event) => setGrantTool(event.target.value)}
-            placeholder="Tool name, e.g. Edit"
+            placeholder="Tool, e.g. Edit, Write or Bash"
             aria-label="Permission tool name"
           />
           <Input
             value={grantPath}
             onChange={(event) => setGrantPath(event.target.value)}
-            placeholder="Workspace-relative path"
+            placeholder="Path in the project, e.g. src or ."
             aria-label="Permission path scope"
           />
           <Select
@@ -390,10 +396,14 @@ export function SettingsPermissionsSection() {
           </div>
         </div>
 
-        {sharedGrants.length === 0 ? (
+        {!loaded ? (
+          <SettingsRow label="Loading rules…">
+            <span />
+          </SettingsRow>
+        ) : sharedGrants.length === 0 ? (
           <SettingsRow
-            label="No shared grants"
-            description="Tools follow the selected provider permission mode."
+            label="No rules yet"
+            description="Tools follow the permission mode picked in the chat."
           >
             <span />
           </SettingsRow>
@@ -436,17 +446,22 @@ export function SettingsPermissionsSection() {
         return (
           <SettingsSection
             key={source}
-            title={SOURCE_LABELS[source]}
+            icon={<BrandMark id="claude" />}
+            title={`Claude Code · ${SOURCE_LABELS[source]}`}
             description={
               source !== "userSettings" && !activeProjectPath
-                ? "Open a project thread to see project-scoped rules."
-                : undefined
+                ? "Open a project chat to see this project's rules."
+                : "Saved when you pick “Always allow” or “Always deny” in a Claude Code chat."
             }
           >
-            {rules.length === 0 ? (
+            {!loaded ? (
+              <SettingsRow label="Loading rules…">
+                <span />
+              </SettingsRow>
+            ) : rules.length === 0 ? (
               <SettingsRow
-                label="No rules"
-                description="Nothing persisted here yet."
+                label="No rules yet"
+                description="Nothing saved here."
               >
                 <span />
               </SettingsRow>
@@ -480,10 +495,14 @@ export function SettingsPermissionsSection() {
       })}
 
       <SettingsSection
-        title="Session rules (in-memory)"
-        description="“Always allow — this session” decisions. They live per thread and vanish when the thread closes."
+        title="Session rules"
+        description="This session only: “Always allow — this session” decisions, per chat. They end when the chat closes."
       >
-        {sessionRules.length === 0 ? (
+        {!loaded ? (
+          <SettingsRow label="Loading rules…">
+            <span />
+          </SettingsRow>
+        ) : sessionRules.length === 0 ? (
           <SettingsRow
             label="No session rules"
             description="Nothing active right now."

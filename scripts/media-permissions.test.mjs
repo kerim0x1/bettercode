@@ -1,16 +1,22 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import path from "node:path"
 import { test } from "node:test"
 import { pathToFileURL } from "node:url"
-import { runInNewContext } from "node:vm"
 
 const require = createRequire(import.meta.url)
-const source = readFileSync(new URL("../apps/shell/main.cjs", import.meta.url), "utf8")
-const start = source.indexOf("session.defaultSession.setPermissionRequestHandler(")
-const end = source.indexOf("for (const partition of", start)
-assert.ok(start >= 0 && end > start)
+const {
+  denyAllPermissions,
+  installDefaultSessionPermissionHandlers,
+} = require("../apps/shell/shared/web-contents-policy.cjs")
+
+function fakeSession() {
+  const session = {
+    setPermissionRequestHandler: callback => { session.request = callback },
+    setPermissionCheckHandler: callback => { session.check = callback },
+  }
+  return session
+}
 
 function handlers(isPackaged = false) {
   const policy = {
@@ -19,14 +25,8 @@ function handlers(isPackaged = false) {
   }
   const url = isPackaged ? pathToFileURL(path.join(policy.packagedRendererRoot, "index.html")).href : `${policy.devRendererOrigin}/`
   const contents = { id: 1, getURL: () => url, isDestroyed: () => false }
-  const session = { defaultSession: {
-    setPermissionRequestHandler: callback => { session.request = callback },
-    setPermissionCheckHandler: callback => { session.check = callback },
-  } }
-  runInNewContext(source.slice(start, end), {
-    session, getRendererSecurityPolicy: () => policy,
-    ...require("../apps/shell/shared/urlPolicy.cjs"),
-  })
+  const session = fakeSession()
+  installDefaultSessionPermissionHandlers(session, () => policy)
   return { session, contents, details: { isMainFrame: true, requestingUrl: url, mediaTypes: ["audio"] } }
 }
 
@@ -55,4 +55,31 @@ test("permission checks apply the same microphone and frame boundary", () => {
   assert.equal(check({ mediaType: "audio" }), true)
   for (const value of [{ mediaType: "video" }, { mediaType: "unknown" }, {}, { mediaType: "audio", isMainFrame: false }]) assert.equal(check(value), false)
   assert.equal(session.check(null, "media", "http://localhost:49123", { ...details, mediaType: "audio" }), false)
+})
+
+test("system notifications are allowed for a registered app main frame only", () => {
+  const { session, contents, details } = handlers()
+  const request = (sender, value) => {
+    let result
+    session.request(sender, "notifications", allowed => { result = allowed }, value)
+    return result
+  }
+  const notificationDetails = { isMainFrame: true, requestingUrl: details.requestingUrl }
+  assert.equal(request(contents, notificationDetails), true)
+  assert.equal(request(contents, { ...notificationDetails, isMainFrame: false }), false)
+  assert.equal(request(contents, { ...notificationDetails, requestingUrl: "https://untrusted.example" }), false)
+  assert.equal(request({ ...contents, id: 2 }, notificationDetails), false)
+  assert.equal(request(null, notificationDetails), false)
+  assert.equal(session.check(contents, "notifications", "http://localhost:49123", notificationDetails), true)
+  assert.equal(session.check(contents, "notifications", "http://localhost:49123", { ...notificationDetails, isMainFrame: false }), false)
+  assert.equal(session.check(null, "notifications", "http://localhost:49123", notificationDetails), false)
+})
+
+test("preview sessions grant no permission, not even to a trusted-looking request", () => {
+  const session = fakeSession()
+  denyAllPermissions(session)
+  let granted = null
+  session.request({ id: 1 }, "media", allowed => { granted = allowed }, { isMainFrame: true, mediaTypes: ["audio"] })
+  assert.equal(granted, false)
+  assert.equal(session.check({ id: 1 }, "media", "http://localhost:49123", { mediaType: "audio" }), false)
 })

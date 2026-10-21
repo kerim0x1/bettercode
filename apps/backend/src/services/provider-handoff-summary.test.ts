@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { defaultSettings } from "@betterc0de/schema"
 import { ChatLlmHelpers } from "./chat"
-import { runNativeTextGeneration } from "./native-text-generation"
+import type { NativeTextGenerator } from "./native-text-generation"
 
-vi.mock("./native-text-generation", () => ({
-  runNativeTextGeneration: vi.fn(),
-}))
+/** The backend's native text generations: a fake the tests drive. */
+const runNativeTextGeneration = vi.fn<NativeTextGenerator["run"]>()
+const nativeTextGeneration = { run: runNativeTextGeneration }
 beforeEach(() => vi.clearAllMocks())
 
 describe("provider handoff summary routing", () => {
@@ -23,7 +23,10 @@ describe("provider handoff summary routing", () => {
     vi.mocked(runNativeTextGeneration).mockResolvedValue(
       '{"summary":"Keep API stable; implement retries next."}'
     )
-    const helper = new ChatLlmHelpers({ settings: defaultSettings })
+    const helper = new ChatLlmHelpers({
+      settings: defaultSettings,
+      nativeTextGeneration,
+    })
     await expect(helper.generateProviderHandoffSummary(input)).resolves.toEqual(
       { summary: "Keep API stable; implement retries next." }
     )
@@ -47,6 +50,7 @@ describe("provider handoff summary routing", () => {
       await expect(
         new ChatLlmHelpers({
           settings: defaultSettings,
+          nativeTextGeneration,
         }).generateProviderHandoffSummary(input)
       ).rejects.toThrow("no handoff summary")
       expect(runNativeTextGeneration).toHaveBeenCalledTimes(1)
@@ -60,6 +64,7 @@ describe("provider handoff summary routing", () => {
     await expect(
       new ChatLlmHelpers({
         settings: defaultSettings,
+        nativeTextGeneration,
       }).generateProviderHandoffSummary(input)
     ).rejects.toThrow("source unavailable")
     expect(runNativeTextGeneration).toHaveBeenCalledTimes(1)

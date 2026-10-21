@@ -11,6 +11,15 @@ export default defineConfig({
     include: ["src/**/*.test.{ts,tsx}"],
     environment: "node",
     globals: true,
+    // Opt-in: `npm run test:coverage` (needs @vitest/coverage-v8). No
+    // thresholds yet; the report establishes the baseline to ratchet from.
+    coverage: {
+      provider: "v8",
+      reporter: ["text-summary", "html", "lcov"],
+      reportsDirectory: "coverage",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.test.{ts,tsx}", "src/**/*.d.ts"],
+    },
   },
   resolve: {
     alias: {

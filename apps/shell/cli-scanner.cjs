@@ -10,12 +10,19 @@
  * native collision behavior: configuration and agents use the closest scope,
  * Claude skills use project precedence, and Codex keeps same-named skills from
  * multiple `.agents/skills` roots visible.
+ *
+ * All file access is asynchronous (fs/promises): the scans run in the
+ * Electron main process, where synchronous reads of a large
+ * `~/.claude.json` or a deep skills tree froze every window.
  */
 
-const fs = require("fs")
+const fsp = require("fs/promises")
 const path = require("path")
 const os = require("os")
-const { readJson, readBoundedRegularFile } = require("./shared/json-fs.cjs")
+const {
+  readJsonAsync,
+  readBoundedRegularFileAsync,
+} = require("./shared/json-fs.cjs")
 
 const MAX_DISCOVERED_FILES = 512
 const MAX_DISCOVERY_DEPTH = 8
@@ -23,10 +30,9 @@ const MAX_DISCOVERY_FILE_BYTES = 1024 * 1024
 const HTTP_HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]{1,128}$/
 const ENVIRONMENT_VARIABLE_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/
 
-function listDirs(dir) {
+async function listDirs(dir) {
   try {
-    return fs
-      .readdirSync(dir, { withFileTypes: true })
+    return (await fsp.readdir(dir, { withFileTypes: true }))
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort((left, right) => left.localeCompare(right))
@@ -35,13 +41,13 @@ function listDirs(dir) {
   }
 }
 
-function listFilesRecursive(dir, extension, depth = 0, prefix = "") {
+async function listFilesRecursive(dir, extension, depth = 0, prefix = "") {
   if (depth > MAX_DISCOVERY_DEPTH) return []
   let entries
   try {
-    entries = fs
-      .readdirSync(dir, { withFileTypes: true })
-      .sort((left, right) => left.name.localeCompare(right.name))
+    entries = (await fsp.readdir(dir, { withFileTypes: true })).sort(
+      (left, right) => left.name.localeCompare(right.name)
+    )
   } catch {
     return []
   }
@@ -52,11 +58,13 @@ function listFilesRecursive(dir, extension, depth = 0, prefix = "") {
     const relative = prefix ? path.join(prefix, entry.name) : entry.name
     if (entry.isDirectory()) {
       files.push(
-        ...listFilesRecursive(
-          path.join(dir, entry.name),
-          extension,
-          depth + 1,
-          relative
+        ...(
+          await listFilesRecursive(
+            path.join(dir, entry.name),
+            extension,
+            depth + 1,
+            relative
+          )
         ).slice(0, MAX_DISCOVERED_FILES - files.length)
       )
       continue
@@ -118,10 +126,12 @@ function slug(value) {
     .replace(/^-+|-+$/g, "")
 }
 
-function readFrontmatter(file) {
+async function readFrontmatter(file) {
   let content
   try {
-    content = readBoundedRegularFile(file, MAX_DISCOVERY_FILE_BYTES).toString("utf8")
+    content = (
+      await readBoundedRegularFileAsync(file, MAX_DISCOVERY_FILE_BYTES)
+    ).toString("utf8")
   } catch {
     return {}
   }
@@ -137,11 +147,11 @@ function readFrontmatter(file) {
   return metadata
 }
 
-function findSkillFile(skillDir) {
+async function findSkillFile(skillDir) {
   for (const name of ["SKILL.md", "skill.md"]) {
     const candidate = path.join(skillDir, name)
     try {
-      if (fs.statSync(candidate).isFile()) return candidate
+      if ((await fsp.stat(candidate)).isFile()) return candidate
     } catch {
       // Try the next canonical spelling.
     }
@@ -149,12 +159,17 @@ function findSkillFile(skillDir) {
   return null
 }
 
-function readSkills(root, source, scope, idNamespace = "") {
-  return listDirs(root).flatMap((directoryName) => {
+/** Map `items` through an async function, keeping their order. */
+function mapInOrder(items, mapper) {
+  return Promise.all(items.map((item) => mapper(item)))
+}
+
+async function readSkills(root, source, scope, idNamespace = "") {
+  const skills = await mapInOrder(await listDirs(root), async (directoryName) => {
     const skillDir = path.join(root, directoryName)
-    const skillFile = findSkillFile(skillDir)
+    const skillFile = await findSkillFile(skillDir)
     if (!skillFile) return []
-    const metadata = readFrontmatter(skillFile)
+    const metadata = await readFrontmatter(skillFile)
     const name = metadata.name || titleize(directoryName)
     return [
       {
@@ -171,12 +186,13 @@ function readSkills(root, source, scope, idNamespace = "") {
       },
     ]
   })
+  return skills.flat()
 }
 
-function readMarkdownAssets(root, source, scope, kind) {
-  return listFilesRecursive(root, ".md").map((relativeFile) => {
+async function readMarkdownAssets(root, source, scope, kind) {
+  return mapInOrder(await listFilesRecursive(root, ".md"), async (relativeFile) => {
     const absolutePath = path.join(root, relativeFile)
-    const metadata = readFrontmatter(absolutePath)
+    const metadata = await readFrontmatter(absolutePath)
     const relativeName = relativeFile
       .replace(/\.md$/i, "")
       .split(path.sep)
@@ -373,9 +389,11 @@ function parseTomlConfig(text) {
   return { mcpServers, config }
 }
 
-function parseTomlMcpServers(file) {
+async function parseTomlMcpServers(file) {
   try {
-    return parseTomlConfig(readBoundedRegularFile(file, MAX_DISCOVERY_FILE_BYTES).toString("utf8")).mcpServers
+    return parseTomlConfig(
+      (await readBoundedRegularFileAsync(file, MAX_DISCOVERY_FILE_BYTES)).toString("utf8")
+    ).mcpServers
   } catch {
     return {}
   }
@@ -575,8 +593,36 @@ function mergeMcpObject(
   }
 }
 
-function mergeJsonMcpFile(target, file, source, scope, configSources, skipped) {
-  const parsed = readJson(file)
+// `~/.claude.json` grows with Claude Code's project history (up to the 8 MB
+// JSON read limit), every scan reads it twice, and auto-sync scans on each
+// project switch. Parse a config file once per change of its identity (size,
+// mtime, ctime, inode). Cached values are shared between scans: callers must
+// treat them as read-only.
+const MAX_PARSED_JSON_CACHE = 16
+const parsedJsonCache = new Map()
+
+async function readJsonCached(file) {
+  let stat
+  try {
+    stat = await fsp.stat(file)
+  } catch {
+    parsedJsonCache.delete(file)
+    return readJsonAsync(file)
+  }
+  const identity = `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.ino}`
+  const cached = parsedJsonCache.get(file)
+  if (cached && cached.identity === identity) return cached.value
+  const value = await readJsonAsync(file)
+  parsedJsonCache.delete(file)
+  if (parsedJsonCache.size >= MAX_PARSED_JSON_CACHE) {
+    parsedJsonCache.delete(parsedJsonCache.keys().next().value)
+  }
+  parsedJsonCache.set(file, { identity, value })
+  return value
+}
+
+async function mergeJsonMcpFile(target, file, source, scope, configSources, skipped) {
+  const parsed = await readJsonCached(file)
   if (!parsed || typeof parsed !== "object") return
   configSources.push(file)
   mergeMcpObject(
@@ -589,8 +635,8 @@ function mergeJsonMcpFile(target, file, source, scope, configSources, skipped) {
   )
 }
 
-function mergeClaudeCredentials(target, file, configSources) {
-  const parsed = readJson(file)
+async function mergeClaudeCredentials(target, file, configSources) {
+  const parsed = await readJsonAsync(file)
   if (!parsed || typeof parsed !== "object") return
   configSources.push(file)
   const servers = parsed.mcpServers
@@ -623,14 +669,14 @@ function mergeClaudeCredentials(target, file, configSources) {
   }
 }
 
-function mergeClaudeLocalProjectMcp(
+async function mergeClaudeLocalProjectMcp(
   target,
   file,
   cwd,
   configSources,
   skipped
 ) {
-  const parsed = readJson(file)
+  const parsed = await readJsonCached(file)
   const projects =
     parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? parsed.projects
@@ -659,17 +705,27 @@ function normalizedPathIdentity(value) {
   return process.platform === "win32" ? normalized.toLowerCase() : normalized
 }
 
-function existingFiles(files) {
-  return files.filter((file) => {
+async function existingFiles(files) {
+  const present = await mapInOrder(files, async (file) => {
     try {
-      return fs.statSync(file).isFile()
+      return (await fsp.stat(file)).isFile()
     } catch {
       return false
     }
   })
+  return files.filter((_file, index) => present[index])
 }
 
-function scanClaude(options = {}) {
+async function pathExists(target) {
+  try {
+    await fsp.access(target)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function scanClaude(options = {}) {
   const homeDir = options.homeDir || os.homedir()
   const claudeDir = resolveClaudeConfigDir(options)
   const cwd = options.cwd ? path.resolve(options.cwd) : null
@@ -678,7 +734,7 @@ function scanClaude(options = {}) {
   const configSources = []
   const skippedMcpServers = []
   const settingsPath = path.join(claudeDir, "settings.json")
-  const settings = readJson(settingsPath)
+  const settings = await readJsonAsync(settingsPath)
   if (settings && typeof settings === "object") configSources.push(settingsPath)
 
   const enabledPlugins = settings?.enabledPlugins
@@ -699,11 +755,12 @@ function scanClaude(options = {}) {
     "user",
     skippedMcpServers
   )
+  // Sequential on purpose: later sources override earlier ones by name.
   for (const file of [
     path.join(homeDir, ".claude.json"),
     path.join(claudeDir, ".mcp.json"),
   ]) {
-    mergeJsonMcpFile(
+    await mergeJsonMcpFile(
       mcpByName,
       file,
       "claude",
@@ -712,7 +769,7 @@ function scanClaude(options = {}) {
       skippedMcpServers
     )
   }
-  mergeClaudeCredentials(
+  await mergeClaudeCredentials(
     mcpByName,
     path.join(claudeDir, "credentials.json"),
     configSources
@@ -723,7 +780,7 @@ function scanClaude(options = {}) {
       path.join(projectDir, "settings.json"),
       path.join(projectDir, "settings.local.json"),
     ]) {
-      mergeJsonMcpFile(
+      await mergeJsonMcpFile(
         mcpByName,
         file,
         "claude",
@@ -732,7 +789,7 @@ function scanClaude(options = {}) {
         skippedMcpServers
       )
     }
-    mergeClaudeLocalProjectMcp(
+    await mergeClaudeLocalProjectMcp(
       mcpByName,
       path.join(homeDir, ".claude.json"),
       cwd,
@@ -741,48 +798,52 @@ function scanClaude(options = {}) {
     )
   }
 
-  const userSkills = readSkills(
-    path.join(claudeDir, "skills"),
-    "claude",
-    "user"
-  )
-  const projectSkills = projectDir
-    ? readSkills(path.join(projectDir, "skills"), "claude", "project")
-    : []
-  const userAgents = readMarkdownAssets(
-    path.join(claudeDir, "agents"),
-    "claude",
-    "user",
-    "agent"
-  )
-  const projectAgents = projectDir
-    ? readMarkdownAssets(
-        path.join(projectDir, "agents"),
-        "claude",
-        "project",
-        "agent"
-      )
-    : []
-  const userCommands = readMarkdownAssets(
-    path.join(claudeDir, "commands"),
-    "claude",
-    "user",
-    "command"
-  )
-  const projectCommands = projectDir
-    ? readMarkdownAssets(
-        path.join(projectDir, "commands"),
-        "claude",
-        "project",
-        "command"
-      )
-    : []
+  const [
+    userSkills,
+    projectSkills,
+    userAgents,
+    projectAgents,
+    userCommands,
+    projectCommands,
+    found,
+  ] = await Promise.all([
+    readSkills(path.join(claudeDir, "skills"), "claude", "user"),
+    projectDir
+      ? readSkills(path.join(projectDir, "skills"), "claude", "project")
+      : [],
+    readMarkdownAssets(path.join(claudeDir, "agents"), "claude", "user", "agent"),
+    projectDir
+      ? readMarkdownAssets(
+          path.join(projectDir, "agents"),
+          "claude",
+          "project",
+          "agent"
+        )
+      : [],
+    readMarkdownAssets(
+      path.join(claudeDir, "commands"),
+      "claude",
+      "user",
+      "command"
+    ),
+    projectDir
+      ? readMarkdownAssets(
+          path.join(projectDir, "commands"),
+          "claude",
+          "project",
+          "command"
+        )
+      : [],
+    (async () =>
+      (await pathExists(claudeDir)) ||
+      Boolean(projectDir && (await pathExists(projectDir))) ||
+      Boolean(
+        projectDir && cwd && (await pathExists(path.join(cwd, ".mcp.json")))
+      ))(),
+  ])
 
   return {
-    found:
-      fs.existsSync(claudeDir) ||
-      Boolean(projectDir && fs.existsSync(projectDir)) ||
-      Boolean(projectDir && cwd && fs.existsSync(path.join(cwd, ".mcp.json"))),
+    found,
     plugins: pluginIds
       .map((id) => ({
         id,
@@ -802,10 +863,12 @@ function scanClaude(options = {}) {
   }
 }
 
-function readTomlAgentMetadata(file) {
+async function readTomlAgentMetadata(file) {
   let content
   try {
-    content = readBoundedRegularFile(file, MAX_DISCOVERY_FILE_BYTES).toString("utf8")
+    content = (
+      await readBoundedRegularFileAsync(file, MAX_DISCOVERY_FILE_BYTES)
+    ).toString("utf8")
   } catch {
     return {}
   }
@@ -819,14 +882,14 @@ function readTomlAgentMetadata(file) {
   return metadata
 }
 
-function readCodexAgents(root, scope) {
-  return listFilesRecursive(root, ".toml").map((relativeFile) => {
+async function readCodexAgents(root, scope) {
+  return mapInOrder(await listFilesRecursive(root, ".toml"), async (relativeFile) => {
     const relativeName = relativeFile
       .replace(/\.toml$/i, "")
       .split(path.sep)
       .join("/")
     const absolutePath = path.join(root, relativeFile)
-    const metadata = readTomlAgentMetadata(absolutePath)
+    const metadata = await readTomlAgentMetadata(absolutePath)
     const name = metadata.name || titleize(relativeName)
     return {
       id: `codex-agent-${slug(relativeName)}`,
@@ -840,10 +903,10 @@ function readCodexAgents(root, scope) {
   })
 }
 
-function findDefaultProjectRoot(cwd) {
+async function findDefaultProjectRoot(cwd) {
   let current = path.resolve(cwd)
   while (true) {
-    if (fs.existsSync(path.join(current, ".git"))) return current
+    if (await pathExists(path.join(current, ".git"))) return current
     const parent = path.dirname(current)
     if (parent === current) return path.resolve(cwd)
     current = parent
@@ -867,12 +930,12 @@ function projectLayerDirectories(cwd, projectRoot) {
   return directories
 }
 
-function scanCodex(options = {}) {
+async function scanCodex(options = {}) {
   const codexDir = resolveCodexHome(options)
   const homeDir = options.homeDir || os.homedir()
   const cwd = options.cwd ? path.resolve(options.cwd) : null
   const projectRoot = cwd
-    ? path.resolve(options.projectRoot || findDefaultProjectRoot(cwd))
+    ? path.resolve(options.projectRoot || (await findDefaultProjectRoot(cwd)))
     : null
   const projectDirectories =
     cwd && projectRoot && options.workspaceTrusted === true
@@ -893,7 +956,9 @@ function scanCodex(options = {}) {
   ]) {
     let parsed
     try {
-      parsed = parseTomlConfig(readBoundedRegularFile(file, MAX_DISCOVERY_FILE_BYTES).toString("utf8"))
+      parsed = parseTomlConfig(
+        (await readBoundedRegularFileAsync(file, MAX_DISCOVERY_FILE_BYTES)).toString("utf8")
+      )
     } catch {
       continue
     }
@@ -912,36 +977,52 @@ function scanCodex(options = {}) {
     }
   }
 
-  const userSkills = dedupeByLogicalName([
+  const [
+    codexUserSkills,
+    agentsUserSkills,
+    projectSkillGroups,
+    userAgents,
+    projectAgentGroups,
+    found,
+  ] = await Promise.all([
     readSkills(path.join(codexDir, "skills"), "codex", "user"),
     readSkills(path.join(homeDir, ".agents", "skills"), "codex", "user"),
+    mapInOrder(projectDirectories, (directory) => {
+      const namespace =
+        projectRoot && directory === projectRoot
+          ? "root"
+          : path.relative(projectRoot || directory, directory) || "cwd"
+      return readSkills(
+        path.join(directory, ".agents", "skills"),
+        "codex",
+        "project",
+        namespace
+      )
+    }),
+    readCodexAgents(path.join(codexDir, "agents"), "user"),
+    mapInOrder(projectDirectories, (directory) =>
+      readCodexAgents(path.join(directory, ".codex", "agents"), "project")
+    ),
+    (async () => {
+      if (await pathExists(codexDir)) return true
+      if (await pathExists(path.join(homeDir, ".agents"))) return true
+      for (const directory of projectDirectories) {
+        if (
+          (await pathExists(path.join(directory, ".codex"))) ||
+          (await pathExists(path.join(directory, ".agents")))
+        ) {
+          return true
+        }
+      }
+      return false
+    })(),
   ])
-  const projectSkills = projectDirectories.flatMap((directory) => {
-    const namespace =
-      projectRoot && directory === projectRoot
-        ? "root"
-        : path.relative(projectRoot || directory, directory) || "cwd"
-    return readSkills(
-      path.join(directory, ".agents", "skills"),
-      "codex",
-      "project",
-      namespace
-    )
-  })
-  const userAgents = readCodexAgents(path.join(codexDir, "agents"), "user")
-  const projectAgents = projectDirectories.flatMap((directory) =>
-    readCodexAgents(path.join(directory, ".codex", "agents"), "project")
-  )
+  const userSkills = dedupeByLogicalName([codexUserSkills, agentsUserSkills])
+  const projectSkills = projectSkillGroups.flat()
+  const projectAgents = projectAgentGroups.flat()
 
   return {
-    found:
-      fs.existsSync(codexDir) ||
-      fs.existsSync(path.join(homeDir, ".agents")) ||
-      projectDirectories.some(
-        (directory) =>
-          fs.existsSync(path.join(directory, ".codex")) ||
-          fs.existsSync(path.join(directory, ".agents"))
-      ),
+    found,
     plugins: [],
     mcpServers: [...mcpByName.values()].sort((left, right) =>
       left.name.localeCompare(right.name, undefined, { sensitivity: "base" })
@@ -952,7 +1033,7 @@ function scanCodex(options = {}) {
     agents: mergeByLogicalName([userAgents, projectAgents]),
     commands: [],
     skippedMcpServers,
-    configSources: existingFiles(configSources),
+    configSources: await existingFiles(configSources),
     ...(model ? { model } : {}),
     ...(Object.keys(features).length > 0 ? { features } : {}),
   }

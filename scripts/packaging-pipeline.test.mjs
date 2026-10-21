@@ -6,7 +6,7 @@ import path from "node:path"
 import test from "node:test"
 
 const require = createRequire(import.meta.url)
-const { createSubprocessRunner, main: packageMain, buildSigningMetadataArgs } = require("./pack-electron.cjs")
+const { buildSigningMetadataArgs } = require("./pack-electron.cjs")
 const { configureBuildCommand, normalizeOptions } = require("electron-builder/out/builder")
 const { copyFiles, getFileMatchers, getMainFileMatchers, getNodeModuleFileMatcher } = require("app-builder-lib/out/fileMatcher")
 const {
@@ -182,22 +182,6 @@ test("Linux dependency packaging keeps the glibc Claude binary and excludes musl
   }
 })
 
-for (const result of [
-  { status: null, signal: "SIGTERM" },
-  { status: null, signal: null },
-]) {
-  test(`packaging subprocess stages fail on ${JSON.stringify(result)}`, () => {
-    const runner = createSubprocessRunner({
-      spawnSyncImpl: () => result,
-      logger: silentLogger(),
-    })
-
-    assert.equal(runner.run("vendor-workspace-deps.cjs"), 1)
-    assert.equal(runner.runNpm(["run", "backend:rebuild"]), 1)
-    assert.equal(runner.runElectronBuilder(["--win"]), 1)
-  })
-}
-
 test("postinstall fails closed when the rebuild exits non-zero", () => {
   assert.throws(
     () =>
@@ -364,40 +348,36 @@ function silentLogger() {
   return { log() {}, error() {} }
 }
 
-test("packaging restores workspace links even when vendoring or native rebuild fails", () => {
-  for (const failure of ["vendor", "native"]) {
-    const calls = []
-    const runner = {
-      run(file) {
-        const stage = file.includes("restore-workspace") ? "restore" : "vendor"
-        calls.push(stage)
-        return stage === failure ? 7 : 0
-      },
-      runNpm(args) {
-        const stage = args[0] === "run" ? "native" : "node-restore"
-        calls.push(stage)
-        if (stage === failure) throw new Error("rebuild unavailable")
-        return 0
-      },
-      runElectronBuilder() { calls.push("builder"); return 0 },
-    }
-    if (failure === "vendor") assert.equal(packageMain(["--win"], runner), 7)
-    else assert.throws(() => packageMain(["--win"], runner), /rebuild unavailable/)
-    assert.ok(calls.includes("restore"), failure)
-    assert.ok(calls.includes("node-restore"), failure)
-    assert.equal(calls.includes("builder"), false)
+test("the workspace schema reaches app.asar through the files mapping, not a vendored copy", () => {
+  // Packaging used to replace the npm-workspace symlink with a real copy
+  // around electron-builder and restore it afterwards. The explicit mapping
+  // below is what actually ships the schema; release builds never vendored.
+  const manifest = readJson("package.json")
+  const mapping = manifest.build.files.find(
+    (entry) => typeof entry === "object" && entry?.to === "node_modules/@betterc0de/schema"
+  )
+  assert.deepEqual(mapping, {
+    from: "packages/schema",
+    to: "node_modules/@betterc0de/schema",
+    filter: ["package.json", "dist/**/*", "!dist/**/*.map"],
+  })
+  for (const retired of ["vendor-workspace-deps.cjs", "restore-workspace-deps.cjs", "strip-packaging-artifacts.cjs"]) {
+    assert.equal(fs.existsSync(path.join(root, "scripts", retired)), false, retired)
   }
 })
 
-test("packaging reports failed restoration and attempts both cleanup stages", () => {
-  let restoredNode = false
-  const runner = {
-    run(file) { if (file.includes("restore-workspace")) throw new Error("restore unavailable"); return 0 },
-    runNpm(args) { if (args[0] === "rebuild") restoredNode = true; return 0 },
-    runElectronBuilder() { return 0 },
+test("root node_modules are packaged from the production dependency graph, not hand-listed", () => {
+  // electron-builder never walks the root node_modules for `files` includes
+  // (only exclusions apply to dependencies), so a hand-maintained list of
+  // transitive packages could only drift.
+  const manifest = readJson("package.json")
+  const listed = manifest.build.files.filter(
+    (entry) => typeof entry === "string" && entry.startsWith("node_modules/")
+  )
+  assert.deepEqual(listed, [])
+  for (const retired of ["tar", "fast-glob", "@types/dompurify", "dompurify"]) {
+    assert.equal(retired in (manifest.dependencies ?? {}), false, `${retired} is not a runtime dependency`)
   }
-  assert.equal(packageMain(["--win"], runner), 1)
-  assert.equal(restoredNode, true)
 })
 
 test("release builds include signing metadata and electron-builder preserves its boolean type", () => {

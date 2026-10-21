@@ -39,7 +39,7 @@ describe("openrouter live model helpers", () => {
     )
   })
 
-  it("shows Settings custom models verbatim, trimmed and deduped", () => {
+  it("names Settings custom models readably, trimmed and deduped", () => {
     expect(
       openRouterCustomUiModels([
         "  moonshotai/kimi-k2  ",
@@ -50,13 +50,13 @@ describe("openrouter live model helpers", () => {
     ).toEqual([
       {
         id: "moonshotai/kimi-k2",
-        name: "moonshotai/kimi-k2",
+        name: "Kimi K2",
         context: "custom",
         tier: "Custom",
       },
       {
         id: "mistralai/devstral-large",
-        name: "mistralai/devstral-large",
+        name: "Devstral Large",
         context: "custom",
         tier: "Custom",
       },

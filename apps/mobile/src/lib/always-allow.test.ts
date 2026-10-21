@@ -7,9 +7,10 @@ import {
   type AlwaysAllowRequest,
 } from "@betterc0de/schema/always-allow"
 
-// "Always allow" stores a permission rule for good. The rule must be as
-// narrow as the call the user approved: these are the desktop's rules, which
-// the phone's approval card uses too.
+// "Always allow" stores a permission rule. The rule must be as narrow as the
+// call the user approved: these are the desktop's rules, which the phone's
+// approval card uses too. The phone offers only the session scope, because
+// the desktop drops lasting rules from a paired device.
 
 const bash = (command: unknown): AlwaysAllowRequest => ({
   toolName: "Bash",

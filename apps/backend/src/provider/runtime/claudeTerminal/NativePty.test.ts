@@ -91,7 +91,7 @@ describe("native PTY process-tree termination", () => {
 
     expect(settled).toBe(false)
     expect(spawnProcess).toHaveBeenCalledWith(
-      "taskkill.exe",
+      expect.stringMatching(/^[a-z]:\\.*\\System32\\taskkill\.exe$/i),
       ["/pid", "5151", "/T", "/F"],
       expect.objectContaining({ stdio: "ignore", windowsHide: true })
     )

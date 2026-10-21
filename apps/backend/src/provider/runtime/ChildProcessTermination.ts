@@ -1,11 +1,21 @@
 import { spawn, type ChildProcess } from "node:child_process"
-import { sanitizedChildEnvironment } from "../../security/childEnvironment"
+import { restrictedChildEnvironment } from "../../security/childEnvironment"
+import {
+  errorMessage,
+  isChildProcessRunning,
+  isNoSuchProcessError,
+  isPosixProcessGroupAlive,
+  runWindowsTaskkillDetailed,
+  signalPosixProcessGroup,
+  waitForPosixProcessGroupExit,
+  windowsPowerShellPath,
+  type TaskkillSpawn,
+} from "../../services/process-termination"
 
 const DEFAULT_TERM_GRACE_MS = 500
 const DEFAULT_KILL_GRACE_MS = 2_000
 const DEFAULT_TASKKILL_TIMEOUT_MS = 3_000
 const DEFAULT_TASKKILL_CLOSE_GRACE_MS = 1_000
-const PROCESS_GROUP_POLL_MS = 25
 
 type TaskkillSpawner = (
   command: string,
@@ -197,100 +207,40 @@ export async function runProviderWindowsTaskkill(
     readonly closeGraceMs?: number
   } = {}
 ): Promise<void> {
-  const spawnTaskkill = options.spawnTaskkill ?? (spawn as TaskkillSpawner)
-  const timeoutMs = boundedDelay(options.timeoutMs, DEFAULT_TASKKILL_TIMEOUT_MS)
-  const closeGraceMs = boundedDelay(
-    options.closeGraceMs,
-    DEFAULT_TASKKILL_CLOSE_GRACE_MS
-  )
-  let killer: ChildProcess
-  try {
-    killer = spawnTaskkill("taskkill.exe", ["/pid", String(pid), "/T", "/F"], {
-      env: sanitizedChildEnvironment(),
-      stdio: "ignore",
-      windowsHide: true,
-    })
-  } catch (error) {
-    throw codedError(
-      `Failed to start taskkill for provider process tree ${pid}: ${errorMessage(
-        error
-      )}`,
-      "PROVIDER_TASKKILL_SPAWN_FAILED",
-      { pid, cause: error }
-    )
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    let settled = false
-    let spawnError: Error | null = null
-    let timeoutError: Error | null = null
-    let closeDeadline: NodeJS.Timeout | null = null
-
-    const finish = (error?: Error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      if (closeDeadline) clearTimeout(closeDeadline)
-      killer.off("error", onError)
-      killer.off("close", onClose)
-      if (error) reject(error)
-      else resolve()
-    }
-    const onError = (error: Error) => {
-      spawnError = error
-      // Node normally follows "error" with "close". Keep waiting so the
-      // helper lifecycle is never dropped at the error event.
-    }
-    const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
-      if (spawnError) {
-        finish(
-          codedError(
-            `taskkill for provider process tree ${pid} failed: ${spawnError.message}`,
-            "PROVIDER_TASKKILL_SPAWN_FAILED",
-            { pid, cause: spawnError }
-          )
-        )
-        return
-      }
-      if (timeoutError) {
-        finish(timeoutError)
-        return
-      }
-      if (code === 0) {
-        finish()
-        return
-      }
-      finish(
-        codedError(
-          `taskkill for provider process tree ${pid} exited with code ${String(
-            code
-          )}${signal ? ` (${signal})` : ""}.`,
-          "PROVIDER_TASKKILL_FAILED",
-          { pid, exitCode: code, signal }
-        )
+  // The shared helper resolves taskkill absolutely and settles only on the
+  // helper's close (or the close grace after killing a hung helper); this
+  // wrapper keeps the provider runtime's error codes.
+  const result = await runWindowsTaskkillDetailed(pid, true, {
+    spawnProcess: options.spawnTaskkill as TaskkillSpawn | undefined,
+    timeoutMs: boundedDelay(options.timeoutMs, DEFAULT_TASKKILL_TIMEOUT_MS),
+    closeGraceMs: boundedDelay(
+      options.closeGraceMs,
+      DEFAULT_TASKKILL_CLOSE_GRACE_MS
+    ),
+  })
+  switch (result.status) {
+    case "closed":
+      if (result.code === 0) return
+      throw codedError(
+        `taskkill for provider process tree ${pid} exited with code ${String(
+          result.code
+        )}${result.signal ? ` (${result.signal})` : ""}.`,
+        "PROVIDER_TASKKILL_FAILED",
+        { pid, exitCode: result.code, signal: result.signal }
       )
-    }
-    const timeout = setTimeout(() => {
-      timeoutError = codedError(
+    case "timeout":
+      throw codedError(
         `taskkill for provider process tree ${pid} timed out.`,
         "PROVIDER_TASKKILL_TIMEOUT",
         { pid }
       )
-      try {
-        killer.kill("SIGKILL")
-      } catch {
-        // The helper may already be entering its close event.
-      }
-      closeDeadline = setTimeout(() => {
-        finish(timeoutError ?? undefined)
-      }, closeGraceMs)
-      closeDeadline.unref?.()
-    }, timeoutMs)
-    timeout.unref?.()
-
-    killer.once("error", onError)
-    killer.once("close", onClose)
-  })
+    case "error":
+      throw codedError(
+        `taskkill for provider process tree ${pid} failed: ${result.message}`,
+        "PROVIDER_TASKKILL_SPAWN_FAILED",
+        { pid }
+      )
+  }
 }
 
 /**
@@ -385,7 +335,7 @@ async function runWindowsProcessQuery(
   let helper: ChildProcess
   try {
     helper = spawnPowerShell(
-      "powershell.exe",
+      windowsPowerShellPath(),
       [
         "-NoProfile",
         "-NonInteractive",
@@ -395,7 +345,7 @@ async function runWindowsProcessQuery(
         script,
       ],
       {
-        env: sanitizedChildEnvironment(),
+        env: restrictedChildEnvironment(),
         stdio: ["ignore", "pipe", "ignore"],
         windowsHide: true,
       }
@@ -530,53 +480,6 @@ export function parseWindowsProcessRows(
   return records
 }
 
-function signalPosixProcessGroup(
-  pid: number,
-  signal: NodeJS.Signals,
-  killProcess: typeof process.kill
-): boolean {
-  try {
-    killProcess(-pid, signal)
-    return true
-  } catch (error) {
-    if (isNoSuchProcessError(error)) return false
-    // macOS refuses to signal a process group whose members have all exited
-    // but are not reaped yet (zombies) with EPERM; Linux reports success.
-    // Such a group needs no signal. Whether it is gone is decided by the
-    // callers' wait loop, which still treats EPERM as alive until Node
-    // reaps the child, so a genuine permission denial still fails closed.
-    if ((error as NodeJS.ErrnoException).code === "EPERM") return false
-    throw error
-  }
-}
-
-function isPosixProcessGroupAlive(
-  pid: number,
-  killProcess: typeof process.kill
-): boolean {
-  try {
-    killProcess(-pid, 0)
-    return true
-  } catch (error) {
-    if (isNoSuchProcessError(error)) return false
-    if ((error as NodeJS.ErrnoException).code === "EPERM") return true
-    throw error
-  }
-}
-
-async function waitForPosixProcessGroupExit(
-  pid: number,
-  timeoutMs: number,
-  killProcess: typeof process.kill
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (!isPosixProcessGroupAlive(pid, killProcess)) return true
-    await delay(Math.min(PROCESS_GROUP_POLL_MS, deadline - Date.now()))
-  }
-  return !isPosixProcessGroupAlive(pid, killProcess)
-}
-
 function waitForChildExit(
   child: ChildProcess,
   timeoutMs: number
@@ -597,28 +500,13 @@ function waitForChildExit(
 }
 
 function childHasExited(child: ChildProcess): boolean {
-  return child.exitCode !== null || child.signalCode !== null
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, Math.max(1, ms))
-    timer.unref?.()
-  })
+  return !isChildProcessRunning(child)
 }
 
 function boundedDelay(value: number | undefined, fallback: number): number {
   return Number.isFinite(value)
     ? Math.max(1, Math.floor(value as number))
     : fallback
-}
-
-function isNoSuchProcessError(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException).code === "ESRCH"
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 function codedError(

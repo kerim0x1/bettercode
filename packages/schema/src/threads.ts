@@ -1,5 +1,7 @@
 import { z } from "zod"
 import { chatAttachmentSchema } from "./chat"
+import { providerOptionSelectionSchema } from "./model-selection"
+import { chatOrchestrationSchema } from "./orchestrator"
 
 export const threadSaveMessageSchema = z.object({
   id: z.string().trim().min(1, "message.id is required").max(256),
@@ -106,6 +108,98 @@ export const threadMetaSchema = z.object({
 })
 
 export type ThreadMetaBody = z.infer<typeof threadMetaSchema>
+
+const THREAD_SETTINGS_ID_MAX_CHARS = 512
+const THREAD_SETTINGS_MAX_PROVIDERS = 64
+
+/** One provider's composer choices in a chat: model, thinking, context window, options. */
+export const threadProviderModelSettingsSchema = z.object({
+  selectedModel: z.string().max(THREAD_SETTINGS_ID_MAX_CHARS).optional(),
+  thinkingMode: z.string().max(128).nullable().optional(),
+  contextWindow: z.string().max(32).optional(),
+  fastMode: z.boolean().optional(),
+  optionSelections: z.array(providerOptionSelectionSchema).max(128).optional(),
+})
+
+/**
+ * A chat's own settings, kept with the chat in the backend: its permission
+ * level, its model selection, its orchestration and the comparison it was
+ * started in. Each is absent until a client sets it for this chat; the chat
+ * then follows the client's defaults. (A chat's goal is kept with the chat
+ * too, as `goal`.)
+ */
+export const threadSettingsSchema = z.object({
+  permissionLevel: z.string().trim().min(1).max(64).optional(),
+  selectedProviderId: z.string().max(THREAD_SETTINGS_ID_MAX_CHARS).optional(),
+  selectedModel: z.string().max(THREAD_SETTINGS_ID_MAX_CHARS).optional(),
+  modelSelectionByProvider: z
+    .record(
+      z.string().min(1).max(THREAD_SETTINGS_ID_MAX_CHARS),
+      threadProviderModelSettingsSchema
+    )
+    .refine(
+      (value) => Object.keys(value).length <= THREAD_SETTINGS_MAX_PROVIDERS,
+      `modelSelectionByProvider is limited to ${THREAD_SETTINGS_MAX_PROVIDERS} providers`
+    )
+    .optional(),
+  orchestration: chatOrchestrationSchema.optional(),
+  /**
+   * Shared by the chats one prompt started with several models at once
+   * (Compare), so clients can show them as a group.
+   */
+  compareGroupId: z.string().trim().min(1).max(128).optional(),
+  /**
+   * Wake the chat when its branch's pull request gets a failed check, a
+   * review or a merge conflict. Turned on only from the desktop; the backend
+   * clears it once the pull request is merged or closed.
+   */
+  pullRequestWake: z.boolean().optional(),
+})
+
+export type ThreadSettings = z.infer<typeof threadSettingsSchema>
+
+/** The keys `threadSettingsSchema` keeps, in one place for clients that copy them. */
+export const THREAD_SETTINGS_KEYS = [
+  "permissionLevel",
+  "selectedProviderId",
+  "selectedModel",
+  "modelSelectionByProvider",
+  "orchestration",
+  "compareGroupId",
+  "pullRequestWake",
+] as const satisfies ReadonlyArray<keyof ThreadSettings>
+
+/**
+ * A change to a chat's settings: a key with a value replaces it, a key with
+ * `null` clears it, and a key left out keeps its value.
+ */
+export const threadSettingsPatchSchema = z
+  .object({
+    permissionLevel: threadSettingsSchema.shape.permissionLevel.nullable(),
+    selectedProviderId:
+      threadSettingsSchema.shape.selectedProviderId.nullable(),
+    selectedModel: threadSettingsSchema.shape.selectedModel.nullable(),
+    modelSelectionByProvider:
+      threadSettingsSchema.shape.modelSelectionByProvider.nullable(),
+    orchestration: threadSettingsSchema.shape.orchestration.nullable(),
+    compareGroupId: threadSettingsSchema.shape.compareGroupId.nullable(),
+    pullRequestWake: threadSettingsSchema.shape.pullRequestWake.nullable(),
+  })
+  .strict()
+
+export type ThreadSettingsPatch = z.infer<typeof threadSettingsPatchSchema>
+
+/**
+ * Body for PATCH /threads/:id. Either the chat's metadata, as before (the
+ * whole set: title, project, workspace; a `settings` key in it is ignored),
+ * or `{ settings }` alone, which changes only the chat's settings.
+ */
+export const threadUpdateSchema = z.union([
+  threadMetaSchema,
+  z.object({ settings: threadSettingsPatchSchema }).strict(),
+])
+
+export type ThreadUpdateBody = z.infer<typeof threadUpdateSchema>
 
 export const threadMessageSchema = threadSaveMessageSchema.extend({
   id: z.string().min(1, "message.id is required"),

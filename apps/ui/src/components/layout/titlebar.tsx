@@ -45,10 +45,13 @@ import {
   SimpleDropdownSeparator,
 } from "@/components/ui/simple-dropdown"
 import { useChatStore } from "@/lib/chat-store"
+import { countConsoleErrors, useConsoleLogStore } from "@/lib/console-log-store"
 import { usePreferencesStore } from "@/lib/preferences-store"
 import { resolveNewThreadContext } from "@/lib/thread-context"
 import { openAppWindow } from "@/lib/open-app-window"
-import { pickFolder } from "@/services/backend"
+import { switchAppMode } from "@/lib/app-mode-switch"
+import type { AppMode } from "@/lib/preferences-store"
+import { pickFolder } from "@/services/backend/runtime"
 import {
   isMacTitlebarPlatform,
   shouldRenderCustomWindowControls,
@@ -64,21 +67,15 @@ type ElectronApi = {
   openExternal?: (url: string) => void
 }
 
-type ConsoleLog = {
-  type: "log" | "warn" | "error" | "info" | "debug"
-  message: string
-  timestamp: Date
-}
-
 /**
  * Custom titlebar shown when running under a frameless Electron window
  * (packaged builds + dev mode). If `electronApi` is missing we render
  * nothing — the native OS titlebar is used instead.
  *
  * Contains:
- *  - Menu bar (Edit / File / View / Window / Help)
- *  - Center: current project name (read-only)
- *  - Right: DevTools toggle, console error indicator, window controls
+ *  - Left: sidebar toggle
+ *  - Center: menu bar (Edit / File / View / Window / Help)
+ *  - Right: current project name (read-only), window controls
  *
  * Menu behavior switches between the Radix `<DropdownMenu>` (extended UI)
  * and our custom `<SimpleDropdown>` (simple UI) based on `chatUiStyle`
@@ -91,9 +88,8 @@ type ComposerTabLite = {
   label: string
 }
 
-export function Titlebar({
+function TitlebarImpl({
   activeThreadProjectName,
-  consoleLogs,
   consolePanelOpen,
   chatUiStyle,
   appMode,
@@ -114,7 +110,6 @@ export function Titlebar({
   exitSplitMode: _exitSplitMode,
 }: {
   activeThreadProjectName: string | undefined
-  consoleLogs: ConsoleLog[]
   consolePanelOpen: boolean
   chatUiStyle: string
   appMode: "agent" | "editor" | "design"
@@ -136,6 +131,12 @@ export function Titlebar({
   enterSplitMode?: () => void
   exitSplitMode?: () => void
 }) {
+  // Counts, not the log array: a flushed batch only re-renders the title bar
+  // when a count changes.
+  const consoleLogCount = useConsoleLogStore((s) => s.logs.length)
+  const consoleErrorCount = useConsoleLogStore((s) =>
+    countConsoleErrors(s.logs)
+  )
   const isFrameless = !!electronApi?.windowMinimize
   if (!isFrameless) return null
   const navigatorPlatform =
@@ -147,6 +148,12 @@ export function Titlebar({
     navigatorPlatform,
     hasWindowControlIpc: !!electronApi?.windowMinimize,
   })
+  const selectMode = (mode: AppMode) =>
+    switchAppMode(mode, {
+      setAppMode,
+      setSystemBrowserIntent,
+      setSystemBrowserOpen,
+    })
 
   const menus: {
     label: string
@@ -306,10 +313,8 @@ export function Titlebar({
         },
         {
           label: (() => {
-            const errCount = consoleLogs.filter(
-              (l) => l.type === "error"
-            ).length
-            const total = consoleLogs.length
+            const errCount = consoleErrorCount
+            const total = consoleLogCount
             if (total === 0) return "Console Report"
             if (errCount > 0)
               return `Console Report (${total} logs, ${errCount} errors)`
@@ -328,7 +333,7 @@ export function Titlebar({
               className="size-3.5"
             />
           ),
-          action: () => setAppMode("agent"),
+          action: () => selectMode("agent"),
         },
         {
           label: "Editor Mode",
@@ -339,7 +344,7 @@ export function Titlebar({
               className="size-3.5"
             />
           ),
-          action: () => setAppMode("editor"),
+          action: () => selectMode("editor"),
         },
         {
           label: "Canvas Mode",
@@ -350,7 +355,7 @@ export function Titlebar({
               className="size-3.5"
             />
           ),
-          action: () => setAppMode("design"),
+          action: () => selectMode("design"),
         },
       ],
     },
@@ -371,7 +376,11 @@ export function Titlebar({
                   label: "New Canvas Window",
                   icon: PaintBoardIcon,
                 },
-                { mode: "agent", label: "New Agent Window", icon: BotIcon },
+                {
+                  mode: "agent",
+                  label: "New Agent Window",
+                  icon: BotIcon,
+                },
               ] as const
             ).map(({ mode, label, icon }) => ({
               label,
@@ -437,22 +446,29 @@ export function Titlebar({
   ]
 
   return (
+    // Equal side columns keep the menus centred in the window whatever the
+    // toggle and window controls measure; free space stays draggable.
     <div
       className={cn(
-        "flex h-10 shrink-0 items-center bg-sidebar select-none",
+        "grid h-10 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center bg-sidebar select-none",
         isMac && "pl-20"
       )}
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
     >
-      {/* Left: App icon + menus */}
+      {/* Left: sidebar toggle */}
       <div
-        className="flex h-full items-center"
+        className="flex h-full max-w-full items-center justify-self-start overflow-hidden"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
         <SidebarToggleButton />
-        <div className="mx-1 h-5 w-px bg-border" />
-        {/* Render order: Edit → File → View → Window → Help. File sits directly to
-            the right of Edit per the UI spec. */}
+      </div>
+
+      {/* Center: menus. Render order: Edit → File → View → Window → Help;
+          File sits directly to the right of Edit per the UI spec. */}
+      <div
+        className="flex h-full items-center gap-0.5 px-3"
+        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+      >
         {(() => {
           const byLabel = Object.fromEntries(menus.map((m) => [m.label, m]))
           return ["Edit", "File", "View", "Window", "Help"]
@@ -462,62 +478,69 @@ export function Titlebar({
         })()}
       </div>
 
-      <div className="flex-1" />
-
-      {/* Center: project title */}
-      <span className="max-w-[300px] truncate text-[11px] text-muted-foreground/50">
-        {activeThreadProjectName || "BetterC0de"}
-      </span>
-
-      <div className="flex-1" />
-
-      {/* Right: Window controls. macOS uses native traffic lights. */}
-      <div
-        className="flex h-full items-center"
-        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-      >
-        {showCustomWindowControls && (
-          <>
-            <button
-              type="button"
-              onClick={() => electronApi.windowMinimize?.()}
-              className="flex h-full w-11 items-center justify-center text-muted-foreground/50 transition-colors hover:bg-muted/30 hover:text-foreground"
-              aria-label="Minimize window"
-            >
-              <svg viewBox="0 0 12 12" className="size-3" fill="currentColor">
-                <rect x="1" y="5.5" width="10" height="1" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={() => electronApi.windowMaximize?.()}
-              className="flex h-full w-11 items-center justify-center text-muted-foreground/50 transition-colors hover:bg-muted/30 hover:text-foreground"
-              aria-label="Maximize window"
-            >
-              <svg
-                viewBox="0 0 12 12"
-                className="size-3"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.2"
+      {/* Right: project title, then window controls. macOS uses native
+          traffic lights. */}
+      <div className="flex h-full min-w-0 items-center justify-end">
+        <span className="mr-3 min-w-0 truncate text-[11px] text-muted-foreground/50">
+          {activeThreadProjectName || "BetterC0de"}
+        </span>
+        <div
+          className="flex h-full shrink-0 items-center"
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+        >
+          {showCustomWindowControls && (
+            <>
+              <button
+                type="button"
+                onClick={() => electronApi.windowMinimize?.()}
+                className="flex h-full w-11 items-center justify-center text-muted-foreground/50 transition-colors hover:bg-muted/30 hover:text-foreground"
+                aria-label="Minimize window"
               >
-                <rect x="1.5" y="1.5" width="9" height="9" rx="1" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={() => electronApi.windowClose?.()}
-              className="flex h-full w-12 items-center justify-center text-muted-foreground/50 transition-colors hover:bg-destructive hover:text-white"
-              aria-label="Close window"
-            >
-              <XIcon className="size-3.5" />
-            </button>
-          </>
-        )}
+                <svg viewBox="0 0 12 12" className="size-3" fill="currentColor">
+                  <rect x="1" y="5.5" width="10" height="1" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => electronApi.windowMaximize?.()}
+                className="flex h-full w-11 items-center justify-center text-muted-foreground/50 transition-colors hover:bg-muted/30 hover:text-foreground"
+                aria-label="Maximize window"
+              >
+                <svg
+                  viewBox="0 0 12 12"
+                  className="size-3"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                >
+                  <rect x="1.5" y="1.5" width="9" height="9" rx="1" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => electronApi.windowClose?.()}
+                className="flex h-full w-12 items-center justify-center text-muted-foreground/50 transition-colors hover:bg-destructive hover:text-white"
+                aria-label="Close window"
+              >
+                <XIcon className="size-3.5" />
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   )
 }
+
+/**
+ * Memoized: the title bar's props are values and stable setters, so it skips
+ * the app-shell renders driven by chat activity it does not show.
+ */
+export const Titlebar = React.memo(TitlebarImpl)
+
+/** Menu triggers are toolbar-sized buttons, like the canvas toolbar's. */
+const TITLEBAR_MENU_TRIGGER =
+  "flex h-7 items-center justify-center rounded-md px-2.5 text-[12px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring data-[state=open]:bg-muted/60 data-[state=open]:text-foreground"
 
 type MenuDef = {
   label: string
@@ -546,11 +569,7 @@ function renderMenu(menu: MenuDef, chatUiStyle: string) {
         side="bottom"
         className="min-w-[220px]"
         trigger={
-          <button
-            type="button"
-            className="flex h-full items-center justify-center px-2.5 text-[12px] text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
-            style={{ height: "40px" }}
-          >
+          <button type="button" className={TITLEBAR_MENU_TRIGGER}>
             {menu.label}
           </button>
         }
@@ -576,10 +595,7 @@ function renderMenu(menu: MenuDef, chatUiStyle: string) {
   return (
     <DropdownMenu key={menu.label}>
       <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className="flex h-full items-center justify-center px-2.5 text-[12px] text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
-        >
+        <button type="button" className={TITLEBAR_MENU_TRIGGER}>
           {menu.label}
         </button>
       </DropdownMenuTrigger>

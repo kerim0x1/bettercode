@@ -4,6 +4,7 @@ import path from "node:path"
 import Database from "better-sqlite3"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { createServerConfig } from "../config"
+import { AgentPermissionRuntime } from "../provider/agent-permission-runtime"
 import type { BootRoot } from "./context"
 import { openPersistence } from "./persistence"
 
@@ -46,6 +47,7 @@ function open(options: Parameters<typeof createServerConfig>[0] = {}) {
     config,
     options: {},
     startupCleanup: cleanup,
+    agentPermissionRuntime: new AgentPermissionRuntime(),
     resourceShutdowns: {
       git: async () => undefined,
       imageGeneration: async () => 0,

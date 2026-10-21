@@ -6,7 +6,6 @@ import type {
   ProviderRuntimeEvent,
   ThreadId,
 } from "../contracts"
-import { configureAgentPermissionRuntime } from "../../agent-permission-runtime"
 import type {
   AcpEvent,
   AcpExit,
@@ -161,7 +160,6 @@ async function runScenario(profile: (typeof PROFILES)[number]) {
 
 describe("ACP adapter parity (Cursor vs Grok)", () => {
   afterEach(() => {
-    configureAgentPermissionRuntime(null)
     vi.useRealTimers()
   })
 
@@ -207,6 +205,117 @@ describe("ACP adapter parity (Cursor vs Grok)", () => {
         expect((await adapter.listSessions())[0]?.runtimeMode).toBe(
           "approval-required"
         )
+      } finally {
+        await adapter.stopAll()
+      }
+    }
+  )
+
+  it.each(PROFILES)(
+    "$name: sends images as ACP blocks when advertised and announces the rest",
+    async (profile) => {
+      const attachments = [
+        {
+          type: "file",
+          filename: "shot.png",
+          mediaType: "image/png",
+          url: "data:image/png;base64,iVBORw0KGgo=",
+        },
+        {
+          type: "file",
+          filename: "spec.pdf",
+          mediaType: "application/pdf",
+          url: "data:application/pdf;base64,JVBERi0=",
+        },
+      ]
+      for (const acceptsImages of [true, false]) {
+        const runtime = new FakeAcpRuntime()
+        const start = runtime.start.bind(runtime)
+        vi.spyOn(runtime, "start").mockImplementation(async () => ({
+          ...(await start()),
+          initializeResult: Object.assign(
+            { protocolVersion: 1 },
+            {
+              agentCapabilities: {
+                promptCapabilities: { image: acceptsImages },
+              },
+            }
+          ),
+        }))
+        const adapter = profile.make(() => runtime)
+        const events: ProviderRuntimeEvent[] = []
+        adapter.subscribe((event) => events.push(event))
+        const threadId = `attachments-${acceptsImages}` as ThreadId
+        await adapter.startSession({ threadId })
+        try {
+          await adapter.sendTurn({
+            threadId,
+            message: "Look",
+            modelId: "default",
+            history: [],
+            attachments,
+          })
+          const [prompt] = runtime.prompts
+          const text = String(prompt?.prompt[0]?.text)
+          expect(text).toContain("spec.pdf")
+          if (acceptsImages) {
+            expect(prompt?.prompt.slice(1)).toEqual([
+              { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+            ])
+            expect(text).not.toContain("shot.png")
+          } else {
+            expect(prompt?.prompt).toHaveLength(1)
+            expect(text).toContain("shot.png")
+          }
+          // Nothing disappears silently: the user is told what was not sent.
+          expect(events.some((event) => event.type === "runtime.warning")).toBe(
+            true
+          )
+        } finally {
+          await adapter.stopAll()
+        }
+      }
+    }
+  )
+
+  it.each(PROFILES)(
+    '$name: never inherits full access for a turn without a level, nor grants it for "full-access"',
+    async (profile) => {
+      const runtime = new FakeAcpRuntime()
+      const adapter = profile.make(() => runtime)
+      const threadId = "no-inherited-bypass" as ThreadId
+      const events: ProviderRuntimeEvent[] = []
+      adapter.subscribe((event) => {
+        events.push(event)
+        if (event.type === "request.opened") {
+          void adapter.respondToRequest(
+            threadId,
+            event.requestId as ApprovalRequestId,
+            { kind: "tool_approval", decision: "deny" }
+          )
+        }
+      })
+      await adapter.startSession({ threadId, runtimeMode: "full-access" })
+      try {
+        for (const permissionLevel of [undefined, "full-access"]) {
+          await adapter.sendTurn({
+            threadId,
+            message: "Edit it",
+            modelId: "default",
+            history: [],
+            ...(permissionLevel ? { permissionLevel } : {}),
+          })
+          // Not auto-approved: the request reaches the user, who denies it.
+          await expect(
+            runtime.triggerPermission({
+              kind: "edit",
+              raw: { options: PERMISSION_OPTIONS },
+            })
+          ).resolves.toMatchObject({ outcome: { optionId: "reject-once" } })
+        }
+        expect(
+          events.filter((event) => event.type === "request.opened")
+        ).toHaveLength(2)
       } finally {
         await adapter.stopAll()
       }

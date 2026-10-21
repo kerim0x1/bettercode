@@ -7,13 +7,6 @@ import { defineWorkbenchThemes } from "@/lib/monaco-workbench-theme"
 import { enableWorkbenchJsx } from "@/lib/monaco-workbench-language"
 import Editor, { type OnMount } from "@monaco-editor/react"
 import { useTheme } from "@/components/theme-provider"
-import { Button } from "@/components/ui/button"
-import {
-  SimpleDropdown,
-  SimpleDropdownSub,
-  SimpleDropdownSubItem,
-} from "@/components/ui/simple-dropdown"
-import { cn } from "@/lib/utils"
 import { useEditorStore, type EditorSelectionContext } from "@/lib/editor-store"
 import {
   normalizeMonacoMarkerSeverity,
@@ -33,58 +26,33 @@ import type { EditorGotoLineDetail } from "@/lib/editor-go-to-line"
 import { isRenameableIdentifier } from "@/lib/symbol-rename"
 import { editorModelUri } from "@/lib/editor-path"
 import { renameSymbolInOpenFiles } from "@/lib/monaco-symbol-rename"
+import {
+  installEditorModelDisposal,
+  scheduleEditorModelCleanup,
+} from "@/lib/monaco-model-disposal"
 import { toast } from "@/lib/toast"
-import {
-  buildOpenEditorWorkspaceSymbolSources,
-  buildWorkspaceDefinitionCandidates,
-  type WorkspaceDefinitionCandidate,
-  type WorkspaceSymbolSource,
-} from "@/lib/workspace-symbols"
-import {
-  quickOpenFiles,
-  readFile,
-  searchContent,
-  type WorkspaceContentSearchResult,
-  type WorkspaceQuickOpenFile,
-} from "@/services/backend"
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  PencilLineIcon,
-  SparklesIcon,
-  TerminalIcon,
-  XIcon,
-} from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import type { editor as MonacoEditor, IRange } from "monaco-editor"
+import {
+  computeLineDiff,
+  editorCommandTargetsFile,
+  resolveMonacoFontFamily,
+  selectionStats,
+} from "./monaco-editor/editor-helpers"
+import { InlineEditPopup } from "./monaco-editor/inline-edit-popup"
+import type {
+  InlineEditProvider,
+  InlineEditRequest,
+} from "./monaco-editor/inline-edit-types"
+import { RenameSymbolPopup } from "./monaco-editor/rename-symbol-popup"
+import { resolveWorkspaceDefinition } from "./monaco-editor/workspace-definition"
 
-export interface InlineEditRequest {
-  filePath: string
-  language: string
-  instruction: string
-  selectedText: string
-  isWholeFile: boolean
-  selection: {
-    startLine: number
-    startColumn: number
-    endLine: number
-    endColumn: number
-  }
-}
-
-export interface InlineEditModel {
-  id: string
-  name: string
-}
-
-export interface InlineEditProvider {
-  id: string
-  name: string
-  logo?: string
-  invertDark?: boolean
-  models: InlineEditModel[]
-}
+export type {
+  InlineEditModel,
+  InlineEditProvider,
+  InlineEditRequest,
+} from "./monaco-editor/inline-edit-types"
 
 interface MonacoEditorWrapperProps {
   workbench?: boolean
@@ -116,12 +84,6 @@ interface MonacoEditorWrapperProps {
   onInlineEditModelChange?: (modelId: string, providerId: string) => void
 }
 
-/** LCS-based line diff → per-line operations for decoration rendering. */
-type LineDiffOp =
-  | { type: "same"; newLine: number }
-  | { type: "add"; newLine: number }
-  | { type: "remove"; beforeNewLine: number; text: string }
-
 interface RenameSymbolContext {
   modelUri: string
   modelVersion: number
@@ -140,98 +102,6 @@ interface DiagnosticInlineFixDetail {
   endLine?: number
   endColumn?: number
   instruction?: string
-}
-
-const DEFAULT_MONACO_FONT_FAMILY =
-  "'Fira Code', 'Cascadia Code', 'JetBrains Mono', Consolas, monospace"
-
-function resolveMonacoFontFamily(value: string): string {
-  const fontFamily = value.trim()
-  if (!fontFamily) return DEFAULT_MONACO_FONT_FAMILY
-  return `'${fontFamily.replace(/'/g, "\\'")}', ${DEFAULT_MONACO_FONT_FAMILY}`
-}
-
-function computeLineDiff(oldText: string, newText: string): LineDiffOp[] {
-  const a = oldText.split("\n")
-  const b = newText.split("\n")
-  const m = a.length
-  const n = b.length
-  // Guard against pathologically huge files — fall back to a no-op diff.
-  if (m * n > 2_000_000)
-    return b.map((_, i) => ({ type: "same", newLine: i + 1 }))
-
-  const dp: Uint32Array[] = Array.from(
-    { length: m + 1 },
-    () => new Uint32Array(n + 1)
-  )
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i][j] =
-        a[i - 1] === b[j - 1]
-          ? dp[i - 1][j - 1] + 1
-          : Math.max(dp[i - 1][j], dp[i][j - 1])
-    }
-  }
-
-  const ops: LineDiffOp[] = []
-  let i = m
-  let j = n
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
-      ops.push({ type: "same", newLine: j })
-      i--
-      j--
-    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      ops.push({ type: "add", newLine: j })
-      j--
-    } else {
-      // Removal: attribute to the line that will come next in the new file
-      ops.push({ type: "remove", beforeNewLine: j + 1, text: a[i - 1] })
-      i--
-    }
-  }
-  return ops.reverse()
-}
-
-function selectionStats(
-  editor: MonacoEditor.IStandaloneCodeEditor,
-  range: IRange
-): EditorSelectionContext {
-  const model = editor.getModel()
-  const empty = {
-    lineCount: 0,
-    charCount: 0,
-    startLine: range.startLineNumber,
-    startColumn: range.startColumn,
-    endLine: range.endLineNumber,
-    endColumn: range.endColumn,
-    text: "",
-  }
-  if (!model) return empty
-  const text = model.getValueInRange(range)
-  if (!text) return empty
-  return {
-    lineCount: Math.max(
-      1,
-      Math.abs(range.endLineNumber - range.startLineNumber) + 1
-    ),
-    charCount: text.length,
-    startLine: range.startLineNumber,
-    startColumn: range.startColumn,
-    endLine: range.endLineNumber,
-    endColumn: range.endColumn,
-    text,
-  }
-}
-
-function editorCommandTargetsFile(
-  detail: { filePath?: string } | undefined,
-  filePath: string
-): boolean {
-  if (detail?.filePath) return detail.filePath === filePath
-  const state = useEditorStore.getState()
-  const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId)
-  return activeTab?.filePath === filePath
 }
 
 export function MonacoEditorWrapper({
@@ -857,6 +727,12 @@ export function MonacoEditorWrapper({
       monacoRef.current = monaco
       diffDecorationsRef.current = editor.createDecorationsCollection()
 
+      // The editor keeps one model per path it has shown. Release models of
+      // closed tabs once the editor has moved on to its next model.
+      installEditorModelDisposal(monaco)
+      editor.onDidChangeModel(() => scheduleEditorModelCleanup())
+      scheduleEditorModelCleanup()
+
       // Search can finish before the lazy editor mounts. Its target position
       // is already in the tab store even when the one-shot event was missed.
       if (workbench) {
@@ -1342,437 +1218,5 @@ export function MonacoEditorWrapper({
           renameDom
         )}
     </>
-  )
-}
-
-const DEFINITION_SEARCH_LIMIT = 100
-const DEFINITION_FILE_LIMIT = 32
-
-async function resolveWorkspaceDefinition(input: {
-  projectPath?: string | null
-  currentFilePath: string
-  currentContent: string
-  symbol: string
-  originLine: number
-  originColumn: number
-}): Promise<WorkspaceDefinitionCandidate | null> {
-  const openEditorSources = buildOpenEditorWorkspaceSymbolSources({
-    projectPath: input.projectPath,
-    currentFilePath: input.currentFilePath,
-    currentContent: input.currentContent,
-    tabs: useEditorStore.getState().tabs,
-  })
-  const sources = [...openEditorSources.sources]
-
-  if (input.projectPath) {
-    const [contentSearch, fileSearch] = await Promise.allSettled([
-      searchContent(input.projectPath, input.symbol, DEFINITION_SEARCH_LIMIT),
-      quickOpenFiles(input.projectPath, input.symbol, DEFINITION_SEARCH_LIMIT),
-    ])
-
-    const files = uniqueDefinitionFiles(
-      contentSearch.status === "fulfilled" ? contentSearch.value : [],
-      fileSearch.status === "fulfilled" ? fileSearch.value : [],
-      openEditorSources.sourcePathKeys
-    ).slice(0, DEFINITION_FILE_LIMIT)
-
-    const loadedSources = await Promise.all(
-      files.map(async (file) => {
-        const filePath = joinWorkspacePath(input.projectPath!, file.path)
-        try {
-          const loaded = await readFile(filePath, { silent404: true })
-          return {
-            filePath,
-            relativePath: file.path,
-            content: loaded.content,
-          } satisfies WorkspaceSymbolSource
-        } catch {
-          return null
-        }
-      })
-    )
-    for (const source of loadedSources) {
-      if (source) sources.push(source)
-    }
-  }
-
-  const definitions = buildWorkspaceDefinitionCandidates(sources, {
-    symbol: input.symbol,
-    originFilePath: input.currentFilePath,
-    originLine: input.originLine,
-    originColumn: input.originColumn,
-  })
-  return definitions[0] ?? null
-}
-
-function uniqueDefinitionFiles(
-  contentResults: readonly WorkspaceContentSearchResult[],
-  fileResults: readonly WorkspaceQuickOpenFile[],
-  excludedPathKeys: ReadonlySet<string>
-): Array<{ path: string; name: string }> {
-  const seen = new Set(excludedPathKeys)
-  const out: Array<{ path: string; name: string }> = []
-  for (const result of [...contentResults, ...fileResults]) {
-    const key = normalizePath(result.path).toLowerCase()
-    if (seen.has(key)) continue
-    seen.add(key)
-    out.push({ path: result.path, name: result.name })
-  }
-  return out
-}
-
-function joinWorkspacePath(projectPath: string, relativePath: string): string {
-  const separator = projectPath.includes("\\") ? "\\" : "/"
-  const base = projectPath.replace(/[\\/]+$/, "")
-  const relative = relativePath.replace(/^[\\/]+/, "")
-  return `${base}${separator}${relative}`
-}
-
-function normalizePath(value: string): string {
-  return value.replace(/\\/g, "/")
-}
-
-interface RenameSymbolPopupProps {
-  symbol: string
-  busy: boolean
-  error: string | null
-  onSubmit: (name: string) => void
-  onCancel: () => void
-}
-
-function RenameSymbolPopup({
-  symbol,
-  busy,
-  error,
-  onSubmit,
-  onCancel,
-}: RenameSymbolPopupProps) {
-  const [name, setName] = useState(symbol)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const valid = isRenameableIdentifier(name)
-  const changed = name.trim() !== symbol
-
-  useEffect(() => {
-    const handle = window.setTimeout(() => {
-      inputRef.current?.focus()
-      inputRef.current?.select()
-    }, 30)
-    return () => window.clearTimeout(handle)
-  }, [])
-
-  return (
-    <div
-      className="inline-edit-widget rename-symbol-widget"
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault()
-          event.stopPropagation()
-          onCancel()
-          return
-        }
-        if (event.key === "Enter") {
-          event.preventDefault()
-          event.stopPropagation()
-          if (valid && changed && !busy) onSubmit(name)
-        }
-      }}
-    >
-      <div className="inline-edit-header">
-        <PencilLineIcon className="size-3.5 text-primary" />
-        <span className="inline-edit-header-title">
-          Rename Symbol in Open Files
-        </span>
-        <span className="inline-edit-header-range">{symbol}</span>
-        <div className="flex-1" />
-        <button
-          type="button"
-          className="inline-edit-close"
-          onClick={onCancel}
-          aria-label="Cancel"
-          disabled={busy}
-        >
-          <XIcon className="size-3" />
-        </button>
-      </div>
-
-      <input
-        ref={inputRef}
-        value={name}
-        onChange={(event) => setName(event.target.value)}
-        className="inline-edit-input h-9 resize-none"
-        disabled={busy}
-        spellCheck={false}
-      />
-
-      <div className="inline-edit-footer">
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate text-[10px]",
-            error || (!valid && name.trim())
-              ? "text-destructive"
-              : "text-muted-foreground"
-          )}
-        >
-          {error ??
-            (!valid && name.trim()
-              ? "Use a valid identifier."
-              : "Open TypeScript/JavaScript files only. Review and save the changes.")}
-        </span>
-        <span className="inline-edit-hint">↵</span>
-        <Button
-          size="sm"
-          className="h-7 gap-1.5 text-xs"
-          onClick={() => onSubmit(name)}
-          disabled={!valid || !changed || busy}
-        >
-          {busy ? (
-            <>
-              <div className="size-3 animate-spin rounded-full border border-current border-t-transparent" />
-              Renaming
-            </>
-          ) : (
-            <>
-              <PencilLineIcon className="size-3" />
-              Rename
-            </>
-          )}
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-// ═════════════════════════════════════════════════════════════════════════
-// Inline Edit Popup — Cursor-style floating card rendered inside Monaco
-// ═════════════════════════════════════════════════════════════════════════
-
-interface InlineEditPopupProps {
-  selection: InlineEditRequest["selection"]
-  isWholeFile: boolean
-  initialInstruction?: string
-  busy: boolean
-  providers: InlineEditProvider[]
-  selectedModelId: string
-  selectedProviderId: string
-  onSelectModel?: (modelId: string, providerId: string) => void
-  onSubmit: (instruction: string) => void
-  onCancel: () => void
-}
-
-function InlineEditPopup({
-  selection,
-  isWholeFile,
-  initialInstruction = "",
-  busy,
-  providers,
-  selectedModelId,
-  selectedProviderId,
-  onSelectModel,
-  onSubmit,
-  onCancel,
-}: InlineEditPopupProps) {
-  const [instruction, setInstruction] = useState(initialInstruction)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
-
-  // Autofocus on mount
-  useEffect(() => {
-    const handle = setTimeout(() => inputRef.current?.focus(), 30)
-    return () => clearTimeout(handle)
-  }, [])
-
-  const currentProvider = providers.find((p) => p.id === selectedProviderId)
-  const currentModel = currentProvider?.models.find(
-    (m) => m.id === selectedModelId
-  )
-  const currentModelName =
-    currentModel?.name || selectedModelId || "Select model"
-
-  const rangeLabel = isWholeFile
-    ? "Whole file"
-    : `L${selection.startLine}–L${selection.endLine}`
-
-  const canSubmit = instruction.trim().length > 0 && !busy
-
-  return (
-    <div
-      className="inline-edit-widget"
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          e.preventDefault()
-          e.stopPropagation()
-          onCancel()
-        } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-          e.preventDefault()
-          e.stopPropagation()
-          if (canSubmit) onSubmit(instruction)
-        }
-      }}
-    >
-      <div className="inline-edit-header">
-        <SparklesIcon className="size-3.5 text-primary" />
-        <span className="inline-edit-header-title">Edit with AI</span>
-        <span className="inline-edit-header-range">{rangeLabel}</span>
-        <div className="flex-1" />
-        <button
-          type="button"
-          className="inline-edit-close"
-          onClick={onCancel}
-          aria-label="Cancel"
-          disabled={busy}
-        >
-          <XIcon className="size-3" />
-        </button>
-      </div>
-
-      <textarea
-        ref={inputRef}
-        value={instruction}
-        onChange={(e) => setInstruction(e.target.value)}
-        placeholder="Describe the change you want for this selection..."
-        className="inline-edit-input"
-        rows={3}
-        disabled={busy}
-      />
-
-      <div className="inline-edit-footer">
-        {providers.length > 0 && onSelectModel ? (
-          <SimpleDropdown
-            align="start"
-            trigger={
-              <button
-                type="button"
-                className="inline-edit-model-button"
-                disabled={busy}
-                aria-label="Change model"
-              >
-                {currentProvider?.logo ? (
-                  <img
-                    src={currentProvider.logo}
-                    alt={currentProvider.name}
-                    className={cn(
-                      "size-3.5 shrink-0",
-                      currentProvider.invertDark && "dark:invert"
-                    )}
-                    onError={(e) =>
-                      ((e.target as HTMLImageElement).style.display = "none")
-                    }
-                  />
-                ) : (
-                  <TerminalIcon className="size-3.5 shrink-0" />
-                )}
-                <span className="inline-edit-model-label">
-                  {currentModelName}
-                </span>
-                <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
-              </button>
-            }
-            className="max-h-[360px] min-w-[180px]"
-          >
-            {providers
-              .filter((p) => p.models.length > 0)
-              .map((provider) => (
-                <SimpleDropdownSub
-                  key={provider.id}
-                  trigger={
-                    <>
-                      {provider.logo ? (
-                        <img
-                          src={provider.logo}
-                          alt={provider.name}
-                          className={cn(
-                            "!size-3.5 shrink-0",
-                            provider.invertDark && "dark:invert"
-                          )}
-                          onError={(e) =>
-                            ((e.target as HTMLImageElement).style.display =
-                              "none")
-                          }
-                        />
-                      ) : (
-                        <TerminalIcon className="!size-3.5 shrink-0" />
-                      )}
-                      <span className="flex-1">{provider.name}</span>
-                      <span className="mr-1 text-xs text-muted-foreground">
-                        {provider.models.length}
-                      </span>
-                    </>
-                  }
-                  className="max-h-[320px]"
-                >
-                  {provider.models.map((model) => {
-                    const isSelected =
-                      selectedProviderId === provider.id &&
-                      selectedModelId === model.id
-                    return (
-                      <SimpleDropdownSubItem
-                        key={model.id}
-                        onClick={() => onSelectModel(model.id, provider.id)}
-                        active={isSelected}
-                      >
-                        {provider.logo ? (
-                          <img
-                            src={provider.logo}
-                            alt={provider.name}
-                            className={cn(
-                              "!size-3.5 shrink-0",
-                              provider.invertDark && "dark:invert"
-                            )}
-                            onError={(e) =>
-                              ((e.target as HTMLImageElement).style.display =
-                                "none")
-                            }
-                          />
-                        ) : (
-                          <TerminalIcon className="!size-3.5 shrink-0" />
-                        )}
-                        <span className="flex-1 truncate text-left text-xs">
-                          {model.name}
-                        </span>
-                        {isSelected && (
-                          <CheckIcon className="size-3 shrink-0 text-primary" />
-                        )}
-                      </SimpleDropdownSubItem>
-                    )
-                  })}
-                </SimpleDropdownSub>
-              ))}
-          </SimpleDropdown>
-        ) : (
-          <div />
-        )}
-
-        <div className="flex-1" />
-
-        <span className="inline-edit-hint">⌘↵</span>
-
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 text-xs"
-          onClick={onCancel}
-          disabled={busy}
-        >
-          Cancel
-        </Button>
-        <Button
-          size="sm"
-          className="h-7 gap-1.5 text-xs"
-          onClick={() => onSubmit(instruction)}
-          disabled={!canSubmit}
-        >
-          {busy ? (
-            <>
-              <div className="size-3 animate-spin rounded-full border border-current border-t-transparent" />
-              Applying
-            </>
-          ) : (
-            <>
-              <SparklesIcon className="size-3" />
-              Apply
-            </>
-          )}
-        </Button>
-      </div>
-    </div>
   )
 }

@@ -9,10 +9,10 @@ import {
 } from "lucide-react-native"
 import type { PermissionUpdate } from "@betterc0de/schema"
 import {
-  ALWAYS_ALLOW_DESTINATIONS,
   alwaysAllowRules,
   buildAlwaysAllowUpdate,
   describeAlwaysAllowRules,
+  type AlwaysAllowDestination,
 } from "@betterc0de/schema/always-allow"
 import type { PendingRequest } from "@/types/remote"
 import {
@@ -26,6 +26,13 @@ import {
 import { DropdownRow, DropdownSheet } from "./dropdown-sheet"
 import { MarkdownText } from "./markdown-text"
 
+/**
+ * The only "always allow" scope a paired phone gets. The desktop keeps a
+ * phone's session rules but drops lasting ones (this project, all
+ * projects): changing permission policy is desktop-only.
+ */
+const PHONE_ALLOW_DESTINATION: AlwaysAllowDestination = "session"
+
 export function PendingRequestCard({
   request,
   busy,
@@ -37,7 +44,10 @@ export function PendingRequestCard({
   busy: boolean
   /** A watch-only session sees the request but must answer it on the desktop. */
   readOnly?: boolean
-  /** Offered as on the desktop: not while the chat's preset is Read-only. */
+  /**
+   * "Allow for this session" is offered as on the desktop: not while the
+   * chat's preset is Read-only.
+   */
   alwaysAllow?: boolean
   onRespond: (response: {
     decision?: "approve" | "deny"
@@ -48,9 +58,9 @@ export function PendingRequestCard({
 }) {
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({})
   const [feedback, setFeedback] = useState("")
-  const [scopesOpen, setScopesOpen] = useState(false)
+  const [sessionAllowOpen, setSessionAllowOpen] = useState(false)
   // `null` when no rule is narrow enough to remember safely: the option is
-  // hidden then, as on the desktop, instead of storing a broader grant.
+  // hidden then, as on the desktop, instead of allowing something broader.
   const alwaysAllowRule = useMemo(() => {
     if (request.kind !== "approval") return null
     const rules = alwaysAllowRules(request)
@@ -242,11 +252,11 @@ export function PendingRequestCard({
           {alwaysAllow && alwaysAllowRule ? (
             <View style={styles.actions}>
               <ActionButton
-                label="Always allow"
+                label="Allow for this session"
                 icon="always"
-                testID="request-always-allow"
+                testID="request-allow-session"
                 disabled={busy}
-                onPress={() => setScopesOpen(true)}
+                onPress={() => setSessionAllowOpen(true)}
               />
             </View>
           ) : null}
@@ -254,29 +264,32 @@ export function PendingRequestCard({
       )}
       {alwaysAllowRule ? (
         <DropdownSheet
-          visible={scopesOpen}
-          onClose={() => setScopesOpen(false)}
-          title="Always allow"
+          visible={sessionAllowOpen}
+          onClose={() => setSessionAllowOpen(false)}
+          title="Allow for this session"
         >
           <Text style={styles.scopeNote}>
-            Approves this call, and the desktop stores the rule below: later
-            calls that match it run without asking.
+            Approves this call. Later calls in this chat that match the rule
+            below run without asking until its session ends. The desktop does
+            not save rules from a paired phone; set lasting rules in its
+            Settings → Permissions.
           </Text>
-          {ALWAYS_ALLOW_DESTINATIONS.map((destination) => (
-            <DropdownRow
-              key={destination.id}
-              label={destination.label}
-              sublabel={alwaysAllowRule}
-              onPress={() => {
-                setScopesOpen(false)
-                const update = buildAlwaysAllowUpdate(request, destination.id)
-                onRespond({
-                  decision: "approve",
-                  updatedPermissions: update ? [update] : undefined,
-                })
-              }}
-            />
-          ))}
+          <DropdownRow
+            label="Allow for this session"
+            sublabel={alwaysAllowRule}
+            testID="request-allow-session-confirm"
+            onPress={() => {
+              setSessionAllowOpen(false)
+              const update = buildAlwaysAllowUpdate(
+                request,
+                PHONE_ALLOW_DESTINATION
+              )
+              onRespond({
+                decision: "approve",
+                updatedPermissions: update ? [update] : undefined,
+              })
+            }}
+          />
         </DropdownSheet>
       ) : null}
     </View>

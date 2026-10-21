@@ -10,6 +10,7 @@ import {
   FlagIcon,
   GlobeIcon,
   ImageOffIcon,
+  PauseIcon,
   RotateCwIcon,
 } from "lucide-react"
 import {
@@ -28,6 +29,8 @@ import {
   useCanvasAssetUrl,
   useCanvasEmbedUrl,
 } from "@/hooks/use-canvas-object-media"
+import { useCanvasGuestState } from "@/hooks/use-canvas-live-guests"
+import { canvasObjectGuestId } from "@/lib/canvas-live-guests"
 import {
   ALIGN_CLASS,
   DIAMOND_CLIP,
@@ -39,6 +42,7 @@ import {
   TEXT_SIZE_CLASS,
 } from "./canvas-object-style"
 import { cn } from "@/lib/utils"
+import { hasElectronApi } from "@/services/ipc-facade"
 
 export interface CanvasObjectCardProps {
   object: CanvasObject
@@ -340,6 +344,9 @@ function EmbedBody({
   onChange: (object: CanvasObject) => void
 }) {
   const { url, error, nonce, reload } = useCanvasEmbedUrl(object)
+  // The board pauses embeds that are out of view, too small to read, or over
+  // its live-page budget; selecting the card loads it again.
+  const guestState = useCanvasGuestState(canvasObjectGuestId(object.id))
   if (object.source === "web" && !object.url)
     return <EmbedPrompt onChange={onChange} object={object} />
   const caption =
@@ -347,10 +354,10 @@ function EmbedBody({
     (object.source === "web"
       ? describeUrl(object.url ?? "")
       : (object.relativePath ?? "Local file"))
-  // Guarded for the static renderer the component tests use, which has no
-  // `window`; every other reader of this flag runs in the browser only.
-  const isElectron =
-    typeof window !== "undefined" && Boolean(window.electronAPI)
+  // `hasElectronApi()` is also safe in the static renderer the component tests
+  // use, which has no `window`; every other reader of this flag runs in the
+  // browser only.
+  const isElectron = hasElectronApi()
   return (
     <div className="flex size-full flex-col overflow-hidden rounded-xl bg-card ring-1 ring-border/70">
       <div className="flex h-8 shrink-0 items-center gap-1.5 border-b border-border/60 bg-sidebar px-2">
@@ -395,6 +402,18 @@ function EmbedBody({
         ) : !url ? (
           <p className="flex size-full items-center justify-center text-[11px] text-muted-foreground">
             Opening…
+          </p>
+        ) : guestState !== "live" ? (
+          <p
+            data-canvas-paused={guestState}
+            className="flex size-full flex-col items-center justify-center gap-1.5 px-4 text-center text-[11px] text-muted-foreground"
+          >
+            <PauseIcon className="size-3.5" strokeWidth={1.5} />
+            {guestState === "capped"
+              ? "Paused to save memory. Select to load."
+              : guestState === "small"
+                ? "Paused. Zoom in to load."
+                : "Paused off screen."}
           </p>
         ) : isElectron ? (
           <webview

@@ -243,7 +243,7 @@ export default function GitDiffScreen() {
       {readOnly ? (
         <StateView
           title="This phone can only watch"
-          message="Pair it again over your Wi-Fi, Tailscale or HTTPS to review changes."
+          message="Pair it again over Tailscale or HTTPS to review changes."
         />
       ) : error && !review ? (
         <StateView

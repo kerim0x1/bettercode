@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest"
 import {
   evaluatePermission,
+  isBypassPermissionLevel,
   normalizeGatePermissionLevel,
   normalizeLevel,
+  providerPermissionModeForLevel,
+  providerRuntimeModeForLevel,
 } from "./permissions"
 import { isImagegenAutoAllowed } from "./shared/chat-mode-tools"
 import {
@@ -31,6 +34,41 @@ describe("permission aliases read and full", () => {
     expect(isImagegenAutoAllowed("agent", "full")).toBe(
       isImagegenAutoAllowed("agent", "allow-edits")
     )
+  })
+
+  it("gives every alias one meaning across gates, live modes and runtime modes", () => {
+    // `full`/`full-access` were the "Full Access" label for allow-edits; no
+    // mapper may read them as bypass.
+    for (const alias of [
+      "full",
+      "full-access",
+      "FULL-ACCESS",
+      "auto-accept-edits",
+    ]) {
+      expect(normalizeLevel(alias)).toBe("allow-edits")
+      expect(normalizeGatePermissionLevel(alias)).toBe("allow-edits")
+      expect(isBypassPermissionLevel(alias)).toBe(false)
+      expect(providerPermissionModeForLevel(alias)).toBe("acceptEdits")
+      expect(providerRuntimeModeForLevel(alias)).toBe("auto-accept-edits")
+    }
+    expect(isBypassPermissionLevel(" Bypass ")).toBe(true)
+    expect(providerPermissionModeForLevel("bypass")).toBe("bypassPermissions")
+    expect(providerRuntimeModeForLevel("bypass")).toBe("full-access")
+    expect(normalizeLevel("approval-required")).toBe("ask-on-edit")
+    expect(providerRuntimeModeForLevel("approval-required")).toBe(
+      "approval-required"
+    )
+    expect(providerPermissionModeForLevel("plan")).toBe("plan")
+    expect(providerPermissionModeForLevel("read")).toBe("default")
+    expect(providerRuntimeModeForLevel("read")).toBe("read-only")
+    // Unknown spellings fail closed instead of inheriting a stored mode;
+    // only a missing level or `default` defers to the caller.
+    expect(isBypassPermissionLevel("bypassPermissions")).toBe(false)
+    expect(providerRuntimeModeForLevel("something-new")).toBe(
+      "approval-required"
+    )
+    expect(providerRuntimeModeForLevel(null)).toBeUndefined()
+    expect(providerRuntimeModeForLevel("default")).toBeUndefined()
   })
 
   it("treats read as read-only for durable allow auto-approve", () => {

@@ -5,7 +5,7 @@ import {
   coerceThinkingModeForModel,
   getModelThinkingOptions,
 } from "./model-capabilities"
-import { buildModelSelection } from "@/services/backend/chatApi"
+import { buildModelSelection } from "@/lib/chat/request-builders"
 import type { UiProvider } from "./provider-types"
 
 function providerWith(

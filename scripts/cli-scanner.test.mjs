@@ -44,7 +44,7 @@ test("Codex scan includes native TOML agents alongside skills", async () => {
     "utf8"
   )
 
-  const scan = scanCodex({ codexDir, homeDir: path.dirname(codexDir) })
+  const scan = await scanCodex({ codexDir, homeDir: path.dirname(codexDir) })
 
   assert.equal(scan.skills.length, 1)
   assert.deepEqual(scan.agents, [
@@ -92,7 +92,7 @@ test("Codex scan imports command and URL MCP servers with config metadata", asyn
     "utf8"
   )
 
-  const scan = scanCodex({ codexDir, homeDir: path.dirname(codexDir) })
+  const scan = await scanCodex({ codexDir, homeDir: path.dirname(codexDir) })
 
   assert.equal(scan.model, "gpt-test")
   assert.deepEqual(scan.features, { collaboration: true })
@@ -167,7 +167,7 @@ test("Codex scan preserves static and environment-backed HTTP headers through im
     "utf8"
   )
 
-  const scan = scanCodex({
+  const scan = await scanCodex({
     codexDir,
     homeDir: path.dirname(codexDir),
     environment: {
@@ -296,11 +296,27 @@ test("production onboarding scan forwards only an explicit selected and trusted 
     ],
   ])
 
+  // The backend's compatibility default (`trusted`, no stored record) is not
+  // consent to read the repository's own CLI configuration.
+  const compatibilityDefault = await scanCliAssets(
+    { projectPath: projectRoot, workspaceTrusted: true },
+    {
+      ...dependencies,
+      readWorkspaceTrust: async () => ({ state: "trusted", explicit: false }),
+    }
+  )
+  assert.equal(compatibilityDefault.projectScope.status, "untrusted")
+  assert.equal(compatibilityDefault.projectScope.workspaceTrusted, false)
+  assert.deepEqual(
+    calls.splice(0).map(([, options]) => options.workspaceTrusted),
+    [false, false]
+  )
+
   const trusted = await scanCliAssets(
     { projectPath: projectRoot, workspaceTrusted: false },
     {
       ...dependencies,
-      readWorkspaceTrust: async () => ({ state: "trusted" }),
+      readWorkspaceTrust: async () => ({ state: "trusted", explicit: true }),
     }
   )
   assert.equal(trusted.projectScope.status, "trusted")
@@ -327,7 +343,7 @@ test("production onboarding scan forwards only an explicit selected and trusted 
     { projectPath: projectRoot, workspaceTrusted: true },
     {
       ...dependencies,
-      readWorkspaceTrust: async () => ({ state: "untrusted" }),
+      readWorkspaceTrust: async () => ({ state: "untrusted", explicit: true }),
     }
   )
   assert.equal(rendererCannotOverride.projectScope.status, "untrusted")
@@ -389,7 +405,7 @@ test("Codex trusted project layers use closest config and agent while preserving
     '[mcp_servers.shared]\ncommand = "project-command"\n'
   )
 
-  const scan = scanCodex({
+  const scan = await scanCodex({
     codexDir,
     homeDir: path.join(root, "home"),
     cwd,
@@ -443,7 +459,7 @@ test("Codex ignores project config, agents, and skills until trust is explicit",
     '[mcp_servers.project]\ncommand = "project-command"\n'
   )
 
-  const scan = scanCodex({ codexDir, homeDir, cwd })
+  const scan = await scanCodex({ codexDir, homeDir, cwd })
 
   assert.deepEqual(
     scan.skills.map((skill) => skill.scope),
@@ -528,7 +544,7 @@ test("Claude scan resolves user and project assets with project precedence", asy
   await fs.writeFile(path.join(userCommands, "review.md"), "User command")
   await fs.writeFile(path.join(projectCommands, "review.md"), "Project command")
 
-  const untrusted = scanClaude({ homeDir, claudeDir, cwd })
+  const untrusted = await scanClaude({ homeDir, claudeDir, cwd })
   assert.equal(untrusted.skills[0].description, "User skill")
   assert.equal(untrusted.agents[0].description, "User agent")
   assert.equal(
@@ -536,7 +552,7 @@ test("Claude scan resolves user and project assets with project precedence", asy
     "user-command"
   )
 
-  const scan = scanClaude({
+  const scan = await scanClaude({
     homeDir,
     claudeDir,
     cwd,
@@ -610,10 +626,10 @@ test("Claude trusted local project MCP overrides project and user scopes", async
     })
   )
 
-  const untrusted = scanClaude({ homeDir, claudeDir, cwd })
+  const untrusted = await scanClaude({ homeDir, claudeDir, cwd })
   assert.equal(untrusted.mcpServers[0].command, "user-command")
 
-  const trusted = scanClaude({
+  const trusted = await scanClaude({
     homeDir,
     claudeDir,
     cwd,
@@ -709,7 +725,7 @@ test("scanner skips oversized TOML and frontmatter before reading their contents
   await fs.writeFile(skillPath, "---\nname: Oversized metadata\n---\n")
   await fs.truncate(configPath, 2 * 1024 * 1024)
   await fs.truncate(skillPath, 2 * 1024 * 1024)
-  const scan = scanCodex({ codexDir, homeDir: root })
+  const scan = await scanCodex({ codexDir, homeDir: root })
   assert.deepEqual(scan.configSources, [])
   assert.deepEqual(scan.mcpServers, [])
   assert.equal(scan.skills[0].name, "Review")
@@ -739,4 +755,44 @@ test("Claude markdown agents retain frontmatter and prompt body on import", asyn
     sourcePath: file,
     source: "claude",
   })
+})
+
+test("the CLI scans are asynchronous and never read synchronously on the main thread", async () => {
+  const { readFileSync } = await import("node:fs")
+  const scannerSource = readFileSync(
+    new URL("../apps/shell/cli-scanner.cjs", import.meta.url),
+    "utf8"
+  )
+  assert.doesNotMatch(scannerSource, /Sync\(|readJson\(|readBoundedRegularFile\(/)
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "bc0de-scan-async-"))
+  tempRoots.push(root)
+  const claude = scanClaude({ homeDir: root, claudeDir: path.join(root, ".claude") })
+  const codex = scanCodex({ homeDir: root, codexDir: path.join(root, ".codex") })
+  assert.ok(claude instanceof Promise)
+  assert.ok(codex instanceof Promise)
+  const [claudeScan, codexScan] = await Promise.all([claude, codex])
+  assert.equal(claudeScan.found, false)
+  assert.equal(codexScan.found, false)
+  assert.deepEqual(claudeScan.mcpServers, [])
+})
+
+test("a stored MCP server keeps the CLI it was imported from", () => {
+  const imported = normalizeMcpConfig({
+    id: "linear",
+    name: "Linear",
+    source: "claude",
+    type: "command",
+    command: "linear-mcp",
+    scope: "user",
+  })
+  assert.equal(imported.source, "claude")
+  // Display only: anything that is not a short lowercase name is dropped.
+  assert.equal(
+    "source" in normalizeMcpConfig({ id: "x", command: "node", source: "<b>x</b>" }),
+    false
+  )
+  assert.equal(
+    "source" in normalizeMcpConfig({ id: "y", command: "node" }),
+    false
+  )
 })

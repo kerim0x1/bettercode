@@ -4,17 +4,18 @@
  * 4–7 handlers wrapping the same pattern; centralizing removes ~150 LoC of
  * `try { ... return ok({...}) } catch (e) { return fail(e) }` repetition.
  *
- * `assertTrustedIpcSender` is already applied automatically by the
- * `ipcMain.handle` wrapper in `apps/shell/main.cjs`, so neither
- * helper here needs to add it. The factory only owns the post-call envelope.
+ * Both helpers register through `registerHandler` (shared/trusted-ipc.cjs),
+ * which checks the sender before the handler runs. A rejected sender gets a
+ * rejected invoke, never an envelope. The factory only owns the post-call
+ * envelope.
  *
  * The pure `makeSafeWrapper` / `makeRawWrapper` functions are exported so
  * unit tests can exercise the envelope behavior without mocking the
  * electron module.
  */
 
-const { ipcMain } = require("electron")
 const { ok, fail } = require("./ipc-envelope.cjs")
+const { registerHandler } = require("./trusted-ipc.cjs")
 
 /**
  * Wrap a user-provided handler so its result is normalized to the standard
@@ -43,8 +44,9 @@ function makeSafeWrapper(handler) {
 /**
  * Wrap a handler that returns a raw value (array, scalar, plain object).
  * On error, returns `fallback` rather than an envelope; this matches the
- * legacy "list returns []" semantic used by *List handlers across hooks /
- * skills / subagents / mcp.
+ * legacy "list returns []" semantic used by *List handlers across skills /
+ * subagents / mcp. Never use it for data that gates execution (hooks): a
+ * silent fallback there fails open.
  */
 function makeRawWrapper(handler, opts = {}) {
   const { fallback = null, warnTag, channel } = opts
@@ -62,13 +64,13 @@ function makeRawWrapper(handler, opts = {}) {
 }
 
 /** Register a `safeHandle`-wrapped IPC handler under `channel`. */
-function safeHandle(channel, handler) {
-  ipcMain.handle(channel, makeSafeWrapper(handler))
+function safeHandle(channel, handler, options) {
+  registerHandler(channel, makeSafeWrapper(handler), options)
 }
 
 /** Register a `rawHandle`-wrapped IPC handler under `channel`. */
 function rawHandle(channel, handler, opts = {}) {
-  ipcMain.handle(channel, makeRawWrapper(handler, { ...opts, channel }))
+  registerHandler(channel, makeRawWrapper(handler, { ...opts, channel }))
 }
 
 module.exports = {

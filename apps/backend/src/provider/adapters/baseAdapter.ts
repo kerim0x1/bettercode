@@ -3,10 +3,10 @@ import type { ProviderAdapter } from "../adapter"
 import type {
   ModelDefinition,
   ProviderKind,
-  ProviderRuntimeEvent,
+  LegacyProviderEvent,
   ProviderSendTurnInput,
 } from "../types"
-import { providerEventBus } from "../events"
+import type { ProviderEventBus } from "../events"
 import { resolveApproval } from "../permissions"
 import { StalePendingProviderRequestError } from "../runtime/pendingRequestErrors"
 
@@ -15,8 +15,9 @@ import { StalePendingProviderRequestError } from "../runtime/pendingRequestError
  *
  * Centralises the small infrastructure that every adapter previously hand-
  * rolled: a per-instance `EventEmitter` for local subscribers, a uniform
- * `emit` that fans events out to both the local bus and the global
- * `providerEventBus`, the `subscribeEvents` accessor, and the approval-
+ * `emit` that fans events out to both the local bus and the backend's
+ * provider event bus (`connectEventBus`), the `subscribeEvents` accessor,
+ * and the approval-
  * response delegation to `resolveApproval`. `interruptAll` has a default
  * implementation that iterates the active session IDs returned by
  * `_activeSessionIds`; override only if a faster path exists.
@@ -31,6 +32,7 @@ import { StalePendingProviderRequestError } from "../runtime/pendingRequestError
  */
 export abstract class BaseProviderAdapter implements ProviderAdapter {
   protected readonly localBus = new EventEmitter()
+  private eventBus: Pick<ProviderEventBus, "emitEvent"> | null = null
 
   abstract providerKind(): ProviderKind
   abstract displayName(): string
@@ -46,6 +48,16 @@ export abstract class BaseProviderAdapter implements ProviderAdapter {
 
   subscribeEvents(): EventEmitter {
     return this.localBus
+  }
+
+  /**
+   * Publish this adapter's events on the backend's provider event bus too,
+   * where ingestion and the legacy provider service listen. Bootstrap
+   * connects every legacy adapter it registers; an unconnected adapter
+   * (a test's) only reaches its local subscribers.
+   */
+  connectEventBus(bus: Pick<ProviderEventBus, "emitEvent">): void {
+    this.eventBus = bus
   }
 
   async respondToApproval(
@@ -75,11 +87,12 @@ export abstract class BaseProviderAdapter implements ProviderAdapter {
   }
 
   /** Fan an event out to both the per-instance local bus (for direct
-   *  subscribers / tests) and the global provider event bus (for the
-   *  WebSocket broadcaster + other cross-cutting consumers). */
-  protected emit(event: ProviderRuntimeEvent): void {
+   *  subscribers / tests) and the connected provider event bus (for
+   *  ingestion, the WebSocket broadcaster and other cross-cutting
+   *  consumers). */
+  protected emit(event: LegacyProviderEvent): void {
     this.localBus.emit("event", event)
-    providerEventBus.emitEvent(event)
+    this.eventBus?.emitEvent(event)
   }
 
   /** Default `authMeta`: most adapters authenticate via a renderer-supplied

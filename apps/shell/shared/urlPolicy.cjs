@@ -105,6 +105,39 @@ function isAllowedNavigationUrl(rawUrl, policy) {
   return isTrustedRendererUrl(rawUrl, policy)
 }
 
+// Host page of the chat's visual replies (apps/ui/public/visual-reply-frame.html).
+// The chat frames it in <iframe sandbox="allow-scripts">, and it shows an
+// agent's page in a nested sandboxed frame.
+const VISUAL_REPLY_FRAME_FILE = 'visual-reply-frame.html'
+
+function isVisualReplyFrameUrl(rawUrl, policy) {
+  if (!isTrustedRendererUrl(rawUrl, policy)) return false
+  try {
+    return new URL(rawUrl).pathname.split('/').pop() === VISUAL_REPLY_FRAME_FILE
+  } catch {
+    return false
+  }
+}
+
+/**
+ * `will-frame-navigate` in an app window; the main frame is `will-navigate`'s
+ * job. A frame that shows a visual reply runs an agent's page: it may reload
+ * that page, never leave it for another app page, a file or a remote site.
+ * Other frames keep what the renderer's Content-Security-Policy allows.
+ */
+function isAllowedFrameNavigation(details, policy) {
+  if (!details || details.isMainFrame) return true
+  let frameUrl = ''
+  try {
+    frameUrl = details.frame?.url || ''
+  } catch {
+    // The frame is gone; so is anything it could navigate.
+    frameUrl = ''
+  }
+  if (!isVisualReplyFrameUrl(frameUrl, policy)) return true
+  return isVisualReplyFrameUrl(String(details.url || ''), policy)
+}
+
 function isAllowedWebviewUrl(rawUrl) {
   try {
     const parsed = new URL(rawUrl)
@@ -124,9 +157,11 @@ module.exports = {
   assertTrustedIpcSender,
   forcePreviewPartition,
   isAllowedExternalUrl,
+  isAllowedFrameNavigation,
   isAllowedNavigationUrl,
   isAllowedWebviewUrl,
   isTrustedRendererRequest,
   isTrustedRendererPermission,
   isTrustedRendererUrl,
+  isVisualReplyFrameUrl,
 }

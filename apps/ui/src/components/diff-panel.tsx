@@ -35,7 +35,7 @@ import {
   gitDiffStaged,
   gitStage,
   gitUnstage,
-} from "@/services/backend"
+} from "@/services/backend/gitApi"
 import { useChatStore } from "@/lib/chat-store"
 import { useEditorStore } from "@/lib/editor-store"
 import { getFileIconUrl } from "@/lib/file-icons"

@@ -1,10 +1,11 @@
 import {
   mergePersistedThreadSkeletons,
   mergePersistedThreadGoals,
+  waitForRetry,
 } from "@/hooks/use-persisted-threads"
 import type { ThreadGoal } from "@betterc0de/schema"
 import { useChatStore, type ChatThread } from "@/lib/chat-store"
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 function thread(id: string, messages: ChatThread["messages"] = []): ChatThread {
   return {
@@ -93,5 +94,61 @@ describe("restoring provider goals", () => {
     expect(
       mergePersistedThreadGoals(current, [{ ...thread("saved"), goal }], before)
     ).toBe(current)
+  })
+})
+
+describe("retrying the initial thread load", () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  function stubShell() {
+    let report!: (event: unknown) => void
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: () => null,
+        setItem: () => {},
+        removeItem: () => {},
+      },
+      electronAPI: {
+        onBackendStatus: (callback: (event: unknown) => void) => {
+          report = callback
+          return () => {}
+        },
+      },
+    })
+    return (event: unknown) => report(event)
+  }
+
+  it("retries at once when the backend reports ready instead of waiting out the backoff", async () => {
+    vi.useFakeTimers()
+    const report = stubShell()
+    const done = vi.fn()
+    void waitForRetry(5_000, new AbortController().signal).then(done)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(done).not.toHaveBeenCalled()
+
+    report({ status: "ready", port: 4600 })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(done).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it("still retries after the backoff delay without any event", async () => {
+    vi.useFakeTimers()
+    stubShell()
+    const done = vi.fn()
+    void waitForRetry(500, new AbortController().signal).then(done)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(done).toHaveBeenCalledOnce()
+  })
+
+  it("returns on unmount", async () => {
+    stubShell()
+    const controller = new AbortController()
+    const waiting = waitForRetry(60_000, controller.signal)
+    controller.abort()
+    await expect(waiting).resolves.toBeUndefined()
   })
 })

@@ -218,14 +218,15 @@ export interface AppearanceState {
   // Layout
   chatMaxWidth: number // Chat container max-width in px (800-1600)
   chatScale: number // Chat UI scale factor (80-120%)
-  messageFontSize: number // Message text size (12-20)
+  messageTextSize: number // Chat message text size in px (11-20)
   sidebarWidth: number // Default sidebar width (200-400)
   compactMode: boolean // Reduce spacing between messages
   chatUiStyle: "extended" | "simple" // Prompt controls density/style
   // Left sidebar chat list layout: "folders" = project-grouped tree
   // (default), "cards" = flat task-card feed (provider avatar, branch,
-  // status per row).
-  chatSidebarLayout: "folders" | "cards"
+  // status per row), "compact" = the same feed as two-line rows (status,
+  // title; repo, branch and model beneath).
+  chatSidebarLayout: "folders" | "cards" | "compact"
   animationsEnabled: boolean
   fileContextEnabled: boolean
   sessionDirectoryFilterEnabled: boolean
@@ -289,7 +290,7 @@ const DEFAULTS: AppearanceSnapshot = {
   radius: "0.625",
   chatMaxWidth: 1200,
   chatScale: 100,
-  messageFontSize: 14,
+  messageTextSize: 13,
   sidebarWidth: 300,
   compactMode: false,
   chatUiStyle: "simple",
@@ -317,6 +318,33 @@ function saveSnapshot(snapshot: AppearanceSnapshot) {
   } catch {
     /* Expected: localStorage may be full or unavailable (incognito) */
   }
+}
+
+/**
+ * Saves before the rename kept "Message Font Size" as `messageFontSize`. It
+ * only sized the transcript wrapper while messages stayed at 13px, so its
+ * 14px default never showed. A size the user picked carries over; the old
+ * default gives way to the real 13px one.
+ */
+function migrateMessageSize(parsed: Record<string, unknown>) {
+  const legacy = parsed.messageFontSize
+  delete parsed.messageFontSize
+  if (
+    parsed.messageTextSize === undefined &&
+    typeof legacy === "number" &&
+    legacy !== 14
+  ) {
+    parsed.messageTextSize = legacy
+  }
+}
+
+/** The active template's own value for a CSS variable, if it sets one. */
+function templateVar(templateId: string, key: string): string | undefined {
+  const builtIn = THEME_TEMPLATES.find((t) => t.id === templateId)
+  const vars = builtIn
+    ? builtIn.vars
+    : getCustomTheme(customThemeIdOf(templateId))?.vars
+  return (vars as Record<string, string> | undefined)?.[key]
 }
 
 /** Extract pure data from store state (no functions) */
@@ -429,8 +457,9 @@ function applyToDOM(state: AppearanceSnapshot) {
     }
   `
 
-  // Hue tinting — applies oklch hue shift to primary/accent
-  if (state.intensity > 0 && state.hue > 0) {
+  // Hue tinting — applies oklch hue shift to primary/accent. Hue 0 is red,
+  // so only the intensity turns the tint off.
+  if (state.intensity > 0) {
     const chroma = (state.intensity / 100) * 0.15
     root.style.setProperty("--primary", `oklch(0.205 ${chroma} ${state.hue})`)
     root.style.setProperty(
@@ -446,10 +475,13 @@ function applyToDOM(state: AppearanceSnapshot) {
       )
     }
   } else {
-    // Reset to defaults — let CSS handle it
-    root.style.removeProperty("--primary")
-    root.style.removeProperty("--ring")
-    root.style.removeProperty("--sidebar-primary")
+    // No tint: keep the theme's own accent (an imported theme brings its
+    // own), and fall back to the CSS defaults only where it sets none.
+    for (const key of ["--primary", "--ring", "--sidebar-primary"]) {
+      const value = templateVar(state.template, key)
+      if (value) root.style.setProperty(key, value)
+      else root.style.removeProperty(key)
+    }
   }
 
   // Reduce transparency
@@ -459,10 +491,10 @@ function applyToDOM(state: AppearanceSnapshot) {
     root.classList.remove("reduce-transparency")
   }
 
-  // Layout — chat width, scale, message font size, sidebar, compact mode
+  // Layout — chat width, scale, message text size, sidebar, compact mode
   root.style.setProperty("--chat-max-width", `${state.chatMaxWidth}px`)
   root.style.setProperty("--chat-scale", `${state.chatScale / 100}`)
-  root.style.setProperty("--message-font-size", `${state.messageFontSize}px`)
+  root.style.setProperty("--message-font-size", `${state.messageTextSize}px`)
   root.style.setProperty("--sidebar-width", `${state.sidebarWidth}px`)
 
   if (state.compactMode) {
@@ -534,6 +566,7 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => ({
         // (e.g. "cursor-dark") to the current default so they don't end up
         // on a no-op template id that silently skips `applyTemplate`.
         parsed.template = normalizeSelectableTemplateId(parsed.template)
+        migrateMessageSize(parsed)
         // Extended UI mode is temporarily disabled — force every stored
         // preference back to simple regardless of what the user last had.
         // When extended lands again, remove this coercion.
@@ -552,8 +585,13 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => ({
 
   reset: () => {
     set(DEFAULTS)
+    // applyToDOM re-applies the default template's colors and mode too.
     applyToDOM(DEFAULTS)
-    localStorage.removeItem(STORAGE_KEY)
+    try {
+      localStorage.removeItem(STORAGE_KEY)
+    } catch {
+      /* Expected: localStorage may be unavailable (incognito) */
+    }
   },
 
   exportSettings: () => {
@@ -561,19 +599,38 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => ({
   },
 
   importSettings: (json: string) => {
+    let parsed: unknown
     try {
-      const parsed = JSON.parse(json)
-      const merged = {
-        ...DEFAULTS,
-        ...parsed,
-        template: normalizeSelectableTemplateId(parsed.template),
-      }
-      set(merged)
-      applyToDOM(merged)
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
-      return true
+      parsed = JSON.parse(json)
     } catch {
       return false
     }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return false
+    }
+    const source = { ...(parsed as Record<string, unknown>) }
+    migrateMessageSize(source)
+    // Take only known settings whose value has the expected type, so a
+    // pasted object can't put junk into the store.
+    const defaults = DEFAULTS as unknown as Record<string, unknown>
+    const picked = Object.fromEntries(
+      Object.entries(source).filter(
+        ([key, value]) =>
+          key in defaults && typeof value === typeof defaults[key]
+      )
+    )
+    if (Object.keys(picked).length === 0) return false
+    const merged: AppearanceSnapshot = {
+      ...DEFAULTS,
+      ...(picked as Partial<AppearanceSnapshot>),
+      template: normalizeSelectableTemplateId(
+        typeof picked.template === "string" ? picked.template : undefined
+      ),
+      chatUiStyle: "simple",
+    }
+    set(merged)
+    applyToDOM(merged)
+    saveSnapshot(merged)
+    return true
   },
 }))

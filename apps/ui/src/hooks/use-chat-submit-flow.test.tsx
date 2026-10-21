@@ -6,7 +6,7 @@ import { useMessageQueueStore } from "@/lib/message-queue-store"
 import { useChatStore } from "@/lib/chat-store"
 import { usePreferencesStore } from "@/lib/preferences-store"
 import { useSettingsStore } from "@/lib/settings-store"
-import { sendChatMessage, sendGoalControl } from "@/services/backend"
+import { sendChatMessage, sendGoalControl } from "@/lib/chat/send-message"
 import { resolveProviderTarget } from "@/lib/resolve-provider-target"
 import {
   buildBetterC0deDefaultAgentContext,
@@ -17,13 +17,18 @@ import { selectComposerModel } from "@/lib/composer-preferences"
 import type { UiProvider } from "@/lib/provider-types"
 import { HttpError } from "@/lib/errors/types"
 import { useBrowserContextStore } from "@/lib/browser-context-store"
+import { useWorkspaceTrustPromptStore } from "@/lib/workspace-trust-prompts"
 import { readBrowserElementAttachment } from "@betterc0de/schema"
 
-vi.mock("@/services/backend", () => ({
+vi.mock("@/lib/chat/send-message", () => ({
   sendChatMessage: vi.fn().mockResolvedValue(undefined),
   sendGoalControl: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock("@/services/backend/coreApi", () => ({
   saveThreadMessage: vi.fn().mockResolvedValue(undefined),
   upsertThreadMeta: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock("@/services/backend/chatApi", () => ({
   saveThreadModelSwitchActivity: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock("@/lib/resolve-provider-target", () => ({
@@ -542,6 +547,40 @@ describe("chat submission ownership", () => {
         ?.messages.at(-1)?.content
     ).toContain("provider is unavailable")
     expect(sendChatMessage).not.toHaveBeenCalled()
+  })
+
+  it("offers to trust the workspace under a refused Agent turn", async () => {
+    useWorkspaceTrustPromptStore.setState({ byMessageId: {} })
+    vi.mocked(sendChatMessage).mockRejectedValueOnce(
+      new HttpError(
+        "This workspace has not been trusted. Open Settings → Permissions → Trust project to enable Agent Mode here.",
+        403,
+        "/chat/send",
+        { code: "workspace_untrusted" }
+      )
+    )
+    await handler()({ text: "Edit the README", files: [], threadId: "a" })
+
+    const error = useChatStore
+      .getState()
+      .threads.find((thread) => thread.id === "a")
+      ?.messages.at(-1)
+    expect(error?.content).toContain("has not been trusted")
+    expect(
+      useWorkspaceTrustPromptStore.getState().byMessageId[error?.id ?? ""]
+    ).toEqual({ workspacePath: "/repo-a" })
+
+    // Any other failure keeps the plain error.
+    vi.mocked(sendChatMessage).mockRejectedValueOnce(new Error("Offline"))
+    await handler()({ text: "Edit the README", files: [], threadId: "a" })
+    const offline = useChatStore
+      .getState()
+      .threads.find((thread) => thread.id === "a")
+      ?.messages.at(-1)
+    expect(offline?.content).toContain("Offline")
+    expect(
+      useWorkspaceTrustPromptStore.getState().byMessageId[offline?.id ?? ""]
+    ).toBeUndefined()
   })
 
   it("uses a model selected after the last render and captures ownership before the lazy import", async () => {

@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net"
 import type {
   PortableMcpServer,
   PortableMcpServerResolver,
-} from "../runtime/cursor/AcpMcpServers"
+} from "../runtime/acp/AcpMcpServers"
 import {
   DirectMcpToolSession,
   connectDirectMcpClient,

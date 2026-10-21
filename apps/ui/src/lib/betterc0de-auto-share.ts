@@ -7,7 +7,7 @@ import {
 } from "@/lib/thread-share"
 import { resolveThreadRuntimePath } from "@/lib/thread-context"
 import { betterC0deShareModeFromProjectSettings } from "@/lib/betterc0de-share-policy"
-import { listProjectConfigSettings } from "@/services/backend"
+import { listProjectConfigSettings } from "@/services/backend/workspaceApi"
 
 const autoShareInFlight = new Set<string>()
 
@@ -18,7 +18,7 @@ export async function maybeMarkBetterC0deAutoShare(
   autoShareInFlight.add(threadId)
   try {
     const store = useChatStore.getState()
-    await store.hydrateThreadMessages(threadId)
+    await store.ensureFullThreadMessages(threadId)
     const thread = useChatStore
       .getState()
       .threads.find((candidate) => candidate.id === threadId)

@@ -23,6 +23,14 @@ import {
   useCanvasTransform,
 } from "@/hooks/use-canvas-transform"
 import { useCanvasProjectDrag } from "@/hooks/use-canvas-project-drag"
+import {
+  CanvasGuestStatesContext,
+  useCanvasLiveGuests,
+} from "@/hooks/use-canvas-live-guests"
+import {
+  canvasObjectGuestId,
+  type CanvasGuestCandidate,
+} from "@/lib/canvas-live-guests"
 import { useChatStore } from "@/lib/chat-store"
 import type { UiProvider } from "@/lib/provider-types"
 import {
@@ -31,6 +39,7 @@ import {
 } from "@/lib/browser-context-store"
 import {
   canvasBounds,
+  canvasDeviceSlots,
   canvasProjectSize,
   nextCanvasPosition,
   PROJECT_CANVAS_STORAGE_KEY,
@@ -98,7 +107,10 @@ import { resolveThreadRuntimePath } from "@/lib/thread-context"
 import { CanvasObjectCard } from "./canvas-object-card"
 import { CanvasFormatBar } from "./canvas-format-bar"
 import { KEEPS_SELECTION } from "./canvas-object-style"
-import { useCanvasPreviewStore } from "./canvas-preview-store"
+import {
+  canvasViewportKey,
+  useCanvasPreviewStore,
+} from "./canvas-preview-store"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { MENU_PANEL, MENU_ITEM } from "@/components/ui/menu-chrome"
@@ -106,6 +118,7 @@ import { CanvasNoteCard } from "./canvas-note-card"
 import { CanvasProjectFrame } from "./canvas-project-frame"
 import { CanvasProjectPicker } from "./canvas-project-picker"
 import { ToolButton, ToolbarDivider } from "./design-preview-controls"
+import { hasElectronApi } from "@/services/ipc-facade"
 
 /** One camera and one dot grid. Project frames share its coordinate space. */
 export function DesignCanvas({
@@ -166,6 +179,9 @@ export function DesignCanvas({
   )
   const pendingCssChanges = useCanvasPreviewStore(
     (state) => state.inspector.cssChanges.length
+  )
+  const focusedViewport = useCanvasPreviewStore(
+    (state) => state.focus?.key ?? null
   )
   const insertionPoint = useRef<CanvasPoint | null>(null)
   const lastActive = useRef<string | null>(null)
@@ -390,6 +406,67 @@ export function DesignCanvas({
         : item
     )
   }, [objects, objectDrag.preview])
+  // Every page the board could host. Only the ones in view, readable and
+  // within the live-guest cap get a real guest process; the rest pause.
+  const guestCandidates = useMemo(() => {
+    const candidates: CanvasGuestCandidate[] = []
+    for (const placement of visible) {
+      const origin = cardPoints.get(placement.threadId) ?? placement
+      for (const slot of canvasDeviceSlots(
+        settings[placement.threadId],
+        origin
+      )) {
+        const id = canvasViewportKey(placement.threadId, slot.deviceId)
+        candidates.push({
+          id,
+          rect: slot,
+          pinned: id === focusedViewport,
+          preferred: placement.threadId === activeThreadId,
+        })
+      }
+    }
+    for (const object of liveObjects) {
+      if (object.kind !== "embed") continue
+      candidates.push({
+        id: canvasObjectGuestId(object.id),
+        rect: object,
+        pinned: object.id === selectedObject,
+      })
+    }
+    return candidates
+  }, [
+    visible,
+    settings,
+    cardPoints,
+    liveObjects,
+    focusedViewport,
+    selectedObject,
+    activeThreadId,
+  ])
+  const liveGuests = useCanvasLiveGuests(
+    canvasRef,
+    { zoom, pan },
+    guestCandidates
+  )
+  const touchGuest = (target: EventTarget) => {
+    if (!(target instanceof Element)) return
+    const device = target.closest("[data-canvas-device]")
+    const project = device?.closest("[data-canvas-project]")
+    if (device && project) {
+      liveGuests.touch(
+        canvasViewportKey(
+          project.getAttribute("data-canvas-project") ?? "",
+          device.getAttribute("data-canvas-device") ?? ""
+        )
+      )
+      return
+    }
+    const embed = target.closest(
+      '[data-canvas-object][data-object-kind="embed"]'
+    )
+    const id = embed?.getAttribute("data-canvas-object")
+    if (id) liveGuests.touch(canvasObjectGuestId(id))
+  }
   // Everything an edge can attach to, in one addressable set.
   const items = useMemo(() => {
     const map = new Map<string, CanvasItemRect>()
@@ -949,6 +1026,8 @@ export function DesignCanvas({
                 )
               }}
               onPointerLeave={() => setHoveredItem(null)}
+              onPointerDownCapture={(event) => touchGuest(event.target)}
+              onFocusCapture={(event) => touchGuest(event.target)}
             >
               <CanvasConnectionLayer
                 geometries={geometries}
@@ -968,70 +1047,72 @@ export function DesignCanvas({
                 onBeginConnect={connectDrag.begin}
                 onRemove={disconnect}
               />
-              {visible.map((placement) => {
-                const point =
-                  drag.preview?.threadId === placement.threadId
-                    ? drag.preview
-                    : placement
-                return (
+              <CanvasGuestStatesContext.Provider value={liveGuests.states}>
+                {visible.map((placement) => {
+                  const point =
+                    drag.preview?.threadId === placement.threadId
+                      ? drag.preview
+                      : placement
+                  return (
+                    <div
+                      key={placement.threadId}
+                      data-canvas-position={placement.threadId}
+                      className="absolute top-0 left-0"
+                      style={{
+                        transform: `translate(${point.x}px, ${point.y}px)`,
+                        width: canvasProjectSize(settings[placement.threadId])
+                          .width,
+                      }}
+                    >
+                      <CanvasProjectFrame
+                        providers={providers}
+                        placement={placement}
+                        active={placement.threadId === activeThreadId}
+                        panActive={tool === "hand" || Boolean(drag.preview)}
+                        onOpenChat={openChat}
+                        onRemove={remove}
+                        onMoveStart={drag.begin}
+                        onMove={move}
+                        onElementSelected={pickElement}
+                        onShortcut={shortcut}
+                        zoom={zoom}
+                      />
+                    </div>
+                  )
+                })}
+                {liveObjects.map((object) => (
                   <div
-                    key={placement.threadId}
-                    data-canvas-position={placement.threadId}
+                    key={object.id}
+                    data-canvas-object-position={object.id}
                     className="absolute top-0 left-0"
                     style={{
-                      transform: `translate(${point.x}px, ${point.y}px)`,
-                      width: canvasProjectSize(settings[placement.threadId])
-                        .width,
+                      transform: `translate(${object.x}px, ${object.y}px)`,
                     }}
                   >
-                    <CanvasProjectFrame
-                      providers={providers}
-                      placement={placement}
-                      active={placement.threadId === activeThreadId}
-                      panActive={tool === "hand" || Boolean(drag.preview)}
-                      onOpenChat={openChat}
-                      onRemove={remove}
-                      onMoveStart={drag.begin}
-                      onMove={move}
-                      onElementSelected={pickElement}
-                      onShortcut={shortcut}
+                    <CanvasObjectCard
+                      object={object}
+                      selected={selectedObject === object.id}
+                      editing={editingObject === object.id}
+                      panActive={tool === "hand" || Boolean(objectDrag.preview)}
                       zoom={zoom}
+                      onSelect={(id) => {
+                        setSelectedObject(id)
+                        setEditingObject((current) =>
+                          current === id ? current : null
+                        )
+                      }}
+                      onEdit={setEditingObject}
+                      onChange={changeObject}
+                      onMoveStart={(event, origin) =>
+                        objectDrag.begin(event, {
+                          threadId: object.id,
+                          ...origin,
+                        })
+                      }
                     />
                   </div>
-                )
-              })}
-              {liveObjects.map((object) => (
-                <div
-                  key={object.id}
-                  data-canvas-object-position={object.id}
-                  className="absolute top-0 left-0"
-                  style={{
-                    transform: `translate(${object.x}px, ${object.y}px)`,
-                  }}
-                >
-                  <CanvasObjectCard
-                    object={object}
-                    selected={selectedObject === object.id}
-                    editing={editingObject === object.id}
-                    panActive={tool === "hand" || Boolean(objectDrag.preview)}
-                    zoom={zoom}
-                    onSelect={(id) => {
-                      setSelectedObject(id)
-                      setEditingObject((current) =>
-                        current === id ? current : null
-                      )
-                    }}
-                    onEdit={setEditingObject}
-                    onChange={changeObject}
-                    onMoveStart={(event, origin) =>
-                      objectDrag.begin(event, {
-                        threadId: object.id,
-                        ...origin,
-                      })
-                    }
-                  />
-                </div>
-              ))}
+                ))}
+              </CanvasGuestStatesContext.Provider>
               {liveNotes.map((note) => {
                 const point = resolveNotePosition(note, cardPoints)
                 return (
@@ -1220,7 +1301,7 @@ export function DesignCanvas({
               <SelectBrowseToggle
                 selectionMode={selectionMode}
                 onToggle={() => setSelectionMode(!selectionMode)}
-                available={Boolean(window.electronAPI)}
+                available={hasElectronApi()}
               />
               <ToolButton
                 active={inspectorOpen}

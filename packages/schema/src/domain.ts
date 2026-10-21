@@ -1,4 +1,4 @@
-import type { ChatAttachment } from "./chat"
+import type { ChatMessageAttachment } from "./chat"
 
 /**
  * Domain types shared between renderer and backend.
@@ -70,6 +70,11 @@ export interface MessageDiff {
   oldText: string
   newText: string
   isNew: boolean
+  /**
+   * Set by a light transcript read: `oldText` and `newText` are empty and
+   * the full message (`GET /threads/:id/messages/:messageId`) has them.
+   */
+  textOmitted?: boolean
 }
 
 export interface ChatMessage {
@@ -84,13 +89,15 @@ export interface ChatMessage {
   questions?: ChatQuestion[]
   answeredQuestions?: { question: string; answer: string }[]
   diffs?: MessageDiff[]
-  attachments?: ChatAttachment[]
+  attachments?: ChatMessageAttachment[]
   usage?: TokenUsage
   modelId?: string
   /** Character count captured from the actual dispatched system instruction. */
   systemInstructionCharacters?: number
   compactedContext?: boolean
   internalContext?: "provider-handoff"
+  /** A user message the backend sent by itself (thread-resume.ts). */
+  automatic?: import("./thread-resume").AutomaticMessageKind
   compactionGeneration?: number
   transcriptTruncated?: boolean
   dispatchStatus?:
@@ -102,6 +109,11 @@ export interface ChatMessage {
     | "reverted"
   dispatchFailed?: boolean
   createdAt: string
+  /**
+   * Storage order within the thread. Present on paged message reads, where
+   * it is the cursor for the next older page (`beforeSequence`).
+   */
+  sequence?: number
 }
 
 export interface ChatThreadSession {
@@ -120,6 +132,20 @@ export interface ChatThreadSession {
 export interface ChatThread {
   /** Provider-reported goal. Omitted until the backend has observed goal metadata. */
   goal?: import("./thread-goal").ThreadGoal | null
+  /** The chat's Autonomous Work run. Omitted when it has none. */
+  autonomy?: import("./thread-autonomy").ThreadAutonomy | null
+  /**
+   * A usage limit or a restart stopped the chat and it may continue by
+   * itself (thread-resume.ts). Omitted when it has none.
+   */
+  resume?: import("./thread-resume").ThreadResume | null
+  /**
+   * The chat's own settings kept by the backend (permission level, model
+   * selection, orchestration). Omitted until a client has set one.
+   */
+  settings?: import("./threads").ThreadSettings | null
+  /** The Claude Code or Codex session an imported chat came from. */
+  importedFrom?: import("./conversation-import").ThreadImportSource | null
   id: string
   title: string
   projectName: string

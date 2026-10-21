@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk"
 import {
+  DEFAULT_COMMIT_MESSAGE_MODELS,
   DEFAULT_GIT_TEXT_GENERATION_MODEL,
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   modelSelectionSchema,
@@ -36,9 +37,9 @@ import {
   type ThreadContextSummaryGenerationResult,
   type ThreadContextSummaryPromptInput,
 } from "./text-generation"
-import {
-  runNativeTextGeneration,
-  type NativeTextGenerationSchemaName,
+import type {
+  NativeTextGenerationSchemaName,
+  NativeTextGenerator,
 } from "./native-text-generation"
 import { getProjectModelDefaults } from "./workspace"
 
@@ -70,11 +71,6 @@ const ANTHROPIC_HELPER_MODEL =
   DEFAULT_GIT_TEXT_GENERATION_MODEL
 const OPENAI_HELPER_MODEL = DEFAULT_GIT_TEXT_GENERATION_MODEL
 
-// CLI model IDs are deliberately separate from the API-key helper models.
-const COMMIT_MESSAGE_CLI_MODELS = {
-  codex: "gpt-5.6-luna",
-  claude: "claude-sonnet-5",
-} as const
 const COMMIT_MESSAGE_TIMEOUT_MS = 180_000
 const COMMIT_MESSAGE_CLI_TIMEOUT_MS = 90_000
 
@@ -91,6 +87,8 @@ const QUESTIONS_SYSTEM_PROMPT =
 export interface ChatLlmHelperDeps {
   settings: () => Settings
   apiKeyPool?: ApiKeyPool
+  /** The backend's native text generations (bootstrap's service). */
+  nativeTextGeneration: NativeTextGenerator
 }
 
 export class ChatLlmHelpers {
@@ -134,7 +132,7 @@ export class ChatLlmHelpers {
       const remaining = deadline - Date.now()
       if (remaining <= 0) break
       try {
-        const result = await runNativeTextGeneration({
+        const result = await this.deps.nativeTextGeneration.run({
           settings,
           cwd: input.cwd,
           modelSelection,
@@ -231,7 +229,7 @@ export class ChatLlmHelpers {
     }
   ): Promise<ThreadContextSummaryGenerationResult> {
     const { prompt, schemaName } = buildThreadContextSummaryPrompt(input)
-    const result = await runNativeTextGeneration({
+    const result = await this.deps.nativeTextGeneration.run({
       settings: this.deps.settings(),
       modelSelection: input.modelSelection,
       prompt:
@@ -443,7 +441,7 @@ export class ChatLlmHelpers {
 
       for (const modelSelection of modelSelections) {
         try {
-          const native = await runNativeTextGeneration({
+          const native = await this.deps.nativeTextGeneration.run({
             settings,
             modelSelection,
             prompt: args.prompt,
@@ -481,7 +479,7 @@ export class ChatLlmHelpers {
 
     if (modelSelection) {
       try {
-        const native = await runNativeTextGeneration({
+        const native = await this.deps.nativeTextGeneration.run({
           settings,
           modelSelection,
           prompt: args.prompt,
@@ -537,7 +535,7 @@ export function resolveCommitMessageModelSelections(
     const provider = nativeCodexOrClaudeProviderForDriver(config.driver)!
     return {
       instanceId: config.instanceId,
-      model: COMMIT_MESSAGE_CLI_MODELS[provider],
+      model: commitMessageCliModel(settings, provider),
       options: [
         {
           id: provider === "codex" ? "reasoningEffort" : "effort",
@@ -546,6 +544,29 @@ export function resolveCommitMessageModelSelections(
       ],
     }
   })
+}
+
+/**
+ * The CLI model for commit messages: the configured one
+ * (`commit_message_codex_model` / `commit_message_claude_model`), else the
+ * built-in default. CLI model ids are deliberately separate from the API-key
+ * helper models. A configured id that clearly belongs to the other CLI (a
+ * Claude model in the Codex slot) would only fail the request, so the
+ * default is used instead.
+ */
+function commitMessageCliModel(
+  settings: Settings,
+  provider: "codex" | "claude"
+): string {
+  const configured = (
+    provider === "codex"
+      ? settings.commit_message_codex_model
+      : settings.commit_message_claude_model
+  )?.trim()
+  return configured &&
+    !looksClearlyIncompatibleWithNativeProvider(provider, configured)
+    ? configured
+    : DEFAULT_COMMIT_MESSAGE_MODELS[provider]
 }
 
 export function resolveThreadContextCompactionModelSelection(

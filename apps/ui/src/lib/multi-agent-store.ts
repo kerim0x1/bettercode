@@ -1,7 +1,8 @@
 import { create } from "zustand"
 import { persist, createJSONStorage } from "zustand/middleware"
 import { useChatStore } from "@/lib/chat-store"
-import { createThreadWorktree, sendChatMessage } from "@/services/backend"
+import { createThreadWorktree } from "@/services/backend/coreApi"
+import { sendChatMessage } from "@/lib/chat/send-message"
 import {
   usePreferencesStore,
   type PermissionLevel,

@@ -1,12 +1,11 @@
 import { asRecord } from "@betterc0de/schema"
 import type { ProviderRuntimeEvent } from "./contracts"
+import type { LegacyProviderEvent } from "../types"
 import { providerKindFromDriver } from "./providerKindAliases"
 
-export interface LegacyProviderEvent {
-  event_type: string
-  thread_id: string
-  payload: Record<string, unknown>
-}
+// The legacy shape has one definition (provider/types.ts); this re-export
+// keeps the `provider/runtime` import path that callers already use.
+export type { LegacyProviderEvent }
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined

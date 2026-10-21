@@ -19,6 +19,11 @@ let observedWindow: Window | null = null
 let unsubscribeBackendStatus: (() => void) | undefined
 let backendUnavailable = false
 
+/** One-shot waiters from {@link whenBackendReady}. */
+const backendReadyWaiters = new Set<(port: number) => void>()
+/** Persistent listeners from {@link onBackendReady}. */
+const backendReadyListeners = new Set<(port: number) => void>()
+
 function observeLocalBackendStatus() {
   if (observedWindow === window) return
   unsubscribeBackendStatus?.()
@@ -37,6 +42,14 @@ function observeLocalBackendStatus() {
         cachedConfig ?? { mode: "local_sidecar" }
       window.__BETTERC0DE__ = { ...previous, port: event.port }
       cachedConfig = null
+      flushBackendReadyWaiters()
+      for (const listener of [...backendReadyListeners]) {
+        try {
+          listener(event.port)
+        } catch (error) {
+          console.error("[backend] backend-ready listener failed:", error)
+        }
+      }
     } else if (
       ["failed", "restarting", "stopped"].includes(event.status ?? "")
     ) {
@@ -44,6 +57,147 @@ function observeLocalBackendStatus() {
       cachedConfig = null
     }
   })
+}
+
+function injectedBackendPort(): number | null {
+  if (typeof window === "undefined") return null
+  const port = window.__BETTERC0DE__?.port
+  return typeof port === "number" && Number.isFinite(port) && port > 0
+    ? port
+    : null
+}
+
+/** The port to talk to, or null while the local backend is not reachable. */
+function readyBackendPort(): number | null {
+  if (backendUnavailable && getBackendMode() !== "remote_http") return null
+  return injectedBackendPort()
+}
+
+function flushBackendReadyWaiters() {
+  if (backendReadyWaiters.size === 0) return
+  const port = readyBackendPort()
+  if (port === null) return
+  const waiters = [...backendReadyWaiters]
+  backendReadyWaiters.clear()
+  for (const resolve of waiters) resolve(port)
+}
+
+const RUNTIME_CONFIG_KEY = "__BETTERC0DE__"
+let watchedConfigWindow: Window | null = null
+let configInjectionWatched = false
+let restoreConfigProperty: (() => void) | undefined
+
+/**
+ * The backend port reaches the renderer in two ways: the `backend:status`
+ * "ready" event, and the `getRuntimeConfig` IPC reply, which
+ * `initDesktopRuntimeConfig` (desktop-runtime-config.ts) publishes by
+ * assigning `window.__BETTERC0DE__`; later "ready" events reassign it. A
+ * waiter registered here can miss the event (it fired before this module
+ * subscribed) or start before the IPC reply arrives, so the assignment is
+ * observed too. An accessor keeps the property a plain value for every reader
+ * and writer; it only adds the notification.
+ */
+function watchRuntimeConfigInjection(): boolean {
+  if (typeof window === "undefined") return false
+  if (watchedConfigWindow === window) return configInjectionWatched
+  restoreConfigProperty?.()
+  restoreConfigProperty = undefined
+  watchedConfigWindow = window
+  configInjectionWatched = false
+  const target = window
+  const descriptor = Object.getOwnPropertyDescriptor(target, RUNTIME_CONFIG_KEY)
+  // Another accessor (or a frozen value) is not ours to replace.
+  if (
+    descriptor &&
+    (!descriptor.configurable || descriptor.get || descriptor.set)
+  ) {
+    return false
+  }
+  let current = target.__BETTERC0DE__
+  try {
+    Object.defineProperty(target, RUNTIME_CONFIG_KEY, {
+      configurable: true,
+      enumerable: true,
+      get: () => current,
+      set: (next: typeof current) => {
+        current = next
+        flushBackendReadyWaiters()
+      },
+    })
+  } catch {
+    return false
+  }
+  restoreConfigProperty = () => {
+    Object.defineProperty(target, RUNTIME_CONFIG_KEY, {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: current,
+    })
+  }
+  configInjectionWatched = true
+  return true
+}
+
+/**
+ * Resolves with the backend port once the backend can take requests: right
+ * away when the shell already published it, otherwise on the shell's "ready"
+ * signal. Replaces fixed-interval polling for `window.__BETTERC0DE__.port`.
+ * Remote runtimes resolve immediately; their requests do not use the port.
+ * Rejects only when `signal` aborts.
+ */
+export function whenBackendReady(signal?: AbortSignal): Promise<number> {
+  if (signal?.aborted) {
+    return Promise.reject(new Error("Backend wait cancelled"))
+  }
+  if (typeof window === "undefined") return Promise.resolve(3773)
+  if (getBackendMode() === "remote_http") {
+    return Promise.resolve(injectedBackendPort() ?? 0)
+  }
+  if (!window.electronAPI?.onBackendStatus) {
+    // No shell (a plain browser page): nothing will announce a port, so use
+    // the same fallback as getConfig() instead of waiting forever.
+    return Promise.resolve(injectedBackendPort() ?? 3773)
+  }
+  observeLocalBackendStatus()
+  const watching = watchRuntimeConfigInjection()
+  const port = readyBackendPort()
+  if (port !== null) return Promise.resolve(port)
+
+  return new Promise<number>((resolve, reject) => {
+    let fallbackTimer: ReturnType<typeof setInterval> | undefined
+    const cleanup = () => {
+      backendReadyWaiters.delete(waiter)
+      if (fallbackTimer) clearInterval(fallbackTimer)
+      signal?.removeEventListener("abort", onAbort)
+    }
+    const waiter = (readyPort: number) => {
+      cleanup()
+      resolve(readyPort)
+    }
+    const onAbort = () => {
+      cleanup()
+      reject(new Error("Backend wait cancelled"))
+    }
+    backendReadyWaiters.add(waiter)
+    signal?.addEventListener("abort", onAbort, { once: true })
+    // Without the property watch (it is owned by something else) the event
+    // remains the primary signal; a slow check covers a missed event.
+    if (!watching) fallbackTimer = setInterval(flushBackendReadyWaiters, 500)
+  })
+}
+
+/**
+ * Calls `listener` with the port every time the shell reports that the local
+ * backend (re)started. Used to reconnect at once instead of waiting out a
+ * backoff timer. Returns an unsubscribe function.
+ */
+export function onBackendReady(listener: (port: number) => void): () => void {
+  if (typeof window !== "undefined") observeLocalBackendStatus()
+  backendReadyListeners.add(listener)
+  return () => {
+    backendReadyListeners.delete(listener)
+  }
 }
 
 function requireLocalBackendAvailable() {
@@ -62,6 +216,11 @@ if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     unsubscribeBackendStatus?.()
     observedWindow = null
+    // The next module instance installs its own accessor.
+    restoreConfigProperty?.()
+    restoreConfigProperty = undefined
+    watchedConfigWindow = null
+    configInjectionWatched = false
   })
 }
 
@@ -247,13 +406,21 @@ export async function waitForConfig(): Promise<RuntimeConfig> {
   }
   if (cachedConfig) return cachedConfig
 
-  for (let attempt = 0; attempt < 25; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    requireLocalBackendAvailable()
-    if (window.__BETTERC0DE__?.port) {
-      cachedConfig = window.__BETTERC0DE__
-      return cachedConfig
-    }
+  // Wait for the shell to publish the port (bounded, so a renderer without a
+  // shell still falls back to the default) instead of polling for it.
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 5_000)
+  try {
+    await whenBackendReady(controller.signal)
+  } catch {
+    // Timed out: fall through to the defaults below.
+  } finally {
+    clearTimeout(timer)
+  }
+  requireLocalBackendAvailable()
+  if (window.__BETTERC0DE__?.port) {
+    cachedConfig = window.__BETTERC0DE__
+    return cachedConfig
   }
 
   return getConfig()
@@ -561,10 +728,16 @@ function getBackendTransport(): BackendTransport {
 }
 
 export async function openWorkspace(workspacePath: string): Promise<string> {
-  const result = await invoke<{ path: string }>("/workspace/open", {
-    method: "POST",
-    body: { workspacePath },
-  })
+  // Through its shared contract (`workspaceOpen`), loaded on first use like
+  // every contract. Not via `invokeContract`: that helper sends through this
+  // module.
+  const { requestHttpContract } =
+    await import("@betterc0de/schema/http-contracts")
+  const result = await requestHttpContract(
+    "workspaceOpen",
+    ({ path, method, body }) => invoke<unknown>(path, { method, body }),
+    { body: { workspacePath } }
+  )
   return result.path
 }
 
@@ -599,6 +772,8 @@ export function httpInvoke<T>(
     signal?: AbortSignal
     timeoutMs?: number
     silentStatuses?: number[]
+    /** Extra request headers (e.g. `clientInstanceRequestOptions()`). */
+    headers?: Record<string, string>
   }
 ): Promise<T> {
   return getBackendTransport().request<T>(path, {
@@ -607,6 +782,7 @@ export function httpInvoke<T>(
     signal: opts?.signal,
     timeoutMs: opts?.timeoutMs,
     silentStatuses: opts?.silentStatuses,
+    ...(opts?.headers ? { headers: opts.headers } : {}),
   })
 }
 
@@ -619,6 +795,7 @@ export function invoke<T>(
     signal?: AbortSignal
     timeoutMs?: number
     silentStatuses?: number[]
+    headers?: Record<string, string>
   }
 ): Promise<T> {
   return httpInvoke<T>(httpPath, {
@@ -627,6 +804,7 @@ export function invoke<T>(
     signal: opts?.signal,
     timeoutMs: opts?.timeoutMs,
     silentStatuses: opts?.silentStatuses,
+    ...(opts?.headers ? { headers: opts.headers } : {}),
   })
 }
 

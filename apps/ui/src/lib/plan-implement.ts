@@ -3,7 +3,7 @@ import {
   derivePendingPlanApprovals,
   type PendingPlanApproval,
 } from "@/lib/pending-approvals"
-import { respondToPlanApproval } from "@/services/backend"
+import { respondToPlanApproval } from "@/services/backend/chatApi"
 
 /**
  * Single source of truth for "implement this plan".

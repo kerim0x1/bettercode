@@ -12,6 +12,7 @@ import type {
 import { logger } from "../../observability/logger"
 import { cancelPendingApprovals, normalizeLevel } from "../permissions"
 import { normalizeAnthropicModelId } from "./anthropicModelIds"
+import { anthropicThinkingAlwaysOn } from "./modelFamilies"
 import { ApiModelCatalog } from "./apiModelCatalog"
 import {
   anthropicRequiresExplicitThinkingDisplay,
@@ -37,6 +38,12 @@ import {
   type ToolMutationArtifact,
 } from "../agent-loop/tool-executor"
 import { gateToolCall } from "../agent-loop/tool-gate"
+import {
+  CHAT_TURN_OUTPUT_RESERVE_TOKENS,
+  TOOL_TURN_OUTPUT_RESERVE_TOKENS,
+  truncatedToolCallError,
+} from "../agent-loop/output-limit"
+import { withTransientRetry } from "./transientRetry"
 import { filterToolsForBetterC0deProjectPolicy } from "../project-tool-policy"
 import {
   getProjectToolOutputLimits,
@@ -278,7 +285,7 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
       // `display:"summarized"` because these generations default to "omitted"
       // (empty thinking blocks, so the UI would show no reasoning at all).
       // Depth comes from `output_config.effort` instead of a token budget.
-      const alwaysOnThinking = model === "claude-opus-5-5"
+      const alwaysOnThinking = anthropicThinkingAlwaysOn(model)
       const adaptiveEffort = modelCapabilities.adaptiveThinking
         ? (mapReasoningToAdaptiveEffort(input.reasoning_effort) ??
           (alwaysOnThinking ? "medium" : null))
@@ -296,14 +303,21 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
       // Adaptive models get a flat streaming-safe allowance: on Fable/Opus 5
       // thinking runs even without an effort selection, so a 4k cap would
       // starve the visible answer.
+      // Tool turns carry whole file bodies as tool input, so they get a larger
+      // visible reserve than plain chat. A tool call cut off at max_tokens is
+      // never executed (see the stop_reason check below), but it costs a retry.
+      const responseReserve =
+        tools.length > 0
+          ? TOOL_TURN_OUTPUT_RESERVE_TOKENS
+          : CHAT_TURN_OUTPUT_RESERVE_TOKENS
       const maxTokens = modelCapabilities.adaptiveThinking
         ? Math.min(modelCapabilities.maxOutputTokens, 64_000)
         : thinking?.type === "enabled"
           ? Math.min(
               modelCapabilities.maxOutputTokens,
-              thinking.budget_tokens + 4_096
+              thinking.budget_tokens + responseReserve
             )
-          : Math.min(4_096, modelCapabilities.maxOutputTokens)
+          : Math.min(responseReserve, modelCapabilities.maxOutputTokens)
       // Normalize UI short IDs (`opus-4-7`) to canonical API slugs before the
       // SDK call — Anthropic rejects the short form server-side.
 
@@ -388,16 +402,23 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
 
           return stream.finalMessage()
         }
+        // The pool disables SDK retries so it can fail over between keys;
+        // transient 429/529/5xx answers are retried on the same key first.
         const final = keySession
           ? await keySession.run(
               (key, started) =>
-                requestMessage(
-                  new Anthropic({
-                    apiKey: key.key,
-                    maxRetries: 0,
-                    timeout: 60_000,
-                  }),
-                  started
+                withTransientRetry(
+                  (attemptStarted) =>
+                    requestMessage(
+                      new Anthropic({
+                        apiKey: key.key,
+                        maxRetries: 0,
+                        timeout: 60_000,
+                      }),
+                      attemptStarted
+                    ),
+                  started,
+                  { signal: controller.signal }
                 ),
               controller.signal
             )
@@ -435,9 +456,23 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
         // Echo the model's content blocks verbatim back into the conversation
         // (text + tool_use + thinking, preserving signatures) and collect the
         // tool_use blocks to execute.
+        // A message that stopped at max_tokens ends inside its last content
+        // block. When that block is a tool_use, its input is a partial parse
+        // that drops unterminated strings (a Write without `content`, an Edit
+        // without `new_string`), so it must never run.
+        const content = final.content ?? []
+        const stoppedAtOutputLimit = final.stop_reason === "max_tokens"
+        const truncatedBlock = stoppedAtOutputLimit
+          ? content[content.length - 1]
+          : undefined
         const assistantContent: ContentBlockParam[] = []
-        const toolUses: Array<{ id: string; name: string; input: unknown }> = []
-        for (const block of final.content ?? []) {
+        const toolUses: Array<{
+          id: string
+          name: string
+          input: unknown
+          truncated: boolean
+        }> = []
+        for (const block of content) {
           if (block.type === "text") {
             assistantContent.push({ type: "text", text: block.text })
           } else if (block.type === "thinking") {
@@ -462,8 +497,20 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
               id: block.id,
               name: block.name,
               input: block.input ?? {},
+              truncated: block === truncatedBlock,
             })
           }
+        }
+
+        if (stoppedAtOutputLimit) {
+          logger.warn(
+            {
+              thread: input.thread_id,
+              maxTokens,
+              truncatedToolCall: truncatedBlock?.type === "tool_use",
+            },
+            "Claude API response stopped at the output token limit"
+          )
         }
 
         if (toolUses.length === 0) {
@@ -482,22 +529,27 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
             payload: { tool_id: tu.id, tool_name: tu.name, input: tu.input },
           })
 
-          const gate = await gateToolCall({
-            emit: (event) => this.emit(event),
-            providerKind: "anthropic",
-            threadId: input.thread_id,
-            level,
-            mode,
-            toolName: tu.name,
-            input: tu.input,
-            projectPermissionRules: projectToolPolicy.permissionRules,
-          })
+          const gate = tu.truncated
+            ? null
+            : await gateToolCall({
+                emit: (event) => this.emit(event),
+                providerKind: "anthropic",
+                threadId: input.thread_id,
+                level,
+                mode,
+                toolName: tu.name,
+                input: tu.input,
+                projectPermissionRules: projectToolPolicy.permissionRules,
+              })
 
           let output: string
           let toolError: string | undefined
           let toolStatus: "cancelled" | "timed_out" | undefined
           let mutation: ToolMutationArtifact | undefined
-          if (!gate.allow) {
+          if (!gate) {
+            toolError = truncatedToolCallError(tu.name)
+            output = `Error: ${toolError}`
+          } else if (!gate.allow) {
             toolError = gate.reason ?? "Permission denied."
             output = `Tool call blocked: ${toolError}`
             this.emit({
@@ -521,6 +573,7 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
                   limits,
                   signal: controller.signal,
                   timeoutMs: DIRECT_TOOL_TIMEOUT_MS,
+                  shell: this.agentTools.shellSessions,
                 })
             output = res.output
             toolError = res.error

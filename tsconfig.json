@@ -1,10 +1,7 @@
 {
-  "files": [],
-  "references": [
-    { "path": "./apps/ui" },
-    { "path": "./apps/backend" },
-    { "path": "./apps/shell" },
-    { "path": "./packages/schema" },
-    { "path": "./packages/util" }
-  ]
+  // Every workspace type-checks with its own tsconfig (apps/*/tsconfig.json,
+  // packages/*/tsconfig.json); there is no root build. Project references
+  // used to be listed here, but none of those projects is `composite`, so
+  // `tsc -b` at the root could never succeed and the list only misled editors.
+  "files": []
 }

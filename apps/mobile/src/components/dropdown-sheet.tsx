@@ -72,6 +72,7 @@ export function DropdownRow({
   sublabel,
   active = false,
   destructive = false,
+  disabled = false,
   onPress,
   testID,
 }: {
@@ -80,25 +81,32 @@ export function DropdownRow({
   sublabel?: string
   active?: boolean
   destructive?: boolean
+  /** Shown but not choosable; the sublabel says why. */
+  disabled?: boolean
   onPress: () => void
   testID?: string
 }) {
   return (
     <Pressable
       accessibilityRole="menuitem"
-      accessibilityState={{ selected: active }}
+      accessibilityState={{ selected: active, disabled }}
       testID={testID}
+      disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.row,
         active && styles.rowActive,
-        pressed && styles.rowPressed,
+        pressed && !disabled && styles.rowPressed,
       ]}
     >
       {icon ? <View style={styles.rowIcon}>{icon}</View> : null}
       <View style={styles.rowCopy}>
         <Text
-          style={[styles.rowLabel, destructive && styles.rowLabelDestructive]}
+          style={[
+            styles.rowLabel,
+            destructive && styles.rowLabelDestructive,
+            disabled && styles.rowLabelDisabled,
+          ]}
           numberOfLines={1}
         >
           {label}
@@ -182,6 +190,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   rowLabelDestructive: { color: colors.danger },
+  rowLabelDisabled: { color: colors.textMuted },
   rowSublabel: {
     color: colors.textMuted,
     fontFamily: font.regular,

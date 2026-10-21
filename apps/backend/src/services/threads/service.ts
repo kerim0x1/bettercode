@@ -3,13 +3,23 @@ import { prepareThreadStatements, type ThreadStatements } from "./statements"
 import type { HistoryMessage } from "../../provider/types"
 import {
   normalizeProviderGoal,
+  threadAutonomySchema,
   threadGoalSchema,
+  threadSettingsSchema,
+  type ThreadAutonomy,
   type ThreadGoal,
+  type ThreadSettings,
+  type ThreadSettingsPatch,
 } from "@betterc0de/schema"
 import {
   CHAT_HISTORY_MAX_BYTES,
   withBrowserElementContext,
 } from "@betterc0de/schema"
+import {
+  threadImportSourceSchema,
+  type ThreadImportSource,
+} from "@betterc0de/schema"
+import { threadResumeSchema, type ThreadResume } from "@betterc0de/schema"
 import { HttpError } from "../../http/errors"
 import type {
   ThreadSaveRequest,
@@ -23,6 +33,17 @@ import type {
   ThreadUserMessageDispatchRequest,
 } from "./types"
 import { serializeMessage, hydrateMessageRow } from "./thread-codec"
+import {
+  hasOmittedPayloads,
+  restoreOmittedPayloads,
+  toLightMessage,
+} from "./light-message"
+import {
+  searchStoredMessages,
+  type MessageSearchOptions,
+  type StoredMessageSearchRow,
+} from "./message-search"
+import type { ThreadMessageSearchResult } from "@betterc0de/schema/http-contracts"
 import { logger } from "../../observability/logger"
 import {
   mergeChatDispatchMetadata,
@@ -128,6 +149,10 @@ interface ThreadSummaryRow {
   parent_thread_id: string | null
   codex_thread_id: string | null
   provider_goal_json: string | null
+  settings_json: string | null
+  autonomy_json: string | null
+  import_source_json: string | null
+  resume_json: string | null
   message_count: number | null
   last_model_id: string | null
   turn_count: number | null
@@ -206,7 +231,8 @@ export class ThreadService {
       status: row.session_status ?? "ready",
       activeTurnId: row.active_turn_id,
       lastError: row.last_error ? "Provider session failed." : null,
-      runtimeMode: row.runtime_mode ?? "full-access",
+      // A row without a stored mode never reads as bypass ("full-access").
+      runtimeMode: row.runtime_mode ?? "approval-required",
       cwd: normalizeOptionalString(row.session_cwd),
       modelSelection: parseJsonOrNull(row.model_selection_json, {
         ...context,
@@ -249,6 +275,51 @@ export class ThreadService {
     return Boolean(this.stmts.getThreadGoalStmt.get(threadId))
   }
 
+  /** The chat's own settings; `null` when it has none or does not exist. */
+  getThreadSettings(threadId: string): ThreadSettings | null {
+    const row = this.stmts.getThreadSettingsStmt.get(threadId) as
+      | { settings_json: string | null }
+      | undefined
+    return row
+      ? (parsePersistedThreadSettings(row.settings_json) ?? null)
+      : null
+  }
+
+  /**
+   * Applies a change to the chat's settings (a `null` clears that key) and
+   * returns them. A chat that does not exist is a 404: settings never
+   * create a chat.
+   */
+  updateThreadSettings(
+    threadId: string,
+    patch: ThreadSettingsPatch
+  ): ThreadSettings {
+    const row = this.stmts.getThreadSettingsStmt.get(threadId) as
+      | { settings_json: string | null }
+      | undefined
+    if (!row) {
+      throw new HttpError(
+        404,
+        `thread ${threadId} not found`,
+        "thread_not_found"
+      )
+    }
+    const next: Record<string, unknown> = {
+      ...(parsePersistedThreadSettings(row.settings_json) ?? {}),
+    }
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) continue
+      if (value === null) delete next[key]
+      else next[key] = value
+    }
+    const settings = threadSettingsSchema.parse(next)
+    this.stmts.updateThreadSettingsStmt.run(
+      Object.keys(settings).length > 0 ? JSON.stringify(settings) : null,
+      threadId
+    )
+    return settings
+  }
+
   /** Called only by runtime ingestion, after the provider event is journaled. */
   updateThreadGoal(
     threadId: string,
@@ -272,6 +343,32 @@ export class ThreadService {
     if (goal === undefined) return
     // Goal accounting must not reorder the sidebar on every token update.
     this.stmts.updateThreadGoalStmt.run(JSON.stringify(goal), threadId)
+  }
+
+  /** The chat's Autonomous Work run; `null` when it has none or does not exist. */
+  getThreadAutonomy(threadId: string): ThreadAutonomy | null {
+    const row = this.stmts.getThreadAutonomyStmt.get(threadId) as
+      | { autonomy_json: string | null }
+      | undefined
+    return row
+      ? (parsePersistedThreadAutonomy(row.autonomy_json) ?? null)
+      : null
+  }
+
+  /**
+   * Called only by runtime ingestion, after the backend's own Autonomous
+   * Work update is journaled (services/chat/autonomy-runtime.ts). `null`
+   * ends the run; a value that is not a run is ignored.
+   */
+  updateThreadAutonomy(threadId: string, value: unknown): void {
+    // A late update must never recreate a deleted thread.
+    if (!this.stmts.getThreadAutonomyStmt.get(threadId)) return
+    const parsed = threadAutonomySchema.nullable().safeParse(value)
+    if (!parsed.success) return
+    this.stmts.updateThreadAutonomyStmt.run(
+      parsed.data ? JSON.stringify(parsed.data) : null,
+      threadId
+    )
   }
 
   save(thread: ThreadSaveRequest): void {
@@ -381,14 +478,23 @@ export class ThreadService {
           }
           return
         }
+        const writtenMessage = persisted
+          ? withStoredPayloads(message, persisted.content_json, {
+              threadId: req.thread_id,
+              messageId: persisted.message_id,
+            })
+          : message
         const durableMessage = serverOwned
           ? this.messageFromServerOwnedDispatch(serverOwned)
           : dispatchStatus
             ? {
-                ...message,
-                extra: mergeChatDispatchMetadata(message.extra, dispatchStatus),
+                ...writtenMessage,
+                extra: mergeChatDispatchMetadata(
+                  writtenMessage.extra,
+                  dispatchStatus
+                ),
               }
-            : message
+            : writtenMessage
         const serialized = serializeMessage(durableMessage)
         if (!persisted) {
           this.stmts.insertMessageStmt.run(
@@ -651,6 +757,51 @@ export class ThreadService {
     txn(req)
   }
 
+  /**
+   * A user message sent into a running turn (steering). It is stored like a
+   * dispatch user message, then placed in front of the turn's answer when
+   * that is already stored, so the transcript reads request, steer, answer
+   * after a reload too, as it did live. `turnMessageId` is the message that
+   * started the turn; without it the message stays last. Repeating the call
+   * stores and places the message once.
+   */
+  persistSteeredUserMessage(
+    req: ThreadUserMessageDispatchRequest,
+    turnMessageId: string | null
+  ): void {
+    const txn = this.db.transaction(
+      (input: ThreadUserMessageDispatchRequest) => {
+        this.persistUserMessageForTurn(input)
+        if (!turnMessageId) return
+        const turn = this.stmts.findMessageSequenceStmt.get(
+          input.thread_id,
+          turnMessageId
+        ) as { sequence: number } | undefined
+        const steered = this.stmts.findMessageSequenceStmt.get(
+          input.thread_id,
+          input.message.message_id
+        ) as { sequence: number; role: string } | undefined
+        if (!turn || !steered || steered.role !== "user") return
+        const answer = this.stmts.findFirstAssistantBetweenStmt.get(
+          input.thread_id,
+          turn.sequence,
+          steered.sequence
+        ) as { sequence: number } | undefined
+        if (!answer) return
+        this.stmts.shiftMessageSequencesStmt.run(
+          input.thread_id,
+          answer.sequence
+        )
+        this.stmts.updateMessageSequenceStmt.run(
+          answer.sequence,
+          input.thread_id,
+          input.message.message_id
+        )
+      }
+    )
+    txn(req)
+  }
+
   markDispatchMessageFailed(threadId: string, messageId: string): void {
     const txn = this.db.transaction(() => {
       const existing = this.stmts.findDispatchMessageStmt.get(messageId) as
@@ -692,6 +843,23 @@ export class ThreadService {
     txn()
   }
 
+  /** `withStoredPayloads` against this thread's stored copy, if any. */
+  private withStoredPayloadsFor(
+    threadId: string,
+    message: ThreadSaveMessage
+  ): ThreadSaveMessage {
+    if (!hasOmittedPayloads(message.extra)) return message
+    const persisted = this.stmts.findPersistedMessageStmt.get(
+      threadId,
+      message.message_id
+    ) as PersistedMessageRow | undefined
+    if (!persisted) return message
+    return withStoredPayloads(message, persisted.content_json, {
+      threadId,
+      messageId: persisted.message_id,
+    })
+  }
+
   private upsertMessageRow(input: ThreadMessageUpsertRequest): void {
     this.assertDispatchMessageWritable(
       input.thread_id,
@@ -713,9 +881,10 @@ export class ThreadService {
       input.thread_id,
       input.message.message_id
     )
+    const incoming = this.withStoredPayloadsFor(input.thread_id, input.message)
     const message =
       durableMessage ??
-      this.withServerDispatchMetadata(input.thread_id, input.message)
+      this.withServerDispatchMetadata(input.thread_id, incoming)
 
     if (existing) {
       this.stmts.updateMessageStmt.run(
@@ -1112,6 +1281,69 @@ export class ThreadService {
     return txn(req)
   }
 
+  /**
+   * Removes a message and everything after it: the inclusive twin of
+   * `truncateAfterMessage`, for edit and resend, which rewinds to just
+   * before the edited message (possibly the first one). Activities without
+   * a turn are kept up to the message's own time.
+   */
+  truncateFromMessage(req: ThreadTruncateRequest): {
+    deletedMessages: number
+  } {
+    const txn = this.db.transaction((input: ThreadTruncateRequest) => {
+      this.assertThreadExists(input.thread_id)
+      const anchor = this.stmts.findMessageBoundaryStmt.get(
+        input.thread_id,
+        input.message_id
+      ) as { sequence: number; created_at: string } | undefined
+      if (!anchor) {
+        throw new HttpError(404, `message ${input.message_id} not found`)
+      }
+      // Sequences are integers, so "after sequence - 1" includes the message.
+      const before = anchor.sequence - 1
+
+      this.stmts.deleteActivitiesAfterMessageSequenceStmt.run(
+        input.thread_id,
+        input.thread_id,
+        before,
+        anchor.created_at
+      )
+      this.stmts.deleteApprovalsAfterMessageSequenceStmt.run(
+        input.thread_id,
+        input.thread_id,
+        before
+      )
+      this.stmts.deleteCheckpointDiffsAfterMessageSequenceStmt.run(
+        input.thread_id,
+        input.thread_id,
+        before
+      )
+      this.stmts.deleteTurnDiffsAfterBoundarySequenceStmt.run(
+        input.thread_id,
+        input.thread_id,
+        before
+      )
+      this.stmts.deleteTurnsAfterMessageSequenceStmt.run(
+        input.thread_id,
+        input.thread_id,
+        before
+      )
+      this.stmts.revertChatDispatchesAfterMessageSequenceStmt.run(
+        input.updated_at,
+        input.thread_id,
+        input.thread_id,
+        before
+      )
+      const result = this.stmts.deleteMessagesAfterSequenceStmt.run(
+        input.thread_id,
+        before
+      ) as { changes: number }
+      this.syncThreadFromMessages(input.thread_id, input.updated_at)
+      return { deletedMessages: result.changes }
+    })
+    return txn(req)
+  }
+
   truncateAfterTurnCount(req: ThreadCheckpointRevertRequest): {
     deletedMessages: number
     boundaryMessageId: string | null
@@ -1278,6 +1510,10 @@ export class ThreadService {
   }
 
   private threadSummaryFromRow(row: ThreadSummaryRow) {
+    const settings = parsePersistedThreadSettings(row.settings_json)
+    const autonomy = parsePersistedThreadAutonomy(row.autonomy_json)
+    const importedFrom = parsePersistedImportSource(row.import_source_json)
+    const resume = parsePersistedThreadResume(row.resume_json)
     return {
       id: row.thread_id,
       projectName: row.project_id,
@@ -1295,6 +1531,10 @@ export class ThreadService {
       ...(row.provider_goal_json !== null
         ? { goal: parsePersistedThreadGoal(row.provider_goal_json) }
         : {}),
+      ...(autonomy ? { autonomy } : {}),
+      ...(settings ? { settings } : {}),
+      ...(importedFrom ? { importedFrom } : {}),
+      ...(resume ? { resume } : {}),
       // Surface `message_count` so the sidebar can distinguish "real chat
       // not hydrated yet" from "empty + button placeholder" after reload.
       // `messages: []` is unavoidable here (they're lazily fetched via
@@ -1347,9 +1587,18 @@ export class ThreadService {
     )
   }
 
+  /**
+   * The newest `limit` messages before `beforeSequence`, oldest first.
+   * `light` drops diff text and inline `data:` attachment payloads and
+   * flags them (see `toLightMessage`); `getMessageView` returns the full row.
+   */
   listMessages(
     threadId: string,
-    options: { limit?: number; beforeSequence?: number | null } = {}
+    options: {
+      limit?: number
+      beforeSequence?: number | null
+      light?: boolean
+    } = {}
   ): unknown[] {
     const limit = Math.min(
       2_000,
@@ -1376,10 +1625,58 @@ export class ThreadService {
     }>
     const exposeCursor =
       options.limit !== undefined || options.beforeSequence !== undefined
-    return rows.reverse().map((row) => ({
-      ...hydrateMessageRow(row),
-      ...(exposeCursor ? { sequence: row.sequence } : {}),
-    }))
+    return rows.reverse().map((row) => {
+      const message = {
+        ...hydrateMessageRow(row),
+        ...(exposeCursor ? { sequence: row.sequence } : {}),
+      }
+      return options.light ? toLightMessage(message) : message
+    })
+  }
+
+  /**
+   * One message in the shape of a paged `listMessages` row (with its
+   * `sequence`), or `null` when the thread has no such message.
+   */
+  getMessageView(
+    threadId: string,
+    messageId: string
+  ): Record<string, unknown> | null {
+    const row = this.stmts.findMessageViewStmt.get(messageId, threadId) as
+      | {
+          message_id: string
+          turn_id: string | null
+          role: string
+          content_json: string
+          created_at: string
+          sequence: number
+        }
+      | undefined
+    if (!row) return null
+    return { ...hydrateMessageRow(row), sequence: row.sequence }
+  }
+
+  /**
+   * Find in chat over the thread's stored messages, or only those before
+   * `beforeSequence` (the ones a client has not loaded). See
+   * `searchStoredMessages`.
+   */
+  searchMessages(
+    threadId: string,
+    options: MessageSearchOptions & { beforeSequence?: number | null }
+  ): ThreadMessageSearchResult {
+    const beforeSequence =
+      typeof options.beforeSequence === "number" &&
+      Number.isSafeInteger(options.beforeSequence) &&
+      options.beforeSequence >= 0
+        ? options.beforeSequence
+        : null
+    const rows = this.stmts.searchMessagesStmt.iterate(
+      threadId,
+      beforeSequence,
+      beforeSequence
+    ) as IterableIterator<StoredMessageSearchRow>
+    return searchStoredMessages(rows, options)
   }
 
   getMessage(threadId: string, messageId: string): ThreadSaveMessage | null {
@@ -2305,6 +2602,23 @@ function parseJsonOrNull(
   }
 }
 
+/**
+ * A light-read copy written back keeps the stored diff text and attachment
+ * data instead of its placeholders (see `restoreOmittedPayloads`).
+ */
+function withStoredPayloads(
+  message: ThreadSaveMessage,
+  storedContentJson: string,
+  context: StoredJsonContext
+): ThreadSaveMessage {
+  if (!hasOmittedPayloads(message.extra)) return message
+  const extra = restoreOmittedPayloads(
+    message.extra,
+    parseStoredMessage(storedContentJson, context).extra
+  )
+  return extra === message.extra ? message : { ...message, extra }
+}
+
 function parseStoredMessage(
   raw: string,
   context: StoredJsonContext = {}
@@ -2393,6 +2707,70 @@ function median(values: number[]): number {
   return sorted.length % 2 === 0
     ? ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2
     : (sorted[mid] ?? 0)
+}
+
+/**
+ * A stored settings row, or `undefined` for none. A row that no longer
+ * reads as settings (hand-edited, or from a newer version) is left out
+ * rather than failing every thread list.
+ */
+function parsePersistedThreadSettings(
+  value: string | null | undefined
+): ThreadSettings | undefined {
+  if (value === null || value === undefined) return undefined
+  try {
+    const parsed = threadSettingsSchema.safeParse(JSON.parse(value))
+    if (!parsed.success || Object.keys(parsed.data).length === 0) {
+      return undefined
+    }
+    return parsed.data
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Where an imported chat came from; `undefined` when it was not imported or
+ * the row no longer reads as a source (never failing the thread list).
+ */
+function parsePersistedImportSource(
+  value: string | null | undefined
+): ThreadImportSource | undefined {
+  if (value === null || value === undefined) return undefined
+  try {
+    const parsed = threadImportSourceSchema.safeParse(JSON.parse(value))
+    return parsed.success ? parsed.data : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The chat's resume record (services/chat/resume-runtime.ts); `undefined`
+ * when it has none or the row no longer reads as one.
+ */
+function parsePersistedThreadResume(
+  value: string | null | undefined
+): ThreadResume | undefined {
+  if (value === null || value === undefined) return undefined
+  try {
+    const parsed = threadResumeSchema.safeParse(JSON.parse(value))
+    return parsed.success ? parsed.data : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function parsePersistedThreadAutonomy(
+  value: string | null | undefined
+): ThreadAutonomy | undefined {
+  if (value === null || value === undefined) return undefined
+  try {
+    const parsed = threadAutonomySchema.safeParse(JSON.parse(value))
+    return parsed.success ? parsed.data : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function parsePersistedThreadGoal(

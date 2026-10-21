@@ -67,7 +67,7 @@ export default function GitHistoryScreen() {
       {readOnly ? (
         <StateView
           title="This phone can only watch"
-          message="Pair it again over your Wi-Fi, Tailscale or HTTPS to see the history."
+          message="Pair it again over Tailscale or HTTPS to see the history."
         />
       ) : error && !commits ? (
         <StateView

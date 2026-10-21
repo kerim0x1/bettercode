@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { readFile, writeFile } from "@/services/backend"
-import { getLanguage, useEditorStore } from "@/lib/editor-store"
+import { readFile, writeFile } from "@/services/backend/workspaceApi"
+import {
+  getLanguage,
+  MAX_RECENTLY_CLOSED_CONTENT_CHARS,
+  useEditorStore,
+} from "@/lib/editor-store"
 import { EDITOR_FILE_ACTIVATE_EVENT } from "@/lib/preview-events"
 
-vi.mock("@/services/backend", () => ({
+vi.mock("@/services/backend/workspaceApi", () => ({
   readFile: vi.fn(async (filePath: string) => ({
     path: filePath,
     content: `content:${filePath}`,
@@ -206,6 +210,64 @@ describe("editor navigation history", () => {
     expect(activeCursor()).toEqual({ line: 12, column: 4 })
     expect(useEditorStore.getState().tabs[0]?.isDirty).toBe(true)
     expect(useEditorStore.getState().recentlyClosedTabs).toHaveLength(0)
+  })
+
+  it("forgets the text of saved closed editors and reads the file again on reopen", async () => {
+    await useEditorStore.getState().openFile("/repo/src/a.ts")
+    const tabId = useEditorStore.getState().activeTabId!
+    useEditorStore.getState().updateCursor(tabId, 7, 3)
+    useEditorStore.getState().togglePinTab(tabId)
+
+    useEditorStore.getState().closeTab(tabId)
+
+    expect(useEditorStore.getState().recentlyClosedTabs[0]).toMatchObject({
+      filePath: "/repo/src/a.ts",
+      content: "",
+      originalContent: "",
+      aiBaselineContent: null,
+      isDirty: false,
+      isPinned: true,
+      cursorLine: 7,
+      cursorColumn: 3,
+    })
+
+    readFileMock.mockImplementation(async (filePath: string) => ({
+      path: filePath,
+      content: "changed on disk",
+    }))
+    readFileMock.mockClear()
+    await useEditorStore.getState().reopenClosedTab()
+
+    expect(readFileMock).toHaveBeenCalledWith("/repo/src/a.ts")
+    expect(activeContent()).toBe("changed on disk")
+    expect(activeCursor()).toEqual({ line: 7, column: 3 })
+    expect(useEditorStore.getState().tabs[0]).toMatchObject({
+      isLoading: false,
+      isDirty: false,
+      isPinned: true,
+    })
+  })
+
+  it("caps unsaved text kept for closed editors and drops the oldest first", async () => {
+    const third = "x".repeat(Math.floor(MAX_RECENTLY_CLOSED_CONTENT_CHARS / 3))
+    for (const name of ["a", "b", "c"]) {
+      await useEditorStore.getState().openFile(`/repo/src/${name}.ts`)
+      const tabId = useEditorStore.getState().activeTabId!
+      useEditorStore.getState().updateContent(tabId, `${name}:${third}`)
+      useEditorStore.getState().closeTab(tabId)
+    }
+
+    const closed = useEditorStore.getState().recentlyClosedTabs
+    expect(closed.map((tab) => tab.filePath)).toEqual([
+      "/repo/src/c.ts",
+      "/repo/src/b.ts",
+      "/repo/src/a.ts",
+    ])
+    expect(closed[0]?.isDirty).toBe(true)
+    expect(closed[0]?.content.startsWith("c:")).toBe(true)
+    expect(closed[1]?.isDirty).toBe(true)
+    expect(closed[1]?.content.startsWith("b:")).toBe(true)
+    expect(closed[2]).toMatchObject({ content: "", isDirty: false })
   })
 
   it("closes tabs to the right and reopens the nearest closed editor first", async () => {

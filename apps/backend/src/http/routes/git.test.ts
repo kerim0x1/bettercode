@@ -26,7 +26,11 @@ vi.mock("../../services/git", () => gitMocks)
 import type { ServerConfig } from "../../config"
 import type { RemoteAccessService } from "../../remote/service"
 import { SHELL_TARGET_IDS, TARGET_IDS } from "../../services/openTargets"
-import { registerGitRoutes } from "./git"
+import { registerGitRoutes as registerGitRoutesUnfilled } from "./git"
+import { withInertStateArgument } from "../../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const registerGitRoutes = withInertStateArgument(registerGitRoutesUnfilled, 1)
 
 const temporaryDirectories: string[] = []
 
@@ -310,7 +314,8 @@ describe("git mutation serialisation", () => {
     gitMocks.commit.mockImplementation(
       async (_cwd: string, message: string) => {
         await run(message)
-        return { ok: true }
+        // The route answers with the `gitCommit` contract: what git printed.
+        return { output: "" }
       }
     )
     gitMocks.stage.mockImplementation(() => run("stage"))

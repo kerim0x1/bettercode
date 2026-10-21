@@ -7,12 +7,13 @@ export type BrowserMode = "browse" | "search"
 
 /**
  * Feature-local state for the System Browser overlay. Kept in its own
- * store (not bundled into `useAppUiState`) because the modal owns a lot
+ * store (not bundled into `useAppUiStore`) because the modal owns a lot
  * of transient state — directory content, selection per directory, search
- * results, load flags — that would drown the shared UI-state hook.
+ * results, load flags — that would drown the shared UI-state store.
  *
  * The single cross-cutting flag (`systemBrowserOpen`) still lives in
- * `useAppUiState`; this store only runs while the modal is mounted.
+ * `useAppUiStore` (`lib/app-ui-store.ts`); this store only runs while the
+ * modal is mounted.
  */
 export interface SystemBrowserState {
   mode: BrowserMode

@@ -7,8 +7,12 @@ const effects = vi.hoisted(() => ({
 const { sendReport } = vi.hoisted(() => ({
   sendReport: vi.fn().mockResolvedValue({ ok: true, retryAfterMs: 10_000 }),
 }))
+const consent = vi.hoisted(() => ({ crashReportsEnabled: true }))
 vi.mock("@/services/ipc-facade", () => ({
   ipcApi: { bugReport: { send: sendReport } },
+}))
+vi.mock("@/lib/settings-store", () => ({
+  useSettingsStore: { getState: () => consent },
 }))
 vi.mock("react", () => ({
   useEffect: (effect: () => () => void) => {
@@ -24,6 +28,7 @@ afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
   sendReport.mockClear()
+  consent.crashReportsEnabled = true
 })
 
 describe("capturing diagnostic errors", () => {
@@ -55,6 +60,25 @@ describe("capturing diagnostic errors", () => {
     expect(listeners.size).toBe(0)
     effects.cleanup = undefined
   })
+  it("sends nothing automatically unless the user opted in to crash reports", () => {
+    consent.crashReportsEnabled = false
+    const listeners = new Map<string, (event: unknown) => void>()
+    vi.stubGlobal("window", {
+      addEventListener: (name: string, listener: (event: unknown) => void) =>
+        listeners.set(name, listener),
+      removeEventListener: (name: string) => listeners.delete(name),
+    })
+    useConsoleCapture(vi.fn())
+    listeners.get("error")?.({
+      error: new Error("Renderer failure"),
+      message: "Renderer failure",
+    })
+    listeners.get("unhandledrejection")?.({
+      reason: new Error("Rejected operation"),
+    })
+    expect(sendReport).not.toHaveBeenCalled()
+  })
+
   it("retains Error messages and stacks for the report while forwarding to the console", () => {
     vi.useFakeTimers()
     const originalError = vi

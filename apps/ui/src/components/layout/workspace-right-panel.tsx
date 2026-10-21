@@ -38,21 +38,22 @@ import { GitPanel } from "@/components/git-panel"
 import { ProjectFileTree } from "@/components/file-tree/project-file-tree"
 import { WorkspaceStatusBar } from "@/components/layout/workspace-status-bar"
 import { WorkspaceOverviewCard } from "@/components/layout/workspace-overview-card"
-import {
-  useChatStore,
-  useThreadActivities,
-  useThreadMessages,
-} from "@/lib/chat-store"
-import { useChatStreamingState } from "@/hooks/use-chat-streaming-state"
-import { openInEditor, pickFolder } from "@/services/backend"
+import { BrowserTabStrip } from "@/components/browser-preview/browser-tab-strip"
+import { useChatStore } from "@/lib/chat-store"
+import { usePlanStreamingState } from "@/hooks/use-chat-streaming-state"
+import { openInEditor } from "@/services/backend/gitApi"
+import { pickFolder } from "@/services/backend/runtime"
 import type { SetPlanModalContent } from "@/lib/plan-modal"
 import type { WorkspaceTab } from "@/lib/preferences-store"
 
-const BrowserPreviewPanel = lazy(() =>
-  import("@/components/browser-preview-panel").then((module) => ({
-    default: module.BrowserPreviewPanel,
+const BrowserWorkspace = lazy(() =>
+  import("@/components/browser-preview/browser-workspace").then((module) => ({
+    default: module.BrowserWorkspace,
   }))
 )
+
+/** How long a hidden right-panel browser keeps its guest process. */
+const HIDDEN_BROWSER_RELEASE_MS = 5 * 60_000
 
 type ActiveThread = {
   id: string
@@ -75,13 +76,17 @@ type ActiveThread = {
  * resize handlers).
  *
  * Persistent shell: the panel always mounts in agent mode even when there
- * is no active thread or no attached folder. In that case every tab shows
- * a shared, grayed-out "No folder / Repo open" empty state with an attach
- * action that auto-creates a thread when there isn't one yet, so the user
- * can onboard from the panel itself instead of first having to create a
- * chat from elsewhere.
+ * is no active thread or no attached folder. The browser works without a
+ * folder (its tabs, history and favorites are not tied to a project); the
+ * other views then show a shared, grayed-out "No folder / Repo open" empty
+ * state with an attach action that auto-creates a thread when there isn't
+ * one yet, so the user can onboard from the panel itself instead of first
+ * having to create a chat from elsewhere.
+ *
+ * Memoized: it re-renders for its own props and store subscriptions, not on
+ * every app-shell render.
  */
-export function WorkspaceRightPanel({
+export const WorkspaceRightPanel = React.memo(function WorkspaceRightPanel({
   rightSidebarOpen,
   setRightSidebarOpen,
   rightSidebarWidth,
@@ -104,13 +109,10 @@ export function WorkspaceRightPanel({
   setPlanModalContent: SetPlanModalContent
   setEditingFile: (path: string) => void
 }) {
-  const threadMessages = useThreadMessages(activeThread?.id ?? null)
-  const threadActivities = useThreadActivities(activeThread?.id ?? null)
-  const { isPlanStreaming, allPlans } = useChatStreamingState(
-    threadMessages,
-    activeThread?.id ?? null,
-    { includeShimmer: false },
-    threadActivities
+  // Plans and the plan-streaming flag only; ordinary answer deltas do not
+  // re-render the panel (and whichever tab it shows).
+  const { isPlanStreaming, allPlans } = usePlanStreamingState(
+    activeThread?.id ?? null
   )
   // Prefer the worktree path when this chat runs in a git worktree, matching
   // the per-pane WorkspacePanelBody so Files/Git/Diff act on the same
@@ -120,16 +122,25 @@ export function WorkspaceRightPanel({
   const projectPath =
     activeThread?.worktreePath || activeThread?.projectPath || null
   const hasFolder = !!projectPath
-  const showBrowser =
-    hasFolder && workspaceTab === "browser" && rightSidebarOpen
-  const [openedBrowserProject, setOpenedBrowserProject] = useState<
-    string | null
-  >(null)
+  const browserView = workspaceTab === "browser"
+  const showBrowser = browserView && rightSidebarOpen
+  const [browserOpened, setBrowserOpened] = useState(false)
   useEffect(() => {
-    if (showBrowser) setOpenedBrowserProject(projectPath)
-  }, [showBrowser, projectPath])
-  // Keep the guest page alive when another workspace view is selected.
-  const browserMounted = showBrowser || openedBrowserProject === projectPath
+    if (showBrowser) setBrowserOpened(true)
+  }, [showBrowser])
+  // Keep the guest pages alive when another workspace view is selected, so a
+  // quick look at Files or Git does not reload them. A guest is a whole
+  // renderer process, so pages left hidden for a while are released; the
+  // tabs keep their addresses.
+  useEffect(() => {
+    if (showBrowser || !browserOpened) return
+    const timer = setTimeout(
+      () => setBrowserOpened(false),
+      HIDDEN_BROWSER_RELEASE_MS
+    )
+    return () => clearTimeout(timer)
+  }, [showBrowser, browserOpened])
+  const browserMounted = showBrowser || browserOpened
 
   // Which external tools are actually installed (Codex-style "Open in"
   // list). Detection pauses while the panel is closed.
@@ -182,10 +193,22 @@ export function WorkspaceRightPanel({
           No folder / repo open
         </p>
         <p className="text-xs text-muted-foreground/70">
-          Attach a folder to enable Plans, Files, Git, Diff, and Browser.
+          Attach a folder to enable Plans, Files, Git and Diff. The browser
+          works without one.
         </p>
       </div>
-      <div className="w-full max-w-[200px]">{attachFolderButton}</div>
+      <div className="flex w-full max-w-[200px] flex-col gap-1.5">
+        {attachFolderButton}
+        <Button
+          size="xs"
+          variant="ghost"
+          className="w-full gap-1.5"
+          onClick={() => setWorkspaceTab("browser")}
+        >
+          <GlobeIcon className="size-3.5" strokeWidth={1.5} />
+          Open browser
+        </Button>
+      </div>
     </div>
   )
 
@@ -270,55 +293,63 @@ export function WorkspaceRightPanel({
           card). The close control lives here, beside the picker, because the
           pane-bar toggle that opened the panel disappears as soon as the
           panel takes focus. */}
-      <div className="flex h-9 shrink-0 items-center justify-between bg-sidebar px-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              size="xs"
-              disabled={!hasFolder}
-              className="h-6 gap-1.5 rounded-lg px-2 text-[11px]"
-            >
-              <ExternalLinkIcon className="size-3" />
-              Open in
-              <ChevronDownIcon className="size-3 text-muted-foreground" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-[190px]">
-            {openTargetsLoading || !openTargets ? (
-              <DropdownMenuItem disabled>Detecting…</DropdownMenuItem>
-            ) : (
-              (() => {
-                const available = openTargets.filter((t) => t.available)
-                if (available.length === 0) {
-                  return (
-                    <DropdownMenuItem disabled>No tools found</DropdownMenuItem>
-                  )
-                }
-                return available.map((target, index) => (
-                  <React.Fragment key={target.id}>
-                    {index > 0 &&
-                      available[index - 1]!.group !== target.group && (
-                        <DropdownMenuSeparator />
-                      )}
-                    <DropdownMenuItem
-                      className="gap-2.5"
-                      onClick={() => {
-                        if (projectPath)
-                          void openInEditor(projectPath, target.id)
-                      }}
-                    >
-                      <OpenTargetIcon id={target.id} className="size-4" />
-                      {target.label}
-                    </DropdownMenuItem>
-                  </React.Fragment>
-                ))
-              })()
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+      <div className="flex h-9 shrink-0 items-center justify-between gap-2 bg-sidebar px-2">
+        {/* The browser's tabs take the header's left side, where "Open in"
+            sits for the project views. */}
+        {browserView ? (
+          <BrowserTabStrip />
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={!hasFolder}
+                className="h-6 gap-1.5 rounded-lg px-2 text-[11px]"
+              >
+                <ExternalLinkIcon className="size-3" />
+                Open in
+                <ChevronDownIcon className="size-3 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-[190px]">
+              {openTargetsLoading || !openTargets ? (
+                <DropdownMenuItem disabled>Detecting…</DropdownMenuItem>
+              ) : (
+                (() => {
+                  const available = openTargets.filter((t) => t.available)
+                  if (available.length === 0) {
+                    return (
+                      <DropdownMenuItem disabled>
+                        No tools found
+                      </DropdownMenuItem>
+                    )
+                  }
+                  return available.map((target, index) => (
+                    <React.Fragment key={target.id}>
+                      {index > 0 &&
+                        available[index - 1]!.group !== target.group && (
+                          <DropdownMenuSeparator />
+                        )}
+                      <DropdownMenuItem
+                        className="gap-2.5"
+                        onClick={() => {
+                          if (projectPath)
+                            void openInEditor(projectPath, target.id)
+                        }}
+                      >
+                        <OpenTargetIcon id={target.id} className="size-4" />
+                        {target.label}
+                      </DropdownMenuItem>
+                    </React.Fragment>
+                  ))
+                })()
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
 
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -386,7 +417,7 @@ export function WorkspaceRightPanel({
           workspaceTab === "browser" ? "overflow-hidden" : "overflow-y-auto"
         )}
       >
-        {!hasFolder && noFolderEmptyState}
+        {!hasFolder && !browserView && noFolderEmptyState}
         {hasFolder && workspaceTab === "overview" && projectPath && (
           <ErrorBoundary label="Overview">
             <WorkspaceOverviewCard
@@ -582,7 +613,7 @@ export function WorkspaceRightPanel({
             />
           </div>
         )}
-        {hasFolder && browserMounted && projectPath && (
+        {browserMounted && (
           <div
             className={cn("h-full min-h-0", !showBrowser && "hidden")}
             aria-hidden={!showBrowser}
@@ -597,13 +628,10 @@ export function WorkspaceRightPanel({
                   />
                 }
               >
-                <BrowserPreviewPanel
-                  key={projectPath}
+                <BrowserWorkspace
                   projectPath={projectPath}
                   threadId={activeThread?.id ?? null}
-                  active={showBrowser && rightSidebarOpen}
-                  compact
-                  className="h-full min-h-0"
+                  active={showBrowser}
                   onClose={() => setWorkspaceTab("overview")}
                 />
               </Suspense>
@@ -624,4 +652,4 @@ export function WorkspaceRightPanel({
       )}
     </motion.aside>
   )
-}
+})

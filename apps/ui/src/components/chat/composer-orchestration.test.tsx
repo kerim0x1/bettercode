@@ -158,6 +158,7 @@ describe("orchestration panel", () => {
             threadId={null}
             currentProvider={claude}
             providers={[claude, codex, grok]}
+            isStreaming={false}
             {...props}
           />
         </TooltipProvider>
@@ -204,7 +205,7 @@ describe("orchestration panel", () => {
     })
   }
 
-  it("shows selected names and reveals each model's live thinking only on hover or focus", async () => {
+  it("lists selected models and reveals each model's live thinking only on hover or focus", async () => {
     const personal: UiProvider = {
       ...codex,
       providerInstanceId: "personal",
@@ -246,8 +247,8 @@ describe("orchestration panel", () => {
     expect(named("Selected agent models").children).toHaveLength(2)
     const workBadge = named("Codex model, Codex")
     const personalBadge = named("Personal model, Personal account")
-    expect(workBadge.textContent).toBe("Codex model")
-    expect(personalBadge.textContent).toBe("Personal model")
+    expect(host.textContent).toContain("Orchestration")
+    expect(host.textContent).toContain("2 models")
     expect(host.textContent).not.toContain("High")
     expect(document.querySelector('[role="tooltip"]')).toBeNull()
     await hover(workBadge)
@@ -276,8 +277,8 @@ describe("orchestration panel", () => {
     expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
       "ThinkingAutoProvider default"
     )
-    expect(personalBadge.textContent).toBe("Personal model")
-    expect(host.textContent).not.toContain("Codex model")
+    expect(personalBadge.isConnected).toBe(true)
+    expect(host.textContent).toContain("1 model")
     await key(personalBadge, "Escape")
     expect(document.querySelector('[role="tooltip"]')).toBeNull()
     expect(document.activeElement).toBe(personalBadge)
@@ -287,7 +288,7 @@ describe("orchestration panel", () => {
     expect(host.childElementCount).toBe(0)
   })
 
-  it("uses the saved thread pool, keeps cached and missing models visible, and excludes the main provider", async () => {
+  it("uses the saved thread pool, keeps cached and missing models visible, shows a saved Ultracode as Auto, and excludes the main provider", async () => {
     const cachedClaude: UiProvider = {
       ...claude,
       modelsReady: false,
@@ -346,12 +347,15 @@ describe("orchestration panel", () => {
     expect(named("Selected agent models").children).toHaveLength(2)
     const claudeBadge = named("Claude model, Claude")
     const missingBadge = named("removed-model, removed-account")
-    expect(claudeBadge.textContent).toBe("Claude model")
-    expect(missingBadge.textContent).toBe("removed-model")
+    expect(host.textContent).toContain("2 models")
     await act(async () => claudeBadge.focus())
+    // Ultracode starts its own agents, so workers never keep it.
     expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
-      "Ultra Code"
+      "ThinkingAutoProvider default"
     )
+    expect(
+      document.querySelector('[role="tooltip"]')?.textContent
+    ).not.toContain("Ultra Code")
     await act(async () => missingBadge.focus())
     expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
       "custom-effort"
@@ -367,10 +371,87 @@ describe("orchestration panel", () => {
     await renderBadge({ providers: [claude, { ...codex, modelsReady: false }] })
     expect(host.textContent).toContain("Loading selected models")
     await renderBadge()
-    expect(named("Codex model, Codex").textContent).toContain("Codex model")
+    expect(named("Codex model, Codex").tagName).toBe("BUTTON")
     state.settings.orchestratorEnabled = false
     await renderBadge()
     expect(host.childElementCount).toBe(0)
+  })
+
+  it("collapses a long row into a count and adjusts thinking from an entry", async () => {
+    const many: UiProvider = {
+      ...codex,
+      models: Array.from({ length: 6 }, (_, index) => ({
+        ...codex.models[0]!,
+        id: `model-${index + 1}`,
+        name: `Model ${index + 1}`,
+      })),
+    }
+    useOrchestrationDraft.getState().set({
+      enabled: true,
+      providers: ["codex"],
+      models: many.models.map((model) => ({
+        providerKind: "codex" as const,
+        providerInstanceId: "work",
+        modelId: model.id,
+      })),
+    })
+    await renderBadge({ providers: [claude, many, grok] })
+    expect(host.textContent).toContain("6 models")
+    expect(named("Selected agent models").children).toHaveLength(5)
+    const more = named("2 more models")
+    expect(more.textContent).toBe("+2")
+    await act(async () => more.focus())
+    const preview = document.querySelector('[role="tooltip"]')?.textContent
+    expect(preview).toContain("Model 5")
+    expect(preview).toContain("Model 6")
+    expect(preview).not.toContain("Model 4")
+    await key(more, "Escape")
+
+    // A click on an entry opens that model's thinking slider.
+    const first = named("Model 1, Codex")
+    await key(first, "Enter")
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    const slider = document.querySelector<HTMLElement>('[role="slider"]')!
+    expect(slider).not.toBeNull()
+    expect(document.activeElement).toBe(slider)
+    await key(slider, "End")
+    expect(slider.getAttribute("aria-valuetext")).toBe("High")
+    expect(useOrchestrationDraft.getState().selection).toMatchObject({
+      models: expect.arrayContaining([
+        expect.objectContaining({
+          modelId: "model-1",
+          reasoningEffort: "high",
+        }),
+      ]),
+    })
+    await key(slider, "Escape")
+    expect(document.querySelector('[role="slider"]')).toBeNull()
+    expect(document.activeElement).toBe(first)
+
+    // The count lists the collapsed models, each with its own slider.
+    await key(more, "Enter")
+    await key(named("Model 6 thinking"), "ArrowRight")
+    const nested = document.querySelector<HTMLElement>('[role="slider"]')!
+    expect(document.activeElement).toBe(nested)
+    await key(nested, "End")
+    expect(useOrchestrationDraft.getState().selection).toMatchObject({
+      models: expect.arrayContaining([
+        expect.objectContaining({
+          modelId: "model-6",
+          reasoningEffort: "high",
+        }),
+      ]),
+    })
+    await key(nested, "Escape")
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+
+    // Thinking stays visible but read-only while a turn runs.
+    await renderBadge({ providers: [claude, many, grok], isStreaming: true })
+    await key(named("Model 2, Codex"), "Enter")
+    expect(document.querySelector('[role="slider"]')).toBeNull()
+    expect(
+      document.querySelector('[data-slot="dropdown-menu-content"]')?.textContent
+    ).toContain("after this turn finishes")
   })
 
   it("edits model choices and thinking in one panel, then restores focus on Escape", async () => {

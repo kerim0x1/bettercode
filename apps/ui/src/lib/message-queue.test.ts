@@ -112,6 +112,64 @@ describe("queued drafts", () => {
   })
 })
 
+describe("editing the queue", () => {
+  it("saves edits and the new order, which come back paused after a restart", () => {
+    const { queue, storage, add } = fixture()
+    const first = add("a", "First"),
+      second = add("a", "Second")
+    queue.getState().edit(second.id, {
+      text: "Second, edited",
+      files: [],
+      browserElements: [],
+    })
+    queue.getState().move(second.id, -1)
+    const restored = createMessageQueueStore(storage).getState().messages
+    expect(
+      restored.map((entry) => [entry.id, entry.payload.text, entry.status])
+    ).toEqual([
+      [second.id, "Second, edited", "paused"],
+      [first.id, "First", "paused"],
+    ])
+  })
+
+  it("does not write the queue when nothing changes", () => {
+    const { queue, storage, add } = fixture()
+    const only = add("a", "Only")
+    const write = vi.fn()
+    storage.write = write
+    queue.getState().move(only.id, -1)
+    queue.getState().moveBefore(only.id, null)
+    expect(write).not.toHaveBeenCalled()
+  })
+
+  it("puts a message to steer first and keeps the runner off it while claimed", async () => {
+    const { queue, add } = fixture()
+    add("a", "Queued earlier")
+    const steer = queue
+      .getState()
+      .enqueueFirst("a", { text: "Steer this", files: [], browserElements: [] })
+    expect(queue.getState().messages[0].id).toBe(steer.id)
+    expect(queue.getState().claimForSteer(steer.id)?.status).toBe("sending")
+    const send = vi.fn()
+    const stop = startMessageQueueRunner({
+      queue,
+      send,
+      isReady: () => true,
+      subscribeReady: () => () => {},
+      onError: vi.fn(),
+    })
+    try {
+      await Promise.resolve()
+      expect(send).not.toHaveBeenCalled()
+      queue.getState().release(steer.id)
+      await vi.waitFor(() => expect(send).toHaveBeenCalledOnce())
+      expect(send.mock.calls[0][0].id).toBe(steer.id)
+    } finally {
+      stop()
+    }
+  })
+})
+
 describe("queue delivery", () => {
   it("waits for completion and delivers FIFO independently of the focused chat", async () => {
     const { queue, add } = fixture()

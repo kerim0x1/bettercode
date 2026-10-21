@@ -1,4 +1,7 @@
-import { routingTestServices } from "../testUtils/routing-services"
+import {
+  routerLifecycleServices,
+  routingTestServices,
+} from "../testUtils/routing-services"
 import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
@@ -7,8 +10,12 @@ import { afterEach, describe, expect, it } from "vitest"
 import { checkpointRefForThreadTurn } from "@betterc0de/schema"
 import type { AppState } from "../appState"
 import type { ServerConfig } from "../config"
-import { buildApp } from "./router"
+import { buildApp as buildAppUnfilled } from "./router"
 import { captureCheckpoint } from "../services/git"
+import { withInertStateArgument } from "../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const buildApp = withInertStateArgument(buildAppUnfilled, 1)
 
 function makeConfig(): ServerConfig {
   return {
@@ -38,6 +45,7 @@ function makeState(
   approvedRoots: readonly string[] = []
 ): AppState {
   return {
+    ...routerLifecycleServices(),
     ...routingTestServices(),
     providerRegistry: { all: () => [] },
     db: { prepare: () => ({ get: () => ({ ok: 1 }) }) },

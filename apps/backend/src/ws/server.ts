@@ -88,8 +88,13 @@ interface SequencedProviderFrame {
   readonly journalId: string
 }
 
+/**
+ * One retained provider frame. Only the serialized JSON is kept: holding the
+ * frame object graph as well cost several times the byte budget the journal
+ * is capped by, and replay needs nothing from it beyond the sequence.
+ */
 interface ReplayJournalEntry {
-  readonly frame: SequencedProviderFrame
+  readonly sequence: number
   readonly serialized: string
   readonly bytes: number
 }
@@ -315,16 +320,21 @@ export class WsHub {
         socket.destroy()
         return
       }
-      // "Insecure" means plaintext from a *public* peer. This computer, the
-      // tailnet and a private network are accepted without TLS, matching
-      // `isInsecureNonLoopbackRequest` on the HTTP side.
+      // "Insecure" means plaintext that left this computer without an
+      // encrypted tunnel: neither TLS, loopback nor the tailnet. A private
+      // network is not encryption, so a LAN peer counts as insecure too and,
+      // as on the HTTP side (`isInsecureNonLoopbackRequest`), its remote
+      // session is downgraded to read-only and the desktop bearer refused.
       const insecureNonLoopback =
         !isSecureUpgrade(request, this.options) &&
         !isLoopbackUpgrade(request, this.options) &&
-        !isTailnetUpgrade(request, this.options) &&
-        !isPrivateNetworkUpgrade(request, this.options)
+        !isTailnetUpgrade(request, this.options)
+      // The transport itself is still admitted from a private network
+      // (`isRemoteRequestTransportAllowed`); only a public plaintext peer
+      // needs the explicit escape hatch.
       if (
         insecureNonLoopback &&
+        !isPrivateNetworkUpgrade(request, this.options) &&
         this.options.allowInsecureRemoteAccess !== true
       ) {
         rejectUpgrade(socket, 426, "Upgrade Required")
@@ -442,7 +452,7 @@ export class WsHub {
         return
       }
       this.providerReplayJournal.push({
-        frame: sequencedFrame,
+        sequence: sequencedFrame.sequence,
         serialized,
         bytes,
       })
@@ -450,7 +460,7 @@ export class WsHub {
       this.trimProviderReplayJournal()
       for (const client of this.clients) {
         if (client.providerEventsReady) {
-          this.sendProviderFrame(client, sequencedFrame, serialized)
+          this.sendProviderFrame(client, sequencedFrame.sequence, serialized)
         }
       }
       return
@@ -1027,7 +1037,7 @@ export class WsHub {
     const journalChanged = request.journalId !== this.providerReplayJournalId
     const requestedAfter = !journalChanged ? request.afterSequence : 0
     const earliestAvailable =
-      this.providerReplayJournal[0]?.frame.sequence ?? this.providerSequence + 1
+      this.providerReplayJournal[0]?.sequence ?? this.providerSequence + 1
     const retainedPrefixMissing = requestedAfter < earliestAvailable - 1
     const unavailableFrameMissing =
       this.lastUnavailableProviderSequence > requestedAfter
@@ -1051,8 +1061,8 @@ export class WsHub {
       client.lastDeliveredProviderSequence
     )
     for (const entry of this.providerReplayJournal) {
-      if (entry.frame.sequence > afterSequence) {
-        this.sendProviderFrame(client, entry.frame, entry.serialized)
+      if (entry.sequence > afterSequence) {
+        this.sendProviderFrame(client, entry.sequence, entry.serialized)
       }
     }
     client.providerEventsReady = true
@@ -1065,17 +1075,17 @@ export class WsHub {
 
   private sendProviderFrame(
     client: ReplayClient,
-    frame: SequencedProviderFrame,
+    sequence: number,
     serialized: string
   ): void {
     if (
-      frame.sequence <= client.lastDeliveredProviderSequence ||
+      sequence <= client.lastDeliveredProviderSequence ||
       client.socket.readyState !== WebSocket.OPEN
     ) {
       return
     }
     if (!this.sendSerializedFrame(client, serialized)) return
-    client.lastDeliveredProviderSequence = frame.sequence
+    client.lastDeliveredProviderSequence = sequence
   }
 
   private sendSerializedFrame(

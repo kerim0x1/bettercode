@@ -1,7 +1,7 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { CodexSessionRuntime } from "./CodexSessionRuntime"
 import { CodexServerResponseRefusedError } from "./rpc"
 
@@ -177,6 +177,60 @@ async function waitForRpcLog(
 }
 
 describe("CodexSessionRuntime", () => {
+  function withFakeRpc(runtime: CodexSessionRuntime) {
+    const calls: Array<{ method: string; params: unknown }> = []
+    let answerTurnStart: (value: unknown) => void = () => undefined
+    const rpc = {
+      call: vi.fn((method: string, params: unknown) => {
+        calls.push({ method, params })
+        if (method === "turn/start") {
+          return new Promise((resolve) => {
+            answerTurnStart = resolve
+          })
+        }
+        return Promise.resolve({})
+      }),
+    }
+    Object.assign(runtime as unknown as Record<string, unknown>, {
+      rpc,
+      initialized: true,
+      providerThreadId: "provider-thread-1",
+    })
+    return {
+      calls,
+      answerTurnStart: (value: unknown) => answerTurnStart(value),
+    }
+  }
+
+  it("delivers a Stop pressed before the turn id was known", async () => {
+    const runtime = new CodexSessionRuntime({ binaryPath: "codex" })
+    const fake = withFakeRpc(runtime)
+
+    const sending = runtime.sendTurn({ message: "long task" })
+    await runtime.interruptTurn()
+    expect(fake.calls.map((call) => call.method)).toEqual(["turn/start"])
+
+    fake.answerTurnStart({ turn: { id: "turn-9" } })
+    await sending
+    await vi.waitFor(() =>
+      expect(fake.calls.map((call) => call.method)).toEqual([
+        "turn/start",
+        "turn/interrupt",
+      ])
+    )
+    expect(fake.calls[1]?.params).toEqual({
+      threadId: "provider-thread-1",
+      turnId: "turn-9",
+    })
+  })
+
+  it("keeps an interrupt without any turn in flight a no-op", async () => {
+    const runtime = new CodexSessionRuntime({ binaryPath: "codex" })
+    const fake = withFakeRpc(runtime)
+    await runtime.interruptTurn()
+    expect(fake.calls).toEqual([])
+  })
+
   it("does not expose native spawn diagnostics in provider events", () => {
     const runtime = new CodexSessionRuntime({ binaryPath: "codex" })
     const events: Array<{ kind: string; error?: string }> = []

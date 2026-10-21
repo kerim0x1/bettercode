@@ -12,6 +12,15 @@ import type { WsHub } from "../ws/server"
 import type { RemoteTerminalChannel } from "../ws/terminalChannel"
 import type { ShutdownStep } from "../shutdown"
 import type { AdmissionGate } from "../lifecycle/AdmissionGate"
+import type { ProviderEventBus } from "../provider/events"
+import type { TerminalPtyService } from "../services/terminalPty"
+import type { ShellSessionService } from "../services/shell"
+import type { GitProcessService } from "../services/git"
+import type { ImageGenerationService } from "../services/image-generation"
+import type { NativeTextGenerationService } from "../services/native-text-generation"
+import type { WorkspaceProcessService } from "../services/workspace"
+import type { WorkspaceRecoveryGate } from "../services/workspace-recovery-gate"
+import type { AgentPermissionRuntime } from "../provider/agent-permission-runtime"
 import type { Db } from "../persistence/db"
 import type { EventStore } from "../persistence/eventStore"
 import type { CommandReceiptStore } from "../persistence/commandReceipts"
@@ -51,9 +60,9 @@ import type { CheckpointRefCleanupScheduler } from "../checkpointing/CheckpointR
 import type { CheckpointRefOperationGate } from "../checkpointing/CheckpointRefOperationGate"
 import type { CheckpointTurnSlotStore } from "../checkpointing/CheckpointTurnSlotStore"
 import type { ThreadService } from "../services/threads"
+import type { PullRequestWatcher } from "../services/github-pull-request-watch"
 import type { ChatLlmHelpers } from "../services/chat"
 import type { WorktreeManager } from "../services/worktree"
-import type { AuthStore } from "../auth/store"
 import type { CheckpointRevertOperationStore } from "../services/checkpoint-revert-operations"
 import type { ChatDispatchStore } from "../services/chat-dispatch-store"
 import type { RemoteAccessService } from "../remote/service"
@@ -64,6 +73,8 @@ import type { buildApp } from "../http/router"
 
 export interface StartOptions {
   dataDir?: string
+  /** The desktop configuration folder (`ServerConfig.runtimeHome`). */
+  runtimeHome?: string
   preferredPort?: number
   webRoot?: string
   signal?: AbortSignal
@@ -96,6 +107,53 @@ export interface BootRoot {
   readonly config: ServerConfig
   readonly startupCleanup: ShutdownStep[]
   readonly requestAdmission: AdmissionGate
+  /**
+   * The provider-event bus every phase wires into: ingestion, the checkpoint
+   * reactor, the provider hub subscription and the goal runtime receive it
+   * from here instead of importing a module-level bus.
+   */
+  readonly eventBus: ProviderEventBus
+  /**
+   * This instance's terminals. Created here so admission, the startup unwind
+   * and the graceful drain own it; `AppState.terminalPtys` is the same one.
+   */
+  readonly terminalPtys: TerminalPtyService
+  /**
+   * This instance's shell commands, owned the same way as the terminals;
+   * `AppState.shellSessions` is the same one.
+   */
+  readonly shellSessions: ShellSessionService
+  /**
+   * This instance's git processes. `reopenResourceAdmissions` installs it
+   * as the default every git helper runs through
+   * (`setDefaultGitProcessService`); admission and the drains use it here.
+   */
+  readonly gitProcesses: GitProcessService
+  /**
+   * This instance's image generations; the Claude adapter's image tool gets
+   * it through the provider instance options.
+   */
+  readonly imageGenerations: ImageGenerationService
+  /** This instance's native text generations; the chat helpers run them. */
+  readonly nativeTextGenerations: NativeTextGenerationService
+  /**
+   * This instance's formatter and project-config helper processes.
+   * `reopenResourceAdmissions` installs it as the default the workspace
+   * helpers run through (`setDefaultWorkspaceProcessService`).
+   */
+  readonly workspaceProcesses: WorkspaceProcessService
+  /**
+   * This instance's workspace recovery gate; `AppState.workspaceRecoveryGate`
+   * is the same one, and thread retention receives it from here.
+   */
+  readonly workspaceRecoveryGate: WorkspaceRecoveryGate
+  /**
+   * This instance's agent permission runtime, reporting to `eventBus`.
+   * `openPersistence` attaches the durable policy and installs it as the
+   * default provider callbacks consult (`setDefaultAgentPermissionRuntime`);
+   * the startup unwind and the graceful shutdown release it.
+   */
+  readonly agentPermissionRuntime: AgentPermissionRuntime
   readonly taint: {
     readonly taintBackend: (error: Error, origin: string) => void
     readonly isBackendTainted: () => boolean
@@ -148,7 +206,6 @@ export interface SettingsContext {
   readonly unsubscribeRemoteOwnerCleanup: () => void
   readonly transcriptRecoveryStore: AssistantTranscriptRecoveryStore
   readonly transcriptRecoveryTarget: AssistantTranscriptRecoveryTarget
-  readonly authStore: AuthStore
 }
 
 export interface ProvidersContext {
@@ -193,6 +250,7 @@ export interface TimersContext {
   readonly transcriptRecoveryTimer: NodeJS.Timeout
   readonly providerSessionReaper: ProviderSessionReaper | null
   readonly vacuumTimer: NodeJS.Timeout | null
+  readonly pullRequestWatcher: PullRequestWatcher
 }
 
 export type HttpApp = ReturnType<typeof buildApp>

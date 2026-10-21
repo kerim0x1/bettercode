@@ -1,24 +1,14 @@
 import path from "node:path"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ThreadRetentionScheduler } from "./thread-retention"
-import { closeShellSessionsForWorkspace } from "./shell"
-import { shutdownTerminalPtySessionsForWorkspace } from "./terminalPty"
-import { workspaceRecoveryGate } from "./workspace-recovery-gate"
+import { WorkspaceRecoveryGate } from "./workspace-recovery-gate"
 
-vi.mock("./shell", () => ({
-  closeShellSessionsForWorkspace: vi.fn(),
-}))
-
-vi.mock("./terminalPty", () => ({
-  shutdownTerminalPtySessionsForWorkspace: vi.fn(),
-}))
-
-const closeShellSessionsForWorkspaceMock = vi.mocked(
-  closeShellSessionsForWorkspace
-)
-const shutdownTerminalPtySessionsForWorkspaceMock = vi.mocked(
-  shutdownTerminalPtySessionsForWorkspace
-)
+/** The scheduler's shell commands: only their workspace shutdown matters here. */
+const closeShellSessionsForWorkspaceMock =
+  vi.fn<(workspace: string) => Promise<number>>()
+/** The scheduler's terminals: only their workspace shutdown matters here. */
+const shutdownTerminalPtySessionsForWorkspaceMock =
+  vi.fn<(workspace: string) => Promise<number>>()
 
 function makeDependencies(options: { worktreeFailure?: Error } = {}) {
   const calls: string[] = []
@@ -33,6 +23,13 @@ function makeDependencies(options: { worktreeFailure?: Error } = {}) {
       }
     }
   const dependencies = {
+    shellSessions: {
+      closeSessionsForWorkspace: closeShellSessionsForWorkspaceMock,
+    },
+    terminalPtys: {
+      shutdownForWorkspace: shutdownTerminalPtySessionsForWorkspaceMock,
+    },
+    workspaceRecoveryGate: new WorkspaceRecoveryGate(),
     forgetThreadGoal: vi.fn(() => calls.push("goal:forget")),
     threads: {
       archiveOldThreads: vi.fn(() => 2),
@@ -194,6 +191,7 @@ describe("ThreadRetentionScheduler", () => {
 
   it("queues exclusive maintenance, drains workspace processes, and holds the barrier through purge", async () => {
     const { dependencies } = makeDependencies()
+    const { workspaceRecoveryGate } = dependencies
     dependencies.worktrees.removeForThread.mockImplementation(async () => {
       expect(workspaceRecoveryGate.tryAcquireExclusive("/repo")).toBeNull()
     })

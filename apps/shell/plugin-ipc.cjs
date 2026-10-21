@@ -1,17 +1,75 @@
 /**
  * Plugin IPC — Electron IPC handlers for plugin system
+ *
+ * Startup order: `registerPluginHandlers()` only registers handlers (no
+ * I/O, no plugin code), so it can run before the first window. Plugin
+ * install/scan/require and event setup happen in `startPlugins()`, which
+ * main.cjs starts after the window exists and does not wait for; handlers
+ * that depend on loaded plugins wait for it instead.
  */
 
 const { dialog, BrowserWindow, app } = require("electron")
 const path = require("path")
 const fs = require("fs")
-const { PluginManager, validatePluginId } = require("./plugin-manager.cjs")
+const { PluginManager, validatePluginId, runtimeModulePaths } = require("./plugin-manager.cjs")
 const { IpcChannel, IpcEvent } = require("./shared/ipc-contract.cjs")
 const { safeHandle, rawHandle } = require("./shared/ipc-handlers-factory.cjs")
 const { assertPathContained } = require("./shared/security-checks.cjs")
 const { broadcast } = require("./shared/broadcast.cjs")
 
-const manager = new PluginManager()
+/**
+ * Where plugin code runs. With BETTERC0DE_PLUGIN_HOST=utility it runs in a
+ * separate utility process (shared/plugin-host-client.cjs): a plugin that
+ * spins the CPU, crashes or leaks child processes no longer takes the app
+ * with it. Otherwise plugins are `require()`d into this process, as before;
+ * that stays the default until the host has been verified in packaged
+ * builds on every platform.
+ */
+function usePluginHost(env = process.env) {
+  return env.BETTERC0DE_PLUGIN_HOST === "utility"
+}
+
+function createPluginHost() {
+  const {
+    createPluginHostClient,
+    spawnUtilityPluginHost,
+  } = require("./shared/plugin-host-client.cjs")
+  return createPluginHostClient({
+    spawnHost: () => spawnUtilityPluginHost(),
+    getModulePaths: runtimeModulePaths,
+    // An uncaught error the host traced to one plugin: same handling as an
+    // in-process plugin fault (handlePluginUncaughtException).
+    onFault: (pluginId, error) => {
+      if (!manager.plugins.has(pluginId)) return
+      manager.disablePluginAfterFault(pluginId, error)
+      console.error(
+        `[plugin] ${pluginId} threw an uncaught error and was disabled:`,
+        error?.stack || error,
+      )
+    },
+    // The host exited unexpectedly. Its plugins are reloaded (in a new host,
+    // after the client's restart backoff) and their events wired again, as
+    // at startup; after repeated crashes they stay stopped until used again.
+    onCrash: ({ reason, gaveUp }) => {
+      const affected = manager.handleHostExit(reason)
+      if (gaveUp) return
+      for (const pluginId of affected) {
+        void manager
+          .loadPlugin(pluginId)
+          .then(() => setupEvents(pluginId))
+          .catch((error) => {
+            console.error(
+              `[plugin] Could not restart ${pluginId} after the plugin host stopped:`,
+              error?.message || error,
+            )
+          })
+      }
+    },
+  })
+}
+
+const pluginHost = usePluginHost() ? createPluginHost() : null
+const manager = new PluginManager({ host: pluginHost })
 
 // Resolve "the window the user is interacting with" for dialog parents
 // (`dialog.showOpenDialog`, `dialog.showMessageBox`). With multi-window
@@ -27,6 +85,12 @@ function getWindow() {
   )
 }
 let handlersRegistered = false
+let pluginsReady = null
+
+/** Resolves once startup loading finished (successfully or not). */
+function whenPluginsReady() {
+  return pluginsReady || Promise.resolve()
+}
 
 async function activateInstalledPlugin(manifest) {
   try {
@@ -62,14 +126,18 @@ function getBundledPluginsDirectory() {
     : path.join(__dirname, "default-plugins")
 }
 
-async function registerPluginHandlers() {
+function registerPluginHandlers() {
   if (handlersRegistered) return
   handlersRegistered = true
 
-  rawHandle(IpcChannel.PluginList, async () => manager.listPlugins(), {
-    fallback: [],
-    warnTag: "plugin-ipc",
-  })
+  rawHandle(
+    IpcChannel.PluginList,
+    async () => {
+      await whenPluginsReady()
+      return manager.listPlugins()
+    },
+    { fallback: [], warnTag: "plugin-ipc" },
+  )
 
   // Install plugin from folder.
   // SECURITY: any renderer-supplied `sourcePath` is treated as untrusted and
@@ -94,7 +162,9 @@ async function registerPluginHandlers() {
         message: "Install plugin from this folder?",
         detail:
           `${sourcePath}\n\n` +
-          "Plugins execute native code in the BetterC0de main process. " +
+          (pluginHost
+            ? "Plugins run native code with your permissions, in BetterC0de's plugin host process. "
+            : "Plugins execute native code in the BetterC0de main process. ") +
           "Only install plugins from sources you trust.",
         buttons: ["Cancel", "Install"],
         defaultId: 0,
@@ -102,16 +172,19 @@ async function registerPluginHandlers() {
       })
       if (confirm.response !== 1) throw new Error("User cancelled")
     }
+    await whenPluginsReady()
     const manifest = await manager.installPlugin(sourcePath)
     await activateInstalledPlugin(manifest)
     return { manifest }
   })
 
   safeHandle(IpcChannel.PluginRemove, async (_event, { pluginId } = {}) => {
+    await whenPluginsReady()
     await manager.removePlugin(pluginId)
   })
 
   safeHandle(IpcChannel.PluginToggle, async (_event, { pluginId, enabled } = {}) => {
+    await whenPluginsReady()
     await manager.togglePlugin(pluginId, enabled)
     if (enabled) {
       try {
@@ -144,6 +217,7 @@ async function registerPluginHandlers() {
   })
 
   safeHandle(IpcChannel.PluginSend, async (_event, { pluginId, method, args } = {}) => {
+    await whenPluginsReady()
     const result = await manager.sendToPlugin(pluginId, method, args)
     return { result }
   })
@@ -172,24 +246,65 @@ async function registerPluginHandlers() {
       throw new Error(`Plugin ${pluginId} not found in default plugins`)
     }
 
+    await whenPluginsReady()
     const manifest = await manager.installPlugin(sourcePath)
     await activateInstalledPlugin(manifest)
     return { manifest }
   })
 
-  // Load all enabled plugins on startup
-  await manager.loadAllEnabled()
-
-  // Setup event forwarding for loaded plugins
-  for (const [id] of manager.plugins) {
-    try {
-      await setupEvents(id)
-    } catch (err) {
-      console.error(`[plugin-ipc] Failed to register events for ${id}:`, err)
-    }
-  }
-
   console.log("[plugin-ipc] Handlers registered")
+}
+
+/**
+ * Install bundled defaults, then load every enabled plugin and wire its
+ * events. Started once, after the first window; never rejects (a plugin that
+ * fails to load is reported on that plugin, not as an app startup failure).
+ */
+function startPlugins() {
+  pluginsReady ??= (async () => {
+    try {
+      await installDefaultPlugins()
+    } catch (err) {
+      console.error("[plugin-ipc] Bundled plugin install failed:", err)
+    }
+    try {
+      manager.init()
+      await manager.loadAllEnabled()
+    } catch (err) {
+      console.error("[plugin-ipc] Loading enabled plugins failed:", err)
+    }
+    // Event setup runs plugin code with a per-plugin deadline; do the
+    // plugins side by side so one slow plugin does not hold up the others.
+    await Promise.all(
+      [...manager.plugins.keys()].map((id) =>
+        setupEvents(id).catch((err) => {
+          console.error(`[plugin-ipc] Failed to register events for ${id}:`, err)
+        }),
+      ),
+    )
+  })()
+  return pluginsReady
+}
+
+/**
+ * Called from the main process's uncaughtException handler. When the error's
+ * stack points into a loaded plugin, that plugin is quarantined, unloaded and
+ * disabled, and true is returned so the app keeps running.
+ */
+function handlePluginUncaughtException(error) {
+  let pluginId = null
+  try {
+    pluginId = manager.containPluginFault(error)
+  } catch {
+    return false
+  }
+  if (!pluginId) return false
+  console.error(
+    `[plugin] ${pluginId} threw an uncaught error and was disabled:`,
+    error?.stack || error,
+  )
+  // The plugin list reports it as an error with this message.
+  return true
 }
 
 async function setupEvents(pluginId) {
@@ -225,11 +340,19 @@ function setPluginEncryptionKey(base64Key) {
 }
 
 async function disposePlugins() {
-  await manager.disposeAll()
+  try {
+    await manager.disposeAll()
+  } finally {
+    // Plugin host mode: end the host process and whatever it started.
+    await pluginHost?.dispose()
+  }
 }
 
 module.exports = {
+  usePluginHost,
   registerPluginHandlers,
+  startPlugins,
+  handlePluginUncaughtException,
   setPluginWindow,
   installDefaultPlugins,
   setPluginEncryptionKey,

@@ -2,7 +2,11 @@ import { toolNameCategory } from "../tool-name-category"
 import { describeClaudeAccount } from "./account-label"
 import { EventEmitter } from "node:events"
 import { randomUUID } from "node:crypto"
-import { spawn, type ChildProcess } from "node:child_process"
+import {
+  spawn,
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams,
+} from "node:child_process"
 import fs from "node:fs"
 import { CODE_SEARCH_SERVER } from "../../../services/code-search/contracts"
 import os from "node:os"
@@ -52,7 +56,11 @@ import {
   resolveTurnModelId,
   resolveTurnStringOption,
 } from "../providerTurnOptions"
-import { buildUnsupportedAttachmentNotice } from "../../attachments"
+import {
+  attachmentNotice,
+  splitAttachmentsForImageInput,
+  type InlineImageAttachment,
+} from "../attachmentContent"
 import {
   pendingRequestKindFromDecisionKind,
   StalePendingProviderRequestError,
@@ -83,7 +91,6 @@ import {
   buildImagegenMcpServer,
   IMAGEGEN_MCP_SERVER_NAME,
   IMAGEGEN_SYSTEM_HINT,
-  type SdkMcpCapableModule,
 } from "./imagegenMcpServer"
 import {
   evaluateBetterC0deProjectToolPermission,
@@ -112,16 +119,28 @@ import {
   type GatePermissionLevel,
 } from "../../permissions"
 
-import { buildWindowsCmdArgs } from "../../../security/windowsCommandLine"
+import { ProcessStderrTail, withStderrTail } from "../ProcessStderrTail"
+import { errorMessage } from "../errorMessage"
+import { trackChildProcessTree } from "../../../services/child-process-registry"
+import { anthropicThinkingAlwaysOn } from "../../adapters/modelFamilies"
+import { cliVersionAtLeast } from "../../../cli/versions"
+import {
+  claudeSpawnCommand,
+  isClaudeSdkScriptPath,
+  resolveClaudeSdkExecutable,
+  type ClaudeSdkExecutable,
+} from "./claudeLaunch"
 import { CliModelSnapshot, cliAccountIdentity } from "../CliModelSnapshot"
-interface SdkQuery {
-  [Symbol.asyncIterator](): AsyncIterator<unknown>
-  initializationResult?: () => Promise<SdkInitializationResult>
-  interrupt?: () => Promise<void> | void
-  close?: () => Promise<void> | void
-  /** Mid-stream permission-mode switch (control request over CLI stdin). */
-  setPermissionMode?: (mode: SdkPermissionMode) => Promise<void> | void
-}
+import type * as ClaudeAgentSdk from "@anthropic-ai/claude-agent-sdk"
+/**
+ * The Agent SDK is a declared backend dependency, so its own types describe
+ * the query surface; only the narrower shapes this adapter builds or parses
+ * are declared here.
+ */
+type SdkModule = typeof ClaudeAgentSdk
+type SdkQuery = ClaudeAgentSdk.Query
+type SdkThinkingConfig = ClaudeAgentSdk.ThinkingConfig
+type SdkSystemPrompt = NonNullable<ClaudeAgentSdk.Options["systemPrompt"]>
 
 interface SdkInitializationResult {
   commands?: ReadonlyArray<ClaudeSlashCommand>
@@ -137,6 +156,8 @@ interface SdkInitializationResult {
     readonly email?: unknown
     readonly subscriptionType?: unknown
     readonly tokenSource?: unknown
+    readonly apiKeySource?: unknown
+    readonly apiProvider?: unknown
   }
 }
 
@@ -146,31 +167,10 @@ interface ClaudeSlashCommand {
   argumentHint?: unknown
 }
 
-// Skill-file candidates + reader now live in ./claudePluginSkills (shared
-// with the plugin-bundled skill enumeration).
-
-type SdkPermissionResult = {
-  behavior: "allow" | "deny"
-  input?: unknown
-  updatedInput?: unknown
-  updatedPermissions?: unknown[]
-  reason?: string
-  message?: string
-}
-
 type SdkSettings = {
   alwaysThinkingEnabled?: boolean
   fastMode?: boolean
 }
-
-type SdkThinkingConfig =
-  | { type: "adaptive"; display?: "summarized" | "omitted" }
-  | {
-      type: "enabled"
-      budgetTokens?: number
-      display?: "summarized" | "omitted"
-    }
-  | { type: "disabled" }
 
 type SdkPermissionMode =
   | "default"
@@ -178,87 +178,17 @@ type SdkPermissionMode =
   | "acceptEdits"
   | "bypassPermissions"
 
-type SdkSystemPrompt =
-  | string
-  | {
-      type: "preset"
-      preset: "claude_code"
-      append?: string
-    }
-
-interface SdkModule extends SdkMcpCapableModule {
-  query(args: {
-    prompt: string | AsyncIterable<unknown>
-    options?: {
-      model?: string
-      cwd?: string
-      additionalDirectories?: string[]
-      mcpServers?: Record<string, unknown>
-      env?: NodeJS.ProcessEnv
-      abortController?: AbortController
-      maxTurns?: number
-      tools?: string[]
-      disallowedTools?: string[]
-      betas?: string[]
-      enableFileCheckpointing?: boolean
-      effort?: string
-      thinking?: SdkThinkingConfig
-      permissionMode?: SdkPermissionMode
-      settings?: SdkSettings
-      settingSources?: ReadonlyArray<"user" | "project" | "local">
-      systemPrompt?: SdkSystemPrompt
-      persistSession?: boolean
-      includePartialMessages?: boolean
-      pathToClaudeCodeExecutable?: string
-      spawnClaudeCodeProcess?: (options: {
-        command: string
-        args: string[]
-        cwd?: string
-        env: NodeJS.ProcessEnv
-        signal: AbortSignal
-      }) => ChildProcess
-      resume?: string
-      resumeSessionAt?: string
-      sessionId?: string
-      stderr?: () => void
-      canUseTool?: (
-        toolName: string,
-        toolInput: unknown,
-        opts?: {
-          toolUseID?: string
-          title?: string
-          description?: string
-          displayName?: string
-          decisionReason?: string
-          blockedPath?: string
-          suggestions?: unknown[]
-          signal?: AbortSignal
-        }
-      ) => Promise<SdkPermissionResult>
-      hooks?: Partial<
-        Record<
-          string,
-          Array<{
-            matcher?: string
-            hooks: Array<
-              (
-                input: unknown,
-                toolUseID: string | undefined,
-                options: { signal: AbortSignal }
-              ) => Promise<unknown>
-            >
-            timeout?: number
-          }>
-        >
-      >
-    }
-  }): SdkQuery
-}
-
 export interface ClaudeAdapterOptions {
   readonly modelCacheDir?: string
   readonly resolveOrchestratorServer?: import("../../../services/orchestrator/mcp").OrchestratorServerResolver
   readonly resolveCodeSearchServer?: import("../../../services/code-search/contracts").CodeSearchServerResolver
+  /** Configured image-generation model (settings `image_generation_model`). */
+  readonly resolveImageGenerationModel?: () => string | null | undefined
+  /**
+   * The backend's image generations (`AppState`'s, from bootstrap), which
+   * the in-process image tool runs in.
+   */
+  readonly imageGeneration?: import("../../../services/image-generation").ImageGenerationRunner
   readonly providerInstanceId?: string
   readonly continuationKey?: string
   readonly binaryPath?: string | null
@@ -331,6 +261,14 @@ interface SessionContext {
   sessionExited: boolean
   /** CLI process for the live query. Force-completed turns tree-kill it. */
   claudeChild: ChildProcess | null
+  /** Bounded stderr of the latest CLI process, attached to turn failures. */
+  claudeStderr: ProcessStderrTail | null
+  /**
+   * The subscription limit that refused this turn's request (a rejected
+   * `rate_limit_event`), attached to the turn's failure as `detail.limit`
+   * for the chat resume scheduler (services/chat/usage-limit.ts).
+   */
+  rateLimitRejection?: { readonly resetAt: number | null } | null
 }
 
 interface ActiveClaudeTurn {
@@ -352,6 +290,55 @@ interface ActiveClaudeTurn {
   toolsById: Map<string, ActiveClaudeTool>
   capturedProposedPlanKeys: Set<string>
 }
+
+/**
+ * What `sendTurn` resolves before it starts the SDK query
+ * (`prepareClaudeTurn`) and the later steps read.
+ */
+interface PreparedClaudeTurn {
+  readonly key: ProviderSendTurnInput["threadId"]
+  readonly ctx: SessionContext
+  /** Cancels this turn's read loop; `ctx.abort` while the turn is current. */
+  readonly loopAbort: AbortController
+  readonly turnId: string
+  readonly modelId: string
+  readonly contextWindow: "200k" | "1m" | null
+  readonly opts: ResolvedOptions
+  readonly attachmentContent: ReturnType<typeof splitAttachmentsForImageInput>
+  readonly cwd: string | undefined
+  readonly chatMode: string | null
+  readonly isPlanMode: boolean
+  readonly planApprovalMode: "interactive" | "capture"
+  readonly interactivePlan: boolean
+  readonly projectToolPolicy: Awaited<
+    ReturnType<typeof loadBetterC0deProjectToolPolicy>
+  >
+  readonly tools: ReturnType<typeof filterToolsForBetterC0deProjectPolicy>
+  readonly permissionMode: SdkPermissionMode | null
+  readonly effectiveGateLevel: GatePermissionLevel
+  readonly codeSearchServer:
+    | Awaited<
+        ReturnType<NonNullable<ClaudeAdapterOptions["resolveCodeSearchServer"]>>
+      >
+    | null
+    | undefined
+  readonly orchestratorServer:
+    | Awaited<
+        ReturnType<
+          NonNullable<ClaudeAdapterOptions["resolveOrchestratorServer"]>
+        >
+      >
+    | null
+    | undefined
+  readonly imagegenReachable: boolean
+  readonly systemPrompt: SdkSystemPrompt | undefined
+  readonly fullPrompt: ReturnType<typeof prependProviderHistoryForFreshSession>
+  readonly resumeSessionId: ProviderSession["providerThreadId"]
+  readonly resumeSessionAt: string | undefined
+}
+
+/** The SDK's permission callback, as `createClaudeCanUseTool` builds it. */
+type ClaudeCanUseTool = NonNullable<ClaudeAgentSdk.Options["canUseTool"]>
 
 interface ActiveClaudeTool {
   id: string
@@ -394,6 +381,8 @@ interface ClaudeCapabilitiesProbe {
   readonly email?: string
   readonly subscriptionType?: string
   readonly tokenSource?: string
+  /** Claude Code started but holds no credential at all. */
+  readonly signedOut?: true
   readonly slashCommands: ReadonlyArray<ProviderSlashCommand>
   readonly models: ReadonlyArray<ProviderModel>
 }
@@ -412,18 +401,20 @@ const CAPABILITIES: ProviderCapabilities = {
   managesOwnLifecycle: true,
 }
 
-// Upper bound on turns whose full raw SDK messages (which include complete tool
-// outputs — file contents, command output) are retained in memory per session.
-// Beyond this the oldest turns' items are dropped, but their resume point is
-// preserved by folding it into the base cursor prefix, so continuation is
-// unaffected. High enough that no realistic interactive session reaches it; it
-// only bounds pathological / long autonomous-loop sessions.
-const MAX_RETAINED_TURN_ITEMS = 500
+// Turn snapshots only back `readThread`/`rollbackThread`; continuation works
+// from each turn's resume point alone. Snapshots therefore keep a slim,
+// size-bounded projection of the SDK messages (no per-delta `stream_event`
+// partials, no tool inputs or results, truncated text). Beyond the turn cap the
+// oldest turns are dropped, but their resume point is folded into the base
+// cursor prefix, so continuation and rollback depth are unaffected.
+const MAX_RETAINED_TURN_SNAPSHOTS = 20
+const MAX_RETAINED_ITEMS_PER_TURN = 64
+const MAX_RETAINED_BLOCKS_PER_ITEM = 16
+const MAX_RETAINED_TEXT_CHARS = 2_000
 
 const PROVIDER_METADATA_CACHE_TTL_MS = 30_000
 const CLAUDE_MODEL_CACHE_TTL_MS = 15 * 60_000
 const CLAUDE_COMMAND_PROBE_TIMEOUT_MS = 8_000
-const CLAUDE_PENDING_REQUEST_TIMEOUT_MS = 5 * 60_000
 const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111"
 
 const CLAUDE_LOW_TO_HIGH_OPTIONS = [
@@ -520,7 +511,7 @@ function claudeEffortOptionsFor(slug: string): ReadonlyArray<{
   readonly isDefault?: boolean
 }> | null {
   const identity = parseAnthropicModelId(slug)
-  if (slug === "claude-opus-5-5")
+  if (anthropicThinkingAlwaysOn(slug))
     return CLAUDE_OPUS_47_OPTIONS.map((option) => ({
       id: option.id,
       label: option.label,
@@ -590,7 +581,7 @@ export function buildClaudeModelsFromInitialization(
             id,
             label:
               id === "xhigh" ? "Extra High" : id[0].toUpperCase() + id.slice(1),
-            ...(id === "medium" && slug === "claude-opus-5-5"
+            ...(id === "medium" && anthropicThinkingAlwaysOn(slug)
               ? { isDefault: true }
               : {}),
           }))
@@ -636,9 +627,9 @@ export function buildClaudeModelsFromInitialization(
 }
 
 function supportsClaudeOpus47(version: string | null | undefined): boolean {
-  return version
-    ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_4_7_VERSION) >= 0
-    : false
+  return cliVersionAtLeast(version, MINIMUM_CLAUDE_OPUS_4_7_VERSION, {
+    prereleaseMeetsRelease: true,
+  })
 }
 
 function formatClaudeOpus47UpgradeMessage(version: string | null): string {
@@ -665,7 +656,7 @@ function normalizeClaudeCapabilityModelId(modelId: string): string {
   return modelId.replace(/\[(?:1m|200k)\]$/i, "").replace(/-(?:1m|200k)$/i, "")
 }
 
-const ADAPTIVE_EFFORT_DEFAULT = "high"
+const ADAPTIVE_EFFORT_DEFAULT: ClaudeAgentSdk.EffortLevel = "high"
 
 function supportsAdaptiveThinking(modelId: string): boolean {
   return anthropicSupportsAdaptiveThinking(modelId)
@@ -940,7 +931,7 @@ function requiresExplicitDisplaySummarized(modelId: string): boolean {
 }
 
 type ResolvedOptions = {
-  effort?: string
+  effort?: ClaudeAgentSdk.EffortLevel
   thinking?: SdkThinkingConfig
   settings?: SdkSettings
 }
@@ -968,7 +959,7 @@ function resolveOptions(
   if (supportsAdaptiveThinking(modelId)) {
     out.effort =
       mapAdaptiveEffort(effort, modelId) ??
-      (modelId === "claude-opus-5-5" ? "medium" : ADAPTIVE_EFFORT_DEFAULT)
+      (anthropicThinkingAlwaysOn(modelId) ? "medium" : ADAPTIVE_EFFORT_DEFAULT)
     if (requiresExplicitDisplaySummarized(modelId)) {
       out.thinking = { type: "adaptive", display: "summarized" }
     }
@@ -991,7 +982,7 @@ function resolveOptions(
 function mapAdaptiveEffort(
   raw: string | null | undefined,
   modelId: string
-): string | undefined {
+): ClaudeAgentSdk.EffortLevel | undefined {
   if (!raw) return undefined
   const key = raw.toLowerCase().replace(/[\s_-]+/g, "")
   if (key === "low" || key === "medium" || key === "high") return key
@@ -1707,7 +1698,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     }
     try {
       const versionProbe = await runClaudeCommandProbe({
-        binaryPath,
+        launch: await resolveClaudeSdkExecutable(binaryPath ?? "claude"),
         args: ["--version"],
         cwd: normalizeCwd(input.cwd),
         env: this.makeEnvironment(),
@@ -1750,6 +1741,20 @@ export class ClaudeAdapter implements ProviderAdapterShape {
           },
           { transient: this.sdkCache !== null }
         )
+      }
+      if (capabilities.signedOut) {
+        // Without a `claude` of their own, the desktop shell hands over the
+        // Agent SDK's bundled binary, which starts fine but has no login.
+        return this.cacheStatus({
+          configured: false,
+          installed: true,
+          version,
+          status: "error",
+          auth: { status: "unauthenticated" },
+          message: isBundledClaudeBinary(binaryPath)
+            ? "Claude Code is not installed. Install it, then sign in with `claude auth login`."
+            : "Claude Code is not signed in. Run `claude auth login` and try again.",
+        })
       }
 
       const authMetadata = describeClaudeAccount({
@@ -1991,9 +1996,9 @@ export class ClaudeAdapter implements ProviderAdapterShape {
 
     const abort = new AbortController()
     const accountAtStart = this.modelAccountIdentity()
-    const claudeCodeBinaryPath = this.claudeBinaryPath()
     let query: SdkQuery | null = null
     try {
+      const launch = await this.claudeSdkLaunch()
       query = sdk.query({
         prompt: waitForAbortPrompt(abort.signal),
         options: {
@@ -2005,9 +2010,11 @@ export class ClaudeAdapter implements ProviderAdapterShape {
           persistSession: false,
           abortController: abort,
           stderr: () => {},
-          ...(claudeCodeBinaryPath
-            ? { pathToClaudeCodeExecutable: claudeCodeBinaryPath }
-            : {}),
+          ...launch.sdkOptions,
+          spawnClaudeCodeProcess: (spawnOptions) =>
+            spawnClaudeSdkChild(spawnOptions, {
+              nodeRuntime: launch.nodeRuntime,
+            }),
         },
       })
       this.metadataQueries.add(query)
@@ -2044,6 +2051,9 @@ export class ClaudeAdapter implements ProviderAdapterShape {
         ...(email ? { email } : {}),
         ...(subscriptionType ? { subscriptionType } : {}),
         ...(tokenSource ? { tokenSource } : {}),
+        ...(isClaudeAccountSignedOut(init.account)
+          ? { signedOut: true as const }
+          : {}),
         slashCommands,
         models,
       }
@@ -2141,6 +2151,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       lastProposedPlanText: null,
       sessionExited: false,
       claudeChild: null,
+      claudeStderr: null,
     })
     return session
   }
@@ -2155,6 +2166,51 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     }))
   }
 
+  /**
+   * One turn = one SDK `query()` = one Claude Code CLI process, which starts
+   * every configured MCP server and reloads the session (`resume`) before the
+   * model sees the prompt. The steps: `prepareClaudeTurn`,
+   * `createClaudeCanUseTool`, `spawnClaudeQuery`, `streamClaudeTurn`,
+   * `finalizeClaudeTurn`.
+   *
+   * Why not one long-lived query per session (HARNESS-13), as the installed
+   * SDK (0.2.x) would allow with an `AsyncIterable<SDKUserMessage>` prompt:
+   *
+   * - What this adapter varies per turn is fixed for the life of a query:
+   *   `tools` (by chat mode and project policy), `disallowedTools`
+   *   (read-only), `systemPrompt` (the turn's system instruction and the
+   *   imagegen hint), `maxTurns`, `enableFileCheckpointing`, `betas` (1M
+   *   context by model), `thinking`, `cwd`, `additionalDirectories`, `env`
+   *   and the `canUseTool` / hook callbacks. Only the model
+   *   (`setModel`), the permission mode (`setPermissionMode`), MCP servers
+   *   (`setMcpServers`) and some settings (`applyFlagSettings`: effort up to
+   *   `xhigh`, fast mode) change on a live query. A session would need a
+   *   spawn signature over the fixed options and a respawn (with `resume`)
+   *   whenever it changes — which a mode or effort switch does.
+   * - `streamClaudeTurn` ends a turn by leaving the `for await` at the
+   *   result, which closes the generator and with it the query. A live query
+   *   needs one reader per session that outlives turns and routes messages to
+   *   the current turn by position alone (the SDK does not carry our turn
+   *   id), including the task notifications a backgrounded command sends
+   *   after its turn's result.
+   * - The interrupt ladder (`interruptTurn`) escalates to `close()` and to
+   *   aborting the process, and a rollback resumes at an earlier message
+   *   (`resumeSessionAt`): both must drop the live query and respawn.
+   * - `canUseTool` closes over one turn (its id, abort signal, plan approval
+   *   mode and project policy); it would have to read them from the session
+   *   instead.
+   * - An idle session would keep a CLI process and every MCP server it
+   *   started alive, so the session reaper would have to close idle queries.
+   *
+   * Doing it means: a per-session input queue and reader, a spawn signature
+   * with respawn-on-change, `canUseTool` reading the active turn from the
+   * session, the interrupt ladder and rollback dropping the query, and tests
+   * rewritten around a query that outlives a turn.
+   * `startup()` (a pre-warmed process) is the smaller step: after a turn,
+   * warm the next process with the same options so the next `query()` skips
+   * the cold start — it still starts the MCP servers once per turn and needs
+   * the same session-level `canUseTool`.
+   */
   async sendTurn(input: ProviderSendTurnInput): Promise<void> {
     const key = input.threadId
     let ctx = this.sessions.get(key)
@@ -2188,6 +2244,31 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       )
     }
 
+    const turn = await this.prepareClaudeTurn(input, key, ctx, loopAbort)
+    if (!turn) return
+    const canUseTool = this.createClaudeCanUseTool(turn)
+    const { query, activeTurn } = await this.spawnClaudeQuery(
+      input,
+      sdk,
+      turn,
+      canUseTool
+    )
+    await this.streamClaudeTurn(input, turn, query, activeTurn)
+  }
+
+  /**
+   * `sendTurn` step 1 (prepare): resolve the model and its options, the chat
+   * mode and the permission gate, the MCP servers and the prompt for this
+   * turn. Consumes a permission mode queued while the session was idle. Null
+   * when the turn was stopped, or the session replaced, while the servers
+   * were resolved.
+   */
+  private async prepareClaudeTurn(
+    input: ProviderSendTurnInput,
+    key: PreparedClaudeTurn["key"],
+    ctx: SessionContext,
+    loopAbort: AbortController
+  ): Promise<PreparedClaudeTurn | null> {
     const turnId = randomUUID()
 
     const rawModelId = resolveTurnModelId(input)
@@ -2223,9 +2304,13 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       modelCapabilities,
       reasoningEffort
     )
+    // Images travel as structured content blocks of the user message; only
+    // what Claude cannot read inline (PDFs, archives, …) is listed as text.
+    const attachmentContent = splitAttachmentsForImageInput(input.attachments, {
+      acceptsImages: true,
+    })
     const providerMessage = applyClaudePromptEffortPrefix(
-      input.message +
-        (buildUnsupportedAttachmentNotice(input.attachments) ?? ""),
+      input.message + attachmentNotice(attachmentContent.unsupported),
       promptInjectedEffort
     )
     const cwd = input.projectPath ?? undefined
@@ -2289,12 +2374,16 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       ctx.sessionExited ||
       this.sessions.get(key) !== ctx
     )
-      return
+      return null
     const imagegenAdvertised =
       Boolean(cwd) &&
       effectiveGateLevel !== "read-only" &&
       chatMode !== "plan" &&
       chatMode !== "ask"
+    // Interactive plans keep the server for a same-query rollover into
+    // implementation; every other mode that disallows the tool skips it.
+    const imagegenReachable =
+      imagegenAdvertised || (Boolean(cwd) && interactivePlan)
     const systemPrompt = buildSystemPromptOption(
       [
         input.systemInstruction,
@@ -2304,6 +2393,58 @@ export class ClaudeAdapter implements ProviderAdapterShape {
         .join("\n\n")
     )
 
+    // History prefix is concatenated into the prompt itself — the Agent SDK
+    // doesn't take a separate `history` option. The plugin used the same
+    // approach.
+    const resumeSessionId = ctx.session.providerThreadId
+    const resumeCursor = readClaudeResumeCursor(ctx.session.resumeCursor)
+    const resumeSessionAt = resumeSessionId
+      ? resumeCursor?.resumeSessionAt
+      : undefined
+    const fullPrompt = prependProviderHistoryForFreshSession({
+      history,
+      currentPrompt: isPlanMode
+        ? buildPlanModePrompt(providerMessage)
+        : providerMessage,
+      resumed: Boolean(resumeSessionId),
+    })
+
+    return {
+      key,
+      ctx,
+      loopAbort,
+      turnId,
+      modelId,
+      contextWindow,
+      opts,
+      attachmentContent,
+      cwd,
+      chatMode,
+      isPlanMode,
+      planApprovalMode,
+      interactivePlan,
+      projectToolPolicy,
+      tools,
+      permissionMode,
+      effectiveGateLevel,
+      codeSearchServer,
+      orchestratorServer,
+      imagegenReachable,
+      systemPrompt,
+      fullPrompt,
+      resumeSessionId,
+      resumeSessionAt,
+    }
+  }
+
+  /**
+   * The SDK's `canUseTool` callback for one turn: questions, plan approval,
+   * then the permission ladder (mode, session and project rules, the level's
+   * ceiling) and, when nothing decides the call, the user's approval.
+   */
+  private createClaudeCanUseTool(turn: PreparedClaudeTurn): ClaudeCanUseTool {
+    const { key, ctx, loopAbort, turnId, planApprovalMode, projectToolPolicy } =
+      turn
     const canUseTool = async (
       toolName: string,
       toolInput: unknown,
@@ -2319,16 +2460,14 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       }
     ) => {
       const cancelled = () =>
-        loopAbort.signal.aborted ||
-        ctx!.sessionExited ||
-        ctx!.abort !== loopAbort
+        loopAbort.signal.aborted || ctx.sessionExited || ctx.abort !== loopAbort
       const interrupted = { behavior: "deny" as const, message: "Interrupted" }
       if (cancelled()) return interrupted
       if (toolName === "AskUserQuestion") {
         const requestId = randomUUID()
         const questions = normalizeClaudeUserInputQuestions(toolInput)
         const answers = await awaitPendingClaudeRequest(
-          ctx!.pendingUserInputs,
+          ctx.pendingUserInputs,
           requestId,
           loopAbort.signal,
           {},
@@ -2358,7 +2497,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
 
       if (toolName === "ExitPlanMode") {
         const planMarkdown = extractExitPlanModePlan(toolInput)
-        if (planMarkdown) ctx!.lastProposedPlanText = planMarkdown
+        if (planMarkdown) ctx.lastProposedPlanText = planMarkdown
         if (
           planMarkdown &&
           markProposedPlanCaptured(ctx, {
@@ -2386,10 +2525,10 @@ export class ClaudeAdapter implements ProviderAdapterShape {
         const requestId = randomUUID()
         const resolution =
           await awaitPendingClaudeRequest<PlanApprovalResolution>(
-            ctx!.pendingPlanApprovals,
+            ctx.pendingPlanApprovals,
             requestId,
             loopAbort.signal,
-            { decision: "deny", message: "Interrupted or timed out" },
+            { decision: "deny", message: "Interrupted" },
             () =>
               this.emitEvent({
                 ...eventBase(key),
@@ -2399,7 +2538,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
                 // Fall back to the plan text streamed earlier this session when
                 // the tool input arrived without a plan payload — the approval
                 // UI must never show an empty preview for a real plan.
-                planMarkdown: planMarkdown ?? ctx!.lastProposedPlanText ?? "",
+                planMarkdown: planMarkdown ?? ctx.lastProposedPlanText ?? "",
                 turnId,
               })
           )
@@ -2423,7 +2562,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
           // and every Edit/Write call failed with "Edit exists but is not
           // enabled in this context" even though our own gate allowed it.
           try {
-            await ctx!.query?.setPermissionMode?.(
+            await ctx.query?.setPermissionMode?.(
               approvedMode === "acceptEdits" ? "acceptEdits" : "default"
             )
           } catch {
@@ -2432,7 +2571,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
           }
           // Leave plan mode in our own gate for the rest of the turn so the
           // read-only restriction stops firing while Claude implements.
-          ctx!.permissionState = {
+          ctx.permissionState = {
             chatMode: "agent",
             permissionLevel:
               approvedMode === "acceptEdits" ? "allow-edits" : "default",
@@ -2451,7 +2590,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
 
       // Read the MUTABLE permission state (not closure constants) so
       // mid-turn setPermissionMode / plan approval affect this gate too.
-      const perm = ctx!.permissionState
+      const perm = ctx.permissionState
       // Canonicalize ONCE. Every comparison below reads `level`, never the raw
       // `perm.permissionLevel`. Comparing the raw string meant an alias such as
       // `"read"` — which `normalizeLevel` maps to `read-only`, and which
@@ -2461,7 +2600,12 @@ export class ClaudeAdapter implements ProviderAdapterShape {
         perm.permissionLevel
       )
       const permissionClass = classifyToolPermission(toolName)
-      const policyClass = classifyTool(toolName, toolInput)
+      // Image generation runs a CLI and spends quota: execute-class, so
+      // allow-edits never auto-approves it (only bypass does).
+      const policyClass =
+        toolName === IMAGEGEN_TOOL_NAME
+          ? "execute"
+          : classifyTool(toolName, toolInput)
       const imagegenMayAutoAllow =
         toolName === IMAGEGEN_TOOL_NAME &&
         isImagegenAutoAllowed(perm.chatMode, level)
@@ -2592,10 +2736,10 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       const suggestions = parsePermissionSuggestions(opts?.suggestions)
       const resolution =
         await awaitPendingClaudeRequest<ToolApprovalResolution>(
-          ctx!.pendingApprovals,
+          ctx.pendingApprovals,
           requestId,
           loopAbort.signal,
-          { decision: "deny", message: "Interrupted or timed out" },
+          { decision: "deny", message: "Interrupted" },
           () =>
             this.emitEvent({
               ...eventBase(key),
@@ -2633,8 +2777,12 @@ export class ClaudeAdapter implements ProviderAdapterShape {
         return {
           behavior: "allow" as const,
           input: toolInput,
+          // Built by permissionUpdatesForClaudeSdk in the SDK's own shape.
           ...(updatedPermissions && updatedPermissions.length > 0
-            ? { updatedPermissions }
+            ? {
+                updatedPermissions:
+                  updatedPermissions as ClaudeAgentSdk.PermissionUpdate[],
+              }
             : {}),
         }
       }
@@ -2644,31 +2792,59 @@ export class ClaudeAdapter implements ProviderAdapterShape {
         message: denyMessage || "User denied the action",
       }
     }
+    return canUseTool
+  }
 
-    // History prefix is concatenated into the prompt itself — the Agent SDK
-    // doesn't take a separate `history` option. The plugin used the same
-    // approach.
-    const resumeSessionId = ctx.session.providerThreadId
-    const resumeCursor = readClaudeResumeCursor(ctx.session.resumeCursor)
-    const resumeSessionAt = resumeSessionId
-      ? resumeCursor?.resumeSessionAt
-      : undefined
-    const fullPrompt = prependProviderHistoryForFreshSession({
-      history,
-      currentPrompt: isPlanMode
-        ? buildPlanModePrompt(providerMessage)
-        : providerMessage,
-      resumed: Boolean(resumeSessionId),
-    })
-
+  /**
+   * `sendTurn` step 2 (spawn): start the Claude Code CLI for this turn
+   * through the SDK's `query()`, register the query and the active turn on
+   * the session and announce `turn.started`.
+   */
+  private async spawnClaudeQuery(
+    input: ProviderSendTurnInput,
+    sdk: SdkModule,
+    turn: PreparedClaudeTurn,
+    canUseTool: ClaudeCanUseTool
+  ): Promise<{ query: SdkQuery; activeTurn: ActiveClaudeTurn }> {
+    const {
+      key,
+      ctx,
+      turnId,
+      modelId,
+      contextWindow,
+      opts,
+      attachmentContent,
+      cwd,
+      chatMode,
+      isPlanMode,
+      planApprovalMode,
+      interactivePlan,
+      tools,
+      permissionMode,
+      effectiveGateLevel,
+      codeSearchServer,
+      orchestratorServer,
+      imagegenReachable,
+      systemPrompt,
+      fullPrompt,
+      resumeSessionId,
+      resumeSessionAt,
+    } = turn
     // Path forwarded from the shell process — see
     // `apps/shell/shared/claude-binary-path.cjs` for the resolution rationale.
-    const claudeCodeBinaryPath = this.claudeBinaryPath()
+    // Resolved to the same launch the probes use (claudeLaunch.ts), so an npm
+    // `claude.cmd` shim no longer fails every turn with EINVAL on Windows.
+    const launch = await this.claudeSdkLaunch()
+    ctx.claudeStderr = null
+    ctx.rateLimitRejection = null
     // Per-turn controller passed to the SDK. `ctx.abort` only stops our loop;
     // without this the interrupt path had no way to end a wedged child.
     const turnAbort = new AbortController()
     const query = sdk.query({
-      prompt: fullPrompt,
+      prompt:
+        attachmentContent.images.length > 0
+          ? claudeUserMessageWithImages(fullPrompt, attachmentContent.images)
+          : fullPrompt,
       options: {
         ...(cwd ? { cwd } : {}),
         model: modelId,
@@ -2680,16 +2856,22 @@ export class ClaudeAdapter implements ProviderAdapterShape {
           // SDK closes the tool stream at its 60s default.
           ...(cwd ? { CLAUDE_CODE_STREAM_CLOSE_TIMEOUT: "420000" } : {}),
         },
-        ...(claudeCodeBinaryPath
-          ? { pathToClaudeCodeExecutable: claudeCodeBinaryPath }
-          : {}),
+        ...launch.sdkOptions,
         spawnClaudeCodeProcess: (spawnOptions) =>
-          this.spawnClaudeCodeProcess(ctx, spawnOptions),
+          this.spawnClaudeCodeProcess(
+            ctx,
+            key,
+            spawnOptions,
+            launch.nodeRuntime
+          ),
         ...(resumeSessionId ? { resume: resumeSessionId } : {}),
         ...(resumeSessionAt ? { resumeSessionAt } : {}),
         ...(cwd ? { additionalDirectories: [cwd] } : {}),
-        // In-process MCP server: real PNG assets via the local Codex CLI,
-        // always pinned to gpt-5.5 @ xhigh (see imagegenMcpServer.ts).
+        // In-process MCP server: real PNG assets via the local Codex CLI with
+        // the configured image model at xhigh (see imagegenMcpServer.ts). It is
+        // registered only when this query can ever call it: read-only, ask
+        // and capture-plan turns disallow the tool for the whole query, so
+        // starting the server there only slows CLI startup.
         ...(cwd
           ? {
               mcpServers: {
@@ -2699,9 +2881,15 @@ export class ClaudeAdapter implements ProviderAdapterShape {
                 ...(orchestratorServer
                   ? { betterc0de_orchestrator: orchestratorServer }
                   : {}),
-                [IMAGEGEN_MCP_SERVER_NAME]: buildImagegenMcpServer(sdk, {
-                  workspaceDir: cwd,
-                }),
+                ...(imagegenReachable
+                  ? {
+                      [IMAGEGEN_MCP_SERVER_NAME]: buildImagegenMcpServer(sdk, {
+                        workspaceDir: cwd,
+                        model: this.options.resolveImageGenerationModel?.(),
+                        imageGeneration: this.options.imageGeneration,
+                      }),
+                    }
+                  : {}),
               },
             }
           : {}),
@@ -2761,7 +2949,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       settled: turnSettled,
       settle: settleTurn,
       forceCompleted: false,
-      items: [{ type: "user", text: input.message }],
+      items: [{ type: "user", text: boundedRetainedText(input.message) }],
       assistantResumeUuid: null,
       toolsByBlockIndex: new Map(),
       toolsById: new Map(),
@@ -2779,6 +2967,21 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       },
     })
 
+    return { query, activeTurn }
+  }
+
+  /**
+   * `sendTurn` step 3 (stream): read the SDK messages, translate and publish
+   * them, persist the continuation, and stop at the turn's terminal result.
+   * A query that throws before one ends the turn as failed.
+   */
+  private async streamClaudeTurn(
+    input: ProviderSendTurnInput,
+    turn: PreparedClaudeTurn,
+    query: SdkQuery,
+    activeTurn: ActiveClaudeTurn
+  ): Promise<void> {
+    const { key, ctx, loopAbort, turnId, chatMode } = turn
     let terminalObserved = false
     try {
       for await (const msg of query) {
@@ -2819,9 +3022,21 @@ export class ClaudeAdapter implements ProviderAdapterShape {
         if (ctx.activeTurn?.id === turnId) ctx.activeTurn = null
         // The public message stays generic; the real reason goes to the log
         // and rides along as `detail` so it is not lost on the way to the UI.
-        const detail = error instanceof Error ? error.message : String(error)
+        // The CLI usually prints that reason on stderr, so its tail is
+        // attached to the diagnostic detail (never to the transcript).
+        // Set by spawnClaudeCodeProcess during the query (reset in
+        // `spawnClaudeQuery` before the query starts).
+        const stderrTail = ctx.claudeStderr as ProcessStderrTail | null
+        const detail = withStderrTail(errorMessage(error), stderrTail)
         logger.error(
-          { err: error, thread: key, turn: turnId },
+          {
+            err: error,
+            thread: key,
+            turn: turnId,
+            ...(stderrTail && !stderrTail.isEmpty
+              ? { stderr: stderrTail.tail(2_000) }
+              : {}),
+          },
           "claude sdk query failed"
         )
         const publicMessage = "Claude provider failed."
@@ -2848,32 +3063,47 @@ export class ClaudeAdapter implements ProviderAdapterShape {
         })
       }
     } finally {
-      // `interruptTurn` may already have ended this turn on the user's behalf
-      // when the loop would not unwind; it then owns the terminal event.
-      if (
-        !terminalObserved &&
-        loopAbort.signal.aborted &&
-        !activeTurn.forceCompleted
-      ) {
-        terminalObserved = true
-        this.emitEvent({
-          ...eventBase(key),
-          type: "turn.aborted",
-          turnId,
-          payload: {
-            reason: "Interrupted by user.",
-            ...(input.dispatchTurnId
-              ? { dispatchTurnId: input.dispatchTurnId }
-              : {}),
-          },
-        })
-      }
-      if (ctx.activeTurn?.id === turnId) {
-        ctx.activeTurn = null
-      }
-      if (ctx.query === query) ctx.query = null
-      activeTurn.settle()
+      this.finalizeClaudeTurn(input, turn, query, activeTurn, terminalObserved)
     }
+  }
+
+  /**
+   * `sendTurn` step 4 (finalize): however the read loop ended, emit
+   * `turn.aborted` for an interrupt nothing else ended, clear the turn and
+   * the query from the session and settle the turn.
+   */
+  private finalizeClaudeTurn(
+    input: ProviderSendTurnInput,
+    turn: PreparedClaudeTurn,
+    query: SdkQuery,
+    activeTurn: ActiveClaudeTurn,
+    terminalObserved: boolean
+  ): void {
+    const { key, ctx, loopAbort, turnId } = turn
+    // `interruptTurn` may already have ended this turn on the user's behalf
+    // when the loop would not unwind; it then owns the terminal event.
+    if (
+      !terminalObserved &&
+      loopAbort.signal.aborted &&
+      !activeTurn.forceCompleted
+    ) {
+      this.emitEvent({
+        ...eventBase(key),
+        type: "turn.aborted",
+        turnId,
+        payload: {
+          reason: "Interrupted by user.",
+          ...(input.dispatchTurnId
+            ? { dispatchTurnId: input.dispatchTurnId }
+            : {}),
+        },
+      })
+    }
+    if (ctx.activeTurn?.id === turnId) {
+      ctx.activeTurn = null
+    }
+    if (ctx.query === query) ctx.query = null
+    activeTurn.settle()
   }
 
   private writeNativeSdkMessage(
@@ -3052,26 +3282,18 @@ export class ClaudeAdapter implements ProviderAdapterShape {
 
   private spawnClaudeCodeProcess(
     ctx: SessionContext,
-    options: {
-      command: string
-      args: string[]
-      cwd?: string
-      env: NodeJS.ProcessEnv
-      signal: AbortSignal
-    }
-  ): ChildProcess {
+    threadId: string,
+    options: ClaudeAgentSdk.SpawnOptions,
+    nodeRuntime?: string
+  ): ChildProcessWithoutNullStreams {
     const previous = ctx.claudeChild
-    const child = spawn(options.command, options.args, {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-      // POSIX tree-kill signals the process group, which requires the child
-      // to be the group leader. Windows addresses the tree by PID.
-      detached: process.platform !== "win32",
-      signal: options.signal,
+    const stderr = new ProcessStderrTail()
+    const child = spawnClaudeSdkChild(options, {
+      stderr,
+      threadId,
+      nodeRuntime,
     })
-    child.stderr?.resume()
+    ctx.claudeStderr = stderr
     ctx.claudeChild = child
     child.once("exit", () => {
       if (ctx.claudeChild === child) ctx.claudeChild = null
@@ -3367,7 +3589,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       )
       ctx.resumeCursorPersistenceError = null
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = errorMessage(err)
       if (ctx.resumeCursorPersistenceError === message) return
       ctx.resumeCursorPersistenceError = message
       this.emitEvent({
@@ -3385,10 +3607,16 @@ export class ClaudeAdapter implements ProviderAdapterShape {
   private recordTurnMessage(ctx: SessionContext, msg: unknown): void {
     const active = ctx.activeTurn
     if (!active) return
-    active.items.push(msg)
     const assistantUuid = sdkAssistantUuid(msg)
     if (assistantUuid) {
       active.assistantResumeUuid = assistantUuid
+    }
+    const item = retainedClaudeTurnItem(msg)
+    if (!item) return
+    active.items.push(item)
+    // Keep the user prompt (index 0) and the most recent messages.
+    if (active.items.length > MAX_RETAINED_ITEMS_PER_TURN) {
+      active.items.splice(1, active.items.length - MAX_RETAINED_ITEMS_PER_TURN)
     }
   }
 
@@ -3401,13 +3629,13 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     if (!active || active.id !== turnId) return
     ctx.turns.push({
       id: active.id,
-      items: [...active.items],
+      items: active.items,
       resumeSessionAt: active.assistantResumeUuid,
     })
-    // Bound retained raw-message memory. Fold each evicted turn's resume point
+    // Bound retained snapshot memory. Fold each evicted turn's resume point
     // onto the end of the base prefix so `[...base, ...turns.map(resumeSessionAt)]`
     // — the exact resume-cursor sequence — is byte-for-byte unchanged.
-    while (ctx.turns.length > MAX_RETAINED_TURN_ITEMS) {
+    while (ctx.turns.length > MAX_RETAINED_TURN_SNAPSHOTS) {
       const evicted = ctx.turns.shift()
       if (!evicted) break
       ctx.baseResumeSessionAts.push(evicted.resumeSessionAt)
@@ -3434,6 +3662,26 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       updatedAt: Date.now(),
     }
     this.updateResumeCursor(ctx, threadId)
+  }
+
+  /**
+   * SDK launch shared by turns and metadata probes. The SDK only accepts a
+   * runtime *name* as `executable`, so a node.exe found next to an npm shim
+   * is applied by our spawn hook instead.
+   */
+  private async claudeSdkLaunch(): Promise<{
+    readonly sdkOptions: { pathToClaudeCodeExecutable?: string }
+    readonly nodeRuntime?: string
+  }> {
+    const binaryPath = this.claudeBinaryPath()
+    if (!binaryPath) return { sdkOptions: {} }
+    const resolved = await resolveClaudeSdkExecutable(binaryPath)
+    return {
+      sdkOptions: {
+        pathToClaudeCodeExecutable: resolved.pathToClaudeCodeExecutable,
+      },
+      ...(resolved.executable ? { nodeRuntime: resolved.executable } : {}),
+    }
   }
 
   private claudeBinaryPath(): string | null {
@@ -3488,9 +3736,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
   private async loadSdk(): Promise<SdkModule | null> {
     if (this.sdkCache) return this.sdkCache
     try {
-      const mod = (await import(
-        "@anthropic-ai/claude-agent-sdk" as string
-      )) as SdkModule
+      const mod: SdkModule = await import("@anthropic-ai/claude-agent-sdk")
       this.sdkCache = mod
       this.sdkLoadError = null
       return mod
@@ -3498,7 +3744,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       // "Not installed" is only one reason an import fails; a broken native
       // dependency or a syntax error inside the package are others. Keep the
       // real reason so the surfaced error says so instead of guessing.
-      this.sdkLoadError = error instanceof Error ? error.message : String(error)
+      this.sdkLoadError = errorMessage(error)
       logger.error(
         { err: error },
         "failed to load @anthropic-ai/claude-agent-sdk"
@@ -3541,9 +3787,9 @@ export class ClaudeAdapter implements ProviderAdapterShape {
     if (!sdk) return null
 
     const abort = new AbortController()
-    const claudeCodeBinaryPath = this.claudeBinaryPath()
     let query: SdkQuery | null = null
     try {
+      const launch = await this.claudeSdkLaunch()
       query = sdk.query({
         prompt: waitForAbortPrompt(abort.signal),
         options: {
@@ -3555,9 +3801,11 @@ export class ClaudeAdapter implements ProviderAdapterShape {
           persistSession: false,
           abortController: abort,
           stderr: () => {},
-          ...(claudeCodeBinaryPath
-            ? { pathToClaudeCodeExecutable: claudeCodeBinaryPath }
-            : {}),
+          ...launch.sdkOptions,
+          spawnClaudeCodeProcess: (spawnOptions) =>
+            spawnClaudeSdkChild(spawnOptions, {
+              nodeRuntime: launch.nodeRuntime,
+            }),
         },
       })
       this.metadataQueries.add(query)
@@ -3633,10 +3881,32 @@ export class ClaudeAdapter implements ProviderAdapterShape {
       case "result":
         this.translateResultMessage(translation)
         break
+      case "rate_limit_event":
+        this.noteRateLimitEvent(translation)
+        break
       default:
         break
     }
     return out
+  }
+
+  /**
+   * Claude Code reports its subscription limits as they change. A rejected
+   * request (and no overage to fall back on) names when the limit resets;
+   * the turn's failure carries it (`translateResultMessage`).
+   */
+  private noteRateLimitEvent(t: SdkMessageTranslation): void {
+    if (!t.ctx) return
+    const info = asRecord(asRecord(t.msg).rate_limit_info)
+    if (info.status !== "rejected") return
+    if (
+      info.overageStatus === "allowed" ||
+      info.overageStatus === "allowed_warning"
+    )
+      return
+    t.ctx.rateLimitRejection = {
+      resetAt: readNumber(info, "resetsAt") ?? null,
+    }
   }
 
   /**
@@ -4130,15 +4400,26 @@ export class ClaudeAdapter implements ProviderAdapterShape {
               typeof error === "string" && error.length > 0
           )
         : []
+      // A request the API refused (a usage limit, say) ends in a "success"
+      // result flagged `is_error`, with the CLI's message as its result.
       const errMsg =
         (errors.length > 0 ? errors.join("\n") : undefined) ??
         readString(resultRecord, "error") ??
+        readString(resultEnvelope, "result") ??
         "Claude SDK reported a failure"
+      const rejection = t.ctx?.rateLimitRejection ?? null
       out.push({
         ...eventBase(threadId),
         type: "runtime.error",
         message: errMsg,
         class: "provider_error",
+        ...(rejection
+          ? {
+              detail: {
+                limit: { kind: "usage", resetAt: rejection.resetAt },
+              },
+            }
+          : {}),
       })
       out.push({
         ...eventBase(threadId),
@@ -4171,7 +4452,7 @@ export class ClaudeAdapter implements ProviderAdapterShape {
 
 async function* waitForAbortPrompt(
   signal: AbortSignal
-): AsyncGenerator<unknown> {
+): AsyncGenerator<ClaudeAgentSdk.SDKUserMessage> {
   if (!signal.aborted) {
     await new Promise<void>((resolve) => {
       signal.addEventListener("abort", () => resolve(), { once: true })
@@ -4260,25 +4541,53 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined
 }
 
+/**
+ * Claude Code reports a first-party account without any credential as
+ * `tokenSource: "none"` with no API key, plan or email. Third-party backends
+ * (Bedrock, Vertex, a gateway) authenticate outside Claude Code and leave
+ * the account empty, so only that explicit "none" counts as signed out.
+ */
+function isClaudeAccountSignedOut(
+  account: SdkInitializationResult["account"]
+): boolean {
+  if (!account) return false
+  const apiProvider = nonEmptyString(account.apiProvider)
+  if (apiProvider && apiProvider !== "firstParty") return false
+  return (
+    nonEmptyString(account.tokenSource) === "none" &&
+    !nonEmptyString(account.apiKeySource) &&
+    !nonEmptyString(account.subscriptionType) &&
+    !nonEmptyString(account.email)
+  )
+}
+
+/** The Agent SDK's own `@anthropic-ai/claude-agent-sdk-<platform>-<arch>` binary. */
+function isBundledClaudeBinary(binaryPath: string | null): boolean {
+  return /[\\/]claude-agent-sdk-[^\\/]+[\\/]claude(?:\.exe)?$/i.test(
+    binaryPath?.trim() ?? ""
+  )
+}
+
 function runClaudeCommandProbe(input: {
-  readonly binaryPath: string | null
+  readonly launch: ClaudeSdkExecutable
   readonly args: ReadonlyArray<string>
   readonly cwd: string
   readonly env: NodeJS.ProcessEnv
   readonly timeoutMs: number
   readonly retainFailedCleanup: (child: ChildProcess) => void
 }): Promise<ClaudeCommandProbeResult> {
-  const binaryPath = input.binaryPath?.trim() || "claude"
+  // Mirror the Agent SDK's own launch rule, then the shared spawn path, so
+  // the probe can only report "installed" for a launch turns can use too.
+  const target = input.launch.pathToClaudeCodeExecutable
+  const script = isClaudeSdkScriptPath(target)
+  const plan = claudeSpawnCommand(
+    script ? (input.launch.executable ?? "node") : target,
+    script ? [target, ...input.args] : input.args
+  )
   const isWindows = process.platform === "win32"
-  const directExe =
-    isWindows && path.isAbsolute(binaryPath) && /\.exe$/i.test(binaryPath)
-  const viaCmd = isWindows && !directExe
-  const spawnCommand = viaCmd
-    ? process.env.ComSpec?.trim() || "cmd.exe"
-    : binaryPath
-  const spawnArgs = viaCmd
-    ? buildWindowsCmdArgs(binaryPath, input.args)
-    : [...input.args]
+  const viaCmd = plan.windowsVerbatimArguments
+  const spawnCommand = plan.command
+  const spawnArgs = plan.args
   return new Promise((resolve, reject) => {
     let settled = false
     let terminating = false
@@ -4382,25 +4691,6 @@ function isCommandMissingError(error: unknown): boolean {
   return code === "ENOENT" || message.includes("enoent")
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-function compareSemverVersions(a: string, b: string): number {
-  const parse = (value: string) =>
-    value
-      .split(/[.-]/)
-      .slice(0, 3)
-      .map((part) => Number.parseInt(part, 10))
-  const left = parse(a)
-  const right = parse(b)
-  for (let index = 0; index < 3; index += 1) {
-    const delta = (left[index] || 0) - (right[index] || 0)
-    if (delta !== 0) return delta
-  }
-  return 0
-}
-
 async function loadBetterC0deProjectToolPolicy(
   cwd: string | undefined
 ): Promise<{
@@ -4433,6 +4723,85 @@ function sdkSessionId(msg: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null
 }
 
+const RETAINED_SDK_MESSAGE_TYPES: ReadonlySet<string> = new Set([
+  "user",
+  "assistant",
+  "result",
+])
+
+function boundedRetainedText(text: string): string {
+  return text.length > MAX_RETAINED_TEXT_CHARS
+    ? `${text.slice(0, MAX_RETAINED_TEXT_CHARS)}…`
+    : text
+}
+
+/**
+ * Slim snapshot projection of one SDK message. `stream_event` partials (one
+ * per API delta with `includePartialMessages`), system messages, tool inputs,
+ * tool results, thinking and media are never retained: nothing reads them
+ * after the turn, and a tool-heavy turn would otherwise pin megabytes.
+ */
+function retainedClaudeTurnItem(msg: unknown): Record<string, unknown> | null {
+  if (!msg || typeof msg !== "object") return null
+  const record = msg as Record<string, unknown>
+  if (
+    typeof record.type !== "string" ||
+    !RETAINED_SDK_MESSAGE_TYPES.has(record.type)
+  ) {
+    return null
+  }
+  const item: Record<string, unknown> = { type: record.type }
+  for (const key of ["subtype", "uuid", "session_id"] as const) {
+    const value = record[key]
+    if (typeof value === "string") item[key] = value
+  }
+  if (record.is_error === true) item.is_error = true
+  const message = record.message
+  if (message && typeof message === "object") {
+    const source = message as Record<string, unknown>
+    const slim: Record<string, unknown> = {}
+    if (typeof source.role === "string") slim.role = source.role
+    if (typeof source.content === "string") {
+      slim.content = boundedRetainedText(source.content)
+    } else if (Array.isArray(source.content)) {
+      slim.content = source.content
+        .slice(0, MAX_RETAINED_BLOCKS_PER_ITEM)
+        .flatMap(retainedClaudeContentBlock)
+    }
+    item.message = slim
+  }
+  return item
+}
+
+function retainedClaudeContentBlock(block: unknown): Record<string, unknown>[] {
+  if (!block || typeof block !== "object") return []
+  const record = block as Record<string, unknown>
+  if (record.type === "text" && typeof record.text === "string") {
+    return [{ type: "text", text: boundedRetainedText(record.text) }]
+  }
+  if (record.type === "tool_use") {
+    return [
+      {
+        type: "tool_use",
+        ...(typeof record.id === "string" ? { id: record.id } : {}),
+        ...(typeof record.name === "string" ? { name: record.name } : {}),
+      },
+    ]
+  }
+  if (record.type === "tool_result") {
+    return [
+      {
+        type: "tool_result",
+        ...(typeof record.tool_use_id === "string"
+          ? { tool_use_id: record.tool_use_id }
+          : {}),
+        ...(record.is_error === true ? { is_error: true } : {}),
+      },
+    ]
+  }
+  return []
+}
+
 function sdkAssistantUuid(msg: unknown): string | null {
   if (!msg || typeof msg !== "object") return null
   const record = msg as { type?: unknown; uuid?: unknown }
@@ -4440,6 +4809,91 @@ function sdkAssistantUuid(msg: unknown): string | null {
   return typeof record.uuid === "string" && record.uuid.length > 0
     ? record.uuid
     : null
+}
+
+/**
+ * One-message streaming input carrying the prompt plus image blocks. The SDK
+ * keeps stdin open until the first result (canUseTool and hooks need it) and
+ * then closes it, exactly like a string prompt.
+ */
+async function* claudeUserMessageWithImages(
+  text: string,
+  images: ReadonlyArray<InlineImageAttachment>
+): AsyncGenerator<ClaudeAgentSdk.SDKUserMessage> {
+  yield {
+    type: "user",
+    session_id: "",
+    parent_tool_use_id: null,
+    message: {
+      role: "user",
+      content: [
+        { type: "text" as const, text },
+        ...images.map((image) => ({
+          type: "image" as const,
+          source: {
+            type: "base64" as const,
+            media_type: image.mediaType,
+            data: image.base64,
+          },
+        })),
+      ],
+    },
+  }
+}
+
+/**
+ * Starts the Claude Code process the Agent SDK asks for, through the same
+ * Windows-safe launch the status probe uses (see claudeLaunch.ts). stderr is
+ * recorded in a bounded tail when one is given, otherwise drained.
+ */
+function spawnClaudeSdkChild(
+  options: ClaudeAgentSdk.SpawnOptions,
+  diagnostics: {
+    readonly stderr?: ProcessStderrTail
+    readonly threadId?: string
+    /** Node runtime to use when the SDK asks for bare `node`. */
+    readonly nodeRuntime?: string
+  } = {}
+): ChildProcessWithoutNullStreams {
+  const launch = claudeSpawnCommand(
+    options.command === "node" && diagnostics.nodeRuntime
+      ? diagnostics.nodeRuntime
+      : options.command,
+    options.args
+  )
+  // All three stdio streams are pipes, so none of them is null.
+  const child = spawn(launch.command, launch.args, {
+    cwd: options.cwd,
+    env: options.env,
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+    windowsVerbatimArguments: launch.windowsVerbatimArguments,
+    // POSIX tree-kill signals the process group, which requires the child
+    // to be the group leader. Windows addresses the tree by PID.
+    detached: process.platform !== "win32",
+    signal: options.signal,
+  }) as ChildProcessWithoutNullStreams
+  // Registered so a backend that dies does not leave Claude Code (and the
+  // MCP servers it started) running; released when the root exits.
+  const untrack = trackChildProcessTree(child, "claude code")
+  child.once("exit", untrack)
+  child.once("error", untrack)
+  const stderr = diagnostics.stderr
+  if (!stderr) {
+    child.stderr?.resume()
+    return child
+  }
+  child.stderr?.on("data", (chunk: Buffer | string) => {
+    for (const line of stderr.push(chunk)) {
+      logger.debug({ thread: diagnostics.threadId, line }, "claude stderr")
+    }
+  })
+  child.stderr?.once("end", () => {
+    for (const line of stderr.flush()) {
+      logger.debug({ thread: diagnostics.threadId, line }, "claude stderr")
+    }
+  })
+  return child
 }
 
 function isClaudeBinaryRunnable(binaryPath: string | null): boolean {
@@ -4500,6 +4954,13 @@ function normalizeExactClaudeConfigDir(configDir: string): string {
   return path.normalize(path.resolve(expandHomePath(configDir)))
 }
 
+/**
+ * Waits for the user to answer an approval, plan approval or question. There
+ * is deliberately no timer: a request must never resolve on its own (a timed
+ * out question used to count as answered with `{}` and a plan as rejected).
+ * It settles only on the user response, or with `fallback` when the turn is
+ * interrupted or the session stops, which the caller reports as interrupted.
+ */
 function awaitPendingClaudeRequest<T>(
   pending: Map<string, (value: T) => void>,
   requestId: string,
@@ -4513,18 +4974,12 @@ function awaitPendingClaudeRequest<T>(
     const finish = (value: T) => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
       signal.removeEventListener("abort", onAbort)
       if (pending.get(requestId) === resolver) pending.delete(requestId)
       resolve(value)
     }
     const resolver = (value: T) => finish(value)
     const onAbort = () => finish(fallback)
-    const timer = setTimeout(
-      () => finish(fallback),
-      CLAUDE_PENDING_REQUEST_TIMEOUT_MS
-    )
-    timer.unref?.()
     pending.set(requestId, resolver)
     signal.addEventListener("abort", onAbort, { once: true })
     if (signal.aborted) onAbort()
@@ -4533,7 +4988,6 @@ function awaitPendingClaudeRequest<T>(
         publish()
       } catch (error) {
         settled = true
-        clearTimeout(timer)
         signal.removeEventListener("abort", onAbort)
         if (pending.get(requestId) === resolver) pending.delete(requestId)
         reject(error)

@@ -16,7 +16,9 @@ export {
   CHAT_ATTACHMENTS_MAX_COUNT,
   chatAttachmentSchema,
   chatAttachmentsSchema,
+  chatMessageAttachmentSchema,
   type ChatAttachment,
+  type ChatMessageAttachment,
 } from "./chat-attachment"
 
 export const CHAT_HISTORY_MAX_BYTES = 512 * 1024
@@ -119,8 +121,33 @@ export const chatSendSchema = z
         .parse(pick<unknown>(raw, "modelSelection", "model_selection")) ?? null
     const rawModelId =
       pick<unknown>(raw, "modelId", "model_id") ?? modelSelection?.model
+    // The composer's focus overlay (security, frontend, …) for a prepared
+    // turn's instruction. Left out when absent, so the dispatch fingerprint
+    // of a request that does not send it stays what it was.
+    const specialMode = z
+      .string()
+      .trim()
+      .max(64)
+      .nullish()
+      .parse(pick<unknown>(raw, "specialMode", "special_mode"))
+    // A provider plugin's fallback send: the token `/chat/persist-user`
+    // returned after it ran this message's "on message send" hooks, so they
+    // do not run twice. The backend checks it (single use, short-lived,
+    // bound to this message). Left out when absent, like `special_mode`.
+    const preparedTurnToken = z
+      .string()
+      .trim()
+      .max(128)
+      .nullish()
+      .parse(pick<unknown>(raw, "preparedTurnToken", "prepared_turn_token"))
 
     return {
+      ...((specialMode ? { special_mode: specialMode } : {}) as {
+        special_mode?: string
+      }),
+      ...((preparedTurnToken
+        ? { prepared_turn_token: preparedTurnToken }
+        : {}) as { prepared_turn_token?: string }),
       provider_kind: z.coerce
         .string()
         .trim()
@@ -251,9 +278,11 @@ export const chatSendSchema = z
           .parse(
             pick<unknown>(raw, "systemInstruction", "system_instruction")
           ) ?? null,
-      // Set by a client that does not prepare its turns itself (the phone
-      // app): the backend runs the user's "on message send" hooks and
-      // builds the system instruction the desktop would have sent.
+      // Set by every client that leaves the turn's preparation to the
+      // backend (the desktop, the remote web UI and the phone app): the
+      // backend builds the system instruction from the user's and the
+      // project's settings. The user's "on message send" hooks run in the
+      // backend for every message, prepared or not.
       prepare_turn:
         z
           .boolean()
@@ -372,6 +401,68 @@ export const chatInterruptSchema = z
       .parse(pick<unknown>(raw, "threadId", "thread_id")),
   }))
 export type ChatInterruptBody = z.infer<typeof chatInterruptSchema>
+
+/**
+ * Body of `/chat/steer`: a message for the chat's running turn. `message`
+ * is what the provider reads; `userMessageContent` is what the transcript
+ * shows (the composer text without the browser-element context).
+ * `userMessageId` is the queued draft's id, so a retry stores the message
+ * once.
+ */
+export const chatSteerSchema = z
+  .record(z.string(), z.unknown())
+  .transform((raw) => ({
+    threadId: nonBlankString(
+      "threadId is required",
+      CHAT_IDENTIFIER_MAX_CHARS
+    ).parse(pick<unknown>(raw, "threadId", "thread_id")),
+    providerKind: z
+      .string({ error: "providerKind is required" })
+      .trim()
+      .min(1, "providerKind is required")
+      .max(128)
+      .parse(pick<unknown>(raw, "providerKind", "provider_kind")),
+    providerInstanceId:
+      z
+        .string()
+        .max(CHAT_IDENTIFIER_MAX_CHARS)
+        .nullish()
+        .parse(
+          pick<unknown>(raw, "providerInstanceId", "provider_instance_id")
+        ) ?? null,
+    message: nonBlankString("message is required").parse(
+      pick<unknown>(raw, "message", "message")
+    ),
+    userMessageId: nonBlankString("userMessageId is required", 512).parse(
+      pick<unknown>(raw, "userMessageId", "user_message_id")
+    ),
+    userMessageContent:
+      z
+        .string()
+        .max(CHAT_MESSAGE_MAX_CHARS)
+        .nullish()
+        .parse(
+          pick<unknown>(raw, "userMessageContent", "user_message_content")
+        ) ?? null,
+    userMessageCreatedAt:
+      z
+        .string()
+        .datetime()
+        .nullish()
+        .parse(
+          pick<unknown>(raw, "userMessageCreatedAt", "user_message_created_at")
+        ) ?? null,
+    modelId:
+      z
+        .string()
+        .max(CHAT_IDENTIFIER_MAX_CHARS)
+        .nullish()
+        .parse(pick<unknown>(raw, "modelId", "model_id")) ?? null,
+    attachments: chatAttachmentsSchema
+      .default([])
+      .parse(pick<unknown>(raw, "attachments", "attachments")),
+  }))
+export type ChatSteerBody = z.infer<typeof chatSteerSchema>
 
 export const chatRotateSessionSchema = z
   .record(z.string(), z.unknown())

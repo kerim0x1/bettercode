@@ -11,6 +11,8 @@ export type ShortcutParityAction =
   | "terminal-toggle"
   | "terminal-new"
   | "terminal-close"
+  | "terminal-split-right"
+  | "terminal-split-down"
   | "preview-toggle"
   | "preview-refresh"
   | "preview-focus-location"
@@ -218,12 +220,25 @@ export const SHORTCUT_PARITY_MANIFEST: readonly ShortcutParityManifestEntry[] =
       id: "terminal-split",
       binding: "mod+d",
       displayBinding: "Ctrl+D",
-      actionLabel: "Split Terminal",
+      actionLabel: "Split Terminal Right",
       scope: "terminal",
-      status: "unavailable",
-      action: null,
+      status: "contextual",
+      action: "terminal-split-right",
       chord: { codes: ["KeyD"] },
-      note: "No terminal split primitive exists.",
+      showInShortcutDialog: true,
+      note: "Takes Ctrl+D from the shell while a terminal has focus; type exit to end a shell.",
+    },
+    {
+      id: "terminal-split-down",
+      binding: "mod+shift+d",
+      displayBinding: "Ctrl+Shift+D",
+      actionLabel: "Split Terminal Down",
+      scope: "terminal",
+      status: "contextual",
+      action: "terminal-split-down",
+      chord: { codes: ["KeyD"], shift: true },
+      showInShortcutDialog: true,
+      note: "Outside a terminal Ctrl+Shift+D keeps toggling the diff panel.",
     },
     {
       id: "open-favorite",

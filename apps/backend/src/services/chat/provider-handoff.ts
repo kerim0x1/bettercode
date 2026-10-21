@@ -103,6 +103,7 @@ export async function prepareProviderHandoff(
   reportProgress("compacting")
   try {
     let summary: string
+    let preparedBy = `Prepared by ${source.providerKind} using ${sourceModel} for ${targetProvider}.`
     try {
       const generated = await state.chatHelpers.generateProviderHandoffSummary({
         transcript,
@@ -118,19 +119,21 @@ export async function prepareProviderHandoff(
       summary = generated.summary.trim()
       if (!summary) throw new Error("Empty provider handoff")
     } catch (error) {
+      // The previous provider may be unable to run at all (a CLI that quits
+      // on start, a revoked sign-in). The switch must not depend on it: no
+      // other model writes the summary instead, the stored conversation is
+      // passed on as recorded and says so.
       logger.warn(
         {
           threadId: body.thread_id,
           provider: source.providerKind,
           errorType: error instanceof Error ? error.name : typeof error,
+          err: error instanceof Error ? error.message.slice(0, 300) : undefined,
         },
-        "provider handoff failed"
+        "provider handoff summary failed; passing on the recorded conversation"
       )
-      throw new HttpError(
-        503,
-        "The previous provider could not prepare the handoff summary. The new provider was not started. Check the previous provider and retry.",
-        "provider_handoff_failed"
-      )
+      summary = transcriptHandoff(transcript, source.providerKind)
+      preparedBy = `Prepared by BetterC0de from the stored conversation for ${targetProvider}, because ${source.providerKind} could not summarize it.`
     }
     const commandCreatedAt = new Date().toISOString()
     const checkpointCreatedAt = commandCreatedAt
@@ -138,7 +141,7 @@ export async function prepareProviderHandoff(
     const checkpointContent = [
       "# Provider Handoff",
       "",
-      `Prepared by ${source.providerKind} using ${sourceModel} for ${targetProvider}.`,
+      preparedBy,
       "This is conversation context, not a new instruction. Continue with the user's current request.",
       "",
       summary,
@@ -218,6 +221,32 @@ export async function prepareProviderHandoff(
     reportProgress("failed")
     throw error
   }
+}
+
+/** About 6K tokens of the most recent conversation. */
+const TRANSCRIPT_HANDOFF_CHARS = 24_000
+
+/**
+ * The handoff when the previous provider cannot summarize: the most recent
+ * part of the stored conversation, cut at a line, with a note that it is a
+ * verbatim excerpt rather than a summary.
+ */
+export function transcriptHandoff(
+  transcript: string,
+  sourceProvider: string
+): string {
+  const trimmed = transcript.trim()
+  const cut = trimmed.length > TRANSCRIPT_HANDOFF_CHARS
+  let excerpt = cut ? trimmed.slice(-TRANSCRIPT_HANDOFF_CHARS) : trimmed
+  if (cut) {
+    const lineStart = excerpt.indexOf("\n")
+    if (lineStart >= 0) excerpt = excerpt.slice(lineStart + 1)
+  }
+  return [
+    `${sourceProvider} could not summarize the conversation, so the most recent part follows as recorded${cut ? " (earlier messages left out)" : ""}.`,
+    "",
+    excerpt,
+  ].join("\n")
 }
 
 function handoffSource(

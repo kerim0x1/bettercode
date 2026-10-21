@@ -1,33 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { checkpointRefForThreadTurn } from "@betterc0de/schema"
 import type { AppState } from "../appState"
+import { withInertAppState } from "../testUtils/inert-app-state"
 import { revertThreadCheckpoint } from "./checkpoint-revert-saga"
 import { MAX_CHECKPOINT_REVERT_TURN_RANGE } from "./checkpoint-revert-operations"
-import { workspaceRecoveryGate } from "./workspace-recovery-gate"
-import { closeShellSessionsForWorkspace } from "./shell"
 
 vi.mock("./git", () => ({ isRepo: vi.fn(async () => ({ is_repo: false })) }))
-vi.mock("./shell", () => ({
-  closeShellSessionsForWorkspace: vi.fn(async () => {}),
-}))
-vi.mock("./terminalPty", () => ({
-  shutdownTerminalPtySessionsForWorkspace: vi.fn(async () => {}),
-}))
 vi.mock("./checkpoint-recovery-fence", () => ({
   recoveryWorkspacesForThread: () => [],
 }))
-vi.mock("./workspace-recovery-gate", () => ({
-  workspaceRecoveryGate: {
-    acquireExclusiveAfterQuiesce: vi.fn(async () => ({ release: vi.fn() })),
-  },
-}))
+
+/** The backend's shell sessions, which a revert drains for its workspace. */
+const shellSessions = { closeSessionsForWorkspace: vi.fn(async () => 0) }
+/** The backend's recovery gate, which a revert holds exclusively. */
+const workspaceRecoveryGate = {
+  acquireExclusiveAfterQuiesce: vi.fn(async () => ({ release: vi.fn() })),
+}
 
 describe("checkpoint revert counter validation", () => {
   beforeEach(() => vi.clearAllMocks())
 
   const run = (latestTurn: number, refs: string[] = []) =>
     revertThreadCheckpoint({
-      state: {
+      state: withInertAppState({
+        shellSessions,
+        workspaceRecoveryGate,
         providerSessionBindings: {
           getLatestForThread: () => ({
             cwd: "/repo",
@@ -39,7 +36,7 @@ describe("checkpoint revert counter validation", () => {
           listCheckpointRefsByThread: () => refs,
           latestTurnIndex: () => latestTurn,
         },
-      } as unknown as AppState,
+      } as unknown as AppState),
       threadId: "thread-1",
       turnCount: 0,
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -54,7 +51,7 @@ describe("checkpoint revert counter validation", () => {
       expect(
         workspaceRecoveryGate.acquireExclusiveAfterQuiesce
       ).not.toHaveBeenCalled()
-      expect(closeShellSessionsForWorkspace).not.toHaveBeenCalled()
+      expect(shellSessions.closeSessionsForWorkspace).not.toHaveBeenCalled()
     }
   )
 

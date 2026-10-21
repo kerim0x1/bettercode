@@ -6,21 +6,21 @@ import type { Settings } from "../settings/schema"
 import { ProviderAdapterRegistry } from "../provider/registry"
 import { ProviderService } from "../provider/service"
 import { ThreadTurnCoordinator } from "../provider/threadTurnCoordinator"
-import type { ProviderRuntimeEvent } from "../provider/types"
+import type { LegacyProviderEvent } from "../provider/types"
+import type { TurnLifecyclePolicy } from "../provider/turnLifecyclePolicy"
 import { ClaudeApiAdapter } from "../provider/adapters/claudeApi"
 import { ApiModelCatalog } from "../provider/adapters/apiModelCatalog"
 import { ApiKeyPool } from "../auth/apiKeyPool"
 import { ClaudeAgentAdapter } from "../provider/adapters/claudeAgent"
+import { BaseProviderAdapter } from "../provider/adapters/baseAdapter"
 import {
   makeGrokAdapter,
   makeLmStudioAdapter,
   makeOpenAiAdapter,
   makeOpenRouterAdapter,
 } from "../provider/adapters/factories"
-import {
-  portableMcpServersToAcp,
-  createPortableMcpServerResolver,
-} from "../provider/runtime/cursor/AcpMcpServers"
+import { portableMcpServersToAcp } from "../provider/runtime/acp/AcpMcpServers"
+import { resolveConfiguredMcpServers } from "../services/desktop-config/mcp"
 import { CodeSearchHarness } from "../services/code-search/harness"
 import { OrchestratorService } from "../services/orchestrator/service"
 import { createContextSourceReader } from "../services/orchestrator/context-sources"
@@ -29,11 +29,11 @@ import { OrchestratorMcpHarness } from "../services/orchestrator/mcp"
 import { dispatchChatTurn } from "../services/chat/dispatch"
 import { interruptChatTurn } from "../services/chat/sessions"
 import { withCodeSearchServer } from "../services/code-search/provider-resolver"
+import { isScratchWorkspacePath } from "../services/scratchWorkspace"
 import {
   ProviderHub,
   ProviderInstanceManager,
   isProviderSessionContinuationCompatible,
-  canonicalToLegacy,
   makeEventNdjsonLogger,
   providerEventTraceEnabled,
 } from "../provider/runtime"
@@ -43,7 +43,6 @@ import {
   resolveOpenAiKey,
   resolveOpenRouterKey,
 } from "../auth/keyResolution"
-import { providerEventBus } from "../provider/events"
 import { SqlitePendingSourceProposedPlanImplementationStore } from "../provider/runtime/PendingSourceProposedPlanImplementationStore"
 import { CheckpointReactor } from "../checkpointing/CheckpointReactor"
 import { ChatLlmHelpers } from "../services/chat"
@@ -54,13 +53,11 @@ import {
   remoteTerminalGrantRevoked,
   remoteTerminalRevocationOwners,
 } from "../remote/terminalGrant"
-import { closeShellSessionsForOwner } from "../services/shell"
-import { shutdownTerminalPtySessionsForOwner } from "../services/terminalPty"
 import { CheckpointRefCleanupStore } from "../checkpointing/CheckpointRefCleanupStore"
 import { CheckpointRefCleanupScheduler } from "../checkpointing/CheckpointRefCleanupScheduler"
 import { CheckpointRefOperationGate } from "../checkpointing/CheckpointRefOperationGate"
 import { CheckpointTurnSlotStore } from "../checkpointing/CheckpointTurnSlotStore"
-import { positiveEnvMs } from "./env"
+import { positiveEnvMs, readTuningEnv } from "./env"
 import type {
   BootRoot,
   PersistenceContext,
@@ -75,7 +72,7 @@ import type {
  * settings-change listener, the checkpoint stores and reactor, and finally
  * the `AppState` container every transport reads from.
  *
- * `finalizeCheckpointTurn` and the two `beforeTurn` hooks close over
+ * `finalizeCheckpointTurn` and the shared `turnLifecycle` policy close over
  * `checkpointReactor`, which is constructed further down in this same scope.
  * That is safe for the same reason it always was: no turn can be dispatched
  * before the HTTP listener binds at the very end of startup, long after the
@@ -87,7 +84,7 @@ export function wireProviders(
   persistence: PersistenceContext,
   settingsCtx: SettingsContext
 ): ProvidersContext {
-  const { options, config, startupCleanup, requestAdmission } = root
+  const { options, config, startupCleanup, requestAdmission, eventBus } = root
   const { taintBackend, isBackendTainted } = root.taint
   const {
     db,
@@ -111,31 +108,32 @@ export function wireProviders(
     tailscale,
     remoteProviderTurns,
     transcriptRecoveryStore,
-    authStore,
   } = settingsCtx
+
+  // Folderless chats run in the app's own per-thread scratch tree. Nothing in
+  // it was chosen by a repository, so Agent Mode needs no trust decision
+  // there — which keeps those chats working now that automatic trust is off
+  // by default. The data dir may sit behind a symlink (macOS), so match both.
+  const scratchDataDirs = [
+    config.dataDir,
+    realDirectoryOrNull(config.dataDir),
+  ].filter((dir): dir is string => typeof dir === "string" && dir.length > 0)
+  agentPermissions.configureAppOwnedWorkspaces((workspacePath) =>
+    scratchDataDirs.some((dataDir) =>
+      isScratchWorkspacePath(dataDir, workspacePath)
+    )
+  )
 
   // ── Provider adapters (API-key fallback chain mirrors Rust auth flow) ─
   const providerRegistry = new ProviderAdapterRegistry()
   const currentSettings = settings.get()
   const apiKeyPool = new ApiKeyPool(settings)
-  const mcpResolverOptions = {
-    dataDir: config.dataDir,
-    // Resolve lazily at each turn/session so enabling, disabling, or editing a
-    // Settings MCP server takes effect without restarting the backend.
-    resolveSettingsServers: () => settings.get().mcp_servers,
-    // A repository's own `betterc0de.json` may declare MCP servers. Ones
-    // that spawn a process require an *explicit* trust decision for that
-    // workspace — the compatibility default ("trusted" with no stored
-    // record) is not consent to execute code the repo chose.
-    allowWorkspaceSpawnedServers: (cwd: string) => {
-      try {
-        const trust = agentPermissions.getWorkspaceTrust(cwd)
-        return trust.state === "trusted" && trust.explicit
-      } catch {
-        return false
-      }
-    },
-  }
+  // The configured MCP servers of a workspace: the desktop's
+  // `mcp-servers.json` (in the runtime home), the user's global config and,
+  // once the workspace is *explicitly* trusted, the servers it declares.
+  // Resolved at each turn/session, and the same list the prompt names
+  // (services/desktop-config/mcp.ts).
+  const configuredMcpState = { config, settings, agentPermissions }
   const codeSearch = new CodeSearchHarness({
     settings: () => settings.get(),
     isWorkspaceAllowed: (cwd) => {
@@ -183,7 +181,11 @@ export function wireProviders(
         updated_at: now,
       })
     },
-    dispatch: (body) => dispatchChatTurn(state, body, () => null),
+    // A worker's task is not a user's message: no message hooks.
+    dispatch: (body) =>
+      dispatchChatTurn(state, body, () => null, undefined, {
+        messageHooks: false,
+      }),
     interrupt: (threadId, providerKind, providerInstanceId) =>
       interruptChatTurn(state, { threadId, providerKind, providerInstanceId }),
     reportError: (error) =>
@@ -198,17 +200,22 @@ export function wireProviders(
     name: "orchestrator harness",
     run: () => orchestratorHarness.close(),
   })
-  const configuredMcpServers =
-    createPortableMcpServerResolver(mcpResolverOptions)
+  const configuredMcpServers = (cwd: string) =>
+    resolveConfiguredMcpServers(configuredMcpState, cwd)
   const directAgentTools = {
     mcpServerResolver: withCodeSearchServer(
       configuredMcpServers,
       codeSearch.resolveServer
     ),
+    shellSessions: root.shellSessions,
   }
   const acpMcpServerResolver = async (cwd: string) =>
     portableMcpServersToAcp(await directAgentTools.mcpServerResolver(cwd))
   let remoteAccessWasEnabled = currentSettings.remote_access_enabled === true
+  // Hosting off at boot (switched off while the app was closed, or a crash
+  // before the live revocation ran): nothing paired or issued earlier may
+  // come back to life when hosting is turned on again.
+  if (!remoteAccessWasEnabled) remoteAccess.revokeAllAccess()
 
   const anthropicKey = resolveAnthropicKey(currentSettings)
   const apiModelCatalog = new ApiModelCatalog(
@@ -250,6 +257,12 @@ export function wireProviders(
   )
 
   providerRegistry.register(makeLmStudioAdapter(directAgentTools))
+  // The direct-API (legacy) adapters publish their events on this
+  // backend's bus, where ingestion and the legacy provider service listen.
+  for (const adapter of providerRegistry.all()) {
+    if (adapter instanceof BaseProviderAdapter)
+      adapter.connectEventBus(eventBus)
+  }
 
   const nativeProviderEventLogger = makeEventNdjsonLogger(
     config.providerEventLogPath,
@@ -286,6 +299,8 @@ export function wireProviders(
     resolveAcpMcpServers: acpMcpServerResolver,
     resolveCodeSearchServer: codeSearch.resolveServer,
     resolveOrchestratorServer: orchestratorHarness.resolveServer,
+    resolveImageGenerationModel: () => settings.get().image_generation_model,
+    imageGeneration: root.imageGenerations,
     getStoredProviderThreadId: ({
       threadId,
       providerKind,
@@ -359,7 +374,7 @@ export function wireProviders(
   // startup. This closure captures the reactor initialized before the HTTP
   // server becomes reachable.
   const finalizeCheckpointTurn = async (
-    event: ProviderRuntimeEvent
+    event: LegacyProviderEvent
   ): Promise<void> => {
     try {
       await checkpointReactor.finalizeTurn(event)
@@ -375,9 +390,40 @@ export function wireProviders(
       throw error
     }
   }
+  // The checkpoint baseline and turn-slot admission, the workspace trust
+  // gate and checkpoint finalization: one policy, handed to both provider
+  // stacks below so they cannot drift apart.
+  const turnLifecycle: TurnLifecyclePolicy = {
+    beforeTurn: (event) => checkpointReactor.prepareTurn(event),
+    preDispatchPolicy: (input) =>
+      agentPermissions.evaluateTurnTrust({
+        workspacePath: input.projectPath,
+        appMode: input.appMode,
+      }),
+    afterTurn: finalizeCheckpointTurn,
+  }
+  // One pair of turn limits for the provider hub and the direct-API service:
+  // an inactivity limit (paused while a request waits for the user) and an
+  // absolute ceiling. See provider/turnLimits.ts for the defaults.
+  const ignoreInvalidTuningEnv = (name: string) =>
+    logger.warn(
+      { name },
+      "Ignoring an invalid environment setting; the default applies"
+    )
+  const turnTimeoutMs = readTuningEnv(
+    "BETTERC0DE_PROVIDER_TURN_TIMEOUT_MS",
+    positiveEnvMs,
+    ignoreInvalidTuningEnv
+  )
+  const turnMaxDurationMs = readTuningEnv(
+    "BETTERC0DE_PROVIDER_TURN_MAX_DURATION_MS",
+    positiveEnvMs,
+    ignoreInvalidTuningEnv
+  )
   const providerHub = new ProviderHub({
     instances: initialProviderInstances.instances,
-    turnTimeoutMs: positiveEnvMs("BETTERC0DE_PROVIDER_TURN_TIMEOUT_MS"),
+    turnTimeoutMs,
+    turnMaxDurationMs,
     statusCacheDir: path.join(config.dataDir, "provider-status-cache"),
     canonicalEventLogger: canonicalProviderEventLogger,
     refreshInstances: ({ instanceId }) =>
@@ -385,27 +431,7 @@ export function wireProviders(
         forceInstanceIds: instanceId ? [instanceId] : [],
       }).instances,
     threadTurnCoordinator,
-    beforeTurn: (input) =>
-      checkpointReactor.prepareTurn({
-        event_type: "turn_started",
-        thread_id: input.threadId,
-        payload: {
-          turn_id: input.turnId,
-          dispatchTurnId: input.turnId,
-          provider_kind: input.providerKind,
-          provider_instance_id: input.providerInstanceId,
-          ...(input.projectPath ? { project_path: input.projectPath } : {}),
-        },
-      }),
-    preDispatchPolicy: (input) =>
-      agentPermissions.evaluateTurnTrust({
-        workspacePath: input.projectPath,
-        appMode: input.appMode,
-      }),
-    afterTurn: async (event) => {
-      const legacy = canonicalToLegacy(event)
-      if (legacy) await finalizeCheckpointTurn(legacy)
-    },
+    turnLifecycle,
   })
   startupCleanup.push({
     name: "provider hub",
@@ -416,7 +442,7 @@ export function wireProviders(
   // propagate synchronously through `emit` to the hub's catch, which marks
   // the turn uncertain.
   const unsubscribeProviderHubEvents = providerHub.subscribe((event) => {
-    providerEventBus.emitCanonical(event)
+    eventBus.emitCanonical(event)
     orchestrator.onEvent(event)
   })
   startupCleanup.push({
@@ -447,7 +473,9 @@ export function wireProviders(
     config.trustLoopbackProxyHeaders =
       next.remote_access_tailscale_serve === true
     if (remoteAccessWasEnabled && next.remote_access_enabled !== true) {
-      remoteAccess.revokeOtherSessions()
+      // Sessions and unredeemed pairing links alike: a shared QR code must
+      // not start working again when hosting is re-enabled.
+      remoteAccess.revokeAllAccess()
       // Hosting off means the tailnet endpoint must disappear too; the
       // setting survives so re-enabling hosting brings it back.
       if (next.remote_access_tailscale_serve === true) {
@@ -465,8 +493,8 @@ export function wireProviders(
         remoteAccess.listSessions()
       )) {
         void Promise.allSettled([
-          closeShellSessionsForOwner(ownerId),
-          shutdownTerminalPtySessionsForOwner(ownerId),
+          root.shellSessions.closeSessionsForOwner(ownerId),
+          root.terminalPtys.shutdownForOwner(ownerId),
         ]).then((results) => {
           for (const result of results) {
             if (result.status === "rejected") {
@@ -516,19 +544,24 @@ export function wireProviders(
   })
 
   const providers = new ProviderService(providerRegistry, {
+    eventBus,
+    turnTimeoutMs,
+    // BETTERC0DE_TURN_HARD_TIMEOUT_MS is the earlier name of this ceiling.
+    turnMaxDurationMs:
+      turnMaxDurationMs ??
+      readTuningEnv(
+        "BETTERC0DE_TURN_HARD_TIMEOUT_MS",
+        positiveEnvMs,
+        ignoreInvalidTuningEnv
+      ),
     durableTurnCount: (threadId) => checkpointDiffs.latestTurnIndex(threadId),
     threadTurnCoordinator,
-    beforeTurn: (event) => checkpointReactor.prepareTurn(event),
-    preDispatchPolicy: (input) =>
-      agentPermissions.evaluateTurnTrust({
-        workspacePath: input.projectPath,
-        appMode: input.appMode,
-      }),
-    afterTurn: finalizeCheckpointTurn,
+    turnLifecycle,
   })
   const chatHelpers = new ChatLlmHelpers({
     settings: () => settings.get(),
     apiKeyPool,
+    nativeTextGeneration: root.nativeTextGenerations,
   })
   const worktrees = new WorktreeManager(db, eventStore, worktreeRegistry)
   const checkpointRefCleanupStore = new CheckpointRefCleanupStore(db)
@@ -546,7 +579,7 @@ export function wireProviders(
   const sourceProposedPlanImplementations =
     new SqlitePendingSourceProposedPlanImplementationStore(db)
   const checkpointReactor = new CheckpointReactor({
-    eventBus: providerEventBus,
+    eventBus,
     threads,
     logger,
     cleanupJournal: checkpointRefCleanupStore,
@@ -608,7 +641,6 @@ export function wireProviders(
     providerEventLoggers,
     transcriptRecoveryStore,
     sourceProposedPlanImplementations,
-    authStore,
     checkpointReverts,
     checkpointReactor,
     checkpointTurnSlots,
@@ -618,6 +650,9 @@ export function wireProviders(
     remoteAccess,
     remoteProviderTurns,
     tailscale,
+    terminalPtys: root.terminalPtys,
+    shellSessions: root.shellSessions,
+    workspaceRecoveryGate: root.workspaceRecoveryGate,
     taintBackend,
     // HTTP and WS admission checks refuse new work after an instance-local
     // durability failure or explicit host taint.
@@ -647,5 +682,14 @@ export function wireProviders(
     checkpointRefCleanup,
     onSettingsChange,
     state,
+  }
+}
+
+/** The canonical path of an existing directory, or null. */
+function realDirectoryOrNull(directory: string): string | null {
+  try {
+    return fs.realpathSync.native(directory)
+  } catch {
+    return null
   }
 }

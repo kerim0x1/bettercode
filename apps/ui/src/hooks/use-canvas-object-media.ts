@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { canvasAssetUrl } from "@/lib/canvas-assets"
 import type { CanvasEmbedObject } from "@/lib/canvas-objects"
+import { getElectronApi } from "@/services/ipc-facade"
 
 /** The object URL for a stored picture, or null while it is being read. */
 export function useCanvasAssetUrl(assetId: string | undefined): string | null {
@@ -35,7 +36,7 @@ async function openLocal(
   projectPath: string,
   relativePath: string
 ): Promise<string> {
-  const api = window.electronAPI
+  const api = getElectronApi()
   if (!api?.openHtmlPreview) {
     throw new Error("Local files can only be embedded in the desktop app.")
   }

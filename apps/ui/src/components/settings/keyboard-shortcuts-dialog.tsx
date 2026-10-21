@@ -49,9 +49,24 @@ const SHORTCUT_GROUPS: ReadonlyArray<{
     shortcuts: [
       { keys: "Enter", action: "Send Message" },
       { keys: "Shift+Enter", action: "New Line" },
+      { keys: "Ctrl+Enter", action: "Steer or Queue While Working" },
+      { keys: "Alt+Up", action: "Edit Last Queued Message" },
       { keys: "Escape", action: "Interrupt Response" },
       { keys: "/", action: "Slash Commands" },
       { keys: "@", action: "Mention Files" },
+      { keys: "Ctrl+F", action: "Find in Chat" },
+      { keys: "F3 / Shift+F3", action: "Next / Previous Match in Chat" },
+    ],
+  },
+  {
+    category: "Chat List",
+    shortcuts: [
+      { keys: "Ctrl+1…9", action: "Open Chat 1–9 in the Sidebar (one pane)" },
+      { keys: "Ctrl+Z", action: "Undo Archive, Delete, Pin, Snooze or Move" },
+      { keys: "Ctrl+Click / Space", action: "Select Chats" },
+      { keys: "Shift+Click", action: "Select a Range of Chats" },
+      { keys: "Escape", action: "Clear the Selection" },
+      { keys: "Shift+F10", action: "Chat Menu" },
     ],
   },
   {

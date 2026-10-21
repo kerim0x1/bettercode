@@ -5,7 +5,8 @@ import { setTimeout as delay } from "node:timers/promises"
 import { TERMINAL_METHODS } from "@betterc0de/schema/remote-terminal"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import type { AppState } from "../appState"
-import { readTerminalPtySession } from "../services/terminalPty"
+import { TerminalPtyService } from "../services/terminalPty"
+import { withInertAppState } from "../testUtils/inert-app-state"
 import type { WsConnection, WsRemotePrincipal } from "./server"
 import { RemoteTerminalChannel } from "./terminalChannel"
 
@@ -36,6 +37,8 @@ interface Frame {
 }
 
 let workspace = ""
+/** A real PTY service, as the backend gives the channel. */
+const ptys = new TerminalPtyService()
 
 beforeEach(() => {
   // The OS's own realpath, as the desktop resolves a workspace: on Windows
@@ -70,11 +73,12 @@ describe("the terminal for paired devices, with a real terminal", () => {
       onClose: () => () => undefined,
     }
     const terminals = new RemoteTerminalChannel({
-      state: {
+      state: withInertAppState({
+        terminalPtys: ptys,
         projectProjections: { listAll: () => [{ path: workspace }] },
         threads: { listProjects: () => [] },
         worktreeRegistry: { listAll: () => [] },
-      } as unknown as AppState,
+      } as unknown as AppState),
       terminalGranted: () => true,
       launch: () => ({ command: process.execPath, args: ["-e", PROGRAM] }),
     })
@@ -129,8 +133,8 @@ describe("the terminal for paired devices, with a real terminal", () => {
         .catch(() => undefined)
       await until(
         () =>
-          readTerminalPtySession(opened.terminalId) === null ||
-          readTerminalPtySession(opened.terminalId)?.status === "exited",
+          ptys.readSession(opened.terminalId) === null ||
+          ptys.readSession(opened.terminalId)?.status === "exited",
         "the terminal to end"
       )
       terminals.dispose()

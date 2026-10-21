@@ -1,22 +1,21 @@
 /**
- * Build the inline `window.__BETTERC0DE__` script the main process injects
- * into the trusted renderer after page load.
+ * Runtime configuration the trusted renderer reads through
+ * `electronAPI.getRuntimeConfig()` (IPC channel `runtime:config`). Port
+ * changes after a backend restart arrive on the `backend:status` event.
  *
  * The backend bearer token intentionally never enters this payload. The
  * Electron main process adds it to trusted renderer network requests, so
  * application JavaScript cannot read or exfiltrate it.
  */
-function buildRuntimeConfigScript({ port, electronPath, previewPartition }) {
-  const payload = {
-    port,
-    mode: 'local_sidecar',
+function buildRuntimeConfig({ port, electronPath, previewPartition }) {
+  return {
+    port: Number.isInteger(port) && port > 0 ? port : 0,
+    mode: "local_sidecar",
     electronPath,
     previewPartition,
   }
-
-  return `window.__BETTERC0DE__ = ${JSON.stringify(payload)};`
 }
 
 module.exports = {
-  buildRuntimeConfigScript,
+  buildRuntimeConfig,
 }

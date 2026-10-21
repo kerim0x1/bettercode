@@ -26,14 +26,37 @@ export interface ApiKeyFailure {
   readonly kind: "invalid" | "quota" | "cooldown" | "request"
   readonly message: string
   readonly retryAt: number | null
+  /** The provider answered 429: a rate limit rather than an outage. */
+  readonly rateLimited?: boolean
+}
+
+/** The rate limit that stopped a request once no key was left to try. */
+export interface ApiKeyRateLimit {
+  readonly kind: "rate"
+  readonly resetAt: number | null
 }
 
 /** Provider messages may echo credentials. Only these fixed messages leave this module. */
 export class ApiKeyRequestError extends Error {
-  constructor(message: string) {
+  /**
+   * Set when a rate limit stopped the request. The turn's failure carries
+   * it, so the chat can resume once it lifts (services/chat/usage-limit.ts).
+   */
+  readonly limit: ApiKeyRateLimit | null
+
+  constructor(message: string, limit: ApiKeyRateLimit | null = null) {
     super(message)
     this.name = "ApiKeyRequestError"
+    this.limit = limit
   }
+}
+
+function rateLimitOf(
+  failure: ApiKeyFailure | undefined
+): ApiKeyRateLimit | null {
+  return failure?.rateLimited
+    ? { kind: "rate", resetAt: failure.retryAt }
+    : null
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -41,7 +64,25 @@ function record(value: unknown): Record<string, unknown> {
     ? (value as Record<string, unknown>)
     : {}
 }
+/**
+ * Longest a provider's retry delay may bench a key. A `Retry-After` of hours
+ * (or a far-future HTTP date) otherwise parked the key until the backend
+ * restarted; after this cap the next request simply tries it again.
+ */
+export const MAX_API_KEY_COOLDOWN_MS = 5 * 60_000
+
 function retryAt(
+  error: Record<string, unknown>,
+  now: number,
+  fallback: number
+): number {
+  return Math.min(
+    now + MAX_API_KEY_COOLDOWN_MS,
+    requestedRetryAt(error, now, fallback)
+  )
+}
+
+function requestedRetryAt(
   error: Record<string, unknown>,
   now: number,
   fallback: number
@@ -113,6 +154,7 @@ export function classifyApiKeyFailure(
       kind: "cooldown",
       message: "Rate limited. Waiting before using this key again.",
       retryAt: retryAt(root, now, 30_000),
+      rateLimited: true,
     }
   if (
     status === 408 ||
@@ -361,14 +403,13 @@ export class ApiKeyPool {
       this.versions.set(id, (this.versions.get(id) ?? 0) + 1)
     }
   }
+  /**
+   * User-initiated: forget the key's recorded health, including an active
+   * cooldown. The provider's delay is advisory and the user may know the
+   * limit has lifted (another client stopped, the plan changed).
+   */
   reset(provider: ApiKeyProvider, id: string): ApiKeyPoolView {
     const key = this.requireKey(provider, id)
-    const state = this.health.get(this.identity(provider, key))
-    if (state?.status === "cooldown" && (state.retryAt ?? 0) > Date.now())
-      throw new HttpError(
-        409,
-        "Wait for the provider's retry delay before checking this key."
-      )
     this.health.delete(this.identity(provider, key))
     this.versions.set(
       this.identity(provider, key),
@@ -510,12 +551,13 @@ export class ApiKeySession {
         signal?.throwIfAborted()
         failure = this.pool.failure(this.provider, key, error, version)
         if (started || failure.kind === "request")
-          throw new ApiKeyRequestError(failure.message)
+          throw new ApiKeyRequestError(failure.message, rateLimitOf(failure))
       }
     }
     throw new ApiKeyRequestError(
       failure?.message ??
-        "No API key is available. Check enabled keys, billing, and retry delays in Settings → Providers."
+        "No API key is available. Check enabled keys, billing, and retry delays in Settings → Providers.",
+      rateLimitOf(failure)
     )
   }
 }

@@ -25,6 +25,10 @@ const threadPageSql = (filter: "newest" | "before" | "id") => `
     thread.parent_thread_id,
     thread.codex_thread_id,
     thread.provider_goal_json,
+    thread.settings_json,
+    thread.autonomy_json,
+    thread.import_source_json,
+    thread.resume_json,
     thread.message_count,
     thread.turn_count,
     (SELECT usage.model_id FROM projection_messages AS message
@@ -199,6 +203,11 @@ export function prepareThreadStatements(db: Db) {
       FROM projection_messages
       WHERE message_id = ?
     `),
+    findMessageViewStmt: db.prepare(`
+      SELECT message_id, turn_id, role, content_json, created_at, sequence
+      FROM projection_messages
+      WHERE message_id = ? AND thread_id = ?
+    `),
     findChatDispatchStatusStmt: db.prepare(`
       SELECT status
       FROM chat_dispatches
@@ -238,6 +247,15 @@ export function prepareThreadStatements(db: Db) {
       UPDATE projection_messages
       SET sequence = sequence + 1
       WHERE thread_id = ? AND sequence >= ?
+    `),
+    // The running turn's answer stored so far: the first assistant message
+    // between the turn's user message and a message sent into the turn.
+    findFirstAssistantBetweenStmt: db.prepare(`
+      SELECT sequence
+      FROM projection_messages
+      WHERE thread_id = ? AND role = 'assistant' AND sequence > ? AND sequence < ?
+      ORDER BY sequence ASC
+      LIMIT 1
     `),
     latestMessageCreatedAtStmt: db.prepare(`
       SELECT created_at
@@ -489,6 +507,22 @@ export function prepareThreadStatements(db: Db) {
     updateThreadGoalStmt: db.prepare(`
       UPDATE projection_threads SET provider_goal_json = ? WHERE thread_id = ?
     `),
+    getThreadSettingsStmt: db.prepare(`
+      SELECT settings_json FROM projection_threads WHERE thread_id = ?
+    `),
+    // Like the goal, a chat's settings leave `updated_at` alone: a new model
+    // or permission level must not reorder the sidebar.
+    updateThreadSettingsStmt: db.prepare(`
+      UPDATE projection_threads SET settings_json = ? WHERE thread_id = ?
+    `),
+    getThreadAutonomyStmt: db.prepare(`
+      SELECT autonomy_json FROM projection_threads WHERE thread_id = ?
+    `),
+    // An Autonomous Work run reports every turn; like the goal it leaves
+    // `updated_at` (the sidebar order) alone.
+    updateThreadAutonomyStmt: db.prepare(`
+      UPDATE projection_threads SET autonomy_json = ? WHERE thread_id = ?
+    `),
     updateThreadWorkspaceStmt: db.prepare(`
       UPDATE projection_threads
       SET
@@ -550,6 +584,24 @@ export function prepareThreadStatements(db: Db) {
         AND (? IS NULL OR sequence < ?)
       ORDER BY sequence DESC
       LIMIT ?
+    `),
+    // Find in chat reads newest first and stops at its match limit, so the
+    // rows are iterated rather than paged. Only the text and the two flags
+    // that hide a message leave SQLite, as one JSON array: attachment data
+    // in the stored JSON never reaches JavaScript. A malformed row yields
+    // NULL instead of failing the whole search.
+    searchMessagesStmt: db.prepare(`
+      SELECT message_id, role, created_at, sequence,
+        CASE WHEN json_valid(content_json) THEN json_extract(
+          content_json,
+          '$.text',
+          '$.extra.internalContext',
+          '$.extra.compactedContext'
+        ) END AS search_fields
+      FROM projection_messages
+      WHERE thread_id = ?
+        AND (? IS NULL OR sequence < ?)
+      ORDER BY sequence DESC
     `),
     providerHistoryMessagesStmt: db.prepare(`
       SELECT message.message_id, message.role, message.content_json,

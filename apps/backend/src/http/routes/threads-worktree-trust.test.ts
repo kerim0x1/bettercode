@@ -4,7 +4,16 @@ import path from "node:path"
 import { Hono } from "hono"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { AppState } from "../../appState"
-import { registerThreadsRoutes } from "./threads"
+import { ThreadTurnCoordinator } from "../../provider/threadTurnCoordinator"
+import { inertOrchestrator } from "../../testUtils/routing-services"
+import { registerThreadsRoutes as registerThreadsRoutesUnfilled } from "./threads"
+import { withInertStateArgument } from "../../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const registerThreadsRoutes = withInertStateArgument(
+  registerThreadsRoutesUnfilled,
+  1
+)
 
 const cleanupDirectories: string[] = []
 
@@ -190,8 +199,16 @@ function worktreeApp(input: {
     baseBranch: entry.base_branch,
     headSha: null,
   }))
+  const passthroughTeardown = async (
+    _threadId: string,
+    operation: () => Promise<unknown>
+  ) => operation()
   const app = new Hono()
   registerThreadsRoutes(app, {
+    orchestrator: inertOrchestrator(),
+    threadTurnCoordinator: new ThreadTurnCoordinator(),
+    providerHub: { withThreadTeardown: passthroughTeardown },
+    providers: { withThreadTeardown: passthroughTeardown },
     projectProjections: {
       listAll: () => [{ path: input.baseRepoPath }],
     },

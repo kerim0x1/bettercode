@@ -16,7 +16,7 @@ vi.mock("@/lib/chat-store", () => ({
 vi.mock("@/lib/thread-compaction", () => ({
   buildThreadCompactionOutput: mocks.compact,
 }))
-vi.mock("@/services/backend", () => ({
+vi.mock("@/services/backend/chatApi", () => ({
   getAutoCompactionDecision: mocks.decision,
 }))
 vi.mock("@/lib/logger", () => ({

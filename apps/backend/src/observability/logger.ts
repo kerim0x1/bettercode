@@ -1,4 +1,5 @@
 import pino from "pino"
+import { boundedRedactedText } from "./redact"
 
 /**
  * Shared backend logger.
@@ -7,10 +8,43 @@ import pino from "pino"
  * usable while chat responses stream. Set `BETTERC0DE_LOG_FORMAT=json` when
  * structured logs are needed for ingestion.
  */
+/**
+ * Binding names whose values are credentials. Everything this logger writes
+ * reaches the Electron app log and, when the user opted in, crash reports;
+ * the main process redacts token-shaped text as well, this keeps obvious
+ * fields from being printed in the first place.
+ */
+const SENSITIVE_BINDING =
+  /(?:token|secret|password|passwd|api[_-]?key|authorization|cookie|credentials?)$/i
+const REDACTED_PATHS = [
+  "token",
+  "apiKey",
+  "api_key",
+  "authorization",
+  "password",
+  "secret",
+  "cookie",
+  "*.token",
+  "*.apiKey",
+  "*.api_key",
+  "*.authorization",
+  "*.password",
+  "*.secret",
+  "*.accessToken",
+  "*.refreshToken",
+  "*.access_token",
+  "*.refresh_token",
+  "headers.authorization",
+  "headers.cookie",
+  "*.headers.authorization",
+  "*.headers.cookie",
+]
+
 const jsonLogger = pino(
   {
     level: normalizeLogLevel(process.env.LOG_LEVEL) ?? "info",
     base: { app: "betterc0de-backend" },
+    redact: { paths: REDACTED_PATHS, censor: "[REDACTED]" },
   },
   pino.destination(2)
 )
@@ -117,16 +151,87 @@ function formatBindingValue(value: unknown): string | null {
   return String(value)
 }
 
+/** Bindings printed as indented blocks after the line, not inline. */
+const DETAIL_BINDINGS = new Set(["stack", "cause"])
+const DETAIL_MAX_CHARS = 8_000
+const MAX_CAUSE_DEPTH = 3
+
 function formatBindings(bindings: Record<string, unknown> | undefined): string {
   if (!bindings) return ""
   const pairs = Object.entries(bindings)
-    .filter(([key, value]) => key !== "app" && value !== undefined)
+    .filter(
+      ([key, value]) =>
+        key !== "app" &&
+        value !== undefined &&
+        !(DETAIL_BINDINGS.has(key) && typeof value === "string")
+    )
     .map(([key, value]) => {
+      if (SENSITIVE_BINDING.test(key) && value !== null)
+        return `${key}=[REDACTED]`
       const formatted = formatBindingValue(value)
       return formatted ? `${key}=${formatted}` : null
     })
     .filter((value): value is string => Boolean(value))
   return pairs.length > 0 ? ` ${pairs.join(" ")}` : ""
+}
+
+function errorChain(error: Error): string {
+  const parts = [error.stack || `${error.name}: ${error.message}`]
+  let cause: unknown = (error as { cause?: unknown }).cause
+  for (
+    let depth = 0;
+    cause !== undefined && cause !== null && depth < MAX_CAUSE_DEPTH;
+    depth += 1
+  ) {
+    if (cause instanceof Error) {
+      parts.push(
+        `Caused by: ${cause.stack || `${cause.name}: ${cause.message}`}`
+      )
+      cause = (cause as { cause?: unknown }).cause
+    } else {
+      parts.push(`Caused by: ${String(cause)}`)
+      break
+    }
+  }
+  return parts.join("\n")
+}
+
+/**
+ * Stack and cause details carried by a record: explicit `stack` / `cause`
+ * string bindings (for example from http/errors.ts sanitizeError), and the
+ * stack plus cause chain of Error values at error and fatal level. Printed
+ * redacted and bounded, one indented block each, below the summary line.
+ */
+function formatDetails(
+  level: LogLevel,
+  input: LogInput,
+  bindings: Record<string, unknown> | undefined
+): string {
+  const blocks: string[] = []
+  const severe = LEVEL_WEIGHT[level] >= LEVEL_WEIGHT.error
+  if (input instanceof Error && severe) blocks.push(errorChain(input))
+  if (bindings) {
+    for (const [key, value] of Object.entries(bindings)) {
+      if (DETAIL_BINDINGS.has(key) && typeof value === "string" && value) {
+        blocks.push(`${key}: ${value}`)
+      } else if (
+        value instanceof Error &&
+        severe &&
+        !SENSITIVE_BINDING.test(key)
+      ) {
+        blocks.push(`${key}: ${errorChain(value)}`)
+      }
+    }
+  }
+  return blocks
+    .map((block) =>
+      boundedRedactedText(block, DETAIL_MAX_CHARS)
+        .split("\n")
+        .map((line) => `    ${line}`)
+        .join("\n")
+    )
+    .map((block) => `\n${block}`)
+    .join("")
 }
 
 function writeSimple(level: LogLevel, input: LogInput, message?: string): void {
@@ -145,7 +250,9 @@ function writeSimple(level: LogLevel, input: LogInput, message?: string): void {
       : typeof input === "string"
         ? input
         : "log")
-  process.stderr.write(`${level} ${text}${formatBindings(bindings)}\n`)
+  process.stderr.write(
+    `${level} ${text}${formatBindings(bindings)}${formatDetails(level, input, bindings)}\n`
+  )
 }
 
 function write(level: LogLevel, input: LogInput, message?: string): void {

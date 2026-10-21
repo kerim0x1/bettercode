@@ -22,14 +22,9 @@ import {
   useRef,
   useState,
 } from "react"
-import type {
-  BundledLanguage,
-  BundledTheme,
-  HighlighterGeneric,
-  ThemedToken,
-  ThemeRegistrationRaw,
-} from "shiki"
+import type { BundledLanguage, ThemedToken, ThemeRegistrationRaw } from "shiki"
 import { useAppearanceStore } from "@/lib/appearance-store"
+import { getHighlighter } from "@/lib/shiki-highlighter"
 import { getCustomTheme } from "@/lib/custom-theme-cache"
 import { customThemeIdOf, type AppliedCustomTheme } from "@/lib/vscode-theme"
 
@@ -142,12 +137,6 @@ function activeCustomShikiTheme(): AppliedCustomTheme | null {
   return getCustomTheme(customThemeIdOf(useAppearanceStore.getState().template))
 }
 
-// Highlighter cache (singleton per language)
-const highlighterCache = new Map<
-  string,
-  Promise<HighlighterGeneric<BundledLanguage, BundledTheme>>
->()
-
 // Token cache. Capped so a long session that expands many or large code blocks
 // can't grow this module-level map without bound. Map preserves insertion
 // order, so the oldest entry is evicted first; reads promote to most-recent.
@@ -180,30 +169,6 @@ const getTokensCacheKey = (
   const start = code.slice(0, 100)
   const end = code.length > 100 ? code.slice(-100) : ""
   return `${themeName}:${language}:${code.length}:${start}:${end}`
-}
-
-const getHighlighter = (
-  language: BundledLanguage
-): Promise<HighlighterGeneric<BundledLanguage, BundledTheme>> => {
-  const cached = highlighterCache.get(language)
-  if (cached) {
-    return cached
-  }
-
-  // Imported here rather than at module scope so shiki and its ~290 bundled
-  // TextMate grammars load only once a code block is actually rendered.
-  // Statically importing it put the whole highlighter on the critical path
-  // for every launch. Callers already render `createRawTokens` until this
-  // resolves, so nothing in the render path changes.
-  const highlighterPromise = import("shiki").then(({ createHighlighter }) =>
-    createHighlighter({
-      langs: [language],
-      themes: ["github-light", "github-dark"],
-    })
-  )
-
-  highlighterCache.set(language, highlighterPromise)
-  return highlighterPromise
 }
 
 // Create raw tokens for immediate display while highlighting loads
@@ -248,24 +213,22 @@ const highlightCode = (
     subscribers.get(tokensCacheKey)?.add(callback)
   }
 
-  // Start highlighting in background - fire-and-forget async pattern
-  getHighlighter(language)
+  // Start highlighting in background - fire-and-forget async pattern.
+  // The shared highlighter (lib/shiki-highlighter) loads shiki lazily, so its
+  // grammars stay off the launch path; callers render `createRawTokens` until
+  // this resolves. Unknown languages come back as plain "text".
+  getHighlighter({
+    language,
+    themes: custom
+      ? [
+          "github-light",
+          "github-dark",
+          custom.shiki as unknown as ThemeRegistrationRaw,
+        ]
+      : ["github-light", "github-dark"],
+  })
     // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then)
-    .then(async (highlighter) => {
-      if (
-        custom &&
-        !highlighter.getLoadedThemes().includes(custom.shiki.name)
-      ) {
-        await highlighter.loadTheme(
-          custom.shiki as unknown as ThemeRegistrationRaw
-        )
-      }
-      return highlighter
-    })
-    .then((highlighter) => {
-      const availableLangs = highlighter.getLoadedLanguages()
-      const langToUse = availableLangs.includes(language) ? language : "text"
-
+    .then(({ highlighter, language: langToUse }) => {
       const result = highlighter.codeToTokens(code, {
         lang: langToUse,
         themes: {

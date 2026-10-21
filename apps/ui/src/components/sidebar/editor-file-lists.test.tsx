@@ -203,7 +203,7 @@ describe("editor file lists", () => {
     expect(open).toHaveBeenCalledWith("/repo/lib/helper.ts", {
       line: 42,
       column: 7,
-      preview: true,
+      preview: false,
     })
     expect(dispatchEditorGotoLine).toHaveBeenCalledWith(
       {

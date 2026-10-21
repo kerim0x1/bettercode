@@ -9,14 +9,21 @@ import { openDatabase, type Db } from "../../persistence/db"
 import { runMigrations } from "../../persistence/migrations"
 import { EventStore } from "../../persistence/eventStore"
 import { ThreadService } from "../threads/service"
-import { providerEventBus } from "../../provider/events"
+import { ProviderEventBus } from "../../provider/events"
 import { ProviderRuntimeIngestion } from "../../provider/runtime/ProviderRuntimeIngestion"
 import { ProviderRuntimeEventJournal } from "../../provider/runtime/ProviderRuntimeEventJournal"
 import { ProviderRuntimeProjectionReceiptStore } from "../../provider/runtime/ProviderRuntimeProjectionReceiptStore"
 import { initializeThreadGoals } from "./goal-runtime"
 import { threadGoals } from "./goal-registry"
-import { registerChatRoutes } from "../../http/routes/chat"
+import { registerChatRoutes as registerChatRoutesUnfilled } from "../../http/routes/chat"
 import { dispatchChatTurn } from "./dispatch"
+import { withInertStateArgument } from "../../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const registerChatRoutes = withInertStateArgument(registerChatRoutesUnfilled, 1)
+
+/** The bus the goal runtime and ingestion under test share. */
+const providerEventBus = new ProviderEventBus()
 
 vi.mock("./dispatch", async (original) => ({
   ...(await original<typeof import("./dispatch")>()),
@@ -71,6 +78,8 @@ describe("goal HTTP, journal and dispatch wiring", () => {
       threads,
       threadTurnCoordinator: new ThreadTurnCoordinator(),
       settings: { get: () => ({ auto_save_conversations: true }) },
+      taintedRef: () => false,
+      drainingRef: () => false,
       providerHub: {
         has: () => true,
         waitForThreadIdle: async () => {},
@@ -88,7 +97,7 @@ describe("goal HTTP, journal and dispatch wiring", () => {
       projectedSink: (event) => providerEventBus.emitProjected(event),
     })
     ingestion.start()
-    stop = initializeThreadGoals(state)
+    stop = initializeThreadGoals(state, providerEventBus)
     app = new Hono()
     registerChatRoutes(app, state)
   })
@@ -139,7 +148,7 @@ describe("goal HTTP, journal and dispatch wiring", () => {
           throw new Error("goal record failed")
         })
       try {
-        expect(() => initializeThreadGoals(state)).toThrow(
+        expect(() => initializeThreadGoals(state, providerEventBus)).toThrow(
           `goal ${stage} failed`
         )
         expect(providerEventBus.listenerCount("projected")).toBe(count)
@@ -210,7 +219,7 @@ describe("goal HTTP, journal and dispatch wiring", () => {
     const persisted = threads.getThreadGoal("thread")
     expect(persisted?.id).toBeTruthy()
     stop()
-    stop = initializeThreadGoals(state)
+    stop = initializeThreadGoals(state, providerEventBus)
     expect(threads.getThreadGoal("thread")).toEqual(persisted)
     await vi.advanceTimersByTimeAsync(5000)
     expect(dispatchChatTurn).toHaveBeenCalledTimes(1)
@@ -219,7 +228,7 @@ describe("goal HTTP, journal and dispatch wiring", () => {
   it("recovers active goals as paused, supports explicit resume and durable clear", async () => {
     expect((await request("/goal Work")).status).toBe(200)
     stop()
-    stop = initializeThreadGoals(state)
+    stop = initializeThreadGoals(state, providerEventBus)
     expect(threads.getThreadGoal("thread")?.status).toBe("paused")
     await vi.advanceTimersByTimeAsync(3000)
     expect(dispatchChatTurn).not.toHaveBeenCalled()

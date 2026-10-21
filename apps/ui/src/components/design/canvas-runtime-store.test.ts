@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   MAX_CONSOLE_PER_VIEWPORT,
+  MAX_GUEST_BUCKETS,
   MAX_REQUESTS_PER_GUEST,
   ensurePreviewRequestFeed,
   resetPreviewRequestFeed,
   useCanvasRuntimeStore,
 } from "./canvas-runtime-store"
+import type { PreviewRequestEntry } from "./canvas-runtime"
 
 const initial = useCanvasRuntimeStore.getState()
 beforeEach(() => useCanvasRuntimeStore.setState(initial, true))
@@ -92,4 +94,114 @@ describe("canvas runtime store", () => {
     vi.stubGlobal("window", {})
     expect(() => ensurePreviewRequestFeed()).not.toThrow()
   })
+
+  it("drops a guest's requests when its viewport releases it or it is replaced", () => {
+    const store = useCanvasRuntimeStore.getState()
+    store.bindGuest("a::desktop", 7)
+    store.recordRequest(request(7, "1"))
+    store.recordRequest(request(8, "2"))
+    store.recordConsole("a::desktop", [line("hello")])
+
+    // A reload into a new guest: the old guest's bucket goes.
+    useCanvasRuntimeStore.getState().bindGuest("a::desktop", 9)
+    let state = useCanvasRuntimeStore.getState()
+    expect(state.requestsByGuest[7]).toBeUndefined()
+    expect(state.guestByViewport["a::desktop"]).toBe(9)
+    expect(state.guestOrder).toEqual([8])
+
+    // A pause keeps the console for when the preview loads again...
+    useCanvasRuntimeStore.getState().recordRequest(request(9, "3"))
+    useCanvasRuntimeStore
+      .getState()
+      .releaseViewport("a::desktop", { keepConsole: true })
+    state = useCanvasRuntimeStore.getState()
+    expect(state.requestsByGuest[9]).toBeUndefined()
+    expect(state.guestByViewport).toEqual({})
+    expect(state.consoleByViewport["a::desktop"]).toHaveLength(1)
+
+    // ...a removal does not. Requests of unrelated guests are untouched.
+    useCanvasRuntimeStore.getState().releaseViewport("a::desktop")
+    state = useCanvasRuntimeStore.getState()
+    expect(state.consoleByViewport).toEqual({})
+    expect(state.requestsByGuest[8]).toHaveLength(1)
+  })
+
+  it("forgets a destroyed guest", () => {
+    const store = useCanvasRuntimeStore.getState()
+    store.bindGuest("b::mobile", 4)
+    store.recordRequest(request(4, "1"))
+    useCanvasRuntimeStore.getState().bindGuest("b::mobile", null)
+    const state = useCanvasRuntimeStore.getState()
+    expect(state.requestsByGuest).toEqual({})
+    expect(state.guestByViewport).toEqual({})
+  })
+
+  it("drops a guest the shell reports destroyed, even one its viewport still names", () => {
+    const listeners: Array<(event: unknown) => void> = []
+    const stopDestroyed = vi.fn()
+    vi.stubGlobal("window", {
+      electronAPI: {
+        onPreviewRequest: () => vi.fn(),
+        onPreviewGuestDestroyed: (callback: (event: unknown) => void) => {
+          listeners.push(callback)
+          return stopDestroyed
+        },
+      },
+    })
+    ensurePreviewRequestFeed()
+    expect(listeners).toHaveLength(1)
+
+    const store = useCanvasRuntimeStore.getState()
+    store.bindGuest("c::desktop", 11)
+    store.recordRequest(request(11, "1"))
+    store.recordRequest(request(12, "2"))
+
+    listeners[0]({ webContentsId: "11" })
+    listeners[0](null)
+    expect(useCanvasRuntimeStore.getState().requestsByGuest[11]).toHaveLength(1)
+
+    listeners[0]({ webContentsId: 11 })
+    const state = useCanvasRuntimeStore.getState()
+    expect(state.requestsByGuest[11]).toBeUndefined()
+    expect(state.guestByViewport).toEqual({})
+    expect(state.guestOrder).toEqual([12])
+    expect(state.requestsByGuest[12]).toHaveLength(1)
+
+    resetPreviewRequestFeed()
+    expect(stopDestroyed).toHaveBeenCalledOnce()
+  })
+
+  it("keeps request buckets only for the most recently active unowned guests", () => {
+    const store = useCanvasRuntimeStore.getState()
+    store.bindGuest("a::desktop", 1)
+    for (let id = 1; id <= MAX_GUEST_BUCKETS + 5; id += 1)
+      useCanvasRuntimeStore.getState().recordRequest(request(id, String(id)))
+    const state = useCanvasRuntimeStore.getState()
+    const ids = Object.keys(state.requestsByGuest).map(Number)
+    expect(ids).toHaveLength(MAX_GUEST_BUCKETS)
+    // The owned guest survives although it is the oldest.
+    expect(ids).toContain(1)
+    expect(ids).not.toContain(2)
+    expect(ids).toContain(MAX_GUEST_BUCKETS + 5)
+    expect(state.guestOrder).toHaveLength(MAX_GUEST_BUCKETS)
+  })
 })
+
+function request(webContentsId: number, id: string): PreviewRequestEntry {
+  return {
+    id,
+    webContentsId,
+    method: "GET",
+    url: `http://localhost:3000/${id}`,
+    resourceType: "xhr",
+    startedAt: Number(id),
+    durationMs: 1,
+    statusCode: 200,
+    fromCache: false,
+    error: null,
+  }
+}
+
+function line(message: string) {
+  return { level: "log" as const, message, timestamp: new Date(0) }
+}

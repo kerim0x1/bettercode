@@ -60,22 +60,36 @@ describe("diff view routing", () => {
     }
   )
 
-  it("keeps the Agent diff surface independent of the workspace sidebar", () => {
+  it("uses the right panel's Diff view in Agent mode", () => {
     usePreferencesStore.setState({
       appMode: "agent",
       sidebarOpen: false,
       editorSidebarView: "search",
+      rightSidebarOpen: false,
+      workspaceTab: "files",
     })
     expect(toggleDiffView()).toBe(true)
     expect(usePreferencesStore.getState()).toMatchObject({
       appMode: "agent",
       sidebarOpen: false,
       editorSidebarView: "search",
-      diffOpen: true,
+      rightSidebarOpen: true,
       workspaceTab: "diff",
+      diffOpen: false,
     })
+    expect(isDiffViewOpen(usePreferencesStore.getState())).toBe(true)
     expect(toggleDiffView()).toBe(false)
-    expect(usePreferencesStore.getState().diffOpen).toBe(false)
+    expect(usePreferencesStore.getState().workspaceTab).toBe("overview")
+  })
+
+  it("leaves another right panel view alone when Agent Diff is turned off", () => {
+    usePreferencesStore.setState({
+      appMode: "agent",
+      rightSidebarOpen: true,
+      workspaceTab: "git",
+    })
+    setDiffViewOpen(false)
+    expect(usePreferencesStore.getState().workspaceTab).toBe("git")
   })
 
   it("does not replace another sidebar view when Settings disables Diff", () => {

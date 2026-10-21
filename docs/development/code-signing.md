@@ -10,17 +10,17 @@ The phone app is the exception, because Android and iOS install nothing unsigned
 
 | Platform | First launch | Updates |
 | --- | --- | --- |
-| Windows | SmartScreen shows "Windows protected your PC": **More info → Run anyway**. | The app skips its update check on unsigned builds (`scheduleUpdateCheck` in `apps/shell/main.cjs`). Users install a newer version by running its installer. |
-| macOS | Gatekeeper blocks the first launch: **System Settings → Privacy & Security → Open Anyway**. If macOS reports the app as damaged (Apple Silicon, downloaded copy), run `xattr -dr com.apple.quarantine /Applications/BetterC0de.app`. Since macOS 15, Control-click → Open no longer bypasses the check. | Squirrel.Mac, which electron-updater uses, only installs signed updates. Users update by installing the new disk image. |
-| Linux | Nothing: Linux does not require signed packages. | The AppImage can update itself; `.deb`, `.rpm` and tarball users install the new package. |
+| Windows | SmartScreen shows "Windows protected your PC": **More info → Run anyway**. | Unsigned builds check the release feed and show a new version with a download link (Settings → General → Updates), but download and install nothing. Users install a newer version by running its installer. |
+| macOS | Gatekeeper blocks the first launch: **System Settings → Privacy & Security → Open Anyway**. If macOS reports the app as damaged (Apple Silicon, downloaded copy), run `xattr -dr com.apple.quarantine /Applications/BetterC0de.app`. Since macOS 15, Control-click → Open no longer bypasses the check. | Squirrel.Mac, which electron-updater uses, only installs signed updates, so unsigned builds only check and link to the download, as on Windows. Users update by installing the new disk image. |
+| Linux | Nothing: Linux does not require signed packages. | The AppImage updates itself. `.deb`, `.rpm` and tarball installs check the release feed and link to the download; their users install the new package. |
 
 README.md and INSTALL.md give users these steps.
 
 ## How the pipeline treats it
 
 - `release:check`'s installer smoke records the signing state on every run ("not Authenticode-signed, as intended", "Gatekeeper rejects the unsigned build, as expected") without failing or raising CI warnings. It still launches the installed app on every platform, so an unsigned build that would not start is caught.
-- On macOS, electron-builder skips signing when no identity is available. The Electron binaries keep their linker signatures, so the app runs on Apple Silicon, but the bundle has no valid seal; that is why a quarantined download can be reported as "damaged".
-- `scripts/pack-electron.cjs` records `betterc0deCodeSigned: false` in the packaged `package.json`, which is how the Windows app knows to skip its update check.
+- After packing, the `afterPack` hook `scripts/after-pack-fuses.cjs` sets the Electron fuses of every build and verifies them. Flipping a fuse edits the binary, so on macOS the hook re-signs the whole bundle ad hoc (`codesign --sign - --deep`, through `@electron/fuses`) and Apple Silicon still runs it. electron-builder then skips its own signing because no identity is available. An ad hoc signature names no Developer ID and the app is not notarized, so Gatekeeper still blocks the first launch of a downloaded copy.
+- `release:check`'s package step passes `betterc0deCodeSigned: false` (built by `scripts/pack-electron.cjs`) into the packaged `package.json`. `apps/shell/shared/update-policy.cjs` reads it at runtime: unsigned Windows and macOS builds get the check-and-notify mode instead of automatic updates.
 
 ## Dormant tooling
 

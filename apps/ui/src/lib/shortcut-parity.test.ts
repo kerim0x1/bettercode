@@ -29,7 +29,10 @@ describe("SHORTCUT_PARITY_MANIFEST", () => {
 
     expect(byId.get("command-palette")?.binding).toBe("mod+k")
     expect(byId.get("terminal-toggle")?.binding).toBe("mod+j")
-    expect(byId.get("terminal-split")?.status).toBe("unavailable")
+    expect(byId.get("terminal-split")?.status).toBe("contextual")
+    expect(byId.get("terminal-split")?.scope).toBe("terminal")
+    expect(byId.get("terminal-split-down")?.binding).toBe("mod+shift+d")
+    expect(byId.get("terminal-split-down")?.scope).toBe("terminal")
     expect(byId.get("terminal-new")?.scope).toBe("terminal")
     expect(byId.get("terminal-close")?.scope).toBe("terminal")
     expect(byId.get("preview-toggle")?.binding).toBe("mod+shift+j")
@@ -96,7 +99,32 @@ describe("resolveShortcutParityAction", () => {
     expect(resolveShortcutParityAction(key("KeyW"), terminalContext)).toBe(
       "terminal-close"
     )
-    expect(resolveShortcutParityAction(key("KeyD"), terminalContext)).toBeNull()
+  })
+
+  it("splits the focused terminal right or down, and only inside a terminal", () => {
+    const terminalContext = {
+      ...DEFAULT_CONTEXT,
+      inTerminal: true,
+      inTextEntry: true,
+    }
+
+    expect(resolveShortcutParityAction(key("KeyD"), terminalContext)).toBe(
+      "terminal-split-right"
+    )
+    expect(
+      resolveShortcutParityAction(
+        key("KeyD", { shiftKey: true }),
+        terminalContext
+      )
+    ).toBe("terminal-split-down")
+    // Elsewhere Ctrl+Shift+D stays the diff panel's (use-global-shortcuts).
+    expect(resolveShortcutParityAction(key("KeyD"), DEFAULT_CONTEXT)).toBeNull()
+    expect(
+      resolveShortcutParityAction(
+        key("KeyD", { shiftKey: true }),
+        DEFAULT_CONTEXT
+      )
+    ).toBeNull()
   })
 
   it("keeps BetterC0de's existing new-task chord behavior", () => {

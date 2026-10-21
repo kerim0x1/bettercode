@@ -4,22 +4,22 @@
   "private": true,
   "type": "commonjs",
   "description": "BetterC0de Node.js backend (Hono HTTP + ws + better-sqlite3).",
-  "main": "dist/inProcess.cjs",
+  "main": "dist/inProcess.js",
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.2.141",
     "@anthropic-ai/sdk": "^0.105.0",
     "@betterc0de/schema": "*",
     "@hono/node-server": "^1.13.7",
-    "@types/better-sqlite3": "^7.6.13",
+    "@modelcontextprotocol/sdk": "~1.29.0",
     "better-sqlite3": "^12.9.0",
-    "fast-glob": "^3.3.3",
     "hono": "^4.6.14",
     "ignore": "^7.0.5",
     "node-pty": "^1.1.0",
@@ -29,6 +29,7 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.12.0",
     "@types/ws": "^8.5.13",
     "typescript": "~5.9.3",

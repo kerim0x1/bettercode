@@ -6,7 +6,14 @@ import { Hono } from "hono"
 import { afterEach, describe, expect, it } from "vitest"
 import type { AppState } from "../../appState"
 import { routingTestServices } from "../../testUtils/routing-services"
-import { registerWorkspaceRoutes } from "./workspace"
+import { registerWorkspaceRoutes as registerWorkspaceRoutesUnfilled } from "./workspace"
+import { withInertStateArgument } from "../../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const registerWorkspaceRoutes = withInertStateArgument(
+  registerWorkspaceRoutesUnfilled,
+  1
+)
 
 // A phone edits a file the agent may change at the same moment: the save
 // must name the bytes it started from and fail instead of overwriting.

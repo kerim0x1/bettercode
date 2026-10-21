@@ -60,8 +60,12 @@ import {
   retryCleanupQuarantines,
   type CleanupQuarantineState,
 } from "../CleanupQuarantine"
-import { buildWindowsCmdArgs } from "../../../security/windowsCommandLine"
+import {
+  buildWindowsCmdArgs,
+  resolveComSpec,
+} from "../../../security/windowsCommandLine"
 import { logger } from "../../../observability/logger"
+import { cliVersionAtLeast } from "../../../cli/versions"
 
 const PROVIDER = "betterc0de" as const
 const BETTERC0DE_SERVER_READY_PREFIXES = [
@@ -1376,7 +1380,11 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           message: `Unable to determine BetterC0de version from \`betterc0de --version\` output. BetterC0de requires v${MINIMUM_BETTERC0DE_VERSION} or newer.`,
         }
       }
-      if (compareSemverVersions(version, MINIMUM_BETTERC0DE_VERSION) < 0) {
+      if (
+        !cliVersionAtLeast(version, MINIMUM_BETTERC0DE_VERSION, {
+          prereleaseMeetsRelease: true,
+        })
+      ) {
         return {
           configured: false,
           installed: true,
@@ -4346,21 +4354,6 @@ function parseGenericCliVersion(output: string): string | null {
   return output.match(/\b(\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?)/i)?.[1] ?? null
 }
 
-function compareSemverVersions(a: string, b: string): number {
-  const left = parseVersion(a)
-  const right = parseVersion(b)
-  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
-    const diff = (left[index] ?? 0) - (right[index] ?? 0)
-    if (diff !== 0) return diff
-  }
-  return 0
-}
-
-function parseVersion(value: string): number[] {
-  const numeric = value.match(/\d+(?:\.\d+)*/)?.[0] ?? ""
-  return numeric.split(".").map((part) => Number.parseInt(part, 10) || 0)
-}
-
 function formatBetterC0deProbeError(input: {
   readonly cause: unknown
   readonly isExternalServer: boolean
@@ -4442,7 +4435,7 @@ export function spawnBetterC0deBinary(
   const directExe =
     isWindows && path.isAbsolute(binaryPath) && /\.exe$/i.test(binaryPath)
   const viaCmd = isWindows && !directExe
-  const command = viaCmd ? process.env.ComSpec?.trim() || "cmd.exe" : binaryPath
+  const command = viaCmd ? resolveComSpec() : binaryPath
   const spawnArgs = viaCmd ? buildWindowsCmdArgs(binaryPath, args) : [...args]
   return spawn(command, spawnArgs, {
     env: sanitizedChildEnvironment(options.env),

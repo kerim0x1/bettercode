@@ -18,7 +18,7 @@ import {
   type CodebaseOverviewEntry,
   type CodebaseOverview as OverviewData,
 } from "@/lib/codebase-overview"
-import { searchEntriesDetailed } from "@/services/backend"
+import { searchEntriesDetailed } from "@/services/backend/workspaceApi"
 import { listDirectoryFs } from "@/services/backend/filesystem"
 import { SearchTruncationNotice } from "@/components/search-truncation-notice"
 import "./codebase-overview.css"

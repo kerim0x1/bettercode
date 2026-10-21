@@ -16,6 +16,7 @@ import {
   FileTextIcon,
   FolderOpenIcon,
   GitBranchIcon,
+  GitPullRequestIcon,
   KeyboardIcon,
   LayoutGridIcon,
   ListTreeIcon,
@@ -31,6 +32,7 @@ import {
   SparklesIcon,
   SplitSquareHorizontalIcon,
   SquareTerminalIcon,
+  TextSearchIcon,
   Undo2Icon,
   XIcon,
   type LucideIcon,
@@ -48,7 +50,9 @@ import { relativeEditorPath } from "@/lib/editor-path"
 import { dispatchEditorRevealFile } from "@/lib/editor-reveal-event"
 import { useEditorStore } from "@/lib/editor-store"
 import { useMultiAgentStore } from "@/lib/multi-agent-store"
+import { openPullRequestsPage } from "@/lib/pull-requests-page"
 import { dispatchTerminalNewSession } from "@/lib/terminal-events"
+import { requestChatFind } from "@/lib/chat-find-events"
 import {
   usePreferencesStore,
   type EditorSidebarView,
@@ -130,6 +134,7 @@ export function EditorCommandPaletteDialog({
 }: EditorCommandPaletteDialogProps) {
   const [query, setQuery] = useState("")
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const activeChatId = useChatStore((s) => s.activeThreadId)
   const activeTabId = useEditorStore((s) => s.activeTabId)
   const activeTab = useEditorStore((s) =>
     s.tabs.find((tab) => tab.id === s.activeTabId)
@@ -818,6 +823,20 @@ export function EditorCommandPaletteDialog({
       },
     },
     {
+      id: "chat.find",
+      group: "App",
+      label: "Find in Chat",
+      detail: "Search every message of the open chat",
+      shortcut: "Ctrl+F",
+      icon: TextSearchIcon,
+      disabled: !activeChatId,
+      // After the palette has closed and handed focus back, so the find
+      // field keeps it.
+      run: () => {
+        window.setTimeout(() => requestChatFind(), 0)
+      },
+    },
+    {
       id: "app.new-project",
       group: "App",
       label: "New Project",
@@ -847,6 +866,14 @@ export function EditorCommandPaletteDialog({
       shortcut: appMode === "editor" ? undefined : "Ctrl+Shift+M",
       icon: PanelBottomIcon,
       run: () => setMarketplaceOpen(true),
+    },
+    {
+      id: "app.pull-requests",
+      group: "App",
+      label: "Pull Requests",
+      detail: "Open pull requests of your projects, through GitHub CLI",
+      icon: GitPullRequestIcon,
+      run: () => openPullRequestsPage(),
     },
     {
       id: "app.settings",

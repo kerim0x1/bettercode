@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { ProviderInstanceSnapshot } from "@betterc0de/schema"
-import { createProviderInstanceLoader } from "./provider-instance-loader"
+import { loadProviderInstanceCatalog } from "./provider-instance-loader"
 import {
   listProviderInstanceModels,
   listProviderInstances,
@@ -11,83 +11,72 @@ vi.mock("@/services/backend/providersApi", () => ({
   listProviderInstanceModels: vi.fn(),
 }))
 
-const snapshot = (modelId?: string) =>
+const snapshot = (
+  instanceId: string,
+  input: Partial<ProviderInstanceSnapshot> = {}
+) =>
   ({
-    instanceId: "codex",
+    instanceId,
     driver: "codex",
     enabled: true,
     configured: true,
-    ...(modelId
-      ? {
-          models: [
-            {
-              slug: modelId,
-              name: modelId,
-              isCustom: false,
-              capabilities: null,
-            },
-          ],
-        }
-      : {}),
+    ...input,
   }) as ProviderInstanceSnapshot
 
-describe("provider catalog request ownership", () => {
+describe("provider instance catalog loading", () => {
   beforeEach(() => vi.resetAllMocks())
 
-  it("keeps the newer catalog when an older model lookup finishes last", async () => {
-    const entered = Promise.withResolvers<void>()
-    const oldModels =
-      Promise.withResolvers<
-        Awaited<ReturnType<typeof listProviderInstanceModels>>
-      >()
-    vi.mocked(listProviderInstances)
-      .mockResolvedValueOnce([snapshot()])
-      .mockResolvedValueOnce([snapshot("gpt-6-astra")])
-    vi.mocked(listProviderInstanceModels).mockImplementationOnce(() => {
-      entered.resolve()
-      return oldModels.promise
+  it("fills in models only for enabled, configured instances without a list", async () => {
+    vi.mocked(listProviderInstances).mockResolvedValueOnce([
+      snapshot("codex"),
+      snapshot("disabled", { enabled: false }),
+      snapshot("unconfigured", { configured: false }),
+      snapshot("listed", { models: [] }),
+    ])
+    vi.mocked(listProviderInstanceModels).mockResolvedValueOnce([
+      { slug: "gpt-6-astra", name: "GPT-6-Astra" },
+    ] as Awaited<ReturnType<typeof listProviderInstanceModels>>)
+
+    const catalog = await loadProviderInstanceCatalog("/a")
+
+    expect(listProviderInstances).toHaveBeenCalledExactlyOnceWith("/a")
+    expect(listProviderInstanceModels).toHaveBeenCalledExactlyOnceWith(
+      "codex",
+      "/a"
+    )
+    expect(catalog[0]?.models).toEqual([
+      {
+        slug: "gpt-6-astra",
+        name: "GPT-6-Astra",
+        isCustom: false,
+        capabilities: null,
+      },
+    ])
+    expect(catalog.slice(1)).toEqual([
+      snapshot("disabled", { enabled: false }),
+      snapshot("unconfigured", { configured: false }),
+      snapshot("listed", { models: [] }),
+    ])
+  })
+
+  it("keeps an instance without models when its model lookup fails", async () => {
+    vi.mocked(listProviderInstances).mockResolvedValueOnce([snapshot("codex")])
+    vi.mocked(listProviderInstanceModels).mockRejectedValueOnce(
+      new Error("CLI not ready")
+    )
+
+    expect(await loadProviderInstanceCatalog(null)).toEqual([snapshot("codex")])
+  })
+
+  it("skips the per-instance model lookups for a superseded request", async () => {
+    const controller = new AbortController()
+    vi.mocked(listProviderInstances).mockImplementationOnce(async () => {
+      controller.abort()
+      return [snapshot("codex")]
     })
-    const publish = vi.fn()
-    const loader = createProviderInstanceLoader("/a", publish)
-    const older = loader.refresh()
-    await entered.promise
-    await loader.refresh()
-    oldModels.resolve([])
-    await older
-    expect(publish).toHaveBeenCalledExactlyOnceWith([snapshot("gpt-6-astra")])
-  })
 
-  it("ignores a previous workspace's pending response after disposal", async () => {
-    const pending = Promise.withResolvers<ProviderInstanceSnapshot[]>()
-    vi.mocked(listProviderInstances)
-      .mockReturnValueOnce(pending.promise)
-      .mockResolvedValueOnce([snapshot("gpt-6-astra")])
-    const publish = vi.fn()
-    const oldLoader = createProviderInstanceLoader("/a", publish)
-    const older = oldLoader.refresh()
-    oldLoader.dispose()
-    const currentLoader = createProviderInstanceLoader("/b", publish)
-    await currentLoader.refresh()
-    pending.resolve([snapshot()])
-    await older
-    await oldLoader.refresh()
-    expect(publish).toHaveBeenCalledExactlyOnceWith([snapshot("gpt-6-astra")])
-    expect(listProviderInstances).toHaveBeenNthCalledWith(2, "/b")
-    expect(listProviderInstances).toHaveBeenCalledTimes(2)
+    await loadProviderInstanceCatalog("/a", controller.signal)
+
     expect(listProviderInstanceModels).not.toHaveBeenCalled()
-  })
-
-  it("preserves metadata during a restart and accepts the recovered catalog", async () => {
-    vi.mocked(listProviderInstances)
-      .mockResolvedValueOnce([snapshot("gpt-6-astra")])
-      .mockRejectedValueOnce(new Error("Backend restarting"))
-      .mockResolvedValueOnce([snapshot("gpt-5.6-sol")])
-    const publish = vi.fn()
-    const loader = createProviderInstanceLoader("/a", publish)
-    await loader.refresh()
-    await loader.refresh()
-    expect(publish).toHaveBeenCalledExactlyOnceWith([snapshot("gpt-6-astra")])
-    await loader.refresh()
-    expect(publish).toHaveBeenLastCalledWith([snapshot("gpt-5.6-sol")])
   })
 })

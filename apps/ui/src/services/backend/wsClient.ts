@@ -1,6 +1,117 @@
 import { ProviderReplayCursor } from "@betterc0de/schema/provider-replay"
+import { createLogger } from "@/lib/logger"
 import { buildRemoteWsUrl, getBackendMode, getRemoteToken } from "./runtime"
 import type { WsEventHandler } from "./types"
+
+const log = createLogger("ws")
+
+type WsFrame = Record<string, unknown>
+
+/** The same failure repeating (one bad handler, every delta) is logged once per window. */
+const FAILURE_LOG_WINDOW_MS = 5_000
+const recentFailureLogs = new Map<string, { at: number; suppressed: number }>()
+
+function throttledLog(
+  key: string,
+  emit: (suppressedSinceLast: number) => void
+): void {
+  const now = Date.now()
+  const previous = recentFailureLogs.get(key)
+  if (previous && now - previous.at < FAILURE_LOG_WINDOW_MS) {
+    previous.suppressed += 1
+    return
+  }
+  // Keep the map bounded when many distinct failures occur.
+  if (recentFailureLogs.size > 100) recentFailureLogs.clear()
+  recentFailureLogs.set(key, { at: now, suppressed: 0 })
+  emit(previous?.suppressed ?? 0)
+}
+
+function parseFrame(raw: unknown): WsFrame | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(String(raw))
+  } catch (error) {
+    throttledLog("parse", (suppressed) =>
+      log.warn(
+        "Dropped a WebSocket frame that is not valid JSON",
+        error instanceof Error ? error.message : String(error),
+        suppressed > 0 ? `(${suppressed} more since the last report)` : ""
+      )
+    )
+    return null
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throttledLog("shape", (suppressed) =>
+      log.warn(
+        "Dropped a WebSocket frame that is not an object",
+        suppressed > 0 ? `(${suppressed} more since the last report)` : ""
+      )
+    )
+    return null
+  }
+  return parsed as WsFrame
+}
+
+/**
+ * A realtime event whose payload did not match its channel's schema
+ * (`parseRealtimeEvent` in `@betterc0de/schema`) and was dropped. Logged with
+ * the channel and the first problem only — the payload can hold message text
+ * and file contents.
+ */
+export function reportDroppedRealtimeEvent(
+  channel: string,
+  issue: string
+): void {
+  throttledLog(`invalid:${channel}:${issue}`, (suppressed) =>
+    log.warn(
+      `Dropped an invalid ${channel} event (${issue})`,
+      suppressed > 0 ? `(${suppressed} more since the last report)` : ""
+    )
+  )
+}
+
+function describeFrame(frame: WsFrame): string {
+  const channel =
+    typeof frame.channel === "string"
+      ? frame.channel
+      : typeof frame.type === "string"
+        ? frame.type
+        : "unknown"
+  const data =
+    frame.data && typeof frame.data === "object"
+      ? (frame.data as Record<string, unknown>)
+      : {}
+  const eventType = data.event_type ?? data.type
+  const threadId = data.thread_id ?? data.threadId
+  return [
+    channel,
+    typeof eventType === "string" ? `event=${eventType}` : "",
+    typeof threadId === "string" ? `thread=${threadId}` : "",
+    typeof frame.sequence === "number" ? `seq=${frame.sequence}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ")
+}
+
+/**
+ * A realtime event the app failed to apply. Logged (console and error log
+ * store, via the logger) with enough context to find the event, never with
+ * the payload itself — it can hold message text and file contents.
+ */
+function reportEventHandlerFailure(frame: WsFrame, error: unknown): void {
+  const err = error instanceof Error ? error : new Error(String(error))
+  const context = describeFrame(frame)
+  throttledLog(
+    `handler:${context.split(" ")[0]}:${err.message}`,
+    (suppressed) =>
+      log.error(
+        `Realtime event handler failed (${context}):`,
+        err,
+        suppressed > 0 ? `(${suppressed} more since the last report)` : ""
+      )
+  )
+}
 
 const pendingRpc = new Map<
   string,
@@ -103,46 +214,66 @@ export function connectWs(
 
     ws.onmessage = (event) => {
       if (closed || activeSocket !== ws) return
+      const data = parseFrame(event.data)
+      if (!data) return
+
+      if (!authed) {
+        if (data.type === "auth_ok") {
+          authed = true
+          clearTimeout(authTimer)
+          const replay = providerReplayCursor.negotiate(data.replay)
+          if (replay) {
+            try {
+              ws.send(JSON.stringify(replay))
+            } catch (error) {
+              cancel(error instanceof Error ? error : new Error(String(error)))
+              return
+            }
+          }
+          if (!settled) {
+            settled = true
+            resolve(ws)
+            onOpenRef?.current?.()
+          }
+        }
+        return
+      }
+
+      const rpcId = typeof data.id === "string" ? data.id : null
+      if (rpcId && pendingRpc.get(rpcId)?.socket === ws) {
+        const pending = pendingRpc.get(rpcId)!
+        pendingRpc.delete(rpcId)
+        clearTimeout(pending.timer)
+        if (data.error) {
+          const rpcError = data.error as { message?: unknown }
+          pending.reject(
+            new Error(
+              typeof rpcError.message === "string" && rpcError.message
+                ? rpcError.message
+                : "RPC error"
+            )
+          )
+        } else {
+          pending.resolve(data.result)
+        }
+        return
+      }
+
+      if (!onEvent) return
       try {
-        const data = JSON.parse(event.data)
-        if (!authed) {
-          if (data?.type === "auth_ok") {
-            authed = true
-            clearTimeout(authTimer)
-            const replay = providerReplayCursor.negotiate(data.replay)
-            if (replay) ws.send(JSON.stringify(replay))
-            if (!settled) {
-              settled = true
-              resolve(ws)
-              onOpenRef?.current?.()
-            }
+        providerReplayCursor.deliver(data, (frame) => {
+          if (frame.type === "provider_replay_gap") {
+            onEvent({ channel: "provider.replayGap", data: frame })
+          } else if (typeof frame.channel === "string") {
+            onEvent({ ...frame, channel: frame.channel, data: frame.data })
           }
-          return
-        }
-
-        if (data.id && pendingRpc.get(data.id)?.socket === ws) {
-          const pending = pendingRpc.get(data.id)!
-          pendingRpc.delete(data.id)
-          clearTimeout(pending.timer)
-          if (data.error) {
-            pending.reject(new Error(data.error.message || "RPC error"))
-          } else {
-            pending.resolve(data.result)
-          }
-          return
-        }
-
-        if (onEvent) {
-          providerReplayCursor.deliver(data, (frame) => {
-            if (frame.type === "provider_replay_gap") {
-              onEvent({ channel: "provider.replayGap", data: frame })
-            } else if (typeof frame.channel === "string") {
-              onEvent({ ...frame, channel: frame.channel, data: frame.data })
-            }
-          })
-        }
-      } catch {
-        // ignore parse errors
+        })
+      } catch (error) {
+        // Not rethrown: the socket stays up for the events that follow. The
+        // cursor did not acknowledge this frame (it only advances after the
+        // handler returns), so the next sequenced provider event reports a
+        // replay gap and the chat state rehydrates from the backend.
+        reportEventHandlerFailure(data, error)
       }
     }
 

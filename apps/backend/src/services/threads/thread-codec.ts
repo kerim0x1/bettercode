@@ -59,6 +59,9 @@ export function hydrateMessageRow(row: {
   if (extra.compactedContext === true) message.compactedContext = true
   if (extra.internalContext === "provider-handoff")
     message.internalContext = "provider-handoff"
+  // A message the backend sent by itself to resume the chat (resume-scheduler.ts).
+  if (extra.automatic === "usage-limit" || extra.automatic === "restart")
+    message.automatic = extra.automatic
   if (extra.transcriptTruncated === true) message.transcriptTruncated = true
   if (
     extra.dispatchStatus === "pending" ||

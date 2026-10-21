@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-vi.mock("@/services/backend", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/services/backend")>()
+vi.mock("@/services/backend/workspaceApi", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/services/backend/workspaceApi")>()
   return {
     ...actual,
     listProjectConfigSettings: vi.fn(),
@@ -14,8 +15,8 @@ import {
   listProjectConfigSettings,
   readFile,
   writeFile,
-} from "@/services/backend"
-import type { RuntimeDebugInfo } from "@/services/backend"
+} from "@/services/backend/workspaceApi"
+import type { RuntimeDebugInfo } from "@/services/backend/coreApi"
 import {
   activeContextMessagesFromThread,
   buildMcpAddOutput,

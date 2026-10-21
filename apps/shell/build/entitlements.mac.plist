@@ -2,34 +2,26 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- Hardened runtime exceptions only; this app does not use the App
+         Sandbox, so sandbox keys (network.client, files.user-selected.*,
+         inherit) would have no effect and are deliberately absent.
+         Do not widen this plist unless a signed packaged build proves the
+         exception is needed. -->
+
     <!-- Required by hardened runtime for Electron + V8 JIT. -->
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
-    <!-- Electron re-execs itself and loads helper binaries at runtime. -->
+    <!-- Native Node modules (better-sqlite3, node-pty) load from
+         app.asar.unpacked into the app and the forked backend.
+         electron-builder's own default entitlements keep library validation
+         off for native modules (electron-userland/electron-builder#3940);
+         drop this only after a signed build shows they still load. -->
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
-    <!-- Needed for Electron/native helper compatibility under hardened runtime.
-         Keep paired with notarization smoke tests; do not widen this plist
-         for provider CLIs unless a signed packaged build proves it is needed. -->
-    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
-    <true/>
-    <!-- Network access for provider APIs (Anthropic, OpenAI, OpenRouter, …). -->
-    <key>com.apple.security.network.client</key>
-    <true/>
-    <!-- User-initiated file access for project directories. -->
-    <key>com.apple.security.files.user-selected.read-write</key>
-    <true/>
-    <!-- Child processes (in-process backend helpers, spawned provider CLIs,
-         GPU/renderer helpers, electron
-         workers) inherit the main bundle's entitlements. Without this, on
-         macOS 12+ a forked Node process can be killed by the kernel for
-         missing entitlements without surfacing the cause in our stderr
-         — only `Console.app` reveals it. `entitlementsInherit` in the
-         build config also points at this same plist, so helpers get it
-         via the inherited rule. -->
-    <key>com.apple.security.inherit</key>
-    <true/>
+    <!-- No com.apple.security.cs.allow-dyld-environment-variables: with it,
+         DYLD_INSERT_LIBRARIES could inject code into the signed app and
+         inherit its privacy (TCC) grants such as the microphone. -->
 </dict>
 </plist>

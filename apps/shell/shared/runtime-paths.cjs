@@ -13,10 +13,23 @@ const os = require("os")
 const appConfig = require("./appConfig.cjs")
 
 /**
- * Resolve the per-user data root. Packaged builds use `~/.betterc0de`,
- * dev builds use `~/.betterc0de-dev` so test data doesn't collide with a
- * user's real install. BETTERC0DE_HOME selects the same base used by
- * `resolveBetterC0deUserDataDir()` in `apps/shell/main.cjs`.
+ * The shell's only resolver for BetterC0de's folders. The rest of the main
+ * process, and through the backend environment the backend, take their paths
+ * from here instead of deriving them from the environment again:
+ *
+ * - `getBaseDir()`: the runtime home. Packaged builds use `~/.betterc0de`,
+ *   dev builds `~/.betterc0de-dev` so test data doesn't collide with a
+ *   user's real install; `BETTERC0DE_HOME` replaces it. It holds the desktop
+ *   configuration the backend owns (`mcp-servers.json`, `hooks.json`,
+ *   `rules.md`, `skills/`, `subagents/`) and reaches the backend as
+ *   `BETTERC0DE_RUNTIME_HOME`.
+ * - `resolveUserDataDir()`: the backend's data directory (SQLite,
+ *   settings.json, the settings key): `<home>/userdata`, unless
+ *   `BETTERC0DE_DATA_DIR` names another one. It reaches the backend as
+ *   `BETTERC0DE_DATA_DIR`. A custom data directory never moves the runtime
+ *   home; before both were passed explicitly, the backend guessed the home
+ *   from the data directory's name and silently lost hooks, skills and rules
+ *   for such a profile.
  */
 function getBaseDir() {
   const override = (process.env.BETTERC0DE_HOME || "").trim()
@@ -28,6 +41,43 @@ function getBaseDir() {
   }
   const baseDirName = app.isPackaged ? ".betterc0de" : ".betterc0de-dev"
   return path.join(os.homedir(), baseDirName)
+}
+
+let resolvedUserDataDir = null
+
+/**
+ * The backend's data directory (SQLite + settings.json + settings-key.bin),
+ * created on first use and canonicalized. It used to be
+ * `app.getPath("userData")`, which on Windows is Roaming AppData: a
+ * sync-sensitive location that is a poor fit for a multi-MB chat database.
+ *
+ * `BETTERC0DE_DATA_DIR` (an absolute path, used as it is) wins over
+ * `<getBaseDir()>/userdata`. Cached for the process lifetime, so every caller
+ * sees the directory the backend was started with.
+ */
+function resolveUserDataDir() {
+  if (resolvedUserDataDir) return resolvedUserDataDir
+  const explicitDataDir = String(process.env.BETTERC0DE_DATA_DIR || "").trim()
+  if (
+    explicitDataDir &&
+    (!path.isAbsolute(explicitDataDir) || explicitDataDir.includes("\0"))
+  ) {
+    throw new Error("BETTERC0DE_DATA_DIR must be an absolute filesystem path")
+  }
+  const requested = path.resolve(
+    explicitDataDir || path.join(getBaseDir(), "userdata"),
+  )
+  if (requested === path.parse(requested).root) {
+    throw new Error("Refusing to use a filesystem root as BetterC0de data dir")
+  }
+
+  fs.mkdirSync(requested, { recursive: true, mode: 0o700 })
+  const stat = fs.lstatSync(requested)
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(`BetterC0de data dir is not a regular directory: ${requested}`)
+  }
+  resolvedUserDataDir = fs.realpathSync.native(requested)
+  return resolvedUserDataDir
 }
 
 /** Marker file that flips after the user completes onboarding. */
@@ -85,6 +135,7 @@ function getFocusedWindow() {
 
 module.exports = {
   getBaseDir,
+  resolveUserDataDir,
   getDoneFlag,
   getRuntimePaths,
   ensureDir,

@@ -5,11 +5,11 @@ import {
 } from "../acp/AcpAdapterBase"
 import { ProviderChatModeUnsupportedError } from "../providerChatModeErrors"
 import {
-  buildCursorDiscoveredModelsFromConfigOptions,
-  buildCursorDiscoveredModelsFromSessionModels,
-  findCursorModelConfigOption,
-  type CursorAcpRuntimeSettings,
-} from "./CursorAcpSupport"
+  buildAcpDiscoveredModelsFromConfigOptions,
+  buildAcpDiscoveredModelsFromSessionModels,
+  findAcpModelConfigOption,
+} from "../acp/AcpSessionConfig"
+import { type CursorAcpRuntimeSettings } from "./CursorAcpSupport"
 import {
   cursorAccountModels,
   cursorModelAccountIdentity,
@@ -34,8 +34,6 @@ import {
  * found, where its models come from, its `cursor/*` protocol extensions, and
  * that a missing safe mode is a hard failure.
  */
-
-export const CURSOR_ACP_PENDING_REQUEST_TIMEOUT_MS = 5 * 60 * 1000
 
 export interface CursorAcpAdapterOptions extends AcpAdapterOptions<CursorAcpRuntimeSettings> {
   readonly apiEndpoint?: string | null
@@ -92,7 +90,6 @@ export const CURSOR_PROFILE: AcpProviderProfile<
   continuationPrefix: "cursor",
   errorCodePrefix: "CURSOR_ACP",
   modelProbeThreadId: "_cursor-model-probe",
-  pendingRequestTimeoutMs: CURSOR_ACP_PENDING_REQUEST_TIMEOUT_MS,
   // The asynchronous status probe owns executable discovery. Avoid a
   // synchronous PATH/version child process in hot configuration checks.
   isConfigured: (options) => cursorBinaryPath(options) !== null,
@@ -114,18 +111,16 @@ export const CURSOR_PROFILE: AcpProviderProfile<
     cacheIdentity: cursorModelAccountIdentity,
     onLiveModels: saveCursorAccountModels,
     fromStarted: (started) => {
-      const option = findCursorModelConfigOption(started.configOptions)
+      const option = findAcpModelConfigOption(started.configOptions)
       if (option) {
-        return buildCursorDiscoveredModelsFromConfigOptions(
-          started.configOptions
-        )
+        return buildAcpDiscoveredModelsFromConfigOptions(started.configOptions)
       }
-      return buildCursorDiscoveredModelsFromSessionModels(
+      return buildAcpDiscoveredModelsFromSessionModels(
         started.sessionSetupResult.models
       )
     },
     isEmptyAuthoritative: (started) =>
-      Boolean(findCursorModelConfigOption(started.configOptions)) ||
+      Boolean(findAcpModelConfigOption(started.configOptions)) ||
       Array.isArray(started.sessionSetupResult.models?.availableModels),
     unconfiguredCheckedAt: "now",
   },

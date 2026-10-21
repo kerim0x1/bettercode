@@ -130,6 +130,7 @@ function mergeTurnDiffSummaries<
     oldText: string
     newText: string
     isNew: boolean
+    textOmitted?: boolean
   },
 >(existingDiffs: T[], summaries: TurnDiffFileSummary[]): T[] {
   const byPath = new Map(existingDiffs.map((diff) => [diff.path, { ...diff }]))
@@ -143,6 +144,8 @@ function mergeTurnDiffSummaries<
       oldText: existing?.oldText ?? "",
       newText: existing?.newText ?? "",
       isNew: existing?.isNew ?? false,
+      // A light page's placeholder stays one until the full text is read.
+      ...(existing?.textOmitted ? { textOmitted: true } : {}),
     } as T)
   }
 

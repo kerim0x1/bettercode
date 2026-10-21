@@ -1,7 +1,9 @@
 import type { CSSProperties } from "react"
 import { FolderOpenIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useChatStore } from "@/lib/chat-store"
+import { useChatStore, type ChatThread } from "@/lib/chat-store"
+import { useThreadMessageCount } from "@/lib/chat/thread-derived"
+import { useConsoleLogStore } from "@/lib/console-log-store"
 import { resolveThreadRuntimePath } from "@/lib/thread-context"
 import { clampEditorChatPanelWidth } from "@/lib/editor-layout"
 import type { MainAreaProps } from "@/hooks/use-app-shell-bundles"
@@ -78,7 +80,6 @@ export function MainArea(props: MainAreaProps) {
     setEditingFile,
     // Chat transcript
     swarmActive,
-    messages,
     handleSubmit,
     setPlanModalContent,
     chatMode,
@@ -88,23 +89,6 @@ export function MainArea(props: MainAreaProps) {
     setThinkingMode,
     specialMode,
     permissionLevel,
-    mentionQuery,
-    mentionActive,
-    slashActive,
-    slashQuery,
-    slashTrigger,
-    closeMention,
-    closeSlash,
-    handleSlashSelect,
-    autonomousMode,
-    autonomousStatus,
-    autonomousIterations,
-    autonomousMaxIterations,
-    autonomousTask,
-    autonomousTaskList,
-    autonomousTimeBudgetMin,
-    autonomousStartedAt,
-    autonomousStopReason,
     deepgram,
     composerProps,
     // Console panel
@@ -112,10 +96,6 @@ export function MainArea(props: MainAreaProps) {
     consolePanelHeight,
     setConsolePanelHeight,
     setConsolePanelOpen,
-    consoleTab,
-    setConsoleTab,
-    consoleLogs,
-    setConsoleLogs,
     setSystemBrowserOpen,
     setSystemBrowserIntent,
     // AppModals rendering inside main
@@ -128,18 +108,12 @@ export function MainArea(props: MainAreaProps) {
       : [activeComposerTab]
 
   const consolePanel = consolePanelOpen ? (
-    <ConsolePanel
+    <ConsolePanelSlot
       consolePanelHeight={consolePanelHeight}
       setConsolePanelHeight={setConsolePanelHeight}
-      consolePanelOpen={consolePanelOpen}
       setConsolePanelOpen={setConsolePanelOpen}
-      consoleTab={consoleTab}
-      setConsoleTab={setConsoleTab}
-      consoleLogs={consoleLogs}
-      setConsoleLogs={setConsoleLogs}
       activeThread={activeThread}
       selectedModel={selectedModel}
-      messageCount={messages.length}
     />
   ) : null
 
@@ -172,23 +146,6 @@ export function MainArea(props: MainAreaProps) {
         thinkingMode={thinkingMode}
         specialMode={specialMode}
         permissionLevel={permissionLevel}
-        mentionQuery={mentionQuery}
-        mentionActive={mentionActive}
-        slashActive={slashActive}
-        slashQuery={slashQuery}
-        slashTrigger={slashTrigger}
-        closeMention={closeMention}
-        closeSlash={closeSlash}
-        handleSlashSelect={handleSlashSelect}
-        autonomousMode={autonomousMode}
-        autonomousStatus={autonomousStatus}
-        autonomousIterations={autonomousIterations}
-        autonomousMaxIterations={autonomousMaxIterations}
-        autonomousTask={autonomousTask}
-        autonomousTaskList={autonomousTaskList}
-        autonomousTimeBudgetMin={autonomousTimeBudgetMin}
-        autonomousStartedAt={autonomousStartedAt}
-        autonomousStopReason={autonomousStopReason}
         deepgram={deepgram}
         composerProps={composerProps}
         terminalOpen={terminalOpen}
@@ -254,23 +211,6 @@ export function MainArea(props: MainAreaProps) {
     thinkingMode,
     specialMode,
     permissionLevel,
-    mentionQuery,
-    mentionActive,
-    slashActive,
-    slashQuery,
-    slashTrigger,
-    closeMention,
-    closeSlash,
-    handleSlashSelect,
-    autonomousMode,
-    autonomousStatus,
-    autonomousIterations,
-    autonomousMaxIterations,
-    autonomousTask,
-    autonomousTaskList,
-    autonomousTimeBudgetMin,
-    autonomousStartedAt,
-    autonomousStopReason,
     deepgram,
     composerProps,
     setEditingFile,
@@ -302,14 +242,17 @@ export function MainArea(props: MainAreaProps) {
   }
 
   if (isEditorWithoutWorkspace) {
+    // Framed like the workbench below, so the sidebar card keeps its gap.
     return (
-      <main className="flex min-w-0 flex-1 flex-col bg-background">
-        <EditorWorkspaceEmptyCanvas
-          onOpenWorkspace={() => {
-            setSystemBrowserIntent("editor-open-folder")
-            setSystemBrowserOpen(true)
-          }}
-        />
+      <main className="editor-workbench flex min-w-0 flex-1 overflow-hidden bg-sidebar p-2">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/40 bg-background">
+          <EditorWorkspaceEmptyCanvas
+            onOpenWorkspace={() => {
+              setSystemBrowserIntent("editor-open-folder")
+              setSystemBrowserOpen(true)
+            }}
+          />
+        </div>
         {appModals}
       </main>
     )
@@ -320,7 +263,7 @@ export function MainArea(props: MainAreaProps) {
       className={cn(
         "flex min-w-0 flex-1 bg-background",
         isEditorMode
-          ? "editor-workbench flex-row overflow-hidden bg-sidebar p-2 pl-1"
+          ? "editor-workbench flex-row overflow-hidden bg-sidebar p-2"
           : "flex-col"
       )}
     >
@@ -377,6 +320,46 @@ export function MainArea(props: MainAreaProps) {
 
       {appModals}
     </main>
+  )
+}
+
+/**
+ * The console panel with its live inputs. The log stream and the message
+ * count are read here, so a flushed log batch or a new message re-renders the
+ * panel, not the main area.
+ */
+function ConsolePanelSlot({
+  consolePanelHeight,
+  setConsolePanelHeight,
+  setConsolePanelOpen,
+  activeThread,
+  selectedModel,
+}: {
+  consolePanelHeight: number
+  setConsolePanelHeight: (height: number) => void
+  setConsolePanelOpen: (open: boolean) => void
+  activeThread: ChatThread | null
+  selectedModel: string
+}) {
+  const consoleLogs = useConsoleLogStore((s) => s.logs)
+  const setConsoleLogs = useConsoleLogStore((s) => s.setLogs)
+  const consoleTab = useConsoleLogStore((s) => s.tab)
+  const setConsoleTab = useConsoleLogStore((s) => s.setTab)
+  const messageCount = useThreadMessageCount(activeThread?.id ?? null)
+  return (
+    <ConsolePanel
+      consolePanelHeight={consolePanelHeight}
+      setConsolePanelHeight={setConsolePanelHeight}
+      consolePanelOpen
+      setConsolePanelOpen={setConsolePanelOpen}
+      consoleTab={consoleTab}
+      setConsoleTab={setConsoleTab}
+      consoleLogs={consoleLogs}
+      setConsoleLogs={setConsoleLogs}
+      activeThread={activeThread}
+      selectedModel={selectedModel}
+      messageCount={messageCount}
+    />
   )
 }
 

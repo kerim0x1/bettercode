@@ -11,8 +11,10 @@ import { resolveComposerPreferences } from "./composer-settings"
 import { selectComposerModel } from "./composer-preferences"
 import type { UiProvider } from "./provider-types"
 
-vi.mock("@/services/backend", () => ({
+vi.mock("@/services/backend/coreApi", () => ({
   loadMessages: vi.fn(async () => []),
+}))
+vi.mock("@/services/backend/chatApi", () => ({
   loadThreadActivities: vi.fn(async () => []),
   saveThreadModelSwitchActivity: vi.fn(async () => undefined),
 }))

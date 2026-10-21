@@ -22,7 +22,7 @@ export interface FavoriteEntry {
  * Props shared by both `ComposerMinimalFooter` and `ComposerFullFooter`.
  *
  * These are all passed through from the top-level `ChatComposer` component
- * which receives them as `any`-typed props from the app shell.
+ * (see `ChatComposerProps` below for the full composer input).
  */
 export interface ComposerFooterProps {
   threadId?: string | null
@@ -34,9 +34,6 @@ export interface ComposerFooterProps {
   setThinkingMode: (mode: string | null, providerId?: string) => void
   autonomousMode: boolean
   autonomousStatus: AutonomousStatus
-  autonomousTask: string | null
-  autonomousIterations: number
-  autonomousMaxIterations: number
   chatMode: string
   setChatMode: (mode: string) => void
   permissionLevel: PermissionLevel
@@ -76,4 +73,25 @@ export interface ComposerFooterProps {
   setVoiceModalOpen: (open: boolean) => void
   setAutonomousDialogOpen: (open: boolean) => void
   appMode?: "agent" | "editor" | "design"
+}
+
+/**
+ * Everything `ChatComposer` reads: the footer props plus the textarea and
+ * pane wiring around them.
+ */
+export interface ChatComposerProps extends ComposerFooterProps {
+  isActive?: boolean
+  /** Focuses the owning pane before one of its menus opens. */
+  activatePane?: () => void
+  minimalChat: boolean
+  /** Slash-command detection for the textarea (text, caret position). */
+  checkSlash: (text: string, cursor?: number) => void
+  /** File-mention detection for the textarea. */
+  checkMention: (text: string) => void
+  activeProjectPath?: string | null
+  /**
+   * Sends to the chat the payload's `threadId` names, past this column's
+   * own binding. Compare starts the other models' chats through it.
+   */
+  submitToThread?: (payload: ChatSubmitPayload) => unknown
 }

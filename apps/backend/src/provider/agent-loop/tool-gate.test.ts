@@ -1,8 +1,8 @@
 import path from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
-  configureAgentPermissionRuntime,
-  bindAgentPermissionRuntimeContext,
+  AgentPermissionRuntime,
+  setDefaultAgentPermissionRuntime,
 } from "../agent-permission-runtime"
 import {
   cancelPendingApprovals,
@@ -14,7 +14,7 @@ import { gateToolCall } from "./tool-gate"
 const threadId = "direct-mode-ceiling"
 afterEach(() => {
   cancelPendingApprovals(threadId)
-  configureAgentPermissionRuntime(null)
+  setDefaultAgentPermissionRuntime(null)
 })
 
 describe("direct tool gate mode ceilings", () => {
@@ -26,22 +26,25 @@ describe("direct tool gate mode ceilings", () => {
   ] as const)(
     "requires approval despite an allow grant in $mode/$level",
     async ({ mode, level, toolName }) => {
-      bindAgentPermissionRuntimeContext({
+      const runtime = new AgentPermissionRuntime({
+        policy: {
+          listGrants: () => [],
+          evaluateTool: () => ({
+            decision: "allow",
+            source: "grant",
+            reason: "Allowed path",
+            normalizedPath: "src",
+            grant: null,
+          }),
+        },
+      })
+      runtime.bindContext({
         threadId,
         workspacePath: path.resolve("workspace"),
         chatMode: mode,
         permissionLevel: level,
       })
-      configureAgentPermissionRuntime({
-        listGrants: () => [],
-        evaluateTool: () => ({
-          decision: "allow",
-          source: "grant",
-          reason: "Allowed path",
-          normalizedPath: "src",
-          grant: null,
-        }),
-      })
+      setDefaultAgentPermissionRuntime(runtime)
       const emit = vi.fn()
       const pending = gateToolCall({
         emit,

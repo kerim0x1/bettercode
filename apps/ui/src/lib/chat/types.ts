@@ -7,25 +7,25 @@ import type {
   DesignBrief,
   ThreadActivity,
   ThreadGoal,
+  AutonomyRunConfig,
+  AutonomyStopReason,
+  AutonomyTask,
+  ThreadAutonomy,
+} from "@betterc0de/schema"
+import {
+  AUTONOMY_DEFAULT_MAX_ITERATIONS,
+  AUTONOMY_DEFAULT_TIME_BUDGET_MIN,
 } from "@betterc0de/schema"
 import type { ProviderComposerSelectionMap } from "@/lib/provider-composer-selection"
 
-export type AutonomousStatus = "idle" | "working" | "paused" | "completed"
+/** A chat's Autonomous Work run as the UI shows it; "idle": the chat has none. */
+export type AutonomousStatus = "idle" | ThreadAutonomy["status"]
 
 /** Reason an autonomous run stopped — surfaced to the user in the status bar. */
-export type AutonomousStopReason =
-  | "user"
-  | "max-iterations"
-  | "time-budget"
-  | "completion-signal"
-  | "error"
+export type AutonomousStopReason = AutonomyStopReason
 
 /** Single task row in an Autonomous Work run. */
-export interface AutonomousTask {
-  id: string
-  text: string
-  done: boolean
-}
+export type AutonomousTask = AutonomyTask
 
 export interface FinalizeStreamOptions {
   readonly messageId?: string
@@ -140,6 +140,8 @@ export interface ThreadSettings {
   goal?: ThreadGoal | null
   /** Local revision fences slow snapshots against newer provider metadata, including clears. */
   goalRevision?: number
+  /** Shared by the chats one prompt started with several models (Compare). */
+  compareGroupId?: string
 }
 
 export type { ThreadGoal, ThreadGoalStatus } from "@betterc0de/schema"
@@ -168,10 +170,11 @@ export type ThreadContextPatch = Partial<
 >
 
 /**
- * LRU cache sizing. We keep the last N threads' messages resident; older
- * threads have their `messages` array dropped (the thread itself stays in
+ * LRU cache sizing. We keep the last N threads' messages and activities
+ * resident, counting prefetched neighbours too; older threads have their
+ * `messages` array and activity log dropped (the thread itself stays in
  * the sidebar, just skeletal). Re-opening an evicted thread triggers a
- * single `loadMessages` call which fills it back in within ~20–50ms.
+ * single `loadMessages` page read which fills it back in within ~20–50ms.
  *
  * 10 is a sweet spot: average users hop between 2–4 threads per session,
  * so the cap is rarely hit; power users with many open sessions still keep
@@ -183,14 +186,15 @@ export const LRU_CAPACITY = 10
 export const PERSIST_DEBOUNCE_MS = 500
 
 /** Default cap for autonomous-mode iterations before the agent pauses. */
-export const AUTONOMOUS_MAX_ITERATIONS = 50
+export const AUTONOMOUS_MAX_ITERATIONS = AUTONOMY_DEFAULT_MAX_ITERATIONS
 
 /**
  * Default wall-clock budget for an autonomous run, in minutes. User-configurable
  * from the Autonomous Work dialog; 0 means "no time limit" (only iterations cap
  * applies). 90 min is a minimum floor suggested by the user — feel free to raise.
  */
-export const AUTONOMOUS_DEFAULT_TIME_BUDGET_MIN = 90
+export const AUTONOMOUS_DEFAULT_TIME_BUDGET_MIN =
+  AUTONOMY_DEFAULT_TIME_BUDGET_MIN
 
 export interface ChatState {
   threads: ChatThread[]
@@ -201,6 +205,13 @@ export interface ChatState {
   activitiesLoadedByThread: Record<string, boolean>
   messagesLoadedByThread: Record<string, boolean>
   messageHydrationErrorsByThread: Record<string, string>
+  /**
+   * Storage sequence of the oldest loaded message, per thread, while older
+   * rows exist on the backend. Absent once the start of the chat is loaded.
+   */
+  olderMessagesCursorByThread: Record<string, number>
+  /** True while an older page is being read for that thread. */
+  olderMessagesLoadingByThread: Record<string, boolean>
   lruOrder: string[]
   pinnedThreadIds: Set<string>
   draftsByThread: Record<string, string>
@@ -211,26 +222,46 @@ export interface ChatState {
   settingsByThread: Record<string, ThreadSettings>
   lastUsage: TokenUsage | null
 
-  // Autonomous Work Mode (structured task list + time budget)
-  autonomousMode: boolean
-  autonomousThreadId: string | null
-  /** Free-text one-liner summary; kept for legacy status-bar title + back-compat. */
-  autonomousTask: string | null
-  autonomousStatus: AutonomousStatus
-  autonomousIterations: number
-  autonomousMaxIterations: number
-  /** Structured task list the harness iterates through. */
-  autonomousTaskList: AutonomousTask[] | null
-  /** Wall-clock budget in minutes; 0 = no limit. */
-  autonomousTimeBudgetMin: number
-  /** Epoch ms the run started at; null when idle. Not persisted across reloads. */
-  autonomousStartedAt: number | null
-  /** Why the last run stopped; null while running or before first run. */
-  autonomousStopReason: AutonomousStopReason | null
-
+  /**
+   * Each chat's Autonomous Work run as the backend reports it (the thread
+   * list, its `thread.metadata.updated` pushes and the control responses;
+   * see `@/lib/chat/autonomy-sync`). The backend schedules the turns; a
+   * chat without a run has no entry.
+   */
+  autonomyByThread: Record<string, ThreadAutonomy>
   // Actions
   setActiveThread: (id: string | null) => void
+  /**
+   * Loads the newest page of a thread's transcript. `force` re-reads that
+   * page and merges it into what is already loaded. Pages are read light:
+   * diff text and large inline attachments arrive as placeholders
+   * (`textOmitted` / `dataOmitted`) until `hydrateFullMessage` fills them.
+   */
   hydrateThreadMessages: (threadId: string, force?: boolean) => Promise<void>
+  /**
+   * Prepends the next older page, if the backend has one. Light unless
+   * `light: false`.
+   */
+  loadOlderThreadMessages: (
+    threadId: string,
+    options?: { limit?: number; light?: boolean }
+  ) => Promise<void>
+  /**
+   * Loads every page of a thread with every payload filled in. For commands
+   * that read or copy the whole conversation (export, share, fork,
+   * compaction, statistics). `payloads: false` loads the rows only, for a
+   * caller that just shows or counts them.
+   */
+  ensureFullThreadMessages: (
+    threadId: string,
+    options?: { payloads?: boolean }
+  ) => Promise<void>
+  /**
+   * Replaces a loaded message's diff text and attachment placeholders with
+   * the full copy from the backend. Concurrent calls for one message share
+   * one request; a thread that is not loaded is left alone.
+   */
+  hydrateFullMessage: (threadId: string, messageId: string) => Promise<void>
   hydrateThreadActivities: (threadId: string, force?: boolean) => Promise<void>
   setDraft: (threadId: string, text: string) => void
   getDraft: (threadId: string) => string
@@ -244,6 +275,16 @@ export interface ChatState {
   ) => void
   getThreadSettings: (threadId: string | null | undefined) => ThreadSettings
   initializeThreadModelSettings: (threadId: string) => void
+  /**
+   * Takes over the settings the backend keeps with a chat after another
+   * client changed them (a `thread.metadata` push, see
+   * `@/lib/thread-settings-sync`), except this window's own changes still
+   * on their way. Nothing is written back.
+   */
+  applyStoredThreadSettings: (
+    threadId: string,
+    change: import("@/lib/thread-settings-sync").ThreadSettingsChange
+  ) => void
   pinThread: (threadId: string) => void
   unpinThread: (threadId: string) => void
   createThread: (
@@ -261,7 +302,9 @@ export interface ChatState {
   closeReasoningSegment: (threadId: string) => void
   forkThread: (
     sourceThreadId: string,
-    into?: { projectPath: string; projectName: string }
+    into?: { projectPath: string; projectName: string },
+    /** `throughMessageId` keeps the history up to and including that message. */
+    options?: { throughMessageId?: string }
   ) => Promise<string | null>
   addMessage: (
     threadId: string,
@@ -319,16 +362,39 @@ export interface ChatState {
     threadId: string,
     usage: TokenUsage & { usedTokens?: number; maxTokens?: number }
   ) => void
-  setAutonomousMode: (enabled: boolean) => void
-  setAutonomousTask: (task: string | null) => void
-  setAutonomousStatus: (status: AutonomousStatus) => void
-  incrementAutonomousIteration: () => void
-  resetAutonomous: () => void
-  setAutonomousMaxIterations: (n: number) => void
-  setAutonomousIterations: (n: number) => void
-  setAutonomousTaskList: (list: AutonomousTask[] | null) => void
-  markAutonomousTaskDone: (id: string, done: boolean) => void
-  setAutonomousTimeBudget: (min: number) => void
-  setAutonomousStartedAt: (ts: number | null) => void
-  setAutonomousStopReason: (reason: AutonomousStopReason | null) => void
+  /**
+   * Mirrors the backend's run of a chat (`null`: none). An older state of
+   * the same run never replaces a newer one.
+   */
+  setThreadAutonomy: (threadId: string, autonomy: ThreadAutonomy | null) => void
+}
+
+/** One composer submission, as the submit hook and the message queue carry it. */
+export interface ChatSubmitPayload {
+  /** Explicit pane ownership; omitted for commands in the active chat. */
+  threadId?: string | null
+  text: string
+  files: unknown[]
+  visibleText?: string
+  chatModeOverride?: string | null
+  sourceProposedPlan?:
+    | import("@/lib/plan-modal").SourceProposedPlanReference
+    | null
+  /**
+   * While a turn runs: queue the message for after it, or steer it into the
+   * turn. Left out, the "While the agent works, Enter…" setting decides;
+   * Ctrl/Cmd+Enter in the composer sets the other one.
+   */
+  delivery?: "queue" | "steer"
+  /** Stable identity and captured element tags for a queued draft's delivery. */
+  queuedSubmission?: {
+    id: string
+    createdAt: string
+    browserElements: import("@betterc0de/schema").BrowserElementReference[]
+  }
+  /**
+   * Set by the Autonomous Work dialog: this message opens a run with these
+   * tasks and limits, which the backend then continues on its own.
+   */
+  autonomy?: AutonomyRunConfig
 }

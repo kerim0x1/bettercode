@@ -13,10 +13,12 @@ const codex = {
     { slug: "gpt-6-sol", name: "Sol" },
   ],
 }
+// The runtime spells the Grok CLI driver like its settings id, not like the
+// provider kind workers use.
 const grok = {
   ...codex,
   instanceId: "grok-account",
-  driver: "grok_cli",
+  driver: "grok-cli",
   models: [{ slug: "grok-4.6", name: "Grok" }],
 }
 const claude = {

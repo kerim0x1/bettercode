@@ -201,7 +201,7 @@ function taintDispatchDurability(
   origin: string
 ): void {
   const normalized = error instanceof Error ? error : new Error(String(error))
-  state.taintBackend?.(normalized, origin)
+  state.taintBackend(normalized, origin)
 }
 
 export function markAcceptedDispatchMessage(

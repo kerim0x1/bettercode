@@ -1,45 +1,34 @@
-import {
-  latestProviderInstanceId,
-  latestProviderContinuationKey,
-} from "@/lib/provider-model-selection"
 import { useCallback, useEffect } from "react"
+import { displayModelName } from "@/lib/model-display-name"
 import { AppModals } from "@/components/layout/app-modals"
 import {
-  useSlashCommands,
-  type SlashCommand,
-} from "@/components/slash-commands"
-import { useFileMentions } from "@/components/file-mentions"
-import {
   getThreadStream,
-  useActiveMessages,
   useActiveThread,
   useChatStore,
-  useThreadActivities,
 } from "@/lib/chat-store"
+import { useThreadProviderLock } from "@/lib/chat/thread-derived"
 import { useMultiAgentStore } from "@/lib/multi-agent-store"
 import { usePreferencesStore } from "@/lib/preferences-store"
 import { toggleDiffView } from "@/lib/diff-view"
 import { useRuntimeHookBridge } from "@/lib/runtime-hooks"
 import { useAppPreferences } from "@/hooks/use-app-preferences"
-import { useAppUiState } from "@/hooks/use-app-ui-state"
+import { appUiActions } from "@/lib/app-ui-store"
+import { composerMenuActions } from "@/lib/composer-menu-store"
+import { useConsoleLogStore } from "@/lib/console-log-store"
 import { useAppearanceState } from "@/hooks/use-appearance-state"
-import { useAutonomousLoop } from "@/hooks/use-autonomous-loop"
-import { useAutonomousState } from "@/hooks/use-autonomous-state"
 import { useChatEventBus } from "@/hooks/use-chat-event-bus"
 import { useChatStop } from "@/hooks/use-chat-stop"
-import { findComposerTextarea, setComposerInput } from "@/lib/composer-input"
 import { useChatSubmit } from "@/hooks/use-chat-submit"
 import { useMessageQueue } from "@/hooks/use-message-queue"
 import { useComposerTabs } from "@/hooks/use-composer-tabs"
 import { usePanes } from "@/hooks/use-panes"
-import { useConsoleLogState } from "@/hooks/use-console-log-state"
+import { useConsoleCapture } from "@/hooks/use-console-capture"
 import { useFavorites } from "@/hooks/use-favorites"
 import { useGlobalShortcuts } from "@/hooks/use-global-shortcuts"
 import { useInlineEdit } from "@/hooks/use-inline-edit"
 import { useApprovalAttention } from "@/hooks/use-approval-attention"
 import { useAttentionNotifications } from "@/hooks/use-attention-notifications"
 import { useNativeNotifications } from "@/hooks/use-native-notifications"
-import { useNewProjectWizardState } from "@/hooks/use-new-project-wizard-state"
 import { useCliAutoSync } from "@/hooks/use-cli-auto-sync"
 import { usePersistedThreads } from "@/hooks/use-persisted-threads"
 import { useProvidersWithLmStudio } from "@/hooks/use-providers-with-lm-studio"
@@ -51,10 +40,9 @@ import { useUiSounds } from "@/hooks/use-ui-sounds"
 import { useVoiceInput } from "@/hooks/use-voice-input"
 import { useApplyLaunchParams } from "@/hooks/use-apply-launch-params"
 import { useEditorWorkspace } from "@/hooks/use-editor-workspace"
-import {
-  clampEditorChatPanelWidth,
-  clampEditorSidebarWidth,
-} from "@/lib/editor-layout"
+import { clampEditorChatPanelWidth } from "@/lib/editor-layout"
+import { getElectronApi } from "@/services/ipc-facade"
+import { openAutomationsPage } from "@/lib/automations-page"
 
 /**
  * Meta-hook that assembles every state hook the app needs plus the
@@ -70,6 +58,13 @@ import {
  * each other (e.g. `composerProps` folds into `mainAreaProps`) — splitting
  * it up would just create many small files that each need the same
  * arguments.
+ *
+ * Every state change here re-renders the whole shell, so state that changes
+ * while the user types or works does not live here: modal flags and their
+ * inputs are in `app-ui-store`, the composer's `/` and `@` menus in
+ * `composer-menu-store`, the captured console in `console-log-store`, and the
+ * transcript in the chat store. This hook only takes their setters, which
+ * never change, and the components that show a value subscribe to it.
  */
 export function useAppShellBundles() {
   useRuntimeHookBridge()
@@ -134,59 +129,41 @@ export function useAppShellBundles() {
   useEditorWorkspace(appMode, threadsReady)
 
   const {
-    modelModalOpen,
     setModelModalOpen,
-    settingsOpen,
     setSettingsOpen,
-    settingsTab,
     setSettingsTab,
-    editingFile,
     setEditingFile,
-    chatSearch,
     setChatSearch,
-    chatDateFilter,
     setChatDateFilter,
-    planModalContent,
-    planModalSourceProposedPlan,
-    planModalThreadId,
-    planModalImplemented,
     setPlanModalContent,
-    confirmAction,
     setConfirmAction,
-    editorModeModalOpen,
     setEditorModeModalOpen,
-    editorModalPath,
     setEditorModalPath,
-    newThreadModalOpen,
     setNewThreadModalOpen,
-    newThreadModalPath,
     setNewThreadModalPath,
-    fileExplorerModal,
-    setFileExplorerModal,
     setFileTreeSidebar,
-    gitModal,
     setGitModal,
-    marketplaceOpen,
     setMarketplaceOpen,
-    shortcutsOpen,
     setShortcutsOpen,
-    commandPaletteOpen,
     setCommandPaletteOpen,
-    quickOpenOpen,
     setQuickOpenOpen,
-    goToLineOpen,
     setGoToLineOpen,
-    documentSymbolsOpen,
     setDocumentSymbolsOpen,
-    workspaceSymbolsOpen,
     setWorkspaceSymbolsOpen,
-    autonomousDialogOpen,
     setAutonomousDialogOpen,
-    systemBrowserOpen,
     setSystemBrowserOpen,
-    systemBrowserIntent,
     setSystemBrowserIntent,
-  } = useAppUiState()
+    setNewProjectOpen,
+    setNewProjectStep,
+    setNewProjectName,
+    setNewProjectPath,
+    setNewProjectPM,
+    setNewProjectTemplate,
+    setNewProjectUI,
+    setNewProjectStatus,
+    setNewProjectLog,
+    openNewProjectWizard,
+  } = appUiActions()
 
   useEffect(() => {
     const onOpenSettings = (event: Event) => {
@@ -255,53 +232,21 @@ export function useAppShellBundles() {
           sidebarWidth - Math.min(80, (composerTabs.length - 4) * 20)
         )
       : sidebarWidth
-  const effectiveEditorSidebarWidth = clampEditorSidebarWidth(sidebarWidth)
   const effectiveChatPanelWidth =
     appMode === "editor"
       ? clampEditorChatPanelWidth(chatPanelWidth)
       : chatPanelWidth
 
-  const { consoleLogs, setConsoleLogs, consoleTab, setConsoleTab } =
-    useConsoleLogState()
+  // The capture feeds the console store; only the console panel and the
+  // title bar's counts subscribe to the stream.
+  useConsoleCapture(useConsoleLogStore.getState().setLogs)
 
-  const {
-    slashActive,
-    slashQuery,
-    slashTrigger,
-    slashRange,
-    checkInput: checkSlash,
-    close: closeSlash,
-  } = useSlashCommands()
-  const {
-    active: mentionActive,
-    query: mentionQuery,
-    checkInput: checkMention,
-    close: closeMention,
-  } = useFileMentions()
+  const { checkSlash, closeSlash, checkMention, closeMention } =
+    composerMenuActions()
   const { isResizingRight, handleRightResizeStart } = useRightSidebarResize({
     rightSidebarWidth,
     setRightSidebarWidth,
   })
-  const {
-    newProjectOpen,
-    setNewProjectOpen,
-    newProjectStep,
-    setNewProjectStep,
-    newProjectName,
-    setNewProjectName,
-    newProjectPath,
-    setNewProjectPath,
-    newProjectPM,
-    setNewProjectPM,
-    newProjectTemplate,
-    setNewProjectTemplate,
-    newProjectUI,
-    setNewProjectUI,
-    newProjectStatus,
-    setNewProjectStatus,
-    newProjectLog,
-    setNewProjectLog,
-  } = useNewProjectWizardState()
   // LM Studio polling stays on whenever the composer is mounted. The
   // earlier gate (`selectedProviderId === "lmstudio" || modelModalOpen`)
   // only fired for the full-screen model picker — the inline composer
@@ -330,36 +275,16 @@ export function useAppShellBundles() {
     handleVoiceContextMenu,
   } = useVoiceInput()
 
-  const messages = useActiveMessages()
-  const threadActivities = useThreadActivities(activeThread?.id)
+  // Only coarse, slow-changing facts about the active thread are read here.
+  // The transcript, its activities and the streamed text change on every
+  // provider event; the components that show them subscribe themselves
+  // (ChatColumn, ChatTranscript, PlanModalStreamSync), so a tool event does
+  // not re-render the whole shell.
   const activeThreadId = activeThread?.id ?? null
+  const providerLock = useThreadProviderLock(activeThreadId)
   const isStreaming = useChatStore((state) =>
     Boolean(getThreadStream(state, activeThreadId).isStreaming)
   )
-  const isPlanStreaming = useChatStore((state) =>
-    Boolean(getThreadStream(state, activeThreadId).isPlanStreaming)
-  )
-  const streamingPlanText = useChatStore(
-    (state) => getThreadStream(state, activeThreadId).streamingPlanText
-  )
-
-  useEffect(() => {
-    if (planModalContent === null || !isPlanStreaming || !streamingPlanText) {
-      return
-    }
-    if (
-      streamingPlanText !== planModalContent &&
-      (planModalContent === "" ||
-        streamingPlanText.startsWith(planModalContent))
-    ) {
-      setPlanModalContent(streamingPlanText)
-    }
-  }, [
-    isPlanStreaming,
-    planModalContent,
-    setPlanModalContent,
-    streamingPlanText,
-  ])
   const {
     chatUiStyle,
     uiSoundEnabled,
@@ -383,36 +308,22 @@ export function useAppShellBundles() {
     thinkingMode,
     setThinkingMode,
     lockedProviderInstanceId:
-      activeThread?.session?.providerInstanceId ??
-      latestProviderInstanceId(threadActivities),
+      activeThread?.session?.providerInstanceId ?? providerLock.instanceId,
     lockedContinuationKey:
-      activeThread?.session?.continuationKey ??
-      latestProviderContinuationKey(threadActivities),
+      activeThread?.session?.continuationKey ?? providerLock.continuationKey,
   })
   const selectedProvider = selectedProviderSelection.selectedProvider
   const resolvedSelectedModel = selectedProviderSelection.selectedModel
   const resolvedThinkingMode = selectedProviderSelection.thinkingMode
 
-  const {
-    autonomousMode,
-    autonomousTask,
-    autonomousStatus,
-    autonomousIterations,
-    autonomousMaxIterations,
-    autonomousTaskList,
-    autonomousTimeBudgetMin,
-    autonomousStartedAt,
-    autonomousStopReason,
-  } = useAutonomousState()
-
-  useAutonomousLoop({ providers })
-
   const currentModelName =
     selectedProvider?.models.find((m) => m.id === resolvedSelectedModel)
       ?.name ??
     (selectedProvider?.modelsReady === true && resolvedSelectedModel
-      ? `${resolvedSelectedModel} (unavailable)`
-      : resolvedSelectedModel || "Select model")
+      ? `${displayModelName(resolvedSelectedModel)} (unavailable)`
+      : resolvedSelectedModel
+        ? displayModelName(resolvedSelectedModel)
+        : "Select model")
 
   const isLmStudio = selectedProvider?.id === "lmstudio"
   const currentProvider = selectedProvider
@@ -435,24 +346,11 @@ export function useAppShellBundles() {
       setNewThreadModalPath("")
       setNewThreadModalOpen(true)
     },
-    onNewProject: () => {
-      setNewProjectName("")
-      setNewProjectPath("")
-      setNewProjectTemplate(null)
-      setNewProjectUI(null)
-      setNewProjectPM("npm")
-      setNewProjectStep(0)
-      setNewProjectStatus("idle")
-      setNewProjectLog("")
-      setNewProjectOpen(true)
-    },
+    onNewProject: openNewProjectWizard,
     onOpenMarketplace: () => {
       setMarketplaceOpen(true)
     },
-    // TODO: implement automations panel
-    onOpenAutomations: () => {
-      console.info("Automations: not implemented yet")
-    },
+    onOpenAutomations: openAutomationsPage,
     onOpenSearch: () => {
       if (appMode !== "agent") {
         setSidebarOpen(true)
@@ -517,40 +415,14 @@ export function useAppShellBundles() {
     uiSoundVolume,
   })
 
-  const handleSlashSelect = useCallback(
-    (cmd: SlashCommand, _replacement: string) => {
-      const input = findComposerTextarea()
-      const setComposerText = (text: string) => {
-        setComposerInput(input, text, true)
-      }
-
-      if (cmd.id === "model") {
-        setModelModalOpen(true)
-      } else if (cmd.id === "plan") {
-        setChatMode("plan")
-      } else if (cmd.id === "ask") {
-        setChatMode("ask")
-      } else if (cmd.id === "default") {
-        setChatMode("agent")
-      } else if (cmd.id === "prompt-clear") {
-        setComposerText("")
-      } else if (cmd.id === "prompt-paste") {
-        const readText = navigator.clipboard?.readText?.bind(
-          navigator.clipboard
-        )
-        if (readText) {
-          void readText()
-            .then((text) => {
-              if (text) setComposerText(text)
-            })
-            .catch(() => {})
-        }
-      }
-      // Provider-native commands and non-mode built-ins are written into the
-      // composer; the user presses Enter to execute or send them.
-      closeSlash()
-    },
-    [closeSlash, setChatMode, setModelModalOpen]
+  // Stable, so `handleSubmit` keeps its identity across shell renders.
+  const openModelPicker = useCallback(
+    () => setModelModalOpen(true),
+    [setModelModalOpen]
+  )
+  const openCommandPalette = useCallback(
+    () => setCommandPaletteOpen(true),
+    [setCommandPaletteOpen]
   )
 
   const handleSubmit = useChatSubmit({
@@ -559,8 +431,8 @@ export function useAppShellBundles() {
     toggleFavorite,
     isFavorite,
     appMode,
-    openModelPicker: () => setModelModalOpen(true),
-    openCommandPalette: () => setCommandPaletteOpen(true),
+    openModelPicker,
+    openCommandPalette,
     closeSlash,
     closeMention,
   })
@@ -577,7 +449,7 @@ export function useAppShellBundles() {
 
   const handleStop = useChatStop(selectedProvider)
 
-  const electronApi = window.electronAPI
+  const electronApi = getElectronApi()
 
   return {
     sidebarOpen,
@@ -593,17 +465,15 @@ export function useAppShellBundles() {
     // switch-chats panel. Editor mode has its own EditorModeSplitView, so it
     // isn't shown there.
     showWorkspaceRightPanel: appMode === "agent",
-    // Plain object literals — no useMemo wrappers. An earlier version
-    // wrapped each bundle in useMemo with the full dep list (80+ entries
-    // for mainAreaProps), which was a net loss: the cache busted on
-    // nearly every render (streaming deltas, slash/mention queries,
-    // messages, focus changes) and each miss cost a 20–80 way Object.is
-    // comparison. Returning a fresh object literal is cheaper than the
-    // hash AND has identical downstream behavior, since AppShell and
-    // its children are not React.memo'd against these bags.
+    // Plain object literals — no useMemo wrappers. AppShell spreads each bag
+    // into its slot (`<Titlebar {...titlebarProps} />`), and Titlebar,
+    // LeftSidebar and WorkspaceRightPanel are React.memo'd, so they compare
+    // the individual values and stable setters, not the bag identity. The
+    // shell no longer subscribes to messages, activities or streamed text,
+    // so it re-renders on coarse changes (thread switch, a new message on
+    // the thread object, composer menus), not on every provider event.
     titlebarProps: {
       activeThreadProjectName: activeThread?.projectName,
-      consoleLogs,
       consolePanelOpen,
       chatUiStyle,
       appMode,
@@ -625,10 +495,8 @@ export function useAppShellBundles() {
       exitSplitMode,
     },
     leftSidebarProps: {
-      sidebarWidth:
-        appMode !== "agent"
-          ? effectiveEditorSidebarWidth
-          : effectiveSidebarWidth,
+      // One width for Agent, Editor and Canvas.
+      sidebarWidth: effectiveSidebarWidth,
       setSidebarWidth,
       setSidebarOpen,
       minimalChat,
@@ -636,9 +504,6 @@ export function useAppShellBundles() {
       appMode,
       setAppMode,
       activeThread,
-      messages,
-      chatSearch,
-      chatDateFilter,
       setChatDateFilter,
       gitHubUser,
       gitUserName,
@@ -654,10 +519,7 @@ export function useAppShellBundles() {
       setNewProjectStatus,
       setNewProjectLog,
       setNewProjectOpen,
-      marketplaceOpen,
       setMarketplaceOpen,
-      settingsOpen,
-      settingsTab,
       setSettingsTab,
       setSettingsOpen,
       setGitModal,
@@ -672,13 +534,11 @@ export function useAppShellBundles() {
       providers,
       setSystemBrowserOpen,
     },
-    // mainAreaProps aggregates chat streaming, composer, tab, autonomous,
-    // console, and modal state into a single bag for <MainArea>. Previously
-    // wrapped in a useMemo with an 80-entry dep array — the cache busted on
-    // nearly every render (streaming deltas, slash/mention queries, messages,
-    // focus changes) so memoization was effectively a no-op paid for with an
-    // 80-way Object.is loop. Plain object literal is cheaper and has the
-    // same downstream behavior since MainArea isn't React.memo'd.
+    // mainAreaProps aggregates composer, tab and console state
+    // into a single bag for <MainArea>. MainArea is not memoized; it renders
+    // when the shell does, which no longer happens per keystroke in the
+    // composer menus, per console batch or when a dialog opens. Each
+    // ChatColumn subscribes to its own thread.
     mainAreaProps: {
       wsReady,
       appMode,
@@ -733,7 +593,6 @@ export function useAppShellBundles() {
       openThreadOnPane,
       setEditingFile,
       swarmActive,
-      messages,
       isStreaming,
       handleSubmit,
       setPlanModalContent,
@@ -743,24 +602,6 @@ export function useAppShellBundles() {
       setThinkingMode,
       specialMode,
       permissionLevel,
-      mentionQuery,
-      mentionActive,
-      slashActive,
-      slashQuery,
-      slashTrigger,
-      slashRange,
-      closeMention,
-      closeSlash,
-      handleSlashSelect,
-      autonomousMode,
-      autonomousStatus,
-      autonomousIterations,
-      autonomousMaxIterations,
-      autonomousTask,
-      autonomousTaskList,
-      autonomousTimeBudgetMin,
-      autonomousStartedAt,
-      autonomousStopReason,
       deepgram,
       composerProps: {
         handleSubmit,
@@ -770,11 +611,6 @@ export function useAppShellBundles() {
         minimalChat,
         thinkingMode: resolvedThinkingMode,
         setThinkingMode,
-        autonomousMode,
-        autonomousStatus,
-        autonomousTask,
-        autonomousIterations,
-        autonomousMaxIterations,
         chatMode,
         setChatMode,
         specialMode,
@@ -797,8 +633,6 @@ export function useAppShellBundles() {
         isFavorite,
         isLmStudio,
         isStreaming,
-        modelPickerOpen: modelModalOpen,
-        setModelPickerOpen: setModelModalOpen,
         voiceSetupComplete,
         deepgram,
         setTerminalOpen,
@@ -811,104 +645,25 @@ export function useAppShellBundles() {
       consolePanelHeight,
       setConsolePanelHeight,
       setConsolePanelOpen,
-      consoleTab,
-      setConsoleTab,
-      consoleLogs,
-      setConsoleLogs,
       setChatSearch,
       setSystemBrowserOpen,
       setSystemBrowserIntent,
       appModals: (
         <AppModals
-          planModalContent={planModalContent}
-          planModalSourceProposedPlan={planModalSourceProposedPlan}
-          planModalThreadId={planModalThreadId}
-          planModalImplemented={planModalImplemented}
-          setPlanModalContent={setPlanModalContent}
-          selectedModel={resolvedSelectedModel}
-          selectedProvider={selectedProvider}
-          thinkingMode={resolvedThinkingMode}
-          permissionLevel={permissionLevel}
-          contextWindow={contextWindow}
-          fastMode={fastMode}
-          setChatMode={setChatMode}
-          chatSearch={chatSearch}
-          setChatSearch={setChatSearch}
-          minimalChat={minimalChat}
-          editingFile={editingFile}
-          setEditingFile={setEditingFile}
           activeThread={activeThread}
-          fileExplorerModal={fileExplorerModal}
-          setFileExplorerModal={setFileExplorerModal}
-          gitModal={gitModal}
-          setGitModal={setGitModal}
-          marketplaceOpen={marketplaceOpen}
-          setMarketplaceOpen={setMarketplaceOpen}
-          voiceModalOpen={voiceModalOpen}
-          setVoiceModalOpen={setVoiceModalOpen}
-          startVoice={startVoice}
+          minimalChat={minimalChat}
           providers={providers}
-          editorModeModalOpen={editorModeModalOpen}
-          setEditorModeModalOpen={setEditorModeModalOpen}
-          editorModalPath={editorModalPath}
-          setEditorModalPath={setEditorModalPath}
+          handleSubmit={handleSubmit}
           appMode={appMode}
           setAppMode={setAppMode}
           setSidebarOpen={setSidebarOpen}
           setFileTreeOpen={setFileTreeOpen}
-          editorSidebarView={editorSidebarView}
           setEditorSidebarView={setEditorSidebarView}
           terminalOpen={terminalOpen}
           setTerminalOpen={setTerminalOpen}
-          diffOpen={diffOpen}
-          setDiffOpen={setDiffOpen}
-          newThreadModalOpen={newThreadModalOpen}
-          setNewThreadModalOpen={setNewThreadModalOpen}
-          newThreadModalPath={newThreadModalPath}
-          setNewThreadModalPath={setNewThreadModalPath}
-          newProjectOpen={newProjectOpen}
-          setNewProjectOpen={setNewProjectOpen}
-          newProjectStep={newProjectStep}
-          setNewProjectStep={setNewProjectStep}
-          newProjectStatus={newProjectStatus}
-          setNewProjectStatus={setNewProjectStatus}
-          newProjectLog={newProjectLog}
-          setNewProjectLog={setNewProjectLog}
-          newProjectName={newProjectName}
-          setNewProjectName={setNewProjectName}
-          newProjectPath={newProjectPath}
-          setNewProjectPath={setNewProjectPath}
-          newProjectPM={newProjectPM}
-          setNewProjectPM={setNewProjectPM}
-          newProjectTemplate={newProjectTemplate}
-          setNewProjectTemplate={setNewProjectTemplate}
-          newProjectUI={newProjectUI}
-          setNewProjectUI={setNewProjectUI}
-          confirmAction={confirmAction}
-          setConfirmAction={setConfirmAction}
-          settingsOpen={settingsOpen}
-          setSettingsOpen={setSettingsOpen}
-          settingsTab={settingsTab}
-          setSettingsTab={setSettingsTab}
-          shortcutsOpen={shortcutsOpen}
-          setShortcutsOpen={setShortcutsOpen}
-          commandPaletteOpen={commandPaletteOpen}
-          setCommandPaletteOpen={setCommandPaletteOpen}
-          quickOpenOpen={quickOpenOpen}
-          setQuickOpenOpen={setQuickOpenOpen}
-          goToLineOpen={goToLineOpen}
-          setGoToLineOpen={setGoToLineOpen}
-          documentSymbolsOpen={documentSymbolsOpen}
-          setDocumentSymbolsOpen={setDocumentSymbolsOpen}
-          workspaceSymbolsOpen={workspaceSymbolsOpen}
-          setWorkspaceSymbolsOpen={setWorkspaceSymbolsOpen}
-          autonomousDialogOpen={autonomousDialogOpen}
-          setAutonomousDialogOpen={setAutonomousDialogOpen}
-          systemBrowserOpen={systemBrowserOpen}
-          setSystemBrowserOpen={setSystemBrowserOpen}
-          systemBrowserIntent={systemBrowserIntent}
-          setSystemBrowserIntent={setSystemBrowserIntent}
-          handleSubmit={handleSubmit}
+          voiceModalOpen={voiceModalOpen}
+          setVoiceModalOpen={setVoiceModalOpen}
+          startVoice={startVoice}
         />
       ),
     },

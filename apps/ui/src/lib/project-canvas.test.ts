@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   canvasBounds,
+  canvasDeviceSlots,
   canvasDevices,
   canvasProjectSize,
   moveOnCanvas,
@@ -79,5 +80,34 @@ describe("shared project canvas geometry", () => {
     expect(multiple.height).toBeGreaterThan(single.height)
     expect(single.width).toBe(752)
     expect(single.height).toBe(762)
+  })
+  it("places each device preview where the card draws it, card scale applied", () => {
+    const slots = canvasDeviceSlots(
+      { designDevicePresets: ["desktop", "mobile"] },
+      { x: 100, y: 50 }
+    )
+    expect(slots).toEqual([
+      { deviceId: "desktop", x: 116, y: 274, width: 720, height: 478 },
+      { deviceId: "mobile", x: 852, y: 274, width: 187.5, height: 434 },
+    ])
+    // Every slot fits inside the card it belongs to.
+    const card = canvasProjectSize({
+      designDevicePresets: ["desktop", "mobile"],
+    })
+    for (const slot of slots) {
+      expect(slot.x + slot.width).toBeLessThanOrEqual(100 + card.width)
+      expect(slot.y + slot.height).toBeLessThanOrEqual(50 + card.height)
+    }
+    const [scaled] = canvasDeviceSlots(
+      { designDevicePreset: "desktop", designCardScale: 2 },
+      { x: 100, y: 50 }
+    )
+    expect(scaled).toEqual({
+      deviceId: "desktop",
+      x: 132,
+      y: 498,
+      width: 1440,
+      height: 956,
+    })
   })
 })

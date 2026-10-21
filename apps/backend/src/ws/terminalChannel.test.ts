@@ -7,6 +7,7 @@ import {
 } from "@betterc0de/schema/remote-terminal"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { AppState } from "../appState"
+import { withInertAppState } from "../testUtils/inert-app-state"
 import type { WsConnection, WsPrincipal, WsRemotePrincipal } from "./server"
 import { RemoteTerminalChannel } from "./terminalChannel"
 
@@ -143,15 +144,15 @@ const pty = vi.hoisted(() => {
   }
 })
 
-vi.mock("../services/terminalPty", () => ({
-  openTerminalPtySession: (input: Parameters<typeof pty.open>[0]) =>
-    pty.open(input),
-  readTerminalPtySession: pty.read,
-  subscribeTerminalPtySession: pty.subscribe,
-  writeTerminalPtySession: pty.write,
-  resizeTerminalPtySession: pty.resize,
-  closeTerminalPtySession: pty.close,
-}))
+/** The channel's PTY service: the fake above. */
+const terminalPtys = {
+  openSession: (input: Parameters<typeof pty.open>[0]) => pty.open(input),
+  readSession: pty.read,
+  subscribeSession: pty.subscribe,
+  writeSession: pty.write,
+  resizeSession: pty.resize,
+  closeSession: pty.close,
+}
 
 interface FakeConnection extends WsConnection {
   readonly frames: Array<{ channel: string; data: Record<string, unknown> }>
@@ -196,11 +197,12 @@ let workspace = ""
 let granted = true
 
 function channel(detachedMs?: number) {
-  const state = {
+  const state = withInertAppState({
+    terminalPtys,
     projectProjections: { listAll: () => [{ path: workspace }] },
     threads: { listProjects: () => [] },
     worktreeRegistry: { listAll: () => [] },
-  } as unknown as AppState
+  } as unknown as AppState)
   return new RemoteTerminalChannel({
     state,
     terminalGranted: () => granted,

@@ -6,6 +6,7 @@ import {
   GripVerticalIcon,
   MessageSquareIcon,
   MoveDiagonal2Icon,
+  PauseIcon,
   RefreshCwIcon,
   ServerIcon,
   XIcon,
@@ -18,6 +19,8 @@ import { getModelInfo } from "@/lib/get-model-info"
 import type { UiProvider } from "@/lib/provider-types"
 import { ProviderIcon } from "@/components/provider-icon"
 import { useWorkspaceBranch } from "@/hooks/use-workspace-branch"
+import { useCanvasGuestState } from "@/hooks/use-canvas-live-guests"
+import type { CanvasGuestState } from "@/lib/canvas-live-guests"
 import {
   PROJECT_HEADER_HEIGHT,
   PROJECT_FOOTER_HEIGHT,
@@ -405,23 +408,35 @@ export const CanvasProjectFrame = memo(function CanvasProjectFrame({
             {devices.map((device) => (
               <ProjectDevice
                 key={device.id}
+                guestId={canvasViewportKey(threadId, device.id)}
                 device={device}
                 url={url}
                 panActive={panActive}
                 slotScale={PREVIEW_SCALE}
                 selectionMode={selectionMode}
-                register={(handle) => {
+                register={(handle, paused) => {
+                  const key = canvasViewportKey(threadId, device.id)
                   if (handle) viewports.current.set(device.id, handle)
                   else viewports.current.delete(device.id)
-                  registerCanvasViewport(
-                    canvasViewportKey(threadId, device.id),
-                    handle
-                  )
-                  if (!handle)
-                    useCanvasPreviewStore
-                      .getState()
-                      .forgetViewport(threadId, device.id)
+                  registerCanvasViewport(key, handle)
+                  if (handle) return
+                  useCanvasPreviewStore
+                    .getState()
+                    .forgetViewport(threadId, device.id)
+                  // The guest is gone either way; a paused preview keeps its
+                  // console lines for when it loads again.
+                  useCanvasRuntimeStore
+                    .getState()
+                    .releaseViewport(key, { keepConsole: paused })
                 }}
+                onGuestChange={(webContentsId) =>
+                  useCanvasRuntimeStore
+                    .getState()
+                    .bindGuest(
+                      canvasViewportKey(threadId, device.id),
+                      webContentsId
+                    )
+                }
                 onElementSelected={(element) => {
                   const pageUrl = element.url || url || ""
                   onElementSelected(threadId, { ...element, url: pageUrl })
@@ -562,13 +577,68 @@ export const CanvasProjectFrame = memo(function CanvasProjectFrame({
   )
 })
 
+const PAUSED_COPY: Record<
+  Exclude<CanvasGuestState, "live">,
+  { title: string; body: string }
+> = {
+  offscreen: {
+    title: "Preview paused",
+    body: "It loads again when this device scrolls into view.",
+  },
+  small: {
+    title: "Preview paused",
+    body: "Zoom in to load the page.",
+  },
+  capped: {
+    title: "Preview paused to save memory",
+    body: "Click to load this page; the least recently used preview pauses.",
+  },
+}
+
+/**
+ * Stands in for a guest the board has paused: same size as the device, no
+ * process behind it. Pressing it focuses the device, which loads it again.
+ */
+function PausedPreview({
+  state,
+  url,
+}: {
+  state: Exclude<CanvasGuestState, "live">
+  url: string
+}) {
+  const copy = PAUSED_COPY[state]
+  return (
+    <div
+      data-canvas-paused={state}
+      className="flex size-full items-center justify-center rounded-lg bg-muted/10 p-8 ring-1 ring-border/60"
+    >
+      <div className="flex max-w-md flex-col items-center gap-4 text-center">
+        <div className="flex size-16 items-center justify-center rounded-2xl border border-border/60 bg-muted/25 text-muted-foreground">
+          <PauseIcon className="size-7" strokeWidth={1.5} />
+        </div>
+        <div className="space-y-2">
+          <p className="text-2xl font-medium text-foreground">{copy.title}</p>
+          <p className="text-lg leading-relaxed text-muted-foreground">
+            {copy.body}
+          </p>
+        </div>
+        <p className="max-w-full truncate font-mono text-base text-muted-foreground/70">
+          {url}
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function ProjectDevice({
+  guestId,
   device,
   url,
   panActive,
   selectionMode,
   slotScale,
   register,
+  onGuestChange,
   onElementSelected,
   onDomTree,
   onNavigate,
@@ -577,6 +647,8 @@ function ProjectDevice({
   onShortcut,
   emptyState,
 }: {
+  /** The board's id for this guest, shared with the preview store. */
+  guestId: string
   device: CanvasDevicePreset
   url: string | null
   panActive: boolean
@@ -584,7 +656,9 @@ function ProjectDevice({
   selectionMode: boolean
   /** Card-local pixels per device pixel; the ancestor scales the entire card. */
   slotScale: number
-  register: (handle: PreviewViewportHandle | null) => void
+  /** `paused` is true when the guest unmounts because the board paused it. */
+  register: (handle: PreviewViewportHandle | null, paused: boolean) => void
+  onGuestChange: (webContentsId: number | null) => void
   onElementSelected: (element: SelectedElement) => void
   onDomTree: (tree: DomNode | null) => void
   onNavigate: (url: string) => void
@@ -595,32 +669,40 @@ function ProjectDevice({
   emptyState: React.ReactNode
 }) {
   const [loading, setLoading] = useState(false)
+  const guestState = useCanvasGuestState(guestId)
   // Parent callbacks change while zooming. Detach only when the guest really
   // unmounts, otherwise the focused element and inspector tree are lost.
   const registerRef = useRef(register)
   registerRef.current = register
+  // Read when the guest detaches: set by the render that paused it.
+  const pausedRef = useRef(false)
+  pausedRef.current = guestState !== "live"
   const attachViewport = useCallback((handle: PreviewViewportHandle | null) => {
-    registerRef.current(handle)
+    registerRef.current(handle, pausedRef.current)
   }, [])
   // Keep the page viewport stable. Only CSS transforms scale the canvas.
-  const artboard = (
-    <DesignArtboard
-      ref={attachViewport}
-      preset={device}
-      url={url}
-      interactMode={panActive ? "hand" : "interact"}
-      selectionMode={selectionMode}
-      isLoading={loading}
-      onLoadingChange={setLoading}
-      onElementSelected={onElementSelected}
-      onDomTree={onDomTree}
-      onNavigate={onNavigate}
-      onConsoleEntries={onConsoleEntries}
-      onShortcut={onShortcut}
-      emptyState={emptyState}
-      hideLabel
-    />
-  )
+  const artboard =
+    url && guestState !== "live" ? (
+      <PausedPreview state={guestState} url={url} />
+    ) : (
+      <DesignArtboard
+        ref={attachViewport}
+        preset={device}
+        url={url}
+        interactMode={panActive ? "hand" : "interact"}
+        selectionMode={selectionMode}
+        isLoading={loading}
+        onLoadingChange={setLoading}
+        onElementSelected={onElementSelected}
+        onDomTree={onDomTree}
+        onNavigate={onNavigate}
+        onConsoleEntries={onConsoleEntries}
+        onGuestChange={onGuestChange}
+        onShortcut={onShortcut}
+        emptyState={emptyState}
+        hideLabel
+      />
+    )
   return (
     <div
       data-canvas-device={device.id}

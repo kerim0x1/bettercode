@@ -1,7 +1,7 @@
 import type { AppState } from "../appState"
 import { randomUUID } from "node:crypto"
 import { describe, expect, it } from "vitest"
-import { workspaceRecoveryGate } from "../services/workspace-recovery-gate"
+import { WorkspaceRecoveryGate } from "../services/workspace-recovery-gate"
 import {
   assertThreadRecoveryComplete,
   assertWorkspaceRecoveryComplete,
@@ -9,7 +9,10 @@ import {
 } from "./checkpointRecoveryFence"
 
 function stateWithStore(store: Record<string, unknown>): AppState {
-  return { checkpointReverts: store } as unknown as AppState
+  return {
+    checkpointReverts: store,
+    workspaceRecoveryGate: new WorkspaceRecoveryGate(),
+  } as unknown as AppState
 }
 
 describe("checkpoint recovery mutation fences", () => {
@@ -80,7 +83,7 @@ describe("checkpoint recovery mutation fences", () => {
       blockingThreadForCwd: () => (recoveryPending ? "thread-recovery" : null),
     })
     const recoveryLease =
-      await workspaceRecoveryGate.acquireExclusive(workspace)
+      await state.workspaceRecoveryGate.acquireExclusive(workspace)
     const mutation = withCheckpointRecoveryMutation(
       state,
       { workspaces: [workspace] },
@@ -99,6 +102,6 @@ describe("checkpoint recovery mutation fences", () => {
       code: "checkpoint_recovery_pending",
     })
     expect(operationCalled).toBe(false)
-    expect(workspaceRecoveryGate.activeLeaseCount()).toBe(0)
+    expect(state.workspaceRecoveryGate.activeLeaseCount()).toBe(0)
   })
 })

@@ -46,6 +46,7 @@ import {
 } from "@betterc0de/schema/chat-controls"
 import type { ModelOption } from "@/types/remote"
 import { colors, font, radius, spacing, type } from "@/design/theme"
+import { BYPASS_UNAVAILABLE_HINT } from "@/lib/bypass"
 import {
   supportsFastMode,
   thinkingLabelFor,
@@ -64,8 +65,10 @@ import { ProviderLogo } from "./provider-logo"
  * button (ArrowUp) on the right. While a reply runs, Stop ends it and Queue
  * sends the message after it, as on the desktop. The permission presets,
  * their Bypass warning and the modes come from @betterc0de/schema, so both
- * apps say the same. Photos from the library or the camera sit above the
- * text until the message goes; a message may be photos alone.
+ * apps say the same. Bypass stays in the list but cannot be chosen when the
+ * desktop does not allow it to this phone (`bypassAvailable`). Photos from
+ * the library or the camera sit above the text until the message goes; a
+ * message may be photos alone.
  */
 export function ChatComposer({
   value,
@@ -83,6 +86,7 @@ export function ChatComposer({
   onFastModeChange,
   permissionLevel,
   onPermissionLevelChange,
+  bypassAvailable,
   chatMode,
   onChatModeChange,
   photos,
@@ -106,6 +110,11 @@ export function ChatComposer({
   onFastModeChange: (fastMode: boolean) => void
   permissionLevel: PermissionLevel
   onPermissionLevelChange: (level: PermissionLevel) => void
+  /**
+   * The desktop lets this phone use Bypass (`bypassAllowed`): its terminal
+   * grant. Without it Bypass is shown, unavailable, with the reason.
+   */
+  bypassAvailable: boolean
   chatMode: KnownChatMode
   onChatModeChange: (mode: KnownChatMode) => void
   photos: readonly PreparedPhoto[]
@@ -147,6 +156,7 @@ export function ChatComposer({
       onPermissionLevelChange(level)
       return
     }
+    if (!bypassAvailable) return
     Alert.alert(BYPASS_CONFIRM_TITLE, BYPASS_CONFIRM_BODY, [
       { text: "Cancel", style: "cancel" },
       {
@@ -431,18 +441,27 @@ export function ChatComposer({
       >
         {PERMISSION_LEVELS.map((option) => {
           const Icon = permissionIcon(option.id)
+          const unavailable = option.id === "bypass" && !bypassAvailable
           return (
             <DropdownRow
               key={option.id}
+              testID={`permission-option-${option.id}`}
               icon={
                 <Icon
                   size={15}
-                  color={option.danger ? colors.danger : colors.textSecondary}
+                  color={
+                    unavailable
+                      ? colors.textMuted
+                      : option.danger
+                        ? colors.danger
+                        : colors.textSecondary
+                  }
                 />
               }
               label={option.label}
-              sublabel={option.desc}
+              sublabel={unavailable ? BYPASS_UNAVAILABLE_HINT : option.desc}
               destructive={option.danger}
+              disabled={unavailable}
               active={option.id === permissionLevel}
               onPress={() => choosePermission(option.id)}
             />

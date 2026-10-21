@@ -15,6 +15,7 @@ import { logger } from "../../observability/logger"
 import { isLocalOwnerRequest } from "../../remote/http"
 import { createCliStatusReader } from "../../services/cli-status"
 import { readBackendVersion } from "../../version"
+import { contractResult } from "../contracts"
 
 /* ── Package version (read once at module load) ───────────────────────── */
 const pkgVersion = readBackendVersion()
@@ -55,15 +56,19 @@ export function registerRuntimeRoutes(api: Hono, state: AppState): void {
   let heapSnapshotInFlight = false
   let nextHeapSnapshotAllowedAt = 0
   const readCliStatus = createCliStatusReader(state.providerRegistry)
+  // Every answer below is checked against its shared contract
+  // (`@betterc0de/schema/http-contracts`, `runtime-contracts.ts`).
   api.get("/runtime/health", (c) => {
     const dbStatus = databaseLiveness(state)
-    return c.json(
+    return contractResult(
+      c,
+      "runtimeHealth",
       { status: dbStatus === "ok" ? "ok" : "error", db: dbStatus },
       dbStatus === "ok" ? 200 : 503
     )
   })
   api.get("/runtime/capabilities", (c) =>
-    c.json({
+    contractResult(c, "runtimeCapabilities", {
       capabilities: ["chat.send", "git", "workspace", "shell"],
       backend: "node",
     })
@@ -75,7 +80,7 @@ export function registerRuntimeRoutes(api: Hono, state: AppState): void {
     // allowlist change cannot leak them by accident.
     const localOwner = isLocalOwnerRequest(c, state.config, state)
     const redacted = "[redacted]"
-    return c.json({
+    return contractResult(c, "runtimeDebugInfo", {
       app: {
         name: "BetterC0de",
         version: pkgVersion,
@@ -142,7 +147,7 @@ export function registerRuntimeRoutes(api: Hono, state: AppState): void {
   })
 
   api.get("/runtime/metrics", (c) =>
-    c.json({
+    contractResult(c, "runtimeMetrics", {
       collectedAt: new Date().toISOString(),
       uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
       memory: process.memoryUsage(),
@@ -172,7 +177,7 @@ export function registerRuntimeRoutes(api: Hono, state: AppState): void {
     try {
       const snapshot = writeRuntimeHeapSnapshot(state.config)
       nextHeapSnapshotAllowedAt = now + HEAP_SNAPSHOT_RATE_LIMIT_MS
-      return c.json(snapshot)
+      return contractResult(c, "runtimeHeapSnapshot", snapshot)
     } finally {
       heapSnapshotInFlight = false
     }
@@ -186,7 +191,7 @@ export function registerRuntimeRoutes(api: Hono, state: AppState): void {
    */
   api.get("/cli/status", async (c) => {
     const refresh = c.req.query("refresh") === "true"
-    return c.json(await readCliStatus({ refresh }))
+    return contractResult(c, "cliStatus", await readCliStatus({ refresh }))
   })
 }
 

@@ -6,7 +6,7 @@ const backend = vi.hoisted(() => ({
   createDirectory: vi.fn(async () => undefined),
   writeFile: vi.fn(async () => undefined),
 }))
-vi.mock("@/services/backend", () => backend)
+vi.mock("@/services/backend/workspaceApi", () => backend)
 
 afterEach(() => vi.clearAllMocks())
 

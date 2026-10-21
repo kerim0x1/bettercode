@@ -1,10 +1,30 @@
 import path from "node:path"
-import { closeShellSessionsForWorkspace } from "./shell"
-import { shutdownTerminalPtySessionsForWorkspace } from "./terminalPty"
-import {
-  workspaceRecoveryGate,
-  type WorkspaceRecoveryLease,
+import type { ShellSessionService } from "./shell"
+import type { TerminalPtyService } from "./terminalPty"
+import type {
+  WorkspaceRecoveryGate,
+  WorkspaceRecoveryLease,
 } from "./workspace-recovery-gate"
+
+/**
+ * The long-lived process owners a destructive workspace operation drains:
+ * the instance's terminals and its shell commands.
+ */
+export interface WorkspaceProcessOwners {
+  readonly terminalPtys: Pick<TerminalPtyService, "shutdownForWorkspace">
+  readonly shellSessions: Pick<ShellSessionService, "closeSessionsForWorkspace">
+}
+
+/**
+ * What exclusive workspace maintenance needs: the instance's recovery gate
+ * the barrier queues on, and the process owners it drains.
+ */
+export interface ExclusiveWorkspaceMaintenanceState extends WorkspaceProcessOwners {
+  readonly workspaceRecoveryGate: Pick<
+    WorkspaceRecoveryGate,
+    "acquireExclusiveAfterQuiesce"
+  >
+}
 
 /**
  * Queues a repository-wide exclusive barrier, then drains long-lived process
@@ -16,6 +36,7 @@ import {
  * living in sibling filesystem paths.
  */
 export async function acquireExclusiveWorkspaceMaintenance(
+  state: ExclusiveWorkspaceMaintenanceState,
   workspaces: readonly string[],
   options: { readonly timeoutMs?: number } = {}
 ): Promise<WorkspaceRecoveryLease> {
@@ -30,13 +51,13 @@ export async function acquireExclusiveWorkspaceMaintenance(
     throw new Error("At least one workspace path is required")
   }
 
-  return workspaceRecoveryGate.acquireExclusiveAfterQuiesce(
+  return state.workspaceRecoveryGate.acquireExclusiveAfterQuiesce(
     normalized,
     async () => {
       for (const workspace of normalized) {
         await Promise.all([
-          closeShellSessionsForWorkspace(workspace),
-          shutdownTerminalPtySessionsForWorkspace(workspace),
+          state.shellSessions.closeSessionsForWorkspace(workspace),
+          state.terminalPtys.shutdownForWorkspace(workspace),
         ])
       }
     },
@@ -45,11 +66,16 @@ export async function acquireExclusiveWorkspaceMaintenance(
 }
 
 export async function withExclusiveWorkspaceMaintenance<T>(
+  state: ExclusiveWorkspaceMaintenanceState,
   workspaces: readonly string[],
   operation: () => Promise<T> | T,
   options: { readonly timeoutMs?: number } = {}
 ): Promise<T> {
-  const lease = await acquireExclusiveWorkspaceMaintenance(workspaces, options)
+  const lease = await acquireExclusiveWorkspaceMaintenance(
+    state,
+    workspaces,
+    options
+  )
   try {
     return await operation()
   } finally {

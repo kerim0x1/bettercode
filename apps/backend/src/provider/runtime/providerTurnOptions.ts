@@ -4,6 +4,7 @@ import {
   type ProviderSendTurnInput,
 } from "./contracts"
 import { normalizeModelSlug } from "@betterc0de/schema"
+import { providerRuntimeModeForLevel } from "../permissions"
 
 export function resolveTurnModelId(input: ProviderSendTurnInput): string {
   const rawModel = input.modelSelection?.model ?? input.modelId
@@ -53,24 +54,10 @@ export function runtimeModeForTurn(
     case "security":
       return "security"
   }
-  switch ((input.permissionLevel ?? "").trim().toLowerCase()) {
-    case "bypass":
-    case "full-access":
-      return "full-access"
-    case "full":
-    case "allow-edits":
-    case "auto-accept-edits":
-      return "auto-accept-edits"
-    case "read-only":
-    case "read":
-      return "read-only"
-    case "ask":
-    case "ask-on-edit":
-    case "approval-required":
-      return "approval-required"
-    default:
-      return undefined
-  }
+  // The shared alias table: `full`/`full-access` levels mean allow-edits,
+  // only an explicit `bypass` yields the bypass runtime mode, and an unknown
+  // spelling fails closed instead of inheriting a broader stored mode.
+  return providerRuntimeModeForLevel(input.permissionLevel)
 }
 
 export function normalizeRuntimeMode(

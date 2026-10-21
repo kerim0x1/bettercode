@@ -18,7 +18,17 @@ import {
   codexThreadStartedSchema,
   isCodexHandledServerRequestMethod,
 } from "./protocol"
-import type { ProviderApprovalDecision } from "../contracts"
+import type {
+  ProviderApprovalDecision,
+  ProviderSteerTurnResult,
+} from "../contracts"
+import { classifyCodexSteerError } from "./steer"
+import { logger } from "../../../observability/logger"
+import { redactSensitiveText } from "../../../observability/redact"
+import {
+  codexVersionAdvisory,
+  parseCodexInitializeVersion,
+} from "./codexVersion"
 import {
   pendingRequestKindFromDecisionKind,
   StalePendingProviderRequestError,
@@ -57,6 +67,15 @@ export interface CodexTurnStartParams {
   readonly collaborationMode?: unknown
 }
 
+/** Input for the running turn (`turn/steer`); same shape as a turn's input. */
+export interface CodexTurnSteerParams {
+  readonly message: string
+  readonly images?: CodexTurnStartParams["images"]
+}
+
+/** `turn/steer` only checks the turn and queues the input; it answers fast. */
+const CODEX_STEER_TIMEOUT_MS = 15_000
+
 export interface CodexNativeEvent {
   readonly kind:
     | "notification"
@@ -73,6 +92,13 @@ export interface CodexNativeEvent {
   readonly exit?: { code: number | null; signal: NodeJS.Signals | null }
   readonly error?: string
 }
+
+/**
+ * Non-fatal stderr warnings become at most one transcript warning per window;
+ * every line still reaches the backend log. Codex logs WARN lines routinely,
+ * and one journaled warning per line only buried the transcript.
+ */
+const STDERR_WARNING_WINDOW_MS = 60_000
 
 interface PendingServerRequest {
   readonly jsonRpcMethod: string
@@ -97,6 +123,15 @@ export class CodexSessionRuntime extends EventEmitter {
   private closing = false
   private resumedExistingThread = false
   private successfulTurnCount = 0
+  /** True while `turn/start` is awaiting its response. */
+  private turnStartInFlight = false
+  /** The pending `turn/start`, so a steer sent right after it can wait for its turn id. */
+  private turnStart: Promise<unknown> | null = null
+  /** Stop pressed before the turn id was known; sent once it arrives. */
+  private interruptQueued = false
+  private lastCompletedTurnId: string | null = null
+  private lastStderrWarningAt = 0
+  private agentVersion: string | null = null
   private readonly pendingServerRequests = new Map<
     string,
     PendingServerRequest
@@ -119,15 +154,24 @@ export class CodexSessionRuntime extends EventEmitter {
   isAlive(): boolean {
     return this.rpc.isAlive()
   }
+  /** Codex CLI version reported by `initialize`, when readable. */
+  getAgentVersion(): string | null {
+    return this.agentVersion
+  }
 
   async start(options: CodexSessionStartOptions): Promise<void> {
     this.wireRpcListeners()
     await this.rpc.spawnChild()
     this.spawned = true
-    await this.rpc.call("initialize", {
+    const initialize = await this.rpc.call("initialize", {
       clientInfo: options.clientInfo,
       capabilities: { experimentalApi: true },
     })
+    this.agentVersion = parseCodexInitializeVersion(initialize)
+    const advisory = codexVersionAdvisory(this.agentVersion)
+    if (advisory) {
+      logger.warn({ version: this.agentVersion }, advisory)
+    }
     this.rpc.notify("initialized", {})
     this.initialized = true
 
@@ -173,14 +217,7 @@ export class CodexSessionRuntime extends EventEmitter {
     }
     const payload: Record<string, unknown> = {
       threadId: this.providerThreadId,
-      input: [
-        { type: "text", text: params.message },
-        ...(params.images ?? []).map((image) => ({
-          type: "image",
-          url: image.url,
-          ...(image.detail ? { detail: image.detail } : {}),
-        })),
-      ],
+      input: codexUserInput(params.message, params.images),
     }
     if (params.model) payload.model = params.model
     if (params.approvalPolicy) payload.approvalPolicy = params.approvalPolicy
@@ -192,15 +229,90 @@ export class CodexSessionRuntime extends EventEmitter {
       payload.serviceTier = params.serviceTier
     if (params.collaborationMode !== undefined)
       payload.collaborationMode = params.collaborationMode
-    await this.rpc.call("turn/start", payload)
+    this.interruptQueued = false
+    this.turnStartInFlight = true
+    const started = this.rpc.call("turn/start", payload)
+    this.turnStart = started
+    let response: unknown
+    try {
+      response = await started
+    } finally {
+      this.turnStartInFlight = false
+      if (this.turnStart === started) this.turnStart = null
+    }
+    // The response already names the turn; `turn/started` may arrive later.
+    // Without this a Stop pressed in that window silently did nothing.
+    const turnId = readStartedTurnId(response)
+    if (turnId && !this.activeTurnId && turnId !== this.lastCompletedTurnId) {
+      this.activeTurnId = turnId
+    }
     this.successfulTurnCount += 1
+    this.flushQueuedInterrupt()
   }
 
   async interruptTurn(): Promise<void> {
-    if (!this.providerThreadId || !this.activeTurnId) return
+    if (!this.providerThreadId) return
+    if (!this.activeTurnId) {
+      // `turn/start` is still in flight: interrupt as soon as its id is known.
+      if (this.turnStartInFlight) this.interruptQueued = true
+      return
+    }
+    this.interruptQueued = false
     await this.rpc.call("turn/interrupt", {
       threadId: this.providerThreadId,
       turnId: this.activeTurnId,
+    })
+  }
+
+  /**
+   * Adds the user's input to the running turn (`turn/steer`). The request
+   * names the turn it is meant for, so input never lands in a later turn.
+   * Refusals (no turn, a turn that takes no input, an app-server without
+   * the method) come back as a status; other errors are thrown.
+   */
+  async steerTurn(
+    params: CodexTurnSteerParams
+  ): Promise<ProviderSteerTurnResult> {
+    // Sent right after the message that starts the turn: once `turn/start`
+    // answers, its turn id is known (sendTurn sets it before this resumes).
+    if (!this.activeTurnId && this.turnStart) {
+      await this.turnStart.then(
+        () => undefined,
+        () => undefined
+      )
+    }
+    const expectedTurnId = this.activeTurnId
+    if (!this.initialized || !this.providerThreadId || !expectedTurnId) {
+      return { status: "not_running", reason: "No Codex turn is running." }
+    }
+    try {
+      const response = await this.rpc.call(
+        "turn/steer",
+        {
+          threadId: this.providerThreadId,
+          input: codexUserInput(params.message, params.images),
+          expectedTurnId,
+        },
+        CODEX_STEER_TIMEOUT_MS
+      )
+      return {
+        status: "steered",
+        turnId: readSteeredTurnId(response) ?? expectedTurnId,
+      }
+    } catch (error) {
+      const refusal = classifyCodexSteerError(
+        error instanceof Error ? error.message : String(error)
+      )
+      if (refusal) return refusal
+      throw error
+    }
+  }
+
+  private flushQueuedInterrupt(): void {
+    if (!this.interruptQueued || !this.activeTurnId) return
+    this.interruptQueued = false
+    void this.interruptTurn().catch((error: unknown) => {
+      logger.warn({ err: error }, "codex queued interrupt failed")
     })
   }
 
@@ -369,6 +481,7 @@ export class CodexSessionRuntime extends EventEmitter {
   async close(): Promise<void> {
     this.closing = true
     this.activeTurnId = null
+    this.interruptQueued = false
     this.pendingServerRequests.clear()
     await this.rpc.close()
   }
@@ -413,7 +526,10 @@ export class CodexSessionRuntime extends EventEmitter {
         if (turn?.id) this.activeTurnId = turn.id
       }
       if (m === "turn/completed" || m === "turn/aborted") {
+        this.lastCompletedTurnId =
+          readStartedTurnId(params) ?? this.activeTurnId
         this.activeTurnId = null
+        this.interruptQueued = false
       }
       const native: CodexNativeEvent = {
         kind: "notification",
@@ -421,11 +537,41 @@ export class CodexSessionRuntime extends EventEmitter {
         params,
       }
       this.emit("event", native)
+      if (m === "turn/started") this.flushQueuedInterrupt()
     })
 
     this.rpc.onStderr((line) => {
       const classified = classifyCodexStderrLine(line)
       if (!classified || classified.benign) return
+      // The text itself goes to the log only (redacted, bounded); events stay
+      // generic so no path or credential reaches the transcript.
+      if (
+        classified.fatal ||
+        classified.level === "error" ||
+        classified.level === "warn"
+      ) {
+        logger.warn(
+          {
+            level: classified.level,
+            line: redactSensitiveText(classified.message).slice(0, 1_000),
+          },
+          "codex app-server stderr"
+        )
+      } else {
+        logger.debug(
+          {
+            level: classified.level,
+            line: redactSensitiveText(classified.message).slice(0, 1_000),
+          },
+          "codex app-server stderr"
+        )
+      }
+      if (!classified.fatal) {
+        if (classified.level !== "error" && classified.level !== "warn") return
+        const now = Date.now()
+        if (now - this.lastStderrWarningAt < STDERR_WARNING_WINDOW_MS) return
+        this.lastStderrWarningAt = now
+      }
       const native: CodexNativeEvent = { kind: "stderr", stderr: classified }
       this.emit("event", native)
     })
@@ -434,7 +580,19 @@ export class CodexSessionRuntime extends EventEmitter {
       "exit",
       (info: { code: number | null; signal: NodeJS.Signals | null }) => {
         this.activeTurnId = null
+        this.interruptQueued = false
         this.pendingServerRequests.clear()
+        if (!this.closing && info.code !== 0) {
+          // The cause of an unexpected exit is in stderr, not in the exit code.
+          logger.warn(
+            {
+              code: info.code,
+              signal: info.signal,
+              stderr: this.rpc.stderrText(1_200),
+            },
+            "codex app-server exited unexpectedly"
+          )
+        }
         const native: CodexNativeEvent = { kind: "child-exit", exit: info }
         this.emit("event", native)
       }
@@ -467,6 +625,36 @@ export class CodexSessionRuntime extends EventEmitter {
       this.emit("event", native)
     })
   }
+}
+
+/** The `input` of `turn/start` and `turn/steer`: the text, then the images. */
+function codexUserInput(
+  message: string,
+  images: CodexTurnStartParams["images"]
+): unknown[] {
+  return [
+    { type: "text", text: message },
+    ...(images ?? []).map((image) => ({
+      type: "image",
+      url: image.url,
+      ...(image.detail ? { detail: image.detail } : {}),
+    })),
+  ]
+}
+
+/** `turn/steer` answers with the turn that took the input. */
+function readSteeredTurnId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null
+  const id = (value as { turnId?: unknown }).turnId
+  return typeof id === "string" && id.trim() ? id : null
+}
+
+function readStartedTurnId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null
+  const turn = (value as { turn?: unknown }).turn
+  if (!turn || typeof turn !== "object") return null
+  const id = (turn as { id?: unknown }).id
+  return typeof id === "string" && id.trim() ? id : null
 }
 
 function describeCodexServerRequest(method: string): string {

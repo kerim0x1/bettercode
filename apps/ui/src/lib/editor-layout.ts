@@ -3,12 +3,10 @@ export const EDITOR_CHAT_PANEL_MIN_WIDTH = 300
 export const EDITOR_CHAT_PANEL_MAX_WIDTH = 800
 const LEGACY_EDITOR_CHAT_PANEL_DEFAULT_WIDTHS = new Set([384, 520])
 
-export const EDITOR_SIDEBAR_MIN_WIDTH = 240
-export const EDITOR_SIDEBAR_MAX_WIDTH = 520
-
-// Agent-mode left sidebar bounds (mirrors the resize clamp in left-sidebar.tsx).
-export const AGENT_SIDEBAR_MIN_WIDTH = 220
-export const AGENT_SIDEBAR_MAX_WIDTH = 500
+// Left sidebar bounds, shared by Agent, Editor and Canvas so switching modes
+// keeps the sidebar's width (mirrors the resize clamp in left-sidebar.tsx).
+export const LEFT_SIDEBAR_MIN_WIDTH = 220
+export const LEFT_SIDEBAR_MAX_WIDTH = 500
 
 // Stored sidebar widths are tuned against a 1920px-wide reference display.
 // Rendering them as `vw` keeps the sidebar the same proportion of the screen
@@ -16,7 +14,8 @@ export const AGENT_SIDEBAR_MAX_WIDTH = 500
 // extremes. 1920 / 100 = 19.2px per 1vw at the reference width.
 export const SIDEBAR_REFERENCE_VIEWPORT = 1920
 
-// Above this viewport width the agent sidebar scales its contents up (via the
+// Above this viewport width the left sidebar is this much wider in every mode,
+// and the agent content and the footer scale up inside it (the
 // `.betterc0de-left-sidebar-scale` zoom rule in index.css) so the controls stay
 // comfortable on larger displays. Keep these in sync with that media query.
 export const SIDEBAR_WIDE_BREAKPOINT = 1080
@@ -38,13 +37,8 @@ export function clampEditorChatPanelWidth(value: unknown): number {
   )
 }
 
-export function clampEditorSidebarWidth(value: unknown): number {
-  return clampNumber(
-    value,
-    300,
-    EDITOR_SIDEBAR_MIN_WIDTH,
-    EDITOR_SIDEBAR_MAX_WIDTH
-  )
+export function clampLeftSidebarWidth(value: unknown): number {
+  return clampNumber(value, 300, LEFT_SIDEBAR_MIN_WIDTH, LEFT_SIDEBAR_MAX_WIDTH)
 }
 
 // Convert a reference-px sidebar width into a responsive `vw`-based CSS width,

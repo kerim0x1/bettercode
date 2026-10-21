@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { CliPlugin, CliPluginInventory } from "@betterc0de/schema"
 import { refreshProviderInstance } from "@/services/backend/providersApi"
+import { getElectronApi } from "@/services/ipc-facade"
 
 export type CliPluginMutation = "toggle" | "install" | "uninstall"
 
@@ -26,7 +27,7 @@ export function useCliPlugins() {
   const aliveRef = useRef(true)
 
   const refresh = useCallback(async (force = false) => {
-    const fetcher = window.electronAPI?.cliPluginInventory
+    const fetcher = getElectronApi()?.cliPluginInventory
     if (!fetcher) {
       setError("CLI plugin inventory is unavailable in this environment.")
       setLoading(false)
@@ -47,7 +48,7 @@ export function useCliPlugins() {
   }, [])
 
   const loadAvailable = useCallback(async () => {
-    const fetcher = window.electronAPI?.cliPluginAvailable
+    const fetcher = getElectronApi()?.cliPluginAvailable
     if (!fetcher) return
     setAvailableLoading(true)
     try {
@@ -75,7 +76,7 @@ export function useCliPlugins() {
       id: string,
       enabled?: boolean
     ): Promise<{ ok: boolean; error?: string }> => {
-      const apiSurface = window.electronAPI
+      const apiSurface = getElectronApi()
       if (!apiSurface) return { ok: false, error: "Electron API unavailable" }
       const call =
         mutation === "toggle"

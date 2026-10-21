@@ -51,14 +51,12 @@ const VENDOR_CHUNK_MAP: Record<string, readonly string[]> = {
     "tailwind-merge",
     "lucide-react",
     "@floating-ui",
-    "tippy.js",
     "cmdk",
     "embla-carousel",
     "embla-carousel-react",
     "embla-carousel-reactive-utils",
   ],
   "vendor-motion": ["motion", "framer-motion"],
-  "vendor-remotion": ["remotion", "@remotion"],
   // Streamdown core + every @streamdown plugin together, so the cycle
   // between core and plugins lives inside one chunk (Rollup handles
   // intra-chunk cycles correctly; only inter-chunk cycles cause TDZ).
@@ -90,11 +88,11 @@ const VENDOR_CHUNK_MAP: Record<string, readonly string[]> = {
   // Reached only through the deferred math plugin, so this resolves to an
   // async chunk rather than a preloaded one.
   "vendor-math": ["katex"],
-  "vendor-highlight": ["lowlight", "highlight.js"],
-  "vendor-ai-sdk": ["@anthropic-ai", "@modelcontextprotocol"],
+  // No rules for remotion, lowlight/highlight.js, fuse.js or the provider
+  // SDKs: the renderer imports none of them, so those chunks were never
+  // emitted and only suggested that the libraries ship.
   "vendor-zod": ["zod"],
   "vendor-tanstack": ["@tanstack"],
-  "vendor-search": ["fuse.js"],
   "vendor-color": ["color"],
   "vendor-sanitize": ["dompurify"],
 }

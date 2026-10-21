@@ -121,4 +121,93 @@ describe("derivePendingProviderUserInputs", () => {
     ])
     expect(pending.map((entry) => entry.requestId)).toEqual(["r2"])
   })
+
+  // The phone and the desktop derive open requests in one place
+  // (`@betterc0de/schema/pending-requests`); these pin the rules where the
+  // desktop used to differ.
+  it("settles a question whatever kind of resolution names it", () => {
+    // A question the provider cancelled is projected as `approval.resolved`.
+    const pending = derivePendingProviderUserInputs([
+      requested("r1", 200, "2026-08-21T10:00:00.000Z"),
+      activity({
+        id: "cancel-r1",
+        kind: "approval.resolved",
+        sequence: 300,
+        createdAt: "2026-08-21T10:01:00.000Z",
+        payload: {
+          providerKind: "claude",
+          requestId: "r1",
+          decision: "cancel",
+        },
+      }),
+    ])
+    expect(pending).toEqual([])
+  })
+
+  it("asks for one free-text answer when the request carries no questions", () => {
+    const pending = derivePendingProviderUserInputs([
+      activity({
+        id: "req-free",
+        kind: "user-input.requested",
+        sequence: 10,
+        summary: "User input requested",
+        payload: { providerKind: "cursor", requestId: "free", questions: [] },
+      }),
+    ])
+    expect(pending).toEqual([
+      {
+        requestId: "free",
+        providerKind: "cursor",
+        providerInstanceId: undefined,
+        questions: [{ id: "free", text: "User input requested", options: [] }],
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    ])
+  })
+
+  it("folds provider kind aliases and falls back to Claude", () => {
+    const pending = derivePendingProviderUserInputs([
+      activity({
+        id: "req-a",
+        kind: "user-input.requested",
+        sequence: 1,
+        providerInstanceId: "claude-main",
+        payload: {
+          providerKind: "claudeAgent",
+          requestId: "a",
+          questions: [{ question: "Which one?" }],
+        },
+      }),
+      activity({
+        id: "req-b",
+        kind: "user-input.requested",
+        sequence: 2,
+        payload: { requestId: "b", questions: [{ question: "And now?" }] },
+      }),
+    ])
+    expect(
+      pending.map((entry) => [
+        entry.requestId,
+        entry.providerKind,
+        entry.providerInstanceId,
+      ])
+    ).toEqual([
+      ["a", "claude", "claude-main"],
+      ["b", "claude", undefined],
+    ])
+  })
+
+  it("lists unsequenced requests first, like every other request", () => {
+    const pending = derivePendingProviderUserInputs([
+      requested("sequenced", 0, "2026-08-21T10:00:00.000Z"),
+      activity({
+        ...requested("unsequenced", 0, "2026-08-21T10:05:00.000Z"),
+        sequence: null,
+      }),
+    ])
+    expect(pending.map((entry) => entry.requestId)).toEqual([
+      "unsequenced",
+      "sequenced",
+    ])
+  })
 })

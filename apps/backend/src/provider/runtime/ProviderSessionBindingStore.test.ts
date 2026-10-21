@@ -443,7 +443,8 @@ describe("ProviderSessionBindingStore", () => {
       status: "error",
       activeTurnId: null,
       lastError: "model failed",
-      runtimeMode: "full-access",
+      // No mode was ever stated: fail closed rather than bypass.
+      runtimeMode: "approval-required",
     })
     db.close()
   })

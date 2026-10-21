@@ -1,5 +1,5 @@
 import { create } from "zustand"
-import { readFile, writeFile } from "@/services/backend"
+import { readFile, writeFile } from "@/services/backend/workspaceApi"
 import { HttpError } from "@/lib/errors/types"
 import {
   isEditorPathEqualOrInside,
@@ -302,6 +302,11 @@ function getFileName(filePath: string): string {
 
 const MAX_NAVIGATION_HISTORY = 100
 const MAX_RECENTLY_CLOSED_TABS = 25
+/**
+ * UTF-16 code units of unsaved text kept for closed editors (about 5 MB of
+ * ASCII). Clean closed tabs keep no text at all.
+ */
+export const MAX_RECENTLY_CLOSED_CONTENT_CHARS = 5 * 1024 * 1024
 const MAX_RECENT_FILES = 100
 
 function documentKey(document: {
@@ -352,16 +357,65 @@ function appendNavigationLocation(
   return [...stack, location].slice(-MAX_NAVIGATION_HISTORY)
 }
 
+/** Drop a closed document's text; reopening it reads the file again. */
+function closedTabWithoutContent(tab: EditorTab): EditorTab {
+  return {
+    ...tab,
+    content: "",
+    originalContent: "",
+    aiBaselineContent: null,
+    isDirty: false,
+    isLoading: false,
+    selectionLineCount: 0,
+    selectionCharCount: 0,
+    selectionContext: null,
+  }
+}
+
+/**
+ * Only unsaved text buffers keep their text after close, because nothing else
+ * holds those edits. Saved files, comparisons and previews are re-read.
+ */
+function closedTabSnapshot(tab: EditorTab): EditorTab {
+  const keepsBuffer =
+    tab.isDirty && !tab.diff && (tab.fileKind ?? "text") === "text"
+  if (!keepsBuffer) return closedTabWithoutContent(tab)
+  return {
+    ...tab,
+    aiBaselineContent: null,
+    isLoading: false,
+    selectionLineCount: 0,
+    selectionCharCount: 0,
+    selectionContext: null,
+  }
+}
+
+/** Newest unsaved buffers win; older ones fall back to a disk read on reopen. */
+function capRetainedClosedContent(stack: EditorTab[]): EditorTab[] {
+  let retained = 0
+  return stack.map((tab) => {
+    if (!tab.isDirty) return tab
+    const size = tab.content.length + tab.originalContent.length
+    if (retained + size > MAX_RECENTLY_CLOSED_CONTENT_CHARS) {
+      return closedTabWithoutContent(tab)
+    }
+    retained += size
+    return tab
+  })
+}
+
 function rememberClosedTabs(
   stack: EditorTab[],
   closedTabs: EditorTab[]
 ): EditorTab[] {
   if (closedTabs.length === 0) return stack
   const closedPaths = new Set(closedTabs.map(documentKey))
-  return [
-    ...closedTabs,
-    ...stack.filter((tab) => !closedPaths.has(documentKey(tab))),
-  ].slice(0, MAX_RECENTLY_CLOSED_TABS)
+  return capRetainedClosedContent(
+    [
+      ...closedTabs.map(closedTabSnapshot),
+      ...stack.filter((tab) => !closedPaths.has(documentKey(tab))),
+    ].slice(0, MAX_RECENTLY_CLOSED_TABS)
+  )
 }
 
 function rememberRecentFile(
@@ -1277,10 +1331,14 @@ export const useEditorStore = create<EditorState>((set, get) => {
       }
 
       const id = crypto.randomUUID()
+      // Saved documents were closed without their text; read the current file.
+      const readsFromDisk =
+        !closedTab.isDirty && (closedTab.fileKind ?? "text") === "text"
       const reopened: EditorTab = {
         ...closedTab,
         id,
-        isLoading: false,
+        readGeneration: 0,
+        isLoading: readsFromDisk,
         isPreview: false,
       }
       const before = currentLocation(state)
@@ -1303,6 +1361,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         ),
         navigationForwardStack: [],
       }))
+      if (readsFromDisk) await reloadEditorDocument(get, set, id, "initial")
     },
 
     handlePathMoved: (oldPath: string, newPath: string) => {

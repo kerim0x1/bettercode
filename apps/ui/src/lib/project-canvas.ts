@@ -95,6 +95,35 @@ export function canvasProjectSize(settings?: ThreadSettings) {
   return { width: layout.width * scale, height: layout.height * scale }
 }
 
+/** Height of the device caption row above each preview, in card pixels. */
+export const DEVICE_LABEL_HEIGHT = 28
+
+/**
+ * Where each device preview sits inside a card placed at `origin`, in stage
+ * pixels (card scale applied). Mirrors the card markup: header, padded
+ * toolbar, then the devices side by side under their caption rows.
+ */
+export function canvasDeviceSlots(
+  settings: ThreadSettings | undefined,
+  origin: CanvasPoint
+): Array<CanvasRect & { deviceId: string }> {
+  const scale = canvasCardScale(settings)
+  const top = PROJECT_HEADER_HEIGHT + PROJECT_PADDING + PROJECT_TOOLBAR_HEIGHT
+  let left = PROJECT_PADDING
+  return canvasDevices(settings).map((device) => {
+    const width = device.width * PREVIEW_SCALE
+    const slot = {
+      deviceId: device.id,
+      x: origin.x + left * scale,
+      y: origin.y + top * scale,
+      width: width * scale,
+      height: (DEVICE_LABEL_HEIGHT + device.height * PREVIEW_SCALE) * scale,
+    }
+    left += width + PROJECT_PADDING
+    return slot
+  })
+}
+
 export function readCanvasPlacements(raw: string | null): CanvasPlacement[] {
   try {
     const parsed: unknown = JSON.parse(raw ?? "[]")

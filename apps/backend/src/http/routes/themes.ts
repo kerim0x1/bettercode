@@ -1,6 +1,7 @@
 import type { Hono } from "hono"
 import { isRecord, VsCodeThemeParseError } from "@betterc0de/schema"
 import type { ServerConfig } from "../../config"
+import { contractJson } from "../contracts"
 import { HttpError } from "../errors"
 import { ThemeStore } from "../../services/themes/store"
 
@@ -10,7 +11,9 @@ const MAX_IMPORT_TEXT = 4 * 1024 * 1024
  * Imported color themes. Reading is open to every authenticated client so a
  * paired browser renders the same theme as the desktop; scanning this
  * machine's editors, importing and deleting are desktop-only
- * (`DESKTOP_ONLY_PATHS` in remote/http.ts).
+ * (`DESKTOP_ONLY_PATHS` in remote/http.ts). Every answer is checked against
+ * its shared contract (`@betterc0de/schema/http-contracts`); the import body
+ * is read here, so a bad one gets this route's own reason and code.
  */
 export function registerThemesRoutes(
   api: Hono,
@@ -20,11 +23,13 @@ export function registerThemesRoutes(
   let cached: ThemeStore | null = null
   const storeOf = () => (cached ??= new ThemeStore(config.dataDir))
 
-  api.get("/themes", (c) => c.json({ themes: storeOf().list() }))
+  api.get("/themes", (c) =>
+    contractJson(c, "listThemes", { themes: storeOf().list() })
+  )
 
   // Before `/themes/:id` so the literal segment wins.
   api.get("/themes/installed", (c) =>
-    c.json({
+    contractJson(c, "listInstalledThemes", {
       themes: storeOf()
         .installed()
         .map((theme) => ({
@@ -41,7 +46,7 @@ export function registerThemesRoutes(
   api.get("/themes/:id", (c) => {
     const theme = storeOf().get(c.req.param("id"))
     if (!theme) throw new HttpError(404, "Theme not found", "theme_not_found")
-    return c.json(theme)
+    return contractJson(c, "getTheme", theme)
   })
 
   api.post("/themes/import", async (c) => {
@@ -67,7 +72,11 @@ export function registerThemesRoutes(
             "theme_not_installed"
           )
         }
-        return c.json(storeOf().importInstalled(installed))
+        return contractJson(
+          c,
+          "importTheme",
+          storeOf().importInstalled(installed)
+        )
       }
       if (body.kind === "text") {
         const text = typeof body.text === "string" ? body.text : ""
@@ -87,7 +96,9 @@ export function registerThemesRoutes(
             : source === "file"
               ? "theme.json"
               : "Pasted JSON"
-        return c.json(
+        return contractJson(
+          c,
+          "importTheme",
           storeOf().importText({
             text,
             ...(typeof body.name === "string" ? { name: body.name } : {}),
@@ -108,6 +119,6 @@ export function registerThemesRoutes(
     if (!storeOf().delete(c.req.param("id"))) {
       throw new HttpError(404, "Theme not found", "theme_not_found")
     }
-    return c.json({ deleted: true })
+    return contractJson(c, "deleteTheme", { deleted: true })
   })
 }

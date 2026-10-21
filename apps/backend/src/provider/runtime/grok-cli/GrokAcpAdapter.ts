@@ -3,10 +3,8 @@ import {
   type AcpAdapterOptions,
   type AcpProviderProfile,
 } from "../acp/AcpAdapterBase"
-import {
-  buildGrokDiscoveredModelsFromConfigOptions,
-  type GrokAcpRuntimeSettings,
-} from "./GrokAcpSupport"
+import { buildAcpDiscoveredModelsFromConfigOptions } from "../acp/AcpSessionConfig"
+import { type GrokAcpRuntimeSettings } from "./GrokAcpSupport"
 import {
   GROK_RUNTIME_PROFILE,
   type GrokAcpRuntime,
@@ -29,8 +27,6 @@ import {
  * (no `cursor/*` extensions, so no user-input requests and no session modes
  * to fail closed on).
  */
-
-export const GROK_ACP_PENDING_REQUEST_TIMEOUT_MS = 5 * 60 * 1000
 
 export interface GrokAcpAdapterOptions extends AcpAdapterOptions<GrokAcpRuntimeSettings> {
   readonly runtimeFactory?: GrokAcpRuntimeFactory
@@ -101,7 +97,6 @@ export const GROK_PROFILE: AcpProviderProfile<
   continuationPrefix: "grok-cli",
   errorCodePrefix: "GROK_ACP",
   modelProbeThreadId: "_grok-model-probe",
-  pendingRequestTimeoutMs: GROK_ACP_PENDING_REQUEST_TIMEOUT_MS,
   // The bounded async status/runtime path performs authoritative xAI binary
   // verification. Synchronous turn admission must remain filesystem-free.
   isConfigured: () => true,
@@ -133,7 +128,7 @@ export const GROK_PROFILE: AcpProviderProfile<
       )
       return Array.isArray(started.sessionSetupResult?.models?.availableModels)
         ? advertised
-        : buildGrokDiscoveredModelsFromConfigOptions(started.configOptions)
+        : buildAcpDiscoveredModelsFromConfigOptions(started.configOptions)
     },
     isEmptyAuthoritative: (started) =>
       Array.isArray(started.sessionSetupResult?.models?.availableModels) &&

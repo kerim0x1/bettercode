@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto"
 import type { EventStore } from "../../persistence/eventStore"
 import type { OrchestrationEvent } from "../../persistence/eventStore"
 import { logger } from "../../observability/logger"
-import type { ProviderRuntimeEvent } from "../types"
+import type { LegacyProviderEvent } from "../types"
 import type { ProviderRuntimeEvent as CanonicalProviderRuntimeEvent } from "./contracts"
 import type { ProviderRuntimeEventJournal as ProviderRuntimeEventJournalPort } from "./ProviderRuntimeIngestion"
 import {
@@ -270,11 +270,11 @@ function serializeOrThrow(value: unknown): string {
  * Legacy rows are byte-identical to what this journal wrote before it learned
  * the canonical shape: `schema: 2`, markers inside `payload`.
  */
-function prepareLegacyRow(event: ProviderRuntimeEvent): PreparedJournalRow {
+function prepareLegacyRow(event: LegacyProviderEvent): PreparedJournalRow {
   let payloadJson = serializeOrThrow(event)
   const bytes = Buffer.byteLength(payloadJson, "utf8")
   let truncation: JournalPayloadTruncation | null = null
-  let journaled: ProviderRuntimeEvent = event
+  let journaled: LegacyProviderEvent = event
   if (bytes > MAX_JOURNALED_PROVIDER_EVENT_BYTES) {
     // A 2 MB tool result must not cost the user the rest of the turn. Keep
     // every structural field, bound the big string values, and journal
@@ -403,7 +403,7 @@ interface JournalPayloadTruncation {
   readonly fields: ReadonlyArray<string>
   readonly stringCapBytes: number | null
   /** The bounded event as an object — what the caller projects live. */
-  readonly event: ProviderRuntimeEvent
+  readonly event: LegacyProviderEvent
 }
 
 interface JournalCanonicalTruncation {
@@ -432,7 +432,7 @@ function isDiffEvent(eventType: string): boolean {
  * when its own output limit trips, so the diff panel already understands it.
  */
 export function boundProviderRuntimeEventForJournal(
-  event: ProviderRuntimeEvent,
+  event: LegacyProviderEvent,
   originalBytes: number,
   maxBytes: number
 ): JournalPayloadTruncation | null {
@@ -551,13 +551,13 @@ function dropDiffPatch(payload: Record<string, unknown>): {
 }
 
 function finishBounded(
-  event: ProviderRuntimeEvent,
+  event: LegacyProviderEvent,
   payload: Record<string, unknown>,
   originalBytes: number,
   stringCapBytes: number | null,
   fields: ReadonlyArray<string>
 ): JournalPayloadTruncation | null {
-  const bounded: ProviderRuntimeEvent = {
+  const bounded: LegacyProviderEvent = {
     ...event,
     payload: {
       ...payload,

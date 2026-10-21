@@ -4,9 +4,12 @@ import {
   EditorSaveError,
   useEditorStore,
 } from "./editor-store"
-import { readFile, writeFile } from "@/services/backend"
+import { readFile, writeFile } from "@/services/backend/workspaceApi"
 
-vi.mock("@/services/backend", () => ({ readFile: vi.fn(), writeFile: vi.fn() }))
+vi.mock("@/services/backend/workspaceApi", () => ({
+  readFile: vi.fn(),
+  writeFile: vi.fn(),
+}))
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (error: Error) => void

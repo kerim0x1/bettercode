@@ -3,8 +3,7 @@ import type { AppState } from "../../appState"
 import { requestIdentity } from "../../remote/http"
 import * as browser from "../../services/filesystem-browser"
 import { resolveApprovedWorkspaceRoot } from "../../services/workspace/authorization"
-import { filesystemListSchema, filesystemSearchSchema } from "../validation"
-import { parseAndHandle } from "../routeHelpers"
+import { contractJson, handleHttpContract } from "../contracts"
 import { sanitizeError } from "../errors"
 
 /**
@@ -23,7 +22,8 @@ import { sanitizeError } from "../errors"
  * tests; the router always passes it.
  *
  * No write operations are exposed here; for writes go through `/workspace/*`
- * which enforces project containment.
+ * which enforces project containment. Every route answers with its shared
+ * contract (`@betterc0de/schema/http-contracts`).
  */
 export function registerFilesystemRoutes(api: Hono, state?: AppState): void {
   const confineForRemote = async (
@@ -37,9 +37,9 @@ export function registerFilesystemRoutes(api: Hono, state?: AppState): void {
   }
 
   api.post("/filesystem/list", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      filesystemListSchema,
+      "filesystemList",
       async (b) =>
         browser.listDirectory(
           await confineForRemote(c, b.path),
@@ -51,9 +51,9 @@ export function registerFilesystemRoutes(api: Hono, state?: AppState): void {
   )
 
   api.post("/filesystem/search", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      filesystemSearchSchema,
+      "filesystemSearch",
       async (b) =>
         browser.searchTree(await confineForRemote(c, b.root), b.query, b.limit),
       { operation: "filesystem search" }
@@ -62,7 +62,11 @@ export function registerFilesystemRoutes(api: Hono, state?: AppState): void {
 
   api.get("/filesystem/drives", async (c) => {
     try {
-      return c.json(await browser.enumerateDrives())
+      return contractJson(
+        c,
+        "filesystemDrives",
+        await browser.enumerateDrives()
+      )
     } catch (err) {
       const { message, statusCode } = sanitizeError(err, "filesystem drives", {
         path: "/filesystem/drives",

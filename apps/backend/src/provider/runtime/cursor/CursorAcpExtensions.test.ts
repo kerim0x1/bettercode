@@ -12,7 +12,6 @@ function fixture() {
   const ctx: AcpExtensionContext = {
     threadKey: "thread",
     pendingUserInputs: new Map(),
-    pendingRequestTimeoutMs: 60_000,
     isActive: () => active,
     activeTurnId: () => turnId,
     eventBase: () => ({

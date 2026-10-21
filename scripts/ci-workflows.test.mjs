@@ -173,3 +173,22 @@ test("CI uses no secrets, so pull requests from forks run everything", () => {
   const source = fs.readFileSync(path.join(root, ".github", "workflows", "ci.yml"), "utf8")
   assert.doesNotMatch(source, /secrets\./)
 })
+
+test("checkouts that never push keep the token out of .git/config", () => {
+  for (const name of ["ci.yml", "release.yml"]) {
+    const workflow = readWorkflow(name)
+    for (const [jobName, job] of Object.entries(workflow.jobs)) {
+      for (const step of job.steps ?? []) {
+        if (!String(step.uses ?? "").startsWith("actions/checkout@")) continue
+        assert.equal(step.with?.["persist-credentials"], false, `${name} ${jobName}`)
+      }
+    }
+  }
+})
+
+test("Dependabot updates the actions pinned inside the composite actions too", () => {
+  const config = YAML.parse(fs.readFileSync(path.join(root, ".github", "dependabot.yml"), "utf8"))
+  const actions = config.updates.find((update) => update["package-ecosystem"] === "github-actions")
+  assert.ok(actions, "github-actions ecosystem is configured")
+  assert.deepEqual([...actions.directories].sort(), ["/", "/.github/actions/*"])
+})

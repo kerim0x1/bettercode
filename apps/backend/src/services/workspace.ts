@@ -39,11 +39,9 @@ export {
   type ProjectToolFlagTemplate,
 } from "./workspace/plugins"
 export {
-  activeWorkspaceProcessCount,
-  beginWorkspaceProcessShutdown,
-  queuedWorkspaceProcessCount,
-  resumeWorkspaceProcessAdmissions,
-  shutdownAllWorkspaceProcesses,
+  defaultWorkspaceProcessService,
+  setDefaultWorkspaceProcessService,
+  WorkspaceProcessService,
 } from "./workspace/processes"
 export {
   getProjectModelDefaults,

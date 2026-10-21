@@ -5,6 +5,10 @@
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    // Type-check `@betterc0de/schema` against its source, which is what Vite
+    // bundles, instead of the last-built dist/ declarations (see the
+    // "betterc0de-source" export condition in packages/schema/package.json).
+    "customConditions": ["betterc0de-source"],
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",

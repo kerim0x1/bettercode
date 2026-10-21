@@ -1,6 +1,7 @@
 import { create } from "zustand"
 import { toast } from "sonner"
 import { createLogger } from "@/lib/logger"
+import { getElectronApi } from "@/services/ipc-facade"
 
 const log = createLogger("plugins")
 
@@ -50,13 +51,75 @@ interface PluginState {
 
   init: () => Promise<void>
   refresh: () => Promise<void>
+  /** Resolves true once installed; a failure shows a toast with the reason. */
   installPlugin: (sourcePath?: string) => Promise<boolean>
-  removePlugin: (pluginId: string) => Promise<void>
-  togglePlugin: (pluginId: string, enabled: boolean) => Promise<void>
-  updateConfig: (pluginId: string, key: string, value: unknown) => Promise<void>
+  /** The actions below resolve false and show a toast when they fail. */
+  removePlugin: (pluginId: string) => Promise<boolean>
+  togglePlugin: (pluginId: string, enabled: boolean) => Promise<boolean>
+  updateConfig: (
+    pluginId: string,
+    key: string,
+    value: unknown
+  ) => Promise<boolean>
 }
 
-const api = () => window.electronAPI
+const api = () => getElectronApi()
+
+/** The `error` of a `{ ok: false }` envelope, or null when it succeeded. */
+export function pluginEnvelopeError(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null
+  const envelope = result as { ok?: unknown; error?: unknown }
+  if (envelope.ok !== false) return null
+  return typeof envelope.error === "string" && envelope.error.trim()
+    ? envelope.error.trim()
+    : "Unknown error"
+}
+
+/** Closing the folder picker or the install confirmation is not a failure. */
+export function isCancelledPluginInstall(result: unknown): boolean {
+  if (!result || typeof result !== "object") return false
+  const envelope = result as { ok?: unknown; error?: unknown }
+  if (envelope.ok !== false) return false
+  return (
+    envelope.error === undefined ||
+    (typeof envelope.error === "string" && /cancel/i.test(envelope.error))
+  )
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function pluginName(pluginId: string): string {
+  return (
+    usePluginStore
+      .getState()
+      .plugins.find((plugin) => plugin.manifest.id === pluginId)?.manifest
+      .name || pluginId
+  )
+}
+
+/**
+ * Run a plugin IPC call that answers with an envelope. A rejection or
+ * `{ ok: false }` shows `title` with the reason and resolves false.
+ */
+async function runPluginAction(
+  title: string,
+  call: () => Promise<unknown>
+): Promise<boolean> {
+  try {
+    const error = pluginEnvelopeError(await call())
+    if (error) {
+      toast.error(title, { description: error })
+      return false
+    }
+    return true
+  } catch (error) {
+    log.error(title, error)
+    toast.error(title, { description: errorText(error) })
+    return false
+  }
+}
 
 export const usePluginStore = create<PluginState>((set, get) => ({
   plugins: [],
@@ -106,36 +169,61 @@ export const usePluginStore = create<PluginState>((set, get) => ({
       const res = await bridge.pluginInstall(sourcePath || undefined)
       if (res?.ok) {
         await get().refresh()
+        const name =
+          res.manifest &&
+          typeof res.manifest === "object" &&
+          typeof (res.manifest as { name?: unknown }).name === "string"
+            ? (res.manifest as { name: string }).name
+            : null
+        toast.success(name ? `Installed ${name}` : "Plugin installed")
         return true
       }
-      if (res?.error) log.error("Install failed:", res.error)
+      if (isCancelledPluginInstall(res)) return false
+      const reason = pluginEnvelopeError(res) ?? "No response from BetterC0de."
+      log.error("Install failed:", reason)
+      toast.error("Couldn't install the plugin", { description: reason })
       return false
     } catch (e) {
       log.error("Install error:", e)
+      toast.error("Couldn't install the plugin", { description: errorText(e) })
       return false
     }
   },
 
   removePlugin: async (pluginId: string) => {
     const bridge = api()
-    if (!bridge?.pluginRemove) return
-    await bridge.pluginRemove(pluginId)
+    if (!bridge?.pluginRemove) return false
+    const name = pluginName(pluginId)
+    const removed = await runPluginAction(`Couldn't remove ${name}`, () =>
+      bridge.pluginRemove(pluginId)
+    )
     await get().refresh()
+    return removed
   },
 
   togglePlugin: async (pluginId: string, enabled: boolean) => {
     const bridge = api()
-    if (!bridge?.pluginToggle) return
-    await bridge.pluginToggle(pluginId, enabled)
+    if (!bridge?.pluginToggle) return false
+    const name = pluginName(pluginId)
+    const toggled = await runPluginAction(
+      enabled ? `Couldn't turn on ${name}` : `Couldn't turn off ${name}`,
+      () => bridge.pluginToggle(pluginId, enabled)
+    )
+    // The desktop may have switched it back off after a failed activation.
     await get().refresh()
+    return toggled
   },
 
   updateConfig: async (pluginId: string, key: string, value: unknown) => {
     const bridge = api()
-    if (!bridge?.pluginConfigSet) return
-    await bridge.pluginConfigSet(pluginId, key, value)
+    if (!bridge?.pluginConfigSet) return false
+    const saved = await runPluginAction(
+      `Couldn't save the ${pluginName(pluginId)} setting`,
+      () => bridge.pluginConfigSet(pluginId, key, value)
+    )
     // Reconcile from the main-process redacted response; never retain a newly
     // submitted secret in renderer state.
     await get().refresh()
+    return saved
   },
 }))

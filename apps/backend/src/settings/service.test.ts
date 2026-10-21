@@ -34,16 +34,6 @@ describe("SettingsService secret contract", () => {
         openai: { api_key: { set: "sk-openai" } },
         betterc0de: { serverPassword: { set: "provider-password" } },
       },
-      mcp_servers: [
-        {
-          id: "github",
-          name: "GitHub",
-          command: "npx",
-          args: "",
-          envVars: { set: "GITHUB_TOKEN=mcp-token" },
-          enabled: true,
-        },
-      ],
       provider_instances: {
         remote: {
           driver: "betterc0de",
@@ -63,7 +53,6 @@ describe("SettingsService secret contract", () => {
           serverPassword: { configured: true, storage: "encrypted" },
         },
       },
-      mcp_servers: [{ envVars: { configured: true, storage: "encrypted" } }],
       provider_instances: {
         remote: {
           environment: [
@@ -85,7 +74,6 @@ describe("SettingsService secret contract", () => {
     for (const secret of [
       "sk-openai",
       "provider-password",
-      "mcp-token",
       "env-token",
       "instance-password",
       "deepgram-key",
@@ -97,10 +85,9 @@ describe("SettingsService secret contract", () => {
     if (process.platform !== "win32") {
       expect(fs.statSync(filePath).mode & 0o777).toBe(0o600)
     }
-    expect(disk.match(/enc:v1:/g)?.length).toBe(6)
+    expect(disk.match(/enc:v1:/g)?.length).toBe(5)
     expect(disk).not.toContain("sk-openai")
     expect(disk).not.toContain("provider-password")
-    expect(disk).not.toContain("mcp-token")
     expect(disk).not.toContain("env-token")
     expect(disk).not.toContain("instance-password")
     expect(disk).not.toContain("deepgram-key")
@@ -440,12 +427,24 @@ describe("SettingsService secret contract", () => {
     expect(fs.readFileSync(filePath, "utf8")).not.toContain("shared-secret")
   })
 
-  it("does not auto-trust workspaces when a present settings file cannot be applied", () => {
-    expect(new SettingsService(filePath).get().auto_trust_workspaces).toBe(true)
+  it("does not auto-trust workspaces by default or when a present settings file cannot be applied", () => {
+    // Opening a folder is not consent to run what it declares.
+    expect(new SettingsService(filePath).get().auto_trust_workspaces).toBe(
+      false
+    )
     fs.writeFileSync(filePath, "{ definitely not valid JSON", "utf8")
     expect(new SettingsService(filePath).get().auto_trust_workspaces).toBe(
       false
     )
+  })
+
+  it("keeps a stored auto-trust choice", () => {
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({ auto_trust_workspaces: true }),
+      "utf8"
+    )
+    expect(new SettingsService(filePath).get().auto_trust_workspaces).toBe(true)
   })
 
   it("preserves malformed settings bytes and blocks writes until repaired", () => {
@@ -526,7 +525,6 @@ describe("SettingsService secret contract", () => {
     original.updatePublic({
       theme: "light",
       language: "de",
-      custom_rules: "Keep my project rules",
       archived_thread_ids: ["saved-chat"],
       providers: {
         openai: {
@@ -537,6 +535,8 @@ describe("SettingsService secret contract", () => {
       },
     })
     const legacy = JSON.parse(fs.readFileSync(filePath, "utf8"))
+    // A key an older version kept (now in rules.md) still loads.
+    legacy.custom_rules = "Keep my project rules"
     legacy.text_generation_model = null
     legacy.deepgram_api_key = null
     for (const name of [
@@ -749,62 +749,70 @@ describe("SettingsService secret contract", () => {
     })
   })
 
-  it("does not carry MCP environment secrets across command or identity changes", () => {
+  it("refuses to store the desktop configuration keys that moved to their files", () => {
     const service = new SettingsService(filePath)
-    service.updatePublic({
-      mcp_servers: [
-        {
-          id: "github",
-          name: "GitHub",
-          command: "trusted-mcp",
-          args: "--stdio",
-          envVars: { set: "GITHUB_TOKEN=bound-secret" },
-          enabled: true,
-        },
-      ],
-    })
-
-    const [publicServer] = service.getPublic().mcp_servers as Array<
-      Record<string, unknown>
-    >
-    expect(() =>
-      service.updatePublic({
+    for (const patch of [
+      { custom_rules: "rules" },
+      { skills: [] },
+      { hooks: [] },
+      {
         mcp_servers: [
           {
-            ...publicServer,
-            command: "replacement-mcp",
+            id: "github",
+            name: "GitHub",
+            command: "trusted-mcp",
+            args: "--stdio",
+            envVars: { set: "GITHUB_TOKEN=bound-secret" },
+            enabled: true,
+          },
+        ],
+      },
+    ]) {
+      expect(() => service.updatePublic(patch)).toThrowError(
+        expect.objectContaining<Partial<InvalidSettingsPatchError>>({
+          statusCode: 400,
+          code: "invalid_settings_patch",
+        })
+      )
+    }
+    expect(fs.existsSync(filePath)).toBe(false)
+  })
+
+  it("keeps legacy MCP envVars encrypted until the migration removes them", () => {
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        theme: "light",
+        mcp_servers: [
+          {
+            id: "github",
+            name: "GitHub",
+            command: "trusted-mcp",
+            args: "--stdio",
+            envVars: "GITHUB_TOKEN=bound-secret",
+            enabled: true,
           },
         ],
       })
-    ).toThrowError(
-      expect.objectContaining<Partial<InvalidSettingsPatchError>>({
-        statusCode: 400,
-        code: "invalid_settings_patch",
-      })
     )
-    expect(service.get().mcp_servers[0]).toMatchObject({
+    const service = new SettingsService(filePath)
+    // Plaintext from an older version is encrypted on load, and read back.
+    expect(fs.readFileSync(filePath, "utf8")).not.toContain("bound-secret")
+    expect(service.get().mcp_servers?.[0]).toMatchObject({
       id: "github",
-      command: "trusted-mcp",
       envVars: "GITHUB_TOKEN=bound-secret",
     })
+    expect(
+      (service.getPublic().mcp_servers as Array<Record<string, unknown>>)[0]
+    ).toMatchObject({ envVars: { configured: true, storage: "encrypted" } })
 
-    service.updatePublic({
-      mcp_servers: [
-        {
-          id: "replacement",
-          name: "Replacement",
-          command: "replacement-mcp",
-          args: "--stdio",
-          envVars: "",
-          enabled: true,
-        },
-      ],
-    })
-    expect(service.get().mcp_servers[0]).toMatchObject({
-      id: "replacement",
-      command: "replacement-mcp",
-      envVars: "",
-    })
+    // The migration removes the key once the servers are in their file.
+    service.update({ mcp_servers: undefined })
+    expect(service.get().mcp_servers).toBeUndefined()
+    expect(JSON.parse(fs.readFileSync(filePath, "utf8"))).not.toHaveProperty(
+      "mcp_servers"
+    )
+    expect(new SettingsService(filePath).get().theme).toBe("light")
   })
 
   it("requires instance credentials to be cleared before changing driver destinations", () => {
@@ -1066,6 +1074,32 @@ describe("SettingsService secret contract", () => {
     )
     expect(service.get().theme).toBe("dark")
     expect(fs.existsSync(filePath)).toBe(false)
+  })
+
+  it("persists configured helper models and rejects an invalid model id", () => {
+    const service = new SettingsService(filePath)
+
+    service.update({
+      image_generation_model: "gpt-image-3",
+      commit_message_claude_model: "claude-haiku-5",
+    })
+    const reloaded = new SettingsService(filePath).get()
+    expect(reloaded.image_generation_model).toBe("gpt-image-3")
+    expect(reloaded.commit_message_claude_model).toBe("claude-haiku-5")
+    expect(reloaded.commit_message_codex_model).toBe("gpt-5.6-luna")
+
+    expect(() =>
+      service.update({ image_generation_model: "gpt-5.5 & calc" })
+    ).toThrowError(
+      expect.objectContaining<Partial<InvalidSettingsPatchError>>({
+        statusCode: 400,
+        code: "invalid_settings_patch",
+      })
+    )
+    expect(service.get().image_generation_model).toBe("gpt-image-3")
+
+    service.update({ image_generation_model: "" })
+    expect(service.get().image_generation_model).toBe("gpt-5.5")
   })
 
   it("keeps encrypted secrets on disk and blocks writes when the master key cannot decrypt them", () => {

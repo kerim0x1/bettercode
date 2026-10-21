@@ -1,4 +1,4 @@
-import type { ConsoleLog } from "@/hooks/use-console-capture"
+import type { ConsoleLog } from "@/lib/console-log-store"
 import type { BugReportPayload } from "@/types/electron-api"
 
 export function truncateReportText(text: string, limit: number): string {

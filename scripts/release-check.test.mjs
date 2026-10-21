@@ -101,6 +101,25 @@ test("options reject unknown steps, reversed ranges and unsupported architecture
   assert.throws(() => parseOptions(["--arch", "ia32"], {}), /x64 or arm64/)
   assert.throws(() => parseOptions(["--until"], {}), /needs a value/)
   assert.throws(() => parseOptions(["--frobnicate"], {}), /Unknown option/)
+  assert.throws(() => parseOptions(["--platform", "beos"], {}), /--platform must be one of/)
+  assert.equal(parseOptions(["--platform", "mac"], {}).platform, "mac")
+  assert.equal(parseOptions([], {}).platform, null)
+})
+
+test("local packaging scripts go through the release check for the host platform", () => {
+  for (const name of ["package", "package:dir"]) {
+    assert.match(manifest.scripts[name], /^npm run build && node scripts\/release-check\.mjs --skip-install --from package --until (installers|smoke) --mobile none$/, name)
+  }
+  for (const name of ["build:electron", "electron:build"]) {
+    assert.equal(manifest.scripts[name], "npm run package", name)
+  }
+  for (const platform of ["win", "mac", "linux"]) {
+    assert.equal(manifest.scripts[`build:${platform}`], `npm run package -- --platform ${platform}`)
+    assert.equal(manifest.scripts[`package:dir:${platform}`], `npm run package:dir -- --platform ${platform}`)
+  }
+  for (const script of Object.values(manifest.scripts)) {
+    assert.doesNotMatch(script, /pack-electron|vendor-workspace|restore-workspace|strip-packaging/)
+  }
 })
 
 test("plans keep preflight and explain every skipped step", () => {

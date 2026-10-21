@@ -1,31 +1,23 @@
 /**
- * Provider catalog + OAuth IPC handlers.
+ * Provider catalog IPC handlers.
  *
  * Renderer-facing surface:
  *   - `provider:list`         → returns the static catalog from
  *                               `apps/backend/src/provider/catalog/`
  *                               (delivered as a JSON-serialisable copy of
  *                               the `ProviderDefinition` array).
- *   - `provider:auth-status`  → which providers currently have a stored
- *                               credential (used by Settings to render
- *                               "Signed in" badges).
- *   - `provider:oauth-start`  → kicks off a provider's OAuth flow, opens
- *                               the authorise URL in the user's browser,
- *                               awaits the callback, and POSTs the
- *                               resulting credential to the backend.
- *   - `provider:auth-clear`   → drops the stored credential.
+ *   - `provider:auth-status`  → always empty: BetterC0de stores no provider
+ *                               sign-in credentials (API keys live in
+ *                               settings, CLI providers use their own login).
+ *   - `provider:auth-clear`   → nothing to clear; kept for bridge stability.
  *
- * The OAuth flows themselves live in `apps/shell/oauth/<handler>.cjs`.
- * Each file exports `{ id, handler, start }` and is registered below in
- * the `OAUTH_HANDLERS` map. Adding a new flow = a new file + one entry.
+ * There is no sign-in channel: the ChatGPT sign-in flow stored refresh tokens
+ * that nothing used and was removed (the backend deletes the old `auth.json`
+ * on startup), and its channel went with it.
  */
 
-const { shell } = require("electron")
 const { IpcChannel } = require("./shared/ipc-contract.cjs")
 const { safeHandle, rawHandle } = require("./shared/ipc-handlers-factory.cjs")
-const { fetchJson } = require("./shared/fetch-json.cjs")
-const { getBackendConnection } = require("./shared/backend-endpoint.cjs")
-const { isAllowedExternalUrl } = require("./shared/urlPolicy.cjs")
 
 // ── Provider catalog (mirror of apps/backend/src/provider/catalog/) ──────
 //
@@ -62,8 +54,8 @@ const PROVIDER_CATALOG = [
     ],
   },
   {
-    // CLI-backed: spawns OpenAI's `codex` binary, distinct from the openai
-    // OAuth flow which talks chatgpt.com directly without the CLI.
+    // CLI-backed: spawns OpenAI's `codex` binary; a ChatGPT subscription
+    // login stays with the Codex CLI.
     // Backend runtime adapter: provider/runtime/codex/CodexAdapter.ts.
     id: "codex",
     name: "Codex CLI",
@@ -138,13 +130,12 @@ const PROVIDER_CATALOG = [
   },
   {
     id: "openai",
-    name: "OpenAI / ChatGPT",
-    description: "GPT-5 family via API key OR ChatGPT Pro/Plus OAuth.",
+    name: "OpenAI",
+    description: "GPT-5 family via API key. Use the Codex CLI for a ChatGPT subscription.",
     docsUrl: "https://platform.openai.com/api-keys",
     defaultModels: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
     authMethods: [
       { type: "api-key", label: "API Key", placeholder: "sk-...", envVars: ["OPENAI_API_KEY"] },
-      { type: "oauth", label: "Sign in with ChatGPT (Pro/Plus)", handler: "codex-oauth" },
     ],
   },
   {
@@ -189,63 +180,6 @@ const PROVIDER_CATALOG = [
   },
 ]
 
-// ── OAuth handlers ───────────────────────────────────────────────────────
-const OAUTH_HANDLERS = {
-  "codex-oauth": require("./oauth/codex.cjs"),
-}
-
-// ── Backend HTTP helper ──────────────────────────────────────────────────
-// Auth.set/clear travel through the backend so credentials live in the
-// authoritative store (`apps/backend/src/auth/store.ts`). The main process
-// installs the reader in `backend-endpoint.cjs` once the backend publishes
-// its port and bearer token. The renderer never sees that token.
-const AUTH_STATUS_TYPES = new Set(["oauth", "api", "wellknown"])
-
-function getBackendInfo() {
-  const cfg = getBackendConnection()
-  if (!cfg) {
-    throw new Error("Backend not ready — provider IPC called before bootstrap")
-  }
-  return cfg
-}
-
-function sanitizeAuthStatus(payload) {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    throw new Error("Backend returned an invalid auth status")
-  }
-  const status = {}
-  for (const [id, type] of Object.entries(payload)) {
-    if (typeof id !== "string" || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) continue
-    if (!AUTH_STATUS_TYPES.has(type)) continue
-    status[id] = type
-  }
-  return status
-}
-
-async function postBackend(path, body) {
-  const { port, token } = getBackendInfo()
-  return fetchJson(`http://127.0.0.1:${port}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: body ? JSON.stringify(body) : undefined,
-  })
-}
-
-async function deleteBackend(path) {
-  const { port, token } = getBackendInfo()
-  return fetchJson(`http://127.0.0.1:${port}${path}`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${token}` },
-  })
-}
-
-async function getBackend(path) {
-  const { port, token } = getBackendInfo()
-  return fetchJson(`http://127.0.0.1:${port}${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-}
-
 // ── Handler registration ─────────────────────────────────────────────────
 let registered = false
 
@@ -258,53 +192,18 @@ function registerProviderHandlers() {
     warnTag: "provider-ipc",
   })
 
-  rawHandle(IpcChannel.ProviderAuthStatus, async () => {
-    // The Settings UI indexes this map by provider id. An `{ok:true}` envelope
-    // would pollute that map, so the handler returns the record itself.
-    return sanitizeAuthStatus(await getBackend("/api/v1/providers/auth-status"))
-  }, { fallback: null, warnTag: "provider-ipc" })
+  // The Settings UI indexes this map by provider id. No provider credential
+  // is stored by BetterC0de any more, so it is always empty.
+  rawHandle(IpcChannel.ProviderAuthStatus, async () => ({}), {
+    fallback: null,
+    warnTag: "provider-ipc",
+  })
 
   safeHandle(IpcChannel.ProviderAuthClear, async (_event, { providerId } = {}) => {
     if (typeof providerId !== "string" || providerId.length === 0) {
       throw new Error("providerId is required")
     }
-    return deleteBackend(`/api/v1/providers/${encodeURIComponent(providerId)}/credential`)
-  })
-
-  safeHandle(IpcChannel.ProviderOauthStart, async (_event, { providerId, handler } = {}) => {
-    if (typeof providerId !== "string" || providerId.length === 0) {
-      throw new Error("providerId is required")
-    }
-    if (typeof handler !== "string" || !Object.hasOwn(OAUTH_HANDLERS, handler)) {
-      throw new Error(`Unknown OAuth handler: ${handler}`)
-    }
-    const impl = OAUTH_HANDLERS[handler]
-    if (impl.id !== providerId) {
-      // The renderer claimed providerId X but the handler is registered for
-      // provider Y — that's a contract violation, refuse rather than write
-      // a credential under the wrong key.
-      throw new Error(`Handler ${handler} is registered for ${impl.id}, not ${providerId}`)
-    }
-
-    const { url, instructions, wait, close } = await impl.start()
-    // Opening externally puts the URL in the user's default browser. The
-    // local callback server accepts the redirect; we do not need to spawn
-    // a BrowserWindow. Packaged and dev both refuse non-HTTPS authorize URLs.
-    let credential
-    try {
-      if (typeof url !== "string" || !isAllowedExternalUrl(url, true)) {
-        throw new Error("Refusing to open a non-HTTPS OAuth URL")
-      }
-      await shell.openExternal(url)
-      credential = await wait()
-    } finally {
-      close?.()
-    }
-    await postBackend(
-      `/api/v1/providers/${encodeURIComponent(providerId)}/credential`,
-      credential,
-    )
-    return { ok: true, provider: providerId, instructions }
+    return { ok: true }
   })
 
   console.log("[provider-ipc] Handlers registered")
@@ -313,5 +212,4 @@ function registerProviderHandlers() {
 module.exports = {
   registerProviderHandlers,
   PROVIDER_CATALOG,
-  OAUTH_HANDLERS,
 }

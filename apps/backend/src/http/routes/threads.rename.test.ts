@@ -2,7 +2,14 @@ import { Hono } from "hono"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { AppState } from "../../appState"
 import { registerThreadActivityBroadcaster } from "../../ws/threadActivityBroadcast"
-import { registerThreadsRoutes } from "./threads"
+import { registerThreadsRoutes as registerThreadsRoutesUnfilled } from "./threads"
+import { withInertStateArgument } from "../../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const registerThreadsRoutes = withInertStateArgument(
+  registerThreadsRoutesUnfilled,
+  1
+)
 
 // Clients keep their own copy of a chat's metadata and write all of it back,
 // so a title changed on one client must reach the others, or their next write

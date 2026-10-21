@@ -7,33 +7,58 @@ import { MonitorIcon, TabletIcon, SmartphoneIcon } from "lucide-react"
 
 export interface DevicePreset {
   label: string
-  /** CSS width string — either "100%" or a pixel value like "768px". */
-  width: string
+  /**
+   * The page's viewport in CSS px, scaled down to fit the panel so its
+   * breakpoints see the device and not the panel; null fills the panel.
+   */
+  size: { width: number; height: number } | null
+  /** The device class the page's user agent claims. */
+  agent: "desktop" | "tablet" | "mobile"
   icon: ReactNode
 }
 
 export const DEVICE_PRESETS: DevicePreset[] = [
   {
     label: "Desktop",
-    width: "100%",
+    size: null,
+    agent: "desktop",
     icon: <MonitorIcon className="size-3.5" />,
   },
   {
     label: "Tablet",
-    width: "768px",
+    size: { width: 768, height: 1024 },
+    agent: "tablet",
     icon: <TabletIcon className="size-3.5" />,
   },
   {
     label: "Mobile",
-    width: "375px",
+    size: { width: 375, height: 812 },
+    agent: "mobile",
     icon: <SmartphoneIcon className="size-3.5" />,
   },
 ]
 
 /**
- * Fixed-size artboard presets for the design-mode canvas. Unlike the editor's
- * DEVICE_PRESETS ("100%" fills the panel), artboards on an infinite canvas
- * need concrete pixel dimensions.
+ * A tablet or phone user agent on the app's own Chromium version, so sites
+ * that choose their layout by user agent (search, shops, many CMS themes)
+ * send that version. Desktop keeps the guest's default (null).
+ */
+export function deviceUserAgent(
+  agent: DevicePreset["agent"],
+  base: string = typeof navigator === "undefined" ? "" : navigator.userAgent
+): string | null {
+  if (agent === "desktop") return null
+  const major = /Chrome\/(\d+)/.exec(base)?.[1] ?? "146"
+  const chrome = `Chrome/${major}.0.0.0`
+  return agent === "mobile"
+    ? `Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) ${chrome} Mobile Safari/537.36`
+    : `Mozilla/5.0 (Linux; Android 14; Pixel Tablet) AppleWebKit/537.36 (KHTML, like Gecko) ${chrome} Safari/537.36`
+}
+
+/**
+ * Fixed-size artboard presets for the design-mode canvas. Unlike the browser's
+ * DEVICE_PRESETS (Desktop fills the panel), artboards on an infinite canvas
+ * need concrete pixel dimensions for every device.
  */
 export interface CanvasDevicePreset {
   id: "desktop" | "tablet" | "mobile"

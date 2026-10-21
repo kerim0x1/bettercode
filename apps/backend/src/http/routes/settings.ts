@@ -2,7 +2,8 @@ import type { Hono } from "hono"
 import { isRecord, remoteSettingsPatchSchema } from "@betterc0de/schema"
 import type { AppState } from "../../appState"
 import { requestIdentity } from "../../remote/http"
-import { contractJson, handleHttpContract } from "../contracts"
+import { desktopConfigStoreFor } from "../../services/desktop-config/store"
+import { contractJson, contractResult, handleHttpContract } from "../contracts"
 import { HttpError } from "../errors"
 
 const remoteSettingKeys = new Set(Object.keys(remoteSettingsPatchSchema.shape))
@@ -50,11 +51,27 @@ export function registerSettingsRoutes(api: Hono, state: AppState): void {
     )
   )
 
-  api.post("/settings/deepgram-token", async (c) =>
-    c.json(await createDeepgramAccessToken(state.settings))
+  // The user's rules (rules.md), to read. Only the desktop's main process
+  // edits them (`/config/rules`); a paired browser shows them read-only.
+  // Like every route that is not listed for one (remote/http.ts), a
+  // read-only session (plain HTTP) is refused: rules are configuration,
+  // not monitoring.
+  api.get("/settings/rules", (c) =>
+    contractResult(c, "getUserRules", {
+      content: desktopConfigStoreFor(state.config)?.readRules().content ?? "",
+    })
   )
 
-  api.get("/ws-port", (c) => c.json(state.config.port))
+  // No body: the token is minted from the stored key.
+  api.post("/settings/deepgram-token", async (c) =>
+    contractResult(
+      c,
+      "deepgramToken",
+      await createDeepgramAccessToken(state.settings)
+    )
+  )
+
+  api.get("/ws-port", (c) => contractResult(c, "wsPort", state.config.port))
 }
 
 export async function createDeepgramAccessToken(

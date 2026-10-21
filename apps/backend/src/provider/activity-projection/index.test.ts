@@ -1293,3 +1293,82 @@ describe("provider activity projection", () => {
     expect(chunk?.activity_id).toBe("thread-1::tool.updated::402")
   })
 })
+
+describe("tool output bounds in projected activities", () => {
+  const bigOutput = `$ npm test\n${"line of output\n".repeat(150_000)}FAIL src/app.test.ts`
+
+  it("stores a large tool result as a cut copy that records its full size", () => {
+    const activity = projectProviderEventToThreadActivity(
+      {
+        event_type: "item.completed",
+        thread_id: "thread-1",
+        payload: {
+          providerKind: "cursor",
+          itemId: "item-1",
+          itemType: "command_execution",
+          title: "npm test",
+          turn_id: "turn-1",
+          output: bigOutput,
+          detail: bigOutput,
+        },
+      },
+      77
+    )
+
+    expect(activity).toMatchObject({
+      activity_id: "thread-1::tool.completed::item-1",
+      kind: "tool.completed",
+      sequence: 77,
+    })
+    const payload = activity!.payload as Record<string, unknown>
+    expect(
+      Buffer.byteLength(JSON.stringify(payload), "utf8")
+    ).toBeLessThanOrEqual(64 * 1024)
+    expect(String(payload.output).startsWith("$ npm test")).toBe(true)
+    expect(String(payload.output).endsWith("FAIL src/app.test.ts")).toBe(true)
+    expect(String(payload.output)).toContain("[output truncated:")
+    expect(payload.outputTruncated).toBe(true)
+    expect(payload.outputBytes).toBe(Buffer.byteLength(bigOutput, "utf8"))
+    expect(payload.truncatedFields).toEqual(
+      expect.arrayContaining(["output", "detail"])
+    )
+    expect(payload.toolId).toBe("item-1")
+    expect(activity!.summary.length).toBeLessThanOrEqual(2_000)
+  })
+
+  it("projects the whole output when asked not to bound it", () => {
+    const activity = projectProviderEventToThreadActivity(
+      {
+        event_type: "tool_result",
+        thread_id: "thread-1",
+        payload: {
+          tool_id: "tool-1",
+          tool_name: "exec_command",
+          output: bigOutput,
+        },
+      },
+      78,
+      { boundToolOutput: false }
+    )
+
+    const payload = activity!.payload as Record<string, unknown>
+    expect(payload.output).toBe(bigOutput)
+    expect(payload.outputTruncated).toBeUndefined()
+  })
+
+  it("leaves a small tool result untouched", () => {
+    const activity = projectProviderEventToThreadActivity(
+      {
+        event_type: "tool_result",
+        thread_id: "thread-1",
+        payload: { tool_id: "tool-1", tool_name: "exec_command", output: "ok" },
+      },
+      79
+    )
+
+    const payload = activity!.payload as Record<string, unknown>
+    expect(payload.output).toBe("ok")
+    expect(payload).not.toHaveProperty("outputTruncated")
+    expect(payload).not.toHaveProperty("truncatedFields")
+  })
+})

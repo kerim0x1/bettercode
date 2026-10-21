@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest"
 import type { AppState } from "../appState"
 import type { ServerConfig } from "../config"
-import { buildApp } from "./router"
+import { buildApp as buildAppUnfilled } from "./router"
+import { routerLifecycleServices } from "../testUtils/routing-services"
+import { withInertStateArgument } from "../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const buildApp = withInertStateArgument(buildAppUnfilled, 1)
 
 function config(): ServerConfig {
   return {
@@ -23,6 +28,7 @@ describe("provider-neutral permission API authentication", () => {
   it("keeps durable grant APIs behind the versioned bearer-auth boundary", async () => {
     const listGrants = vi.fn(() => [])
     const app = buildApp(config(), {
+      ...routerLifecycleServices(),
       providerRegistry: { all: () => [] },
       threads: { persistUserMessageForTurn: vi.fn() },
       db: { prepare: () => ({ get: () => ({ ok: 1 }) }) },

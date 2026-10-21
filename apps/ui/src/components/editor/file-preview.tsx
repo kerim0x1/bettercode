@@ -10,9 +10,10 @@ import {
 } from "lucide-react"
 import type { EditorTab } from "@/lib/editor-store"
 import { getEditorFileMimeType } from "@/lib/editor-file-kind"
-import { readBinaryFile } from "@/services/backend"
+import { readBinaryFile } from "@/services/backend/workspaceApi"
 import { Button } from "@/components/ui/button"
 import { HttpError } from "@/lib/errors/types"
+import { getElectronApi } from "@/services/ipc-facade"
 
 const MIN_IMAGE_ZOOM = 25
 const MAX_IMAGE_ZOOM = 400
@@ -69,7 +70,7 @@ export function FilePreview({
   const [previewRevision, setPreviewRevision] = useState(0)
 
   useEffect(() => {
-    return window.electronAPI?.onBackendStatus?.(() => {
+    return getElectronApi()?.onBackendStatus?.(() => {
       setPreviewRevision((current) => current + 1)
     })
   }, [])
@@ -107,7 +108,7 @@ export function FilePreview({
   }, [mimeType, previewRevision, tab.fileKind, tab.filePath])
 
   const openInSystem = () => {
-    void window.electronAPI?.openPath?.(tab.filePath)
+    void getElectronApi()?.openPath?.(tab.filePath)
   }
 
   if (tab.fileKind === "binary") {

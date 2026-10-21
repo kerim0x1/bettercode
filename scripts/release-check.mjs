@@ -41,6 +41,8 @@ const root = path.resolve(import.meta.dirname, "..")
 const require = createRequire(import.meta.url)
 
 const PLATFORM_FLAGS = { win32: "--win", darwin: "--mac", linux: "--linux" }
+/** `--platform` values: the electron-builder target names, keyed for the host check. */
+const PLATFORM_NAMES = { win: "win32", mac: "darwin", linux: "linux" }
 const RUNNER_OS_NAMES = { win32: "Windows", darwin: "macOS", linux: "Linux" }
 const SIGNING_ENV = [
   "CSC_LINK",
@@ -161,6 +163,7 @@ export const MOBILE_MODES = ["auto", "android", "ios", "all", "none"]
 export function parseOptions(argv, env = process.env) {
   const options = {
     arch: process.arch,
+    platform: null,
     from: null,
     until: null,
     mobile: "auto",
@@ -178,6 +181,7 @@ export function parseOptions(argv, env = process.env) {
       return next
     }
     if (arg === "--arch") options.arch = value()
+    else if (arg === "--platform") options.platform = value()
     else if (arg === "--from") options.from = value()
     else if (arg === "--until") options.until = value()
     else if (arg === "--mobile") options.mobile = value()
@@ -195,6 +199,9 @@ export function parseOptions(argv, env = process.env) {
   }
   if (options.from && options.until && STEP_IDS.indexOf(options.from) > STEP_IDS.indexOf(options.until)) {
     throw new Error("--from must not come after --until")
+  }
+  if (options.platform !== null && !Object.hasOwn(PLATFORM_NAMES, options.platform)) {
+    throw new Error(`--platform must be one of: ${Object.keys(PLATFORM_NAMES).join(", ")}`)
   }
   if (options.arch !== "x64" && options.arch !== "arm64") {
     throw new Error(`--arch must be x64 or arm64, not ${options.arch}`)
@@ -372,6 +379,11 @@ function preflight(plan, options, toolchains) {
   if (!PLATFORM_FLAGS[process.platform]) {
     note("error", `Packaging is not configured for ${process.platform}.`)
   }
+  // `npm run build:win|mac|linux` name a platform. Packaging always targets
+  // the host, so a mismatch would silently build the wrong installers.
+  if (options.platform && PLATFORM_NAMES[options.platform] !== process.platform) {
+    note("error", `--platform ${options.platform} packages for ${PLATFORM_NAMES[options.platform]}, but this machine is ${process.platform}. Run it on that OS (CI builds every platform).`)
+  }
   for (const [id, platform] of Object.entries(MOBILE_STEPS)) {
     const name = platform === "ios" ? "iOS" : "Android"
     if (runs(id) && toolchains[platform]) {
@@ -519,6 +531,7 @@ function printUsage() {
       "Usage: npm run release:check -- [options]",
       "",
       "  --arch <x64|arm64>      target CPU architecture (default: this machine's)",
+      "  --platform <win|mac|linux>  fail unless this machine is that OS (packaging targets the host)",
       "  --until <step>          stop after <step>",
       "  --from <step>           start at <step> (reuses earlier results)",
       "  --mobile <mode>         phone app steps: auto (default), android, ios, all or none",

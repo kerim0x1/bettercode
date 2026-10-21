@@ -1,7 +1,16 @@
-import { chatApprovalSchema } from "@betterc0de/schema"
+import {
+  chatApprovalSchema,
+  chatPermissionModeSchema,
+} from "@betterc0de/schema"
 import { describe, expect, it, vi } from "vitest"
 import type { AppState } from "../../appState"
-import { respondToChatApproval } from "./requests"
+import {
+  capRemoteChatPermissions,
+  DESKTOP_PERMISSION_ACCESS,
+  permittedApprovalUpdates,
+  respondToChatApproval,
+  updateChatPermissionMode,
+} from "./requests"
 
 vi.mock("../checkpoint-recovery-fence", () => ({
   withCheckpointRecoveryMutation: (
@@ -58,6 +67,114 @@ describe("approval permission persistence", () => {
     await respondToChatApproval(state, { ...approval("hub"), decision: "deny" })
     expect(upsertGrant).not.toHaveBeenCalled()
   })
+
+  it("never lets a paired device write durable grants or switch to bypass", async () => {
+    const { state, upsertGrant, respond } = fixture("hub", false)
+    const body = chatApprovalSchema.parse({
+      ...approval("hub"),
+      updatedPermissions: [
+        ...(approval("hub").updatedPermissions ?? []),
+        {
+          type: "addRules",
+          behavior: "allow",
+          destination: "session",
+          rules: [{ toolName: "Read", ruleContent: "src/**" }],
+        },
+        { type: "setMode", mode: "bypassPermissions", destination: "session" },
+      ],
+    })
+    await respondToChatApproval(state, body, { remote: true, mayBypass: false })
+    expect(upsertGrant).not.toHaveBeenCalled()
+    const forwarded = (
+      respond.mock.calls[0] as unknown as [
+        unknown,
+        unknown,
+        unknown,
+        { updatedPermissions?: Array<{ destination: string; type: string }> },
+      ]
+    )[3]
+    expect(forwarded.updatedPermissions).toEqual([
+      expect.objectContaining({ type: "addRules", destination: "session" }),
+    ])
+  })
+})
+
+describe("remote permission caps", () => {
+  const remote = { remote: true, mayBypass: false } as const
+
+  it("lowers bypass, aliases of it and a missing level for a paired device without the grant", () => {
+    for (const level of ["bypass", " BYPASS ", null, ""]) {
+      expect(
+        capRemoteChatPermissions(
+          {
+            permission_level: level,
+            sandbox: "dangerFullAccess",
+            approvalPolicy: "never",
+          },
+          remote
+        )
+      ).toEqual({
+        permission_level: "ask-on-edit",
+        sandbox: null,
+        approvalPolicy: null,
+      })
+    }
+    // `full-access` is the old "Full Access" label: allow-edits, not bypass.
+    for (const level of [
+      "allow-edits",
+      "full-access",
+      "read-only",
+      "ask-on-edit",
+    ]) {
+      expect(
+        capRemoteChatPermissions({ permission_level: level }, remote)
+          .permission_level
+      ).toBe(level)
+    }
+  })
+
+  it("keeps bypass for the desktop and for a device with the terminal grant", () => {
+    const body = { permission_level: "bypass", sandbox: "dangerFullAccess" }
+    expect(capRemoteChatPermissions(body, DESKTOP_PERMISSION_ACCESS)).toBe(body)
+    expect(
+      capRemoteChatPermissions(body, { remote: true, mayBypass: true })
+    ).toBe(body)
+  })
+
+  it("refuses a paired device switching a thread to bypass", async () => {
+    const state = {} as AppState
+    for (const permissionLevel of ["bypass", "Bypass"]) {
+      await expect(
+        updateChatPermissionMode(
+          state,
+          chatPermissionModeSchema.parse({
+            threadId: "thread-remote",
+            providerKind: "claude",
+            permissionLevel,
+          }),
+          remote
+        )
+      ).rejects.toMatchObject({
+        statusCode: 403,
+        code: "remote_bypass_disabled",
+      })
+    }
+  })
+
+  it("filters approval updates only for paired devices", () => {
+    const updates = [
+      { type: "addRules", destination: "userSettings" },
+      { type: "addRules", destination: "session" },
+      { type: "setMode", mode: "bypassPermissions", destination: "session" },
+    ]
+    expect(
+      permittedApprovalUpdates(updates, DESKTOP_PERMISSION_ACCESS)
+    ).toEqual(updates)
+    expect(
+      permittedApprovalUpdates(updates, { remote: true, mayBypass: true })
+    ).toEqual([updates[1], updates[2]])
+    expect(permittedApprovalUpdates(updates, remote)).toEqual([updates[1]])
+  })
 })
 
 function approval(provider: "hub" | "legacy") {
@@ -95,5 +212,5 @@ function fixture(provider: "hub" | "legacy", fail: boolean) {
       respondToApproval: respond,
     },
   } as unknown as AppState
-  return { state, upsertGrant, acknowledged }
+  return { state, upsertGrant, acknowledged, respond }
 }

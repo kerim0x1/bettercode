@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { normalizeThinkingModeValue } from "./model-capabilities"
 import {
   modelCapabilitiesSchema,
   type ModelCapabilities,
@@ -29,6 +30,20 @@ export type OrchestratorSelectedModel = z.infer<
   typeof orchestratorSelectedModelSchema
 >
 
+/**
+ * Ultracode is a Claude Code prompt mode that starts its own multi-agent run.
+ * A worker must not delegate further, so it is never a worker effort, even
+ * though the main chat offers it for the same model.
+ */
+export function isOrchestratorExcludedEffort(
+  effort: string | null | undefined
+): boolean {
+  return (
+    typeof effort === "string" &&
+    normalizeThinkingModeValue(effort) === "ultracode"
+  )
+}
+
 /** Only advertised values are selectable; no guessed effort ladder for workers. */
 export function orchestratorReasoningDescriptor(
   capabilities?: ModelCapabilities | null
@@ -38,7 +53,32 @@ export function orchestratorReasoningDescriptor(
       option.type === "select" &&
       (option.id === "reasoningEffort" || option.id === "effort")
   )
-  return descriptor?.type === "select" ? descriptor : undefined
+  if (descriptor?.type !== "select") return undefined
+  const options = descriptor.options.filter(
+    (option) => !isOrchestratorExcludedEffort(option.id)
+  )
+  if (!options.length) return undefined
+  const { currentValue, ...rest } = descriptor
+  const promptInjectedValues = rest.promptInjectedValues?.filter(
+    (value) => !isOrchestratorExcludedEffort(value)
+  )
+  return {
+    ...rest,
+    options,
+    ...(currentValue && !isOrchestratorExcludedEffort(currentValue)
+      ? { currentValue }
+      : {}),
+    ...(promptInjectedValues ? { promptInjectedValues } : {}),
+  }
+}
+
+/** A saved worker effort that is no longer allowed falls back to Auto. */
+export function withoutExcludedOrchestratorEffort<
+  T extends { reasoningEffort?: string | null },
+>(model: T): T {
+  return isOrchestratorExcludedEffort(model.reasoningEffort)
+    ? { ...model, reasoningEffort: null }
+    : model
 }
 
 const selectedModelsSchema = z

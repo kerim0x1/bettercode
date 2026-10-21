@@ -8,11 +8,9 @@ import {
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-export type ConfirmAction = {
-  title: string
-  description: string
-  action: () => void
-}
+import type { ConfirmAction } from "@/lib/confirm-action"
+
+export type { ConfirmAction }
 
 /**
  * Generic destructive-action confirmation dialog.

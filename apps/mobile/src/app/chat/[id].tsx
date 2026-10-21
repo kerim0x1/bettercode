@@ -55,6 +55,7 @@ import { QueuedMessages } from "@/components/queued-messages"
 import { RenameSheet } from "@/components/rename-sheet"
 import { SendFailure } from "@/components/send-failure"
 import { colors, font, radius, spacing, type } from "@/design/theme"
+import { bypassAllowed, bypassUnavailableNotice } from "@/lib/bypass"
 import { chatTimeline, type TimelineEntry } from "@/lib/chat-timeline"
 import { restorableTurns, restorePoints } from "@/lib/checkpoints"
 import { maxRequestBytes } from "@/lib/compat"
@@ -175,6 +176,9 @@ export default function ChatScreen() {
   const requestLimit = useSessionStore((state) =>
     maxRequestBytes(state.protocol)
   )
+  const bypassAvailable = useSessionStore((state) =>
+    bypassAllowed(state.protocol)
+  )
   const [options, setOptions] = useState<ModelOption[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
   const [modelError, setModelError] = useState<string | null>(null)
@@ -215,6 +219,22 @@ export default function ChatScreen() {
       loadActivities(api, threadId),
     ])
   }, [api, loadActivities, loadMessages, threadId])
+
+  // The desktop runs a Bypass message from a phone without its terminal
+  // grant as Ask first. The chat says so and keeps Ask first, rather than
+  // show Bypass and switch to it unasked if the grant comes back.
+  const storedLevel = composerSettings.permissionLevel
+  useEffect(() => {
+    if (!threadId || readOnly || bypassAvailable || storedLevel !== "bypass") {
+      return
+    }
+    useComposerSettings.getState().update(threadId, {
+      permissionLevel: DEFAULT_COMPOSER_SETTINGS.permissionLevel,
+    })
+    setNotice(
+      bypassUnavailableNotice(DEFAULT_COMPOSER_SETTINGS.permissionLevel)
+    )
+  }, [bypassAvailable, readOnly, storedLevel, threadId])
 
   // A chat from a link or notification may not be in the loaded pages yet.
   const known = Boolean(thread)
@@ -809,8 +829,8 @@ export default function ChatScreen() {
         <View style={styles.readOnly} testID="read-only-banner">
           <Eye size={16} color={colors.textSecondary} />
           <Text style={styles.readOnlyText}>
-            This phone can only watch: it paired over plain HTTP from outside
-            your network. Pair it over Wi-Fi, Tailscale or HTTPS to send
+            This phone can only watch: it is connected over plain HTTP, which is
+            not encrypted. Pair it again over Tailscale or HTTPS to send
             messages.
           </Text>
         </View>
@@ -835,6 +855,7 @@ export default function ChatScreen() {
           }
           permissionLevel={composerSettings.permissionLevel}
           onPermissionLevelChange={choosePermission}
+          bypassAvailable={bypassAvailable}
           chatMode={composerSettings.chatMode}
           onChatModeChange={(chatMode) =>
             useComposerSettings.getState().update(threadId, { chatMode })

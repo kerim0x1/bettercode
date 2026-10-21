@@ -15,6 +15,7 @@ import {
 import type { SetPlanModalContent } from "@/lib/plan-modal"
 import { dispatchProviderMetadataChanged } from "@/lib/provider-metadata-events"
 import { normalizeProviderGoal } from "@/lib/thread-goal"
+import { applyAutonomyMetadata } from "@/lib/chat/autonomy-sync"
 import { activityFromProviderEvent } from "./activities"
 import {
   traceProviderEventsEnabled,
@@ -383,6 +384,9 @@ export function handleProviderEvent(
           store.setThreadSetting(threadId, "goal", goal)
         }
       }
+      // The backend's Autonomous Work run and the message of the turn it
+      // just started.
+      applyAutonomyMetadata(threadId, payload, metadata)
       break
     }
 

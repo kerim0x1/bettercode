@@ -25,9 +25,10 @@ import {
   Trash2Icon,
   UsersIcon,
 } from "lucide-react"
+import { getElectronApi } from "@/services/ipc-facade"
 
 function openInstallPath(p: string) {
-  window.electronAPI?.openPath?.(p)
+  getElectronApi()?.openPath?.(p)
 }
 
 function isUserCancelled(error: string | undefined): boolean {
@@ -451,7 +452,8 @@ export function MarketplaceCliPluginsTab({
     if (result.ok && mutation === "uninstall") setSelected(null)
   }
 
-  // In-app confirmation (replaces the previous native OS dialog).
+  // In-app confirmation for toggle and uninstall; install is confirmed by
+  // the main process (cli-plugins-ipc.cjs).
   const confirmMutation = (
     mutation: "toggle" | "install" | "uninstall",
     plugin: CliPlugin,
@@ -473,14 +475,9 @@ export function MarketplaceCliPluginsTab({
       return
     }
     if (mutation === "install") {
-      setConfirmRequest({
-        title: `Install "${displayName}"?`,
-        description:
-          `Runs \`${plugin.source} plugin ${plugin.source === "claude" ? "install" : "add"} ${plugin.id}\`.\n\n` +
-          `Plugins can add skills, commands, and MCP servers that influence every future ${cliLabel} session. Only install plugins you trust.`,
-        confirmLabel: "Install",
-        onConfirm: () => void runMutation("install", plugin),
-      })
+      // The main process asks in a native dialog that names the exact
+      // command; a second in-app prompt would only repeat it.
+      void runMutation("install", plugin)
       return
     }
     setConfirmRequest({

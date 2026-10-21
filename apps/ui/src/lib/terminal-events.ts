@@ -3,6 +3,7 @@ import { useChatStore } from "@/lib/chat-store"
 export const TERMINAL_NEW_SESSION_EVENT = "betterc0de:terminal-new-session"
 export const TERMINAL_CLOSE_ACTIVE_SESSION_EVENT =
   "betterc0de:terminal-close-active-session"
+export const TERMINAL_SPLIT_EVENT = "betterc0de:terminal-split"
 
 export interface TerminalNewSessionEventDetail {
   mode?: "agent" | "editor" | "design"
@@ -28,6 +29,19 @@ export function terminalSessionTargetsPanel(
 
 export interface TerminalCloseActiveSessionEventDetail {
   targetPanelId: string
+}
+
+/** Split the focused terminal of a panel: right (side by side) or down (stacked). */
+export interface TerminalSplitEventDetail {
+  targetPanelId: string
+  direction: "right" | "down"
+}
+
+export function dispatchTerminalSplit(detail: TerminalSplitEventDetail): void {
+  if (typeof window === "undefined") return
+  window.dispatchEvent(
+    new CustomEvent<TerminalSplitEventDetail>(TERMINAL_SPLIT_EVENT, { detail })
+  )
 }
 
 export function dispatchTerminalNewSession(

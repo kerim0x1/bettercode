@@ -1,4 +1,7 @@
-import { routingTestServices } from "../testUtils/routing-services"
+import {
+  routerLifecycleServices,
+  routingTestServices,
+} from "../testUtils/routing-services"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -6,7 +9,11 @@ import { defaultSettings } from "@betterc0de/schema"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { AppState } from "../appState"
 import type { ServerConfig } from "../config"
-import { buildApp } from "./router"
+import { buildApp as buildAppUnfilled } from "./router"
+import { withInertStateArgument } from "../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const buildApp = withInertStateArgument(buildAppUnfilled, 1)
 
 const temporaryDirectories: string[] = []
 
@@ -48,6 +55,7 @@ function makeApp(overrides: Record<string, unknown> = {}) {
     token === "remote-token" ? REMOTE_SESSION : null
   )
   const state = {
+    ...routerLifecycleServices(),
     ...routingTestServices(),
     config,
     providerRegistry: { all: () => [] },
@@ -65,7 +73,6 @@ function makeApp(overrides: Record<string, unknown> = {}) {
     },
     projectProjections: { listAll: () => [] },
     worktreeRegistry: { listAll: () => [] },
-    authStore: { set: vi.fn(), remove: vi.fn() },
     providerHub: {
       getInstance: () => ({ instanceId: "codex", enabled: true }),
       updateProviderInstance: vi.fn(async () => ({ providers: [] })),
@@ -99,6 +106,18 @@ describe("remote access scope", () => {
       ["POST", "/api/v1/providers/instances/codex/update"],
       ["POST", "/api/v1/settings/deepgram-token"],
       ["GET", "/api/v1/filesystem/drives"],
+      ["GET", "/api/v1/automations"],
+      ["POST", "/api/v1/automations"],
+      ["GET", "/api/v1/automations/a1"],
+      ["PUT", "/api/v1/automations/a1"],
+      ["DELETE", "/api/v1/automations/a1"],
+      ["POST", "/api/v1/automations/a1/run"],
+      ["POST", "/api/v1/automations/a1/webhook/rotate"],
+      ["GET", "/api/v1/github/pull-requests/watch"],
+      ["POST", "/api/v1/github/pull-requests/watch"],
+      ["POST", "/api/v1/github/pull-requests/watch/claim"],
+      ["GET", "/api/v1/conversation-imports"],
+      ["POST", "/api/v1/conversation-imports"],
     ]
     for (const [method, route] of cases) {
       const response = await app.request(route, {
@@ -116,8 +135,11 @@ describe("remote access scope", () => {
       })
     }
     expect(
-      (state as unknown as { authStore: { set: ReturnType<typeof vi.fn> } })
-        .authStore.set
+      (
+        state as unknown as {
+          providerHub: { updateProviderInstance: ReturnType<typeof vi.fn> }
+        }
+      ).providerHub.updateProviderInstance
     ).not.toHaveBeenCalled()
 
     const local = await app.request("/api/v1/runtime/debug-info", {

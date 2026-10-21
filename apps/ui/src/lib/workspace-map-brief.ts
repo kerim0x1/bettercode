@@ -1,4 +1,4 @@
-import type { WorkspaceMapOverview } from "@/services/backend"
+import type { WorkspaceMapOverview } from "@/services/backend/workspaceApi"
 
 const MAX_TOP_DIRECTORIES = 6
 const MAX_ENTRY_POINTS = 8

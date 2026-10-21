@@ -1,11 +1,19 @@
 import { useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { ChatColumn } from "@/components/layout/chat-column"
+import {
+  ChatColumn,
+  type ChatColumnSharedProps,
+} from "@/components/layout/chat-column"
 import { PaneTabBar } from "@/components/layout/panes/pane-tab-bar"
 import { WorkspacePanelBody } from "@/components/layout/panes/workspace-panel-body"
 import { useChatStore, useThreadById } from "@/lib/chat-store"
 import { deriveThreadTitle } from "@/lib/thread-title"
 import type { Pane as PaneType, PaneTabKind } from "@/hooks/use-panes"
+
+/** Props every pane's chat column shares, plus the editor opener. */
+export type PaneChatBag = ChatColumnSharedProps & {
+  setEditingFile: (path: string) => void
+}
 
 /**
  * One pane = a combined tab/title bar + the active tab's body. Chat tabs render
@@ -26,8 +34,7 @@ export function Pane({
   pane: PaneType
   isActive: boolean
   canClose: boolean
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  chatBag: any
+  chatBag: PaneChatBag
   onActivate: () => void
   onClose: () => void
   onSelectTab: (tabId: string) => void

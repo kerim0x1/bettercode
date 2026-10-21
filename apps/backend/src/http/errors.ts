@@ -1,5 +1,7 @@
 import { HttpError } from "../errors"
 import { logger } from "../observability/logger"
+import { boundedRedactedText } from "../observability/redact"
+import { currentRequestId } from "../observability/requestContext"
 export { HttpError } from "../errors"
 
 export function httpError(
@@ -64,13 +66,59 @@ function boundedPublicMessage(value: unknown): string | undefined {
     : undefined
 }
 
+const LOG_MESSAGE_MAX_CHARS = 1_000
+const LOG_STACK_MAX_CHARS = 4_000
+
+/**
+ * Server-side diagnostics for a failed request. The client only ever sees the
+ * sanitized response below; the log keeps the redacted message (and, for a
+ * 5xx, the stack and cause) so an unexpected failure can actually be traced.
+ */
+function errorDiagnostics(
+  err: unknown,
+  includeStack: boolean
+): Record<string, unknown> {
+  const diagnostics: Record<string, unknown> = {}
+  const reqId = currentRequestId()
+  if (reqId) diagnostics.reqId = reqId
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : typeof err === "object" &&
+            err !== null &&
+            typeof (err as { message?: unknown }).message === "string"
+          ? (err as { message: string }).message
+          : undefined
+  if (message) {
+    diagnostics.errorMessage = boundedRedactedText(
+      message,
+      LOG_MESSAGE_MAX_CHARS
+    )
+  }
+  if (!includeStack || !(err instanceof Error)) return diagnostics
+  if (typeof err.stack === "string" && err.stack.length > 0) {
+    diagnostics.stack = boundedRedactedText(err.stack, LOG_STACK_MAX_CHARS)
+  }
+  const cause = (err as { cause?: unknown }).cause
+  if (cause instanceof Error) {
+    diagnostics.cause = boundedRedactedText(
+      cause.stack ?? `${cause.name}: ${cause.message}`,
+      LOG_STACK_MAX_CHARS
+    )
+  }
+  return diagnostics
+}
+
 /**
  * Convert any thrown value into a safe HTTP response shape.
  *
  * Only a nominal `HttpError` carries an explicitly public message. Duck-typed
  * service errors can preserve a bounded HTTP status and safe error code, but
- * their internal message is masked. Logs retain only non-sensitive error
- * metadata; every other failure becomes a generic 500.
+ * their internal message is masked; every other failure becomes a generic
+ * 500. The log line keeps the redacted message, the request id and, for a
+ * 5xx, the stack, so the response stays generic without losing the cause.
  */
 export function sanitizeError(
   err: unknown,
@@ -78,11 +126,24 @@ export function sanitizeError(
   context: Record<string, unknown> = {}
 ): { message: string; statusCode: number; code?: string } {
   if (err instanceof HttpError) {
-    return {
-      message: err.message,
-      statusCode: normalizeHttpStatus(err.statusCode),
-      code: safeErrorCode(err.code),
+    const statusCode = normalizeHttpStatus(err.statusCode)
+    const code = safeErrorCode(err.code)
+    // A deliberate 4xx HttpError is a public, expected refusal; a 5xx one is
+    // still the backend failing and must leave a trace.
+    if (statusCode >= 500) {
+      logger.error(
+        {
+          operation,
+          ...context,
+          statusCode,
+          errorType: err.name,
+          ...(code ? { errorCode: code } : {}),
+          ...errorDiagnostics(err, true),
+        },
+        `${operation} failed`
+      )
     }
+    return { message: err.message, statusCode, code }
   }
   const internalCode =
     typeof err === "object" && err !== null
@@ -92,7 +153,8 @@ export function sanitizeError(
   // conflict); only a 5xx is the backend failing. Logging both at ERROR
   // buried real failures under expected refusals.
   const statusForLog = getHttpStatus(err)
-  const log = statusForLog >= 500 ? logger.error : logger.warn
+  const isServerFailure = statusForLog >= 500
+  const log = isServerFailure ? logger.error : logger.warn
   log(
     {
       operation,
@@ -100,6 +162,7 @@ export function sanitizeError(
       statusCode: statusForLog,
       errorType: err instanceof Error ? err.name : typeof err,
       ...(internalCode ? { errorCode: internalCode } : {}),
+      ...errorDiagnostics(err, isServerFailure),
     },
     `${operation} failed`
   )

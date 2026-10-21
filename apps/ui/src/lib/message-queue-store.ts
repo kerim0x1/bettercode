@@ -13,11 +13,18 @@ import {
   resumeThread,
   type QueuedMessage as SharedQueuedMessage,
 } from "@betterc0de/schema/message-queue"
-import type { ChatSubmitPayload } from "@/lib/slash-command-runtime"
+import type { ChatSubmitPayload } from "@/lib/chat/types"
+import {
+  claimMessageForSteer,
+  enqueueMessageFirst,
+  moveQueuedMessage,
+  moveQueuedMessageBefore,
+  updateQueuedMessage,
+} from "@/lib/message-queue-editing"
 
 export type QueuedMessagePayload = Omit<
   ChatSubmitPayload,
-  "threadId" | "queuedSubmission"
+  "threadId" | "queuedSubmission" | "delivery"
 > & {
   browserElements: BrowserElementReference[]
 }
@@ -39,6 +46,16 @@ const browserStorage: QueueStorage = {
 interface MessageQueueState {
   messages: QueuedMessage[]
   enqueue(threadId: string, payload: QueuedMessagePayload): QueuedMessage
+  /** Adds a message at the front of its chat's queue (one to steer). */
+  enqueueFirst(threadId: string, payload: QueuedMessagePayload): QueuedMessage
+  /** Replaces a draft's text and attachments, unless it is being sent. */
+  edit(id: string, payload: QueuedMessagePayload): void
+  /** One place up (`-1`) or down (`1`) in its chat's queue. */
+  move(id: string, step: -1 | 1): void
+  /** In front of another message of its chat, or last with `null`. */
+  moveBefore(id: string, beforeId: string | null): void
+  /** Takes a message to steer into the running turn (see message-queue-editing). */
+  claimForSteer(id: string): QueuedMessage | null
   claim(id: string): QueuedMessage | null
   finish(id: string): void
   release(id: string): void
@@ -91,18 +108,48 @@ export function createMessageQueueStore(
         throw error
       }
     }
+    const newMessage = (
+      threadId: string,
+      payload: QueuedMessagePayload
+    ): QueuedMessage => ({
+      id: crypto.randomUUID(),
+      threadId,
+      createdAt: new Date().toISOString(),
+      payload: structuredClone(payload),
+      status: "queued",
+    })
+    // Edits and moves change only an unsent draft; when nothing changes the
+    // queue is not written again.
+    const commitChange = (messages: QueuedMessage[] | null) => {
+      if (messages) commit(messages)
+    }
     return {
       messages: restore(storage),
       enqueue(threadId, payload) {
-        const message: QueuedMessage = {
-          id: crypto.randomUUID(),
-          threadId,
-          createdAt: new Date().toISOString(),
-          payload: structuredClone(payload),
-          status: "queued",
-        }
+        const message = newMessage(threadId, payload)
         commit(enqueueMessage(get().messages, message))
         return message
+      },
+      enqueueFirst(threadId, payload) {
+        const message = newMessage(threadId, payload)
+        commit(enqueueMessageFirst(get().messages, message))
+        return message
+      },
+      edit(id, payload) {
+        commitChange(
+          updateQueuedMessage(get().messages, id, structuredClone(payload))
+        )
+      },
+      move(id, step) {
+        commitChange(moveQueuedMessage(get().messages, id, step))
+      },
+      moveBefore(id, beforeId) {
+        commitChange(moveQueuedMessageBefore(get().messages, id, beforeId))
+      },
+      claimForSteer(id) {
+        const { messages, claimed } = claimMessageForSteer(get().messages, id)
+        if (claimed) commit(messages)
+        return claimed
       },
       claim(id) {
         const { messages, claimed } = claimMessage(get().messages, id)

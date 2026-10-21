@@ -372,3 +372,94 @@ describe("connectWs authentication transport", () => {
     })
   })
 })
+
+describe("realtime event failures", () => {
+  async function connectedSocket(onEvent: (event: unknown) => void) {
+    const connection = connectWs(4321, undefined, onEvent)
+    const socket = MockWebSocket.instances[0]!
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: "auth_ok",
+        replay: { journalId: "journal-failures", latestSequence: 0 },
+      }),
+    })
+    await connection
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: "provider_replay_complete",
+        journalId: "journal-failures",
+        latestSequence: 0,
+      }),
+    })
+    return socket
+  }
+
+  function runtimeEvent(sequence: number, eventType: string) {
+    return {
+      data: JSON.stringify({
+        channel: "provider.runtimeEvent",
+        journalId: "journal-failures",
+        sequence,
+        data: { event_type: eventType, thread_id: "thread-1" },
+      }),
+    }
+  }
+
+  it("reports a handler failure with context, keeps the socket and self-heals", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      const received: unknown[] = []
+      const socket = await connectedSocket((event) => {
+        const data = (event as { data?: { event_type?: string } }).data
+        if (data?.event_type === "turn_completed") {
+          throw new Error("projection exploded")
+        }
+        received.push(event)
+      })
+
+      socket.onmessage?.(runtimeEvent(1, "turn_completed"))
+
+      expect(consoleError).toHaveBeenCalled()
+      const logged = consoleError.mock.calls.flat().map(String).join(" ")
+      expect(logged).toContain("Realtime event handler failed")
+      expect(logged).toContain("event=turn_completed")
+      expect(logged).toContain("thread=thread-1")
+      expect(socket.close).not.toHaveBeenCalled()
+
+      // The failed frame was never acknowledged, so the next sequenced event
+      // announces a gap and the app rehydrates the thread.
+      socket.onmessage?.(runtimeEvent(2, "content_delta"))
+      expect(received).toEqual([
+        {
+          channel: "provider.replayGap",
+          data: expect.objectContaining({
+            reason: "sequence_gap",
+            requestedAfterSequence: 0,
+          }),
+        },
+        expect.objectContaining({ channel: "provider.runtimeEvent" }),
+      ])
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
+  it("drops malformed frames with a warning and keeps delivering", async () => {
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      const onEvent = vi.fn()
+      const socket = await connectedSocket(onEvent)
+
+      socket.onmessage?.({ data: "{not json" })
+      socket.onmessage?.({ data: "42" })
+      expect(consoleWarn).toHaveBeenCalled()
+      expect(onEvent).not.toHaveBeenCalled()
+
+      socket.onmessage?.(runtimeEvent(1, "content_delta"))
+      expect(onEvent).toHaveBeenCalledOnce()
+      expect(socket.close).not.toHaveBeenCalled()
+    } finally {
+      consoleWarn.mockRestore()
+    }
+  })
+})

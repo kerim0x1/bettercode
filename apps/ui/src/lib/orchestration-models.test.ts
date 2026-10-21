@@ -41,6 +41,50 @@ const catalog = [
 ]
 
 describe("subagent model selection", () => {
+  it("never offers Ultracode to workers and reads a saved one as Auto", () => {
+    const opus = {
+      ...claude,
+      models: [
+        {
+          ...claude.models[0]!,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "effort",
+                type: "select" as const,
+                label: "Effort",
+                options: [
+                  { id: "high", label: "High" },
+                  { id: "ultracode", label: "Ultracode" },
+                ],
+                promptInjectedValues: ["ultracode"],
+              },
+            ],
+          },
+        },
+      ],
+    }
+    const [choice] = subagentModelChoices([opus], "codex")
+    expect(choice?.reasoningOptions.map((option) => option.id)).toEqual([
+      "high",
+    ])
+    const saved = {
+      providerKind: "claude" as const,
+      providerInstanceId: "claude",
+      modelId: "fable",
+    }
+    expect(
+      selectedSubagentModels(
+        {
+          enabled: true,
+          providers: ["claude"],
+          models: [{ ...saved, reasoningEffort: "Ultra Code" }],
+        },
+        [choice!]
+      )
+    ).toEqual([{ ...saved, reasoningEffort: null }])
+  })
+
   it("offers only advertised thinking levels in increasing order and preserves exact selections", () => {
     const withThinking = {
       ...codex,

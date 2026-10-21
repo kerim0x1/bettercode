@@ -1,6 +1,20 @@
 /**
  * Plugin Manager — loads, manages, and executes provider plugins
  * Runs in Electron main process (Node.js)
+ *
+ * Plugins are trusted code the user installed explicitly, and they share the
+ * main process. The manager bounds what a misbehaving one can do to the app:
+ * every lifecycle step and method call has a deadline, a call that overruns
+ * quarantines the plugin until it settles, and an exception thrown later from
+ * a plugin's own timer or listener can be attributed to it
+ * (`findPluginForError`) so the app unloads the plugin instead of quitting.
+ *
+ * With a plugin host (`new PluginManager({ host })`, see
+ * shared/plugin-host-client.cjs; enabled by BETTERC0DE_PLUGIN_HOST=utility)
+ * plugin modules are loaded in a separate utility process instead, which also
+ * contains CPU stalls and crashes. Everything else here — install, config,
+ * queuing, deadlines, quarantine — stays the same; the loaded "module" is
+ * then a proxy whose functions call into the host.
  */
 
 const fs = require("fs")
@@ -8,6 +22,7 @@ const path = require("path")
 const { EventEmitter } = require("events")
 const Module = require("module")
 const crypto = require("crypto")
+const { pathToFileURL } = require("url")
 const { assertPathContained } = require("./shared/security-checks.cjs")
 const { readJson, writeJson } = require("./shared/json-fs.cjs")
 const { getBaseDir } = require("./shared/runtime-paths.cjs")
@@ -17,9 +32,32 @@ const ALLOWED_ENTRY_EXT = new Set([".js", ".cjs", ".mjs"])
 const SECRET_PREFIX = "enc:v1:"
 const PLUGIN_CLEANUP_TIMEOUT_MS = 5_000
 const PLUGIN_SHUTDOWN_TIMEOUT_MS = 10_000
+// A plugin method call holds that plugin's operation queue; past this it is
+// reported as failed and the plugin is quarantined until the call settles.
+const PLUGIN_CALL_TIMEOUT_MS = 120_000
 const MAX_PLUGIN_CONFIG_BYTES = 1024 * 1024
 const MAX_PLUGIN_MANIFEST_BYTES = 256 * 1024
 const MAX_PLUGIN_TREE_BYTES = 256 * 1024 * 1024
+
+/**
+ * The app's own node_modules directories that exist, in resolution order:
+ * plugin code may require the app's runtime dependencies from these.
+ */
+function runtimeModulePaths() {
+  const candidates = []
+  if (process.resourcesPath) {
+    candidates.push(
+      path.join(process.resourcesPath, "node_modules"),
+      path.join(process.resourcesPath, "app.asar", "node_modules"),
+      path.join(process.resourcesPath, "app.asar.unpacked", "node_modules")
+    )
+  }
+  // After the apps/ migration the shell lives at apps/shell/, so to
+  // reach the workspace-hoisted node_modules we go up two levels:
+  // apps/shell/ → apps/ → repo root.
+  candidates.push(path.join(__dirname, "..", "..", "node_modules"))
+  return candidates.filter((candidate) => candidate && fs.existsSync(candidate))
+}
 
 function normalizeDisposer(candidate) {
   if (typeof candidate === "function") return candidate
@@ -205,8 +243,14 @@ function assertPluginTreeHasNoSymlinks(
 }
 
 class PluginManager extends EventEmitter {
-  constructor() {
+  /**
+   * @param {object} [options]
+   * @param {ReturnType<typeof import("./shared/plugin-host-client.cjs").createPluginHostClient> | null} [options.host]
+   *   Load plugin modules in this out-of-process host instead of `require()`.
+   */
+  constructor({ host = null } = {}) {
     super()
+    this._host = host
     this.plugins = new Map() // id -> { manifest, module, config, enabled }
     this._pluginsDir = null // Lazy-initialized
     this._settingsKey = null
@@ -226,6 +270,24 @@ class PluginManager extends EventEmitter {
     this._quarantinedPlugins = new Map()
     this._acceptingOperations = true
     this._disposeAllPromise = null
+    // Module resolution is changed only by an explicit `init()` (or the
+    // first plugin load), never as a side effect of constructing a manager.
+    this._runtimeModulePathsRegistered = false
+    // Why a plugin was stopped after an uncaught error, shown in the list
+    // until it is enabled and loaded again.
+    this._faults = new Map()
+    this._callTimeoutMs = PLUGIN_CALL_TIMEOUT_MS
+  }
+
+  /**
+   * Make the app's own node_modules resolvable for plugin code. Idempotent;
+   * called before the first plugin module is required.
+   */
+  init() {
+    if (this._runtimeModulePathsRegistered) return
+    this._runtimeModulePathsRegistered = true
+    // Plugin code runs in the host, which registers the same paths itself.
+    if (this._host) return
     this._registerRuntimeModulePaths()
   }
 
@@ -351,21 +413,7 @@ class PluginManager extends EventEmitter {
   }
 
   _registerRuntimeModulePaths() {
-    const candidates = []
-    if (process.resourcesPath) {
-      candidates.push(
-        path.join(process.resourcesPath, "node_modules"),
-        path.join(process.resourcesPath, "app.asar", "node_modules"),
-        path.join(process.resourcesPath, "app.asar.unpacked", "node_modules")
-      )
-    }
-    // After the apps/ migration the shell lives at apps/shell/, so to
-    // reach the workspace-hoisted node_modules we go up two levels:
-    // apps/shell/ → apps/ → repo root.
-    candidates.push(path.join(__dirname, "..", "..", "node_modules"))
-
-    for (const candidate of candidates) {
-      if (!candidate || !fs.existsSync(candidate)) continue
+    for (const candidate of runtimeModulePaths()) {
       if (!Module.globalPaths.includes(candidate)) {
         Module.globalPaths.push(candidate)
       }
@@ -555,12 +603,12 @@ class PluginManager extends EventEmitter {
         manifest,
         enabled: config.enabled !== false,
         config: this._publicConfig(manifest, config.values || {}),
-        status: configError || loaded?.error
+        status: configError || loaded?.error || this._faults.has(manifest.id)
           ? "error"
           : config.enabled !== false
             ? "active"
             : "disabled",
-        error: configError || loaded?.error || null,
+        error: configError || loaded?.error || this._faults.get(manifest.id) || null,
       })
     }
     return result
@@ -830,11 +878,11 @@ class PluginManager extends EventEmitter {
     // outside the module-load catch below: treating an unload failure like a
     // require() failure would overwrite the only remaining cleanup handles.
     await this._unloadPluginUnlocked(pluginId)
+    this.init()
     try {
-      // Clear require cache to allow reloading
-      delete require.cache[require.resolve(entryPath)]
-      const mod = require(entryPath)
+      const mod = await this._requirePluginModule(pluginId, dir, entryPath)
 
+      this._faults.delete(pluginId)
       this.plugins.set(pluginId, {
         manifest,
         module: mod,
@@ -874,6 +922,19 @@ class PluginManager extends EventEmitter {
     }
   }
 
+  /**
+   * The plugin's entry module: `require()`d here, or, with a plugin host, a
+   * proxy for the module the host loaded.
+   */
+  async _requirePluginModule(pluginId, pluginDir, entryPath) {
+    if (this._host) {
+      return this._host.loadPlugin({ pluginId, pluginDir, entryPath })
+    }
+    // Clear require cache to allow reloading
+    delete require.cache[require.resolve(entryPath)]
+    return require(entryPath)
+  }
+
   /** Load all enabled plugins */
   async loadAllEnabled() {
     const list = this.listPlugins()
@@ -909,13 +970,117 @@ class PluginManager extends EventEmitter {
 
       // Await the result while holding this plugin's operation slot. Disable,
       // remove and reload calls queued behind it therefore drain invocations.
+      // A call that never settles must not hold the slot forever: past the
+      // deadline the caller gets an error and the plugin stays quarantined
+      // (no other operation may start) until the call finally settles.
       const input =
         args && typeof args === "object" && !Array.isArray(args) ? args : {}
-      return await fn.call(loaded.module, {
-        ...input,
-        config: loaded.config,
-      })
+      try {
+        return await runWithTimeout(
+          () => fn.call(loaded.module, { ...input, config: loaded.config }),
+          this._callTimeoutMs,
+          `Plugin ${pluginId} call ${method}`,
+        )
+      } catch (error) {
+        if (error?.code === "PLUGIN_OPERATION_TIMEOUT") {
+          this._quarantineUntilSettled(pluginId, error)
+        }
+        throw error
+      }
     })
+  }
+
+  /** Quarantine `pluginId` until the timed-out operation behind `error` settles. */
+  _quarantineUntilSettled(pluginId, error) {
+    this._quarantinePlugin(pluginId, error)
+    const quarantine = this._quarantinedPlugins.get(pluginId)
+    const pending = error?.pendingOperation
+    if (!pending || typeof pending.then !== "function") return
+    const lift = () => {
+      if (this._quarantinedPlugins.get(pluginId) === quarantine) {
+        this._quarantinedPlugins.delete(pluginId)
+      }
+    }
+    pending.then(lift, lift)
+  }
+
+  /**
+   * The loaded plugin whose code appears in `error`'s stack, or null. Used to
+   * attribute an exception thrown from a plugin's timer or listener, which
+   * would otherwise reach the process-wide handler.
+   */
+  findPluginForError(error) {
+    const stack = typeof error?.stack === "string" ? error.stack : ""
+    if (!stack || this.plugins.size === 0) return null
+    const haystack = process.platform === "win32" ? stack.toLowerCase() : stack
+    for (const pluginId of this.plugins.keys()) {
+      let pluginDir
+      try {
+        pluginDir = safePluginPath(this.pluginsDir, pluginId)
+      } catch {
+        continue
+      }
+      const needles = [pluginDir + path.sep, pathToFileURL(pluginDir).href + "/"]
+      for (const needle of needles) {
+        const candidate = process.platform === "win32" ? needle.toLowerCase() : needle
+        if (haystack.includes(candidate)) return pluginId
+      }
+    }
+    return null
+  }
+
+  /**
+   * Contain an uncaught exception that came from plugin code: record it on
+   * the plugin, quarantine it and unload it in the background. Returns the
+   * plugin id, or null when the error is not a plugin's.
+   */
+  containPluginFault(error) {
+    const pluginId = this.findPluginForError(error)
+    if (!pluginId) return null
+    return this.disablePluginAfterFault(pluginId, error)
+  }
+
+  /**
+   * Record an uncaught error on `pluginId`, quarantine it, unload it in the
+   * background and keep it disabled. Used for errors attributed here
+   * (`containPluginFault`) and for those the plugin host attributed.
+   */
+  disablePluginAfterFault(pluginId, error) {
+    validatePluginId(pluginId)
+    const message = typeof error?.message === "string" ? error.message : String(error)
+    const fault = `Disabled after an uncaught error: ${message}`.slice(0, 2_000)
+    this._faults.set(pluginId, fault)
+    const loaded = this.plugins.get(pluginId)
+    if (loaded) loaded.error = fault
+    this._quarantinePlugin(
+      pluginId,
+      new Error(`Plugin ${pluginId} threw an uncaught error: ${message}`, { cause: error }),
+    )
+    // Unload (allowed while quarantined, and lifts the quarantine), then keep
+    // it disabled so the same fault does not recur on the next start.
+    void this.unloadPlugin(pluginId)
+      .then(() => this.togglePlugin(pluginId, false))
+      .catch((unloadError) => {
+        console.warn(`[plugin] Could not stop ${pluginId} after its error:`, unloadError)
+      })
+    return pluginId
+  }
+
+  /**
+   * Plugin host mode: the host process ended, and every module it held (and
+   * every event subscription) went with it. Forget them, so the next use
+   * loads them again, and show why in the plugin list until then. Returns
+   * the plugin ids that were loaded.
+   */
+  handleHostExit(reason) {
+    const affected = [...this.plugins.keys()]
+    const fault = `Stopped because the plugin host exited (${String(reason).slice(0, 200)})`
+    for (const pluginId of affected) {
+      this.plugins.delete(pluginId)
+      this._quarantinedPlugins.delete(pluginId)
+      this._faults.set(pluginId, fault)
+    }
+    return affected
   }
 
   /** Register event listener on a plugin */
@@ -1170,6 +1335,12 @@ class PluginManager extends EventEmitter {
   }
 
   _evictPluginRequireCache(pluginId, entryPath) {
+    if (this._host) {
+      // The modules live in the host; it drops them (requests are ordered,
+      // so a reload queued after this sees the eviction).
+      void this._host.evictPlugin(pluginId)
+      return
+    }
     const pluginDir = safePluginPath(this.pluginsDir, pluginId)
     for (const cachePath of Object.keys(require.cache)) {
       const relative = path.relative(pluginDir, cachePath)
@@ -1347,4 +1518,5 @@ module.exports = {
   validatePluginId,
   safePluginPath,
   assertPluginTreeHasNoSymlinks,
+  runtimeModulePaths,
 }

@@ -137,13 +137,23 @@ test("links come from package.json so forks report to their own repository", () 
 
 test("the shell attaches backend stderr to start-up failures and shows the described dialog", () => {
   const shell = readFileSync(new URL("../apps/shell/main.cjs", import.meta.url), "utf8")
-  const spawned = shell.slice(
-    shell.indexOf("async function startSpawnedBackend()"),
-    shell.indexOf("async function startInProcessBackend()")
+  // The launch lives in shared/backend-process.cjs; backend-startup-watchdog
+  // .test.mjs also checks the attached stderr with a fake child.
+  const backendProcess = readFileSync(
+    new URL("../apps/shell/shared/backend-process.cjs", import.meta.url),
+    "utf8"
+  )
+  const start = backendProcess.indexOf("async function startSpawnedBackend()")
+  assert.ok(start >= 0, "startSpawnedBackend is in shared/backend-process.cjs")
+  const spawned = backendProcess.slice(
+    start,
+    backendProcess.indexOf("async function startBackend()")
   )
   assert.match(spawned, /failure\.backendStderr = stderrTail/)
   assert.match(spawned, /stderrTail\.push\(line\)/)
-  assert.doesNotMatch(shell, /cd node-backend && npm install/, "the old advice named a directory that does not exist")
+  for (const source of [shell, backendProcess]) {
+    assert.doesNotMatch(source, /cd node-backend && npm install/, "the old advice named a directory that does not exist")
+    assert.doesNotMatch(source, /Failed to start backend: \$\{err\.message\}/)
+  }
   assert.match(shell, /dialog\.showErrorBox\(title, message\)/)
-  assert.doesNotMatch(shell, /Failed to start backend: \$\{err\.message\}/)
 })

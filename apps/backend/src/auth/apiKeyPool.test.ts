@@ -2,7 +2,12 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { ApiKeyPool, classifyApiKeyFailure } from "./apiKeyPool"
+import {
+  ApiKeyPool,
+  ApiKeyRequestError,
+  MAX_API_KEY_COOLDOWN_MS,
+  classifyApiKeyFailure,
+} from "./apiKeyPool"
 import { SettingsService } from "../settings/service"
 import { __resetMasterKeyCache } from "../settings/crypto"
 
@@ -148,7 +153,47 @@ describe("API key recovery", () => {
     )
     expect(call).toHaveBeenCalledTimes(1)
   })
-  it("respects Retry-After, including manual checks, and restores eligibility after the delay", async () => {
+  it("respects Retry-After and restores eligibility after the delay", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000_000)
+    const { pool } = fixture()
+    pool.add("grok", "Key", "synthetic-key")
+    await expect(
+      pool.snapshot("grok").run(async () => {
+        throw { status: 429, headers: new Headers({ "retry-after": "120" }) }
+      })
+    ).rejects.toThrow()
+    expect(pool.view("grok").keys[0].retryAt).toBe(1_120_000)
+    expect(pool.isReady("grok")).toBe(false)
+    vi.advanceTimersByTime(120_000)
+    expect(pool.isReady("grok")).toBe(true)
+  })
+  it("names the rate limit when no key is left to try", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000_000)
+    const { pool } = fixture()
+    pool.add("grok", "Key", "synthetic-key")
+    const failure = await pool
+      .snapshot("grok")
+      .run(async () => {
+        throw { status: 429, headers: new Headers({ "retry-after": "120" }) }
+      })
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(ApiKeyRequestError)
+    expect((failure as ApiKeyRequestError).limit).toEqual({
+      kind: "rate",
+      resetAt: 1_120_000,
+    })
+    vi.advanceTimersByTime(120_000)
+    const outage = await pool
+      .snapshot("grok")
+      .run(async () => {
+        throw { status: 500 }
+      })
+      .catch((error: unknown) => error)
+    expect((outage as ApiKeyRequestError).limit).toBeNull()
+  })
+  it("lets a user reset end an active cooldown", async () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000_000)
     const { pool } = fixture()
@@ -158,11 +203,26 @@ describe("API key recovery", () => {
         throw { status: 429, headers: new Headers({ "retry-after": "120" }) }
       })
     ).rejects.toThrow()
-    expect(pool.view("grok").keys[0].retryAt).toBe(1_120_000)
-    expect(() => pool.reset("grok", view.keys[0].id)).toThrow("retry delay")
     expect(pool.isReady("grok")).toBe(false)
-    vi.advanceTimersByTime(120_000)
+    const reset = pool.reset("grok", view.keys[0].id)
+    expect(reset.keys[0]).toMatchObject({ status: "untested", retryAt: null })
     expect(pool.isReady("grok")).toBe(true)
+  })
+  it("caps a provider retry delay at five minutes", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000_000)
+    const { pool } = fixture()
+    pool.add("openai", "Key", "synthetic-key")
+    await expect(
+      pool.snapshot("openai").run(async () => {
+        throw { status: 429, headers: new Headers({ "retry-after": "86400" }) }
+      })
+    ).rejects.toThrow()
+    expect(pool.view("openai").keys[0].retryAt).toBe(
+      1_000_000 + MAX_API_KEY_COOLDOWN_MS
+    )
+    vi.advanceTimersByTime(MAX_API_KEY_COOLDOWN_MS)
+    expect(pool.isReady("openai")).toBe(true)
   })
   it("keeps turn credentials stable and ignores late status from replaced keys", async () => {
     const { pool } = fixture()
@@ -229,6 +289,21 @@ describe("API key recovery", () => {
 })
 
 describe("provider error classification", () => {
+  it("caps retry delays from seconds, milliseconds and HTTP dates", () => {
+    const now = Date.parse("2026-10-07T12:00:00Z")
+    const cap = now + MAX_API_KEY_COOLDOWN_MS
+    const delayed = (headers: Record<string, string>) =>
+      classifyApiKeyFailure({ status: 429, headers }, now).retryAt
+    expect(delayed({ "retry-after": "30" })).toBe(now + 30_000)
+    expect(delayed({ "retry-after": "3600" })).toBe(cap)
+    expect(delayed({ "retry-after-ms": "999999999" })).toBe(cap)
+    expect(delayed({ "retry-after": "Wed, 07 Oct 2026 18:00:00 GMT" })).toBe(
+      cap
+    )
+    expect(classifyApiKeyFailure({ status: 503 }, now).retryAt).toBe(
+      now + 5_000
+    )
+  })
   it.each([
     "credit_balance_exhausted",
     "insufficient_quota",

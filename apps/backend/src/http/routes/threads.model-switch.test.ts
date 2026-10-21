@@ -1,7 +1,14 @@
 import { Hono } from "hono"
 import { describe, expect, it, vi } from "vitest"
 import type { AppState } from "../../appState"
-import { registerThreadsRoutes } from "./threads"
+import { registerThreadsRoutes as registerThreadsRoutesUnfilled } from "./threads"
+import { withInertStateArgument } from "../../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const registerThreadsRoutes = withInertStateArgument(
+  registerThreadsRoutesUnfilled,
+  1
+)
 
 describe("thread model switch activities", () => {
   it("persists a model switch as a thread timeline activity", async () => {

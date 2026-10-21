@@ -4,20 +4,28 @@ import type { ProviderAdapter } from "./adapter"
 import type {
   ModelDefinition,
   ProviderKind,
-  ProviderRuntimeEvent,
+  LegacyProviderEvent,
   ProviderSendTurnInput,
 } from "./types"
 import { parseProviderKind } from "./types"
 import { withCircuitBreaker } from "./circuitBreaker"
-import { providerEventBus } from "./events"
+import type { ProviderEventBus } from "./events"
 import { logger } from "../observability/logger"
 import { HttpError } from "../http/errors"
+import { providerLimitFromError } from "../services/chat/usage-limit"
 import type { ThreadTurnCoordinator } from "./threadTurnCoordinator"
+import type { TurnLifecyclePolicy } from "./turnLifecyclePolicy"
 import {
   bindAgentPermissionRuntimeContext,
   clearAgentPermissionRuntimeContext,
   runWithAgentPermissionRuntimeContext,
 } from "./agent-permission-runtime"
+import { onApprovalSettled, pendingApprovalCount } from "./permissions"
+import {
+  normalizeTurnLimits,
+  TurnWatchdog,
+  type TurnTimeoutKind,
+} from "./turnLimits"
 
 export interface ProviderStatus {
   provider: ProviderKind
@@ -45,24 +53,33 @@ interface ModelCacheEntry {
 
 const MODEL_CACHE_TTL_MS = 15 * 60 * 1000
 
-/**
- * M5: hard ceiling on a single provider turn dispatched via `dispatchTurn`.
- * If the adapter / SDK call hangs at a non-cancellable point, the renderer
- * was previously waiting forever for completion events that never came.
- * Ten minutes is well past every legitimate streaming completion observed
- * in the codebase but short enough to surface stuck turns within a UX-
- * tolerable window.  Test/dev override via env var keeps the suite snappy.
- */
-const TURN_HARD_TIMEOUT_MS = Number(
-  process.env.BETTERC0DE_TURN_HARD_TIMEOUT_MS ?? 10 * 60 * 1000
-)
-
 export interface ProviderServiceOptions {
+  /**
+   * The backend's provider event bus (`BootRoot.eventBus`): the legacy
+   * adapters publish on it, and this service publishes turn starts and
+   * terminal events there and watches it for turn activity.
+   */
+  readonly eventBus: ProviderEventBus
+  /**
+   * Inactivity limit for a turn dispatched via `dispatchTurn` (default 30
+   * minutes, as in the provider hub): it fires only when the adapter emitted
+   * no event for the thread for this long, and it is paused while a tool
+   * approval waits for the user. A hung adapter or SDK call at a
+   * non-cancellable point still surfaces as a timed-out turn.
+   */
   readonly turnTimeoutMs?: number
+  /** Absolute ceiling for one turn, whatever its activity (default 12 hours). */
+  readonly turnMaxDurationMs?: number
   readonly shutdownTimeoutMs?: number
   readonly durableTurnCount?: (threadId: string) => number
   readonly threadTurnCoordinator?: ThreadTurnCoordinator
-  readonly beforeTurn?: (event: ProviderRuntimeEvent) => Promise<void>
+  /**
+   * The checkpoint, trust and admission hooks shared with the provider hub
+   * (see `provider/turnLifecyclePolicy.ts`). Production wiring passes this;
+   * the three hooks below override its parts individually.
+   */
+  readonly turnLifecycle?: TurnLifecyclePolicy
+  readonly beforeTurn?: (event: LegacyProviderEvent) => Promise<void>
   readonly preDispatchPolicy?: (input: {
     readonly threadId: string
     readonly turnId: string
@@ -80,7 +97,7 @@ export interface ProviderServiceOptions {
         readonly reason?: string
         readonly toolName?: string
       }>
-  readonly afterTurn?: (event: ProviderRuntimeEvent) => Promise<void>
+  readonly afterTurn?: (event: LegacyProviderEvent) => Promise<void>
 }
 
 export interface LegacyProviderTurnHandle {
@@ -111,8 +128,15 @@ interface ActiveProviderTurn {
 }
 
 class ProviderTurnTimeoutError extends Error {
-  constructor(readonly timeoutMs: number) {
-    super(`turn timed out after ${timeoutMs}ms`)
+  constructor(
+    readonly timeoutMs: number,
+    readonly kind: TurnTimeoutKind = "idle"
+  ) {
+    super(
+      kind === "idle"
+        ? `turn timed out after ${timeoutMs}ms without provider activity`
+        : `turn exceeded the maximum duration of ${timeoutMs}ms`
+    )
     this.name = "ProviderTurnTimeoutError"
   }
 }
@@ -145,23 +169,27 @@ export class ProviderService {
   private readonly quarantinedAdapters = new Map<ProviderAdapter, unknown>()
   private readonly maintenanceByThread = new Set<string>()
   private readonly turnTimeoutMs: number
+  private readonly turnMaxDurationMs: number
   private readonly shutdownTimeoutMs: number
   private readonly durableTurnCount: (threadId: string) => number
   private readonly threadTurnCoordinator?: ThreadTurnCoordinator
   private readonly beforeTurn?: ProviderServiceOptions["beforeTurn"]
   private readonly preDispatchPolicy?: ProviderServiceOptions["preDispatchPolicy"]
   private readonly afterTurn?: ProviderServiceOptions["afterTurn"]
+  private readonly eventBus: ProviderEventBus
   private acceptingWork = true
 
   constructor(
     private readonly registry: ProviderAdapterRegistry,
-    options: ProviderServiceOptions = {}
+    options: ProviderServiceOptions
   ) {
-    const configuredTimeout = options.turnTimeoutMs ?? TURN_HARD_TIMEOUT_MS
-    this.turnTimeoutMs =
-      Number.isFinite(configuredTimeout) && configuredTimeout > 0
-        ? Math.floor(configuredTimeout)
-        : 10 * 60 * 1000
+    this.eventBus = options.eventBus
+    const turnLimits = normalizeTurnLimits({
+      idleTimeoutMs: options.turnTimeoutMs,
+      maxDurationMs: options.turnMaxDurationMs,
+    })
+    this.turnTimeoutMs = turnLimits.idleTimeoutMs
+    this.turnMaxDurationMs = turnLimits.maxDurationMs
     const configuredShutdownTimeout = options.shutdownTimeoutMs ?? 5_000
     this.shutdownTimeoutMs =
       Number.isFinite(configuredShutdownTimeout) &&
@@ -170,9 +198,16 @@ export class ProviderService {
         : 5_000
     this.durableTurnCount = options.durableTurnCount ?? (() => 0)
     this.threadTurnCoordinator = options.threadTurnCoordinator
-    this.beforeTurn = options.beforeTurn
-    this.preDispatchPolicy = options.preDispatchPolicy
-    this.afterTurn = options.afterTurn
+    const lifecycle = options.turnLifecycle
+    this.beforeTurn =
+      options.beforeTurn ??
+      (lifecycle ? (event) => lifecycle.beforeTurn(event) : undefined)
+    this.preDispatchPolicy =
+      options.preDispatchPolicy ??
+      (lifecycle ? (input) => lifecycle.preDispatchPolicy(input) : undefined)
+    this.afterTurn =
+      options.afterTurn ??
+      (lifecycle ? (event) => lifecycle.afterTurn(event) : undefined)
   }
 
   resolveProviderKind(raw: string): ProviderKind {
@@ -319,18 +354,12 @@ export class ProviderService {
       throw error
     }
 
-    // M5: race the turn against a hard timeout.  Without this, a hung
-    // adapter promise never settles and the renderer waits forever — no
-    // turn_error event is ever emitted because the .catch below never fires.
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutHandle = setTimeout(
-        () => reject(new ProviderTurnTimeoutError(this.turnTimeoutMs)),
-        this.turnTimeoutMs
-      )
-      if (timeoutHandle.unref) timeoutHandle.unref()
-    })
-    let syntheticTerminalEvent: ProviderRuntimeEvent | undefined
+    // M5: race the turn against its limits. Without this, a hung adapter
+    // promise never settles and the renderer waits forever — no turn_error
+    // event is ever emitted because the .catch below never fires.
+    const turnWatchdog = this.startTurnWatchdog(input.thread_id)
+    const timeoutPromise = turnWatchdog.timedOut
+    let syntheticTerminalEvent: LegacyProviderEvent | undefined
     const dispatch = this.sendTurn(
       input,
       kind,
@@ -395,7 +424,10 @@ export class ProviderService {
           !active.settlementStarted
         ) {
           active.cancelRequested = true
-          const terminalEvent: ProviderRuntimeEvent = {
+          // A rate limit (an API key's 429) is named, never its message, so
+          // the chat can resume once it lifts (services/chat/usage-limit.ts).
+          const limit = providerLimitFromError(err, Date.now())
+          const terminalEvent: LegacyProviderEvent = {
             event_type: "turn_error",
             thread_id: input.thread_id,
             payload: {
@@ -407,6 +439,7 @@ export class ProviderService {
                 err instanceof ProviderTurnTimeoutError
                   ? "timed_out"
                   : "failed",
+              ...(limit ? { limit } : {}),
             },
           }
           await this.finalizeActiveTurn(
@@ -421,20 +454,60 @@ export class ProviderService {
         }
         throw err
       })
-      .finally(() => {
-        if (timeoutHandle) clearTimeout(timeoutHandle)
-      })
+      .finally(() => turnWatchdog.stop())
     void completion.catch(() => {})
     activeTurn.completion = completion
     void settled.then(
-      () => {
-        if (timeoutHandle) clearTimeout(timeoutHandle)
-      },
-      () => {
-        if (timeoutHandle) clearTimeout(timeoutHandle)
-      }
+      () => turnWatchdog.stop(),
+      () => turnWatchdog.stop()
     )
     return { turnId, completion, settled }
+  }
+
+  /**
+   * Inactivity limit plus absolute ceiling for one dispatched turn. Every
+   * adapter event for the thread counts as activity, and the idle clock is
+   * held while one of the thread's tool approvals waits for the user.
+   */
+  private startTurnWatchdog(threadId: string): {
+    readonly timedOut: Promise<never>
+    readonly stop: () => void
+  } {
+    let rejectTimedOut!: (error: ProviderTurnTimeoutError) => void
+    const timedOut = new Promise<never>((_, reject) => {
+      rejectTimedOut = reject
+    })
+    // Raced against the dispatch; observed here so a timeout that loses the
+    // race is never reported as unhandled.
+    void timedOut.catch(() => {})
+    let unsubscribe = () => {}
+    const watchdog = new TurnWatchdog({
+      idleTimeoutMs: this.turnTimeoutMs,
+      maxDurationMs: this.turnMaxDurationMs,
+      isWaitingOnUser: () => pendingApprovalCount(threadId) > 0,
+      onTimeout: (kind, limitMs) => {
+        unsubscribe()
+        rejectTimedOut(new ProviderTurnTimeoutError(limitMs, kind))
+      },
+    })
+    const onEvent = (event: LegacyProviderEvent) => {
+      if (event.thread_id === threadId) watchdog.touch()
+    }
+    this.eventBus.on("event", onEvent)
+    const offApprovalSettled = onApprovalSettled((settledThreadId) => {
+      if (settledThreadId === threadId) watchdog.touch()
+    })
+    unsubscribe = () => {
+      this.eventBus.off("event", onEvent)
+      offApprovalSettled()
+    }
+    return {
+      timedOut,
+      stop: () => {
+        watchdog.stop()
+        unsubscribe()
+      },
+    }
   }
 
   async sendTurn(
@@ -442,7 +515,7 @@ export class ProviderService {
     kind: ProviderKind,
     turnId = randomUUID(),
     canComplete: () => boolean = () => true,
-    finalizeTerminal?: (event: ProviderRuntimeEvent) => Promise<void>,
+    finalizeTerminal?: (event: LegacyProviderEvent) => Promise<void>,
     control?: {
       readonly isCancelled: () => boolean
       readonly onAdapterDispatchStarted: () => void
@@ -467,7 +540,7 @@ export class ProviderService {
     const turnIndex = managesOwnTurnLifecycle
       ? null
       : this.nextTurnIndex(input.thread_id)
-    const turnStartedEvent: ProviderRuntimeEvent = {
+    const turnStartedEvent: LegacyProviderEvent = {
       event_type: "turn_started",
       thread_id: input.thread_id,
       payload: {
@@ -488,7 +561,7 @@ export class ProviderService {
     }
     this.throwIfTurnDispatchCancelled(turnId, control)
     if (turnIndex !== null) {
-      providerEventBus.emitEvent(turnStartedEvent)
+      this.eventBus.emitEvent(turnStartedEvent)
     }
     this.throwIfTurnDispatchCancelled(turnId, control)
 
@@ -496,7 +569,7 @@ export class ProviderService {
     const markCompleted = async () => {
       if (completionEmitted || turnIndex === null || !canComplete()) return
       completionEmitted = true
-      const terminalEvent: ProviderRuntimeEvent = {
+      const terminalEvent: LegacyProviderEvent = {
         event_type: "turn_completed",
         thread_id: input.thread_id,
         payload: {
@@ -510,7 +583,7 @@ export class ProviderService {
         await finalizeTerminal(terminalEvent)
       } else {
         await this.afterTurn?.(terminalEvent)
-        providerEventBus.emitEvent(terminalEvent)
+        this.eventBus.emitEvent(terminalEvent)
       }
     }
 
@@ -536,7 +609,7 @@ export class ProviderService {
           })
           this.throwIfTurnDispatchCancelled(turnId, control)
           if (policyDecision?.decision === "deny") {
-            providerEventBus.emitEvent({
+            this.eventBus.emitEvent({
               event_type: "tool.denied",
               thread_id: input.thread_id,
               payload: {
@@ -549,7 +622,7 @@ export class ProviderService {
               },
             })
             if (turnIndex === null && canComplete()) {
-              const terminalEvent: ProviderRuntimeEvent = {
+              const terminalEvent: LegacyProviderEvent = {
                 event_type: "turn_completed",
                 thread_id: input.thread_id,
                 payload: {
@@ -562,7 +635,7 @@ export class ProviderService {
                 await finalizeTerminal(terminalEvent)
               } else {
                 await this.afterTurn?.(terminalEvent)
-                providerEventBus.emitEvent(terminalEvent)
+                this.eventBus.emitEvent(terminalEvent)
               }
             } else {
               await markCompleted()
@@ -723,7 +796,7 @@ export class ProviderService {
             }
           }
         }
-        const terminalEvent: ProviderRuntimeEvent = {
+        const terminalEvent: LegacyProviderEvent = {
           event_type: "turn_interrupted",
           thread_id: threadId,
           payload: {
@@ -808,7 +881,7 @@ export class ProviderService {
   private finalizeActiveTurn(
     threadId: string,
     active: ActiveProviderTurn,
-    terminalEvent?: ProviderRuntimeEvent,
+    terminalEvent?: LegacyProviderEvent,
     initialFailure?: unknown,
     cleanup?: () => Promise<void>
   ): Promise<void> {
@@ -835,7 +908,7 @@ export class ProviderService {
       await active.dispatchQuiesced
       if (terminalEvent) {
         try {
-          providerEventBus.emitEvent(terminalEvent)
+          this.eventBus.emitEvent(terminalEvent)
         } catch (error) {
           failures.push(error)
         }

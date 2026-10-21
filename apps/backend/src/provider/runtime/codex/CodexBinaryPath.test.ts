@@ -14,6 +14,27 @@ describe("Codex executable on macOS", () => {
     expect(codexBinaryPath("/custom/codex")).toBe("/custom/codex")
   })
 
+  it("resolves the default codex to an absolute path on PATH, never a bare name searched in cwd", () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), "betterc0de-codex-path-")
+    )
+    try {
+      const fileName = process.platform === "win32" ? "codex.cmd" : "codex"
+      const installed = path.join(root, fileName)
+      fs.writeFileSync(installed, "", "utf8")
+      fs.chmodSync(installed, 0o755)
+      vi.stubEnv("BETTERC0DE_CODEX_CLI_PATH", "")
+      vi.stubEnv("PATH", root)
+      if (process.platform === "win32")
+        vi.stubEnv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+
+      expect(codexBinaryPath(null)).toBe(installed)
+      expect(codexBinaryPath("codex")).toBe(installed)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it("keeps Node beside an npm Codex launcher visible to the child", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-codex-bin-"))
     const platform = Object.getOwnPropertyDescriptor(process, "platform")!

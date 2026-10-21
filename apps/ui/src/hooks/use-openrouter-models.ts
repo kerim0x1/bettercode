@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react"
 import { useVisibilityInterval } from "@/hooks/use-visibility-interval"
 import { SETTINGS_UPDATED_EVENT } from "@/lib/settings-store"
-import { getSettings } from "@/services/backend"
+import { getSettings } from "@/services/backend/coreApi"
 import {
   listOpenRouterModels,
   type OpenRouterLiveModel,

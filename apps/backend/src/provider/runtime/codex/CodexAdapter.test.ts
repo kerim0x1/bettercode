@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   CODEX_CLI_DEFAULT_MODEL_ID,
   CodexAdapter,
+  codexNativePoliciesForSession,
   nativeCodexModelId,
   parseCodexModelListResponse,
 } from "./CodexAdapter"
@@ -1348,5 +1349,37 @@ describe("CodexAdapter", () => {
     expect(
       readRpcLog(fake.logPath).some((entry) => entry.method === "thread/start")
     ).toBe(false)
+  })
+})
+
+describe("Codex session permission policies", () => {
+  it("maps level spellings through the shared alias table", () => {
+    // The old picker label "Full Access" means allow-edits, never bypass.
+    for (const runtimeMode of ["full", "full-access", "auto-accept-edits"]) {
+      expect(codexNativePoliciesForSession({ runtimeMode })).toMatchObject({
+        approvalPolicy: "on-request",
+        threadSandbox: "workspace-write",
+      })
+    }
+    expect(
+      codexNativePoliciesForSession({ runtimeMode: "bypass" })
+    ).toMatchObject({
+      approvalPolicy: "never",
+      threadSandbox: "danger-full-access",
+    })
+    expect(
+      codexNativePoliciesForSession({ permissionLevel: "full-access" })
+    ).toMatchObject({ threadSandbox: "workspace-write" })
+    expect(
+      codexNativePoliciesForSession({ runtimeMode: "plan" })
+    ).toMatchObject({
+      threadSandbox: "read-only",
+    })
+    // Unknown spellings fail closed.
+    expect(
+      codexNativePoliciesForSession({ runtimeMode: "everything" })
+    ).toMatchObject({
+      threadSandbox: "read-only",
+    })
   })
 })

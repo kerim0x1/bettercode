@@ -1008,9 +1008,10 @@
 .reduce-transparency * {
   backdrop-filter: none !important;
 }
-.reduce-transparency .dark {
-  --border: oklch(0.3 0 0);
-  --input: oklch(0.25 0 0);
+/* Both classes sit on <html>. !important beats the theme's inline colors. */
+.reduce-transparency.dark {
+  --border: oklch(0.3 0 0) !important;
+  --input: oklch(0.25 0 0) !important;
 }
 
 /* Global clean scrollbar — scoped to scrollable containers only */
@@ -1030,6 +1031,42 @@
 }
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+/* Settled chats in the Agent sidebar: a slim pill in the sidebar's own
+   foreground that brightens while the list is hovered. scrollbar-width and
+   scrollbar-color stay unset: Chromium ignores these rules once either is. */
+.betterc0de-settled-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.betterc0de-settled-scroll::-webkit-scrollbar-track {
+  background: transparent;
+  margin-block: 2px;
+}
+.betterc0de-settled-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+  background-color: color-mix(
+    in oklab,
+    var(--sidebar-foreground) 12%,
+    transparent
+  );
+}
+.betterc0de-settled-scroll:hover::-webkit-scrollbar-thumb {
+  background-color: color-mix(
+    in oklab,
+    var(--sidebar-foreground) 26%,
+    transparent
+  );
+}
+.betterc0de-settled-scroll::-webkit-scrollbar-thumb:hover,
+.betterc0de-settled-scroll::-webkit-scrollbar-thumb:active {
+  background-color: color-mix(
+    in oklab,
+    var(--sidebar-foreground) 42%,
+    transparent
+  );
 }
 
 /* Deliberate rainbow (mode-independent, purely decorative) — centralized so
@@ -1086,20 +1123,15 @@
 :root {
   --chat-max-width: 1200px;
   --chat-scale: 1;
-  --message-font-size: 14px;
+  --message-font-size: 13px;
   --sidebar-width: 300px;
 }
 
-/* Compact mode — tighter spacing between messages */
+/* Compact mode — tighter lines and less space between messages (the
+   transcript is a flex column; its own gap is 1rem) */
 .compact-mode .chat-prose {
   line-height: 1.5;
-}
-.compact-mode [data-slot="message"] {
-  padding-top: 0.25rem;
-  padding-bottom: 0.25rem;
-}
-.compact-mode [data-slot="message-content"] {
-  gap: 0.25rem;
+  row-gap: 0.5rem;
 }
 
 /* Active agent labels only: completed steps keep their normal, static text. */
@@ -1140,6 +1172,40 @@
   transition-duration: 0.01ms !important;
 }
 
+/* ── Find in chat (chat/chat-find-bar.tsx, lib/chat-find-highlight.ts) ──
+   Matches are CSS custom highlights over the rendered text, so the markdown
+   DOM is never rewritten; their `::highlight()` rules are added at run time
+   by lib/chat-find-highlight.ts (the build's CSS optimizer warns on that
+   pseudo-element). Both use the warning hue, the usual find colour, which
+   is scoped to light and dark mode only, so built-in and imported themes
+   keep it. An entry whose text cannot be highlighted (a browser without the
+   API) is tinted as a whole, the current one with an outline; a plan entry
+   (`data-chat-find-frame`) outlines its card instead, which keeps its own
+   surface. */
+[data-chat-find-hit]:not([data-chat-find-frame]) {
+  border-radius: calc(var(--radius) + 2px);
+  background-color: color-mix(in oklab, var(--warning) 8%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--warning) 8%, transparent);
+}
+[data-chat-find-hit="current"]:not([data-chat-find-frame]) {
+  background-color: color-mix(in oklab, var(--warning) 14%, transparent);
+}
+[data-chat-find-frame][data-chat-find-hit="match"] > :first-child {
+  outline: 1px solid color-mix(in oklab, var(--warning) 45%, transparent);
+  outline-offset: 3px;
+}
+[data-chat-find-hit="current"]:not([data-chat-find-frame]),
+[data-chat-find-frame][data-chat-find-hit="current"] > :first-child {
+  outline: 2px solid color-mix(in oklab, var(--warning) 80%, transparent);
+  outline-offset: 4px;
+}
+@media (forced-colors: active) {
+  [data-chat-find-hit="current"]:not([data-chat-find-frame]),
+  [data-chat-find-frame][data-chat-find-hit="current"] > :first-child {
+    outline-color: Highlight;
+  }
+}
+
 /* ── @ File mention input styling ── */
 .mention-input-active textarea {
   caret-color: var(--foreground);
@@ -1174,6 +1240,35 @@
   font-size: 0.85em;
   font-family: var(--font-mono);
   font-weight: 500;
+}
+
+/* ── Markdown in the composer and in sent user messages ──
+ * The composer paints these over its textarea, so none of them may change a
+ * glyph's advance: bold is a stroke instead of a heavier weight, code keeps
+ * the text face and gets a translucent background (the caret below stays
+ * visible), and the bullet is drawn over the hyphen it replaces. */
+.markdown-source-strong {
+  -webkit-text-stroke: 0.035em currentColor;
+}
+
+.markdown-source-code {
+  border-radius: 0.25em;
+  background: color-mix(in oklab, var(--foreground) 9%, transparent);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.markdown-source-bullet {
+  position: relative;
+  color: transparent;
+}
+
+.markdown-source-bullet::before {
+  content: "•";
+  position: absolute;
+  inset: 0;
+  text-align: center;
+  color: var(--muted-foreground);
 }
 
 .ultra-think-text:hover svg,
@@ -1319,15 +1414,25 @@
     var(--provider-update-pill-dismiss-ms, 3000ms) linear forwards;
 }
 
-/* Wide-screen comfort: above 1080px the agent left sidebar (chat list,
- * "New chat" / "Open folder" actions, footer, …) scales up 15% so the
- * controls stay comfortably sized on larger displays. `zoom` scales the whole
- * subtree — content AND its layout box — so the sidebar simply gets wider to
- * fit; the inline (vw-based) width stays the pre-zoom base. The resize handler
- * in left-sidebar.tsx divides its pointer delta by the same factor so dragging
- * stays 1:1 with the cursor. Keep this in sync with SIDEBAR_WIDE_SCALE in
- * lib/editor-layout.ts. */
+/* One left-sidebar width for every mode; left-sidebar.tsx sets the base
+ * inline as `--left-sidebar-width`. */
+.betterc0de-left-sidebar-width {
+  width: var(--left-sidebar-width);
+}
+
+/* Wide-screen comfort: above 1080px the left sidebar is 15% wider in every
+ * mode, and the agent content and the footer inside it scale up by the same
+ * factor so the controls stay comfortably sized on larger displays. The
+ * aside itself is never zoomed: a zoomed aside specified its width before
+ * the zoom, Editor's after it, and the width transition animated between the
+ * two on every mode switch. A zoomed child column fills its unzoomed parent
+ * exactly. The resize handler in left-sidebar.tsx divides its pointer delta
+ * by the same factor so dragging stays 1:1 with the cursor. Keep this in sync
+ * with SIDEBAR_WIDE_SCALE in lib/editor-layout.ts. */
 @media (min-width: 1081px) {
+  .betterc0de-left-sidebar-width {
+    width: calc(var(--left-sidebar-width) * 1.15);
+  }
   .betterc0de-left-sidebar-scale {
     zoom: 1.15;
   }
@@ -1407,15 +1512,6 @@
 .betterc0de-tool-row {
   animation: betterc0de-tool-row-in 0.28s cubic-bezier(0.22, 1, 0.36, 1)
     backwards;
-}
-
-/* Side panels share the chat surface; the center keeps the shell surface. */
-.editor-sidebar {
-  --sidebar: var(--background);
-  --sidebar-foreground: var(--foreground);
-  --sidebar-border: var(--border);
-  --sidebar-accent: var(--muted);
-  --sidebar-accent-foreground: var(--foreground);
 }
 
 .dark .editor-code-panel {

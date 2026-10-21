@@ -1,12 +1,8 @@
 import { generateWorkspaceCommitMessage as generateFromSources } from "@betterc0de/schema/git-commit-message"
 import { resolveWorkspaceFilePath } from "@/lib/editor-path"
-import {
-  generateCommitMessage,
-  gitDiff,
-  gitDiffStaged,
-  gitStatus,
-  readFile,
-} from "@/services/backend"
+import { generateCommitMessage } from "@/services/backend/chatApi"
+import { gitDiff, gitDiffStaged, gitStatus } from "@/services/backend/gitApi"
+import { readFile } from "@/services/backend/workspaceApi"
 
 /**
  * Generate for exactly the scope that smart commit will commit, without

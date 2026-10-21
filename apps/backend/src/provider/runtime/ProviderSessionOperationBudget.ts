@@ -1,4 +1,5 @@
 import { logger } from "../../observability/logger"
+import { isAcpProviderDriver } from "./providerDrivers"
 
 // ACP startup includes a child spawn, authentication and session setup. Its
 // RPC calls can each wait longer than the short turn-interruption budget.
@@ -10,7 +11,7 @@ export function get(
   label: string,
   interruptTimeoutMs: number
 ): number {
-  const acp = instance.driver === "cursor" || instance.driver === "grok-cli"
+  const acp = isAcpProviderDriver(instance.driver)
   if (acp && label === "startSession") {
     return Math.max(interruptTimeoutMs, ACP_SESSION_START_TIMEOUT_MS)
   }

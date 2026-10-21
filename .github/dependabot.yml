@@ -6,6 +6,17 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
+      # Electron supports only its three newest majors, and the browser
+      # preview loads arbitrary web pages in its Chromium. Keep the runtime,
+      # the packager and the updater in one PR, majors included, so a new
+      # major is proposed together with the builder that supports it. Listed
+      # first: a dependency joins the first group it matches.
+      electron:
+        patterns:
+          - "electron"
+          - "electron-builder"
+          - "electron-updater"
+          - "@electron/*"
       runtime-dependencies:
         dependency-type: production
       development-dependencies:
@@ -30,6 +41,10 @@ updates:
       - dependency-name: "@react-native/*"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: github-actions
-    directory: /
+    # "/" covers .github/workflows only; the composite actions under
+    # .github/actions/* pin their own third-party actions by SHA.
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: monthly

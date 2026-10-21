@@ -4,20 +4,21 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest"
 // Mocks
 // ---------------------------------------------------------------------------
 
-// Mock every named export chat-store.ts imports from @/services/backend.
-// When the chat store adds a new backend call the test file picks it up
-// automatically; historically a missing mock entry (upsertThreadMeta)
-// silently threw "No 'X' export is defined on the '@/services/backend'
-// mock" deep inside createThread().
-vi.mock("@/services/backend", () => ({
+// Mock the named exports chat-store.ts imports from the backend coreApi and
+// chatApi modules. Add an entry here when the chat store adds a backend call:
+// historically a missing mock entry (upsertThreadMeta) silently threw
+// "No 'X' export is defined on the … mock" deep inside createThread().
+vi.mock("@/services/backend/coreApi", () => ({
   upsertThreadMeta: vi.fn().mockResolvedValue(undefined),
   saveThreadMessage: vi.fn().mockResolvedValue(undefined),
   deleteThreadDb: vi.fn().mockResolvedValue(undefined),
   loadMessages: vi.fn().mockResolvedValue([]),
-  loadThreadActivities: vi.fn().mockResolvedValue([]),
   // Legacy names retained in case transitively imported by another module
   // the test pulls in:
   saveThread: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock("@/services/backend/chatApi", () => ({
+  loadThreadActivities: vi.fn().mockResolvedValue([]),
   generateTitle: vi.fn().mockResolvedValue("AI Title"),
 }))
 
@@ -101,11 +102,7 @@ function resetStore() {
     lruOrder: [],
     draftsByThread: {},
     lastUsage: null,
-    autonomousMode: false,
-    autonomousTask: null,
-    autonomousStatus: "idle" as const,
-    autonomousIterations: 0,
-    autonomousMaxIterations: 50,
+    autonomyByThread: {},
   })
 }
 

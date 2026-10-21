@@ -1,5 +1,8 @@
 import { create } from "zustand"
-import { loadProviderUsage, type ProviderUsageReport } from "@/services/backend"
+import {
+  loadProviderUsage,
+  type ProviderUsageReport,
+} from "@/services/backend/coreApi"
 
 const REPORT_TTL_MS = 30_000
 

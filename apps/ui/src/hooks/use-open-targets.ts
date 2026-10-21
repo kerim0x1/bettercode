@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react"
-import { getOpenTargets, type OpenTarget } from "@/services/backend"
+import { getOpenTargets, type OpenTarget } from "@/services/backend/gitApi"
 
 const FALLBACK_TARGETS: OpenTarget[] = [
   { id: "cursor", label: "Cursor", group: "editor", available: true },

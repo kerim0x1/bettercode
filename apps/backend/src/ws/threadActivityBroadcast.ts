@@ -53,6 +53,58 @@ export function broadcastThreadMetadata(update: {
   }
 }
 
+/**
+ * A chat's settings as the backend now keeps them, whole, to every connected
+ * client (`thread.metadata` with `settings`), after PATCH /threads/:id
+ * changed them, so other open windows follow without reloading the chat
+ * list. The frame has no title: clients that only read renames skip it.
+ * Best effort, like the title.
+ */
+export function broadcastThreadSettings(update: {
+  readonly threadId: string
+  readonly settings: Readonly<Record<string, unknown>>
+}): void {
+  const frame = {
+    channel: "thread.metadata",
+    data: { threadId: update.threadId, settings: { ...update.settings } },
+  }
+  for (const broadcaster of broadcasters) {
+    try {
+      broadcaster.broadcast(frame)
+    } catch (err) {
+      logger.warn(
+        { err, thread: update.threadId },
+        "failed to broadcast thread settings"
+      )
+    }
+  }
+}
+
+/**
+ * A chat's resume record as the backend now keeps it (`null` once it is
+ * gone), on the same `thread.metadata` channel, with the message of a turn
+ * the backend just sent (`resumePrompt`; services/chat/resume-runtime.ts).
+ * A frame without a title, so clients that only read renames skip it. Best
+ * effort, like the title.
+ */
+export function broadcastThreadResume(update: {
+  readonly threadId: string
+  readonly resume: unknown
+  readonly resumePrompt?: unknown
+}): void {
+  const frame = { channel: "thread.metadata", data: { ...update } }
+  for (const broadcaster of broadcasters) {
+    try {
+      broadcaster.broadcast(frame)
+    } catch (err) {
+      logger.warn(
+        { err, thread: update.threadId },
+        "failed to broadcast thread resume state"
+      )
+    }
+  }
+}
+
 /** Best effort: the activity is already durable; a failed broadcast is logged, never thrown. */
 export function broadcastThreadActivity(
   activity: ThreadActivityProjection

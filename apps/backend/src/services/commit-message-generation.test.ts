@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { settingsSchema } from "@betterc0de/schema"
 import { ChatLlmHelpers, resolveCommitMessageModelSelections } from "./chat"
-import { runNativeTextGeneration } from "./native-text-generation"
+import type { NativeTextGenerator } from "./native-text-generation"
 import { HttpError } from "../errors"
 
-vi.mock("./native-text-generation", () => ({
-  runNativeTextGeneration: vi.fn(),
-}))
+/** The backend's native text generations: a fake the tests drive. */
+const runNativeTextGeneration = vi.fn<NativeTextGenerator["run"]>()
+const nativeTextGeneration = { run: runNativeTextGeneration }
 vi.mock("../auth/keyResolution", () => ({
   resolveAnthropicKey: () => null,
   resolveOpenAiKey: () => null,
@@ -67,6 +67,35 @@ describe("commit generation service", () => {
     })
   })
 
+  it("uses the configured commit-message models", () => {
+    expect(
+      resolveCommitMessageModelSelections(
+        settingsSchema.parse({
+          providers: { codex: { enabled: true }, claude: { enabled: true } },
+          commit_message_codex_model: " gpt-5.7-mini ",
+          commit_message_claude_model: "claude-haiku-5-20261001",
+        })
+      ).map((selection) => selection.model)
+    ).toEqual(["gpt-5.7-mini", "claude-haiku-5-20261001"])
+  })
+
+  it("restores the defaults for blank models and ignores a model of the other CLI", () => {
+    const settings = settingsSchema.parse({
+      providers: { codex: { enabled: true }, claude: { enabled: true } },
+      commit_message_codex_model: "   ",
+      commit_message_claude_model: null,
+    })
+    expect(settings.commit_message_codex_model).toBe("gpt-5.6-luna")
+    expect(settings.commit_message_claude_model).toBe("claude-sonnet-5")
+    expect(
+      resolveCommitMessageModelSelections({
+        ...settings,
+        commit_message_codex_model: "claude-sonnet-5",
+        commit_message_claude_model: "gpt-5.6-luna",
+      }).map((selection) => selection.model)
+    ).toEqual(["gpt-5.6-luna", "claude-sonnet-5"])
+  })
+
   it.each([
     null,
     '{"subject":"Update files","body":""}',
@@ -81,6 +110,7 @@ describe("commit generation service", () => {
     }
     run.mockResolvedValueOnce(JSON.stringify(message))
     const helpers = new ChatLlmHelpers({
+      nativeTextGeneration,
       settings: () =>
         settingsSchema.parse({
           providers: { codex: { enabled: true }, claude: { enabled: true } },
@@ -100,6 +130,7 @@ describe("commit generation service", () => {
 
   it("reports disabled CLIs without attempting an API-key provider", async () => {
     const helpers = new ChatLlmHelpers({
+      nativeTextGeneration,
       settings: () =>
         settingsSchema.parse({
           providers: {
@@ -121,6 +152,7 @@ describe("commit generation service", () => {
       new Error("Provider unavailable")
     )
     const helpers = new ChatLlmHelpers({
+      nativeTextGeneration,
       settings: () => settingsSchema.parse({}),
     })
     await expect(helpers.generateCommitMessage(input)).rejects.toMatchObject({
@@ -138,6 +170,7 @@ describe("commit generation service", () => {
       JSON.stringify(message)
     )
     const helpers = new ChatLlmHelpers({
+      nativeTextGeneration,
       settings: () => settingsSchema.parse({}),
     })
     await expect(helpers.generateCommitMessage(input)).resolves.toEqual(message)
@@ -151,6 +184,7 @@ describe("commit generation service", () => {
       '{"subject":"Update files","body":""}'
     )
     const helpers = new ChatLlmHelpers({
+      nativeTextGeneration,
       settings: () => settingsSchema.parse({}),
     })
     await expect(helpers.generateCommitMessage(input)).rejects.toBeInstanceOf(

@@ -4,9 +4,14 @@ Editor mode uses a workspace sidebar, a code surface, and a resizable chat
 surface. The sidebar switches between Files, Search, and Git; the menu also
 exposes outline, code map, and references. It uses the same surface tokens and
 menu primitives as Agent mode. Agent mode retains its existing pane grid.
-The editor's left sidebar and right chat share inset rounded borders and the
-same dark surface. The center retains the lighter shell background in dark
-mode, including the file overview and Monaco editor.
+The sidebar, the code surface, and the chat are rounded cards on the shell
+surface with 8 px gaps, matching Agent mode's floating chat card; the empty
+state without a folder uses the same frame. All three cards use the dark
+`--background` surface, and the dark workbench Monaco theme paints the default
+dark background (`#0f0f0f`) so the editor blends into its card. The view tabs
+sit in a slightly raised bar with the canvas toolbar's flat active fill
+sliding to the selected view, measured per tab; the More button takes the fill
+when the active view lives in its menu.
 Open Files, the workspace tree, and Recent Files use independent collapsible
 headers with counts. The workspace header remains reachable while scrolling;
 its creation icons stay available when collapsed and reopen the tree when used.
@@ -179,20 +184,59 @@ claims whose delivery may already have reached the provider. Stop pauses queued
 drafts before the local stream finalizes, and queued input takes precedence over
 automatic autonomous-loop continuation.
 
-This is a desktop composer feature, shared by Agent, Editor and Design views.
-It works with every adapter through normal chat dispatch and current thread
-permissions; it does not add provider-specific steering, a backend scheduler,
-or a mobile queue. The existing mobile dispatch contract is unchanged.
+Queued drafts stay editable until they are claimed. `lib/message-queue-editing`
+holds the pure changes (edit a payload, move up or down, move in front of
+another entry, add at the front, claim for steering); an entry being sent is
+never edited or moved and nothing moves in front of it. The store persists each
+change like an enqueue, so a restart restores the edited order paused. The
+panel above the composer edits text, attachments and browser references inline,
+reorders by native drag and drop (its own drag type, so pane drop zones ignore
+it) or the item menu, and Alt+Up in an empty composer opens the last editable
+entry; the global Alt+Up chat switch yields in that case. While the chat's next
+entry is open in the editor, the runner treats the thread as busy, so the old
+text is not sent.
+
+Steering sends a draft into the running turn instead of after it. The entry is
+added at the front (or moved there by **Steer now**) and claimed like a send,
+then `lib/chat/steer-turn` posts it to `/chat/steer` with its queue id as the
+user-message id. The backend resolves the thread's hub instance, runs the user's
+on-message-send hooks and calls the adapter's optional `steerTurn`; only a
+`steered` answer stores the message (`ThreadService.persistSteeredUserMessage`,
+placed in front of the turn's stored answer so a reload reads request, steer,
+answer). Codex implements it with app-server `turn/steer`, which names the
+expected turn id, so input never lands in a later turn; an app-server without
+the method answers `unsupported`. Claude Code runs each turn as one
+single-message SDK query whose input closes at the first result, and ACP,
+compatibility and API providers run a turn as one request, so they answer
+`unsupported`. Then the renderer interrupts the turn without pausing the queue
+and the entry, still first, goes out through normal dispatch as the next turn.
+`not_running` and `not_steerable` (a review or compaction) leave it first for
+the next turn. Slash commands and drafts that change the turn itself (a mode
+override, a plan to implement, an Autonomous Work run) are never steered. A
+steered message carries its text, images and picked browser elements; unlike a
+turn's first message, its @-mentions are not expanded into file contents (the
+running agent can open those files itself).
+
+`settings.while_working_enter` (Queue or Steer) decides what Enter does while a
+turn runs; Ctrl/Cmd+Enter does the other one. The composer binds that choice to
+the one submit event it starts, so a skipped submit cannot carry it over.
+
+This is a desktop composer feature, shared by Agent, Editor and Design views,
+and it works with every adapter through normal chat dispatch and current thread
+permissions. The phone app keeps its own queue with the same shared rules
+(`@betterc0de/schema/message-queue`) and no editing or steering yet; its
+dispatch contract is unchanged. Paired devices may call `/chat/steer` wherever
+they may send.
 
 ## Skills in the slash picker
 
 The shared desktop composer lists enabled provider skill metadata alongside
 built-in, project and provider commands, with All/Commands/Skills filters.
 Selecting a provider skill inserts its existing native `$skill` token. A typed
-`/skill` alias is resolved in `chat-submit/input-context` before local command
+`/skill` alias is resolved in `lib/chat-commands/input-context` before local command
 dispatch, preserving the visible user text. Built-ins and native provider
 commands take precedence over aliases; runtime/project skill routing is unchanged.
-The command ladder remains in `slash-command-runtime` and the normal submission
+Built-in commands run through the dispatcher below, and the normal submission
 lane still owns permissions, queues and message persistence.
 
 Claude, Codex, Claude Terminal and BetterC0de-compatible providers reuse the same
@@ -200,6 +244,37 @@ native skill path as the `$` picker. Cursor and Grok expose skills here only if
 their provider metadata contains them; commands are not inferred to be skills.
 This changes no adapter protocol or HTTP contract and reads no skill files in
 the renderer. Mobile has no equivalent slash picker; its dispatch is unchanged.
+
+## Slash command dispatch
+
+Each built-in command family is a spec, `{ names, when?, run }`
+(`SlashCommandSpec` in `lib/chat-commands/slash-registry.ts`), kept in a
+`*-slash-specs.ts` file next to the builders and actions it uses. `names`
+lists the commands without the leading slash; `when` narrows a spec to some
+arguments, such as `/mcp add`. `builtin-slash-specs.ts` registers the specs
+in two ordered phases:
+
+1. `PRE_RUNTIME_SLASH_SPECS` (composer, session, thread, message scroll,
+   workspace) run before anything is loaded. Their names never overlap, which
+   `builtin-slash-specs.test.ts` checks, so their order does not matter.
+2. `RUNTIME_SLASH_SPECS` run after `lib/slash-command-runtime.ts` loads the
+   runtime MCP servers, skills and subagents and the workspace's project
+   configuration once. Here list order is precedence: for a shared name the
+   first spec whose `when` passes handles the command, so subcommand specs
+   (`/mcp add`, `/providers login`) sit ahead of the spec that owns the bare
+   name.
+
+A spec either returns a result, which ends the command, or returns nothing
+and lets the run continue with the output it set; `/resume <title>` that
+finds no chat continues to the session list, `/models <query>` to the model
+catalog. A command that no spec answered can still name a runtime MCP server,
+skill or subagent; otherwise it goes to the normal submit flow.
+`BUILTIN_SLASH_COMMAND_NAMES` is derived from the specs, so adding a spec is
+how a command becomes a built-in. `slash-command-runtime.ts` (about 600 lines)
+holds only this dispatch, the runtime-list loading and re-exports for
+existing import sites; the submit hook imports it on demand. Add a command by
+adding a spec to the matching `*-slash-specs.ts` file, or a new file listed
+in `builtin-slash-specs.ts`, not by branching in the runtime.
 
 ## Settings compatibility and checkpoint context
 

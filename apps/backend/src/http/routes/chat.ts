@@ -5,34 +5,38 @@ import { requestIdentity } from "../../remote/http"
 import type { RemoteProviderTurnReservation } from "../../remote/providerTurnOwnership"
 import { resolveAutoCompactionDecisionForThread } from "../../services/chat/automatic-compaction"
 import { dispatchChatTurn } from "../../services/chat/dispatch"
-import { resolveApprovedWorkspaceRoot } from "../../services/workspace/authorization"
-import { controlThreadGoal } from "../../services/chat/goal-runtime"
-import { persistDispatchUserMessage } from "../../services/chat/dispatch-lifecycle"
 import {
+  resolveApprovedWorkspaceRoot,
+  resolveChatWorkspaceRoot,
+} from "../../services/workspace/authorization"
+import { controlThreadGoal } from "../../services/chat/goal-runtime"
+import { registerChatAutonomyRoutes } from "./chat-autonomy"
+import { registerChatResumeRoutes } from "./chat-resume"
+import { persistDispatchUserMessage } from "../../services/chat/dispatch-lifecycle"
+import { preparedTurnTokensFor } from "../../services/chat/prepared-turns"
+import { withThreadPermissionLevel } from "../../services/chat/thread-settings"
+import {
+  buildPreparedTurnInstruction,
+  runMessageSendHooks,
+} from "../../services/chat/turn-preparation"
+import {
+  capRemoteChatPermissions,
+  DESKTOP_PERMISSION_ACCESS,
   rejectChatInput,
   respondToChatApproval,
   respondToChatInput,
   respondToChatPlan,
   updateChatPermissionMode,
   withChatRecoveryMutation,
+  type RemotePermissionAccess,
 } from "../../services/chat/requests"
+import { remoteTerminalRefusal } from "../remoteTerminalPolicy"
 import {
   interruptChatTurn,
   rotateChatSession,
 } from "../../services/chat/sessions"
+import { steerChatTurn } from "../../services/chat/steer"
 import { handleHttpContract } from "../contracts"
-import { parseAndHandle } from "../routeHelpers"
-import {
-  chatAutoCompactionDecisionSchema,
-  chatGenerateBranchNameSchema,
-  chatGenerateCommitMessageSchema,
-  chatGeneratePrContentSchema,
-  chatGenerateSkillContentSchema,
-  chatGenerateThreadContextSummarySchema,
-  chatQuestionsSchema,
-  chatRotateSessionSchema,
-  chatTitleSchema,
-} from "../validation"
 
 function reserveRemoteProviderTurn(
   state: AppState,
@@ -47,6 +51,26 @@ function reserveRemoteProviderTurn(
     generation: session.createdAt,
     expiresAt: session.expiresAt,
   })
+}
+
+/**
+ * The caller's standing with the permission system (see
+ * `RemotePermissionAccess`). Only a paired device is limited: it may use
+ * bypass only with the desktop owner's terminal grant on a full session —
+ * the same check `/shell/run` applies, so the grant cannot be routed around
+ * by asking the agent to run the command instead.
+ */
+export function permissionAccess(
+  state: AppState,
+  c: Context
+): RemotePermissionAccess {
+  const identity = requestIdentity(c, state.config, state)
+  if (identity?.kind !== "remote") return DESKTOP_PERMISSION_ACCESS
+  return {
+    remote: true,
+    mayBypass:
+      remoteTerminalRefusal(c, state.config, identity, state.settings) === null,
+  }
 }
 
 /**
@@ -70,18 +94,62 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
       c,
       "chatGoal",
       async (body) =>
-        controlThreadGoal(state, body, () =>
-          reserveRemoteProviderTurn(state, c)
+        controlThreadGoal(
+          state,
+          capRemoteChatPermissions(
+            withThreadPermissionLevel(state, body),
+            permissionAccess(state, c)
+          ),
+          () => reserveRemoteProviderTurn(state, c)
         ),
       { operation: "chat goal" }
     )
   )
+  registerChatAutonomyRoutes(api, state, {
+    permissionAccess: (c) => permissionAccess(state, c),
+    reserveRemoteTurn: (c) => reserveRemoteProviderTurn(state, c),
+  })
+  registerChatResumeRoutes(api, state, {
+    permissionAccess: (c) => permissionAccess(state, c),
+    reserveRemoteTurn: (c) => reserveRemoteProviderTurn(state, c),
+  })
+  // The user message of a turn a provider plugin runs in the desktop
+  // process. With `prepareTurn` the desktop leaves the turn's preparation
+  // to the backend, as for `/chat/send`: the hooks run before the message
+  // is recorded, and the instruction comes back for the plugin.
   api.post("/chat/persist-user", (c) =>
     handleHttpContract(
       c,
       "chatPersistUser",
       async (body) => {
-        return withChatRecoveryMutation(
+        if (!body.prepare_turn) {
+          return withChatRecoveryMutation(
+            state,
+            body.thread_id,
+            () => {
+              const messageId = persistDispatchUserMessage(state, body)
+              return { persisted: messageId !== null }
+            },
+            body.project_path
+          )
+        }
+        if (requestIdentity(c, state.config, state)?.kind !== "local") {
+          throw new HttpError(
+            403,
+            "Only the desktop host runs provider plugins.",
+            "plugin_turn_desktop_only"
+          )
+        }
+        const prepared = {
+          ...body,
+          project_path: await resolveChatWorkspaceRoot(
+            state,
+            body.thread_id,
+            body.project_path
+          ),
+        }
+        await runMessageSendHooks(state, prepared)
+        const result = await withChatRecoveryMutation(
           state,
           body.thread_id,
           () => {
@@ -90,6 +158,19 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
           },
           body.project_path
         )
+        const systemInstruction = await buildPreparedTurnInstruction(
+          state,
+          prepared
+        )
+        // The hooks ran for this message: if the plugin fails, the desktop
+        // sends it through `/chat/send` with this token, and they do not
+        // run a second time (services/chat/prepared-turns.ts).
+        const preparedTurnToken = preparedTurnTokensFor(state).issue(body)
+        return {
+          ...result,
+          systemInstruction,
+          ...(preparedTurnToken ? { preparedTurnToken } : {}),
+        }
       },
       { operation: "chat persist user" }
     )
@@ -100,16 +181,30 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
       c,
       "chatSend",
       async (parsedBody) => {
-        if (
-          parsedBody.orchestration?.enabled &&
-          requestIdentity(c, state.config, state)?.kind !== "local"
-        )
+        // The token stays out of the turn (and its retry fingerprint).
+        const { prepared_turn_token: preparedTurnToken, ...sendBody } =
+          parsedBody
+        const local = requestIdentity(c, state.config, state)?.kind === "local"
+        if (sendBody.orchestration?.enabled && !local)
           throw new HttpError(
             403,
             "Only the desktop host can configure orchestration."
           )
-        return dispatchChatTurn(state, parsedBody, () =>
-          reserveRemoteProviderTurn(state, c)
+        // A provider plugin's fallback: `/chat/persist-user` already ran
+        // this message's hooks. The token is spent whoever presents it, and
+        // only the desktop's own send skips them.
+        const hooksRan =
+          preparedTurnTokensFor(state).consume(preparedTurnToken, sendBody) &&
+          local
+        return dispatchChatTurn(
+          state,
+          capRemoteChatPermissions(
+            withThreadPermissionLevel(state, sendBody),
+            permissionAccess(state, c)
+          ),
+          () => reserveRemoteProviderTurn(state, c),
+          undefined,
+          { messageHooks: !hooksRan }
         )
       },
       { operation: "chat send" }
@@ -125,10 +220,21 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
     )
   )
 
-  api.post("/chat/compaction/decision", (c) =>
-    parseAndHandle(
+  // A message for the running turn (services/chat/steer.ts). Paired devices
+  // may steer wherever they may send; read-only sessions cannot post.
+  api.post("/chat/steer", (c) =>
+    handleHttpContract(
       c,
-      chatAutoCompactionDecisionSchema,
+      "chatSteer",
+      async (body) => steerChatTurn(state, body),
+      { operation: "chat steer" }
+    )
+  )
+
+  api.post("/chat/compaction/decision", (c) =>
+    handleHttpContract(
+      c,
+      "chatCompactionDecision",
       async (body) => {
         const cwd =
           body.cwd ??
@@ -156,36 +262,36 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/chat/session/rotate", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      chatRotateSessionSchema,
+      "chatSessionRotate",
       async (body) => rotateChatSession(state, body),
       { operation: "chat session rotate" }
     )
   )
 
   api.post("/chat/title", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      chatTitleSchema,
+      "chatTitle",
       async (body) => state.chatHelpers.generateTitle(body.userMessage),
       { operation: "chat title" }
     )
   )
 
   api.post("/chat/questions", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      chatQuestionsSchema,
+      "chatQuestions",
       async (body) => state.chatHelpers.extractQuestions(body.text),
       { operation: "chat questions" }
     )
   )
 
   api.post("/chat/text-generation/commit-message", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      chatGenerateCommitMessageSchema,
+      "generateCommitMessage",
       async (body) =>
         state.chatHelpers.generateCommitMessage({
           ...body,
@@ -196,9 +302,9 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/chat/text-generation/pr-content", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      chatGeneratePrContentSchema,
+      "generatePrContent",
       async (body) =>
         state.chatHelpers.generatePrContent({
           ...body,
@@ -209,9 +315,9 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/chat/text-generation/branch-name", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      chatGenerateBranchNameSchema,
+      "generateBranchName",
       async (body) =>
         state.chatHelpers.generateBranchName({
           ...body,
@@ -222,9 +328,9 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/chat/text-generation/thread-context-summary", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      chatGenerateThreadContextSummarySchema,
+      "generateThreadContextSummary",
       async (body) =>
         state.chatHelpers.generateThreadContextSummary({
           ...body,
@@ -235,9 +341,9 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/chat/text-generation/skill-content", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      chatGenerateSkillContentSchema,
+      "generateSkillContent",
       async (body) =>
         state.chatHelpers.generateSkillContent({
           ...body,
@@ -254,7 +360,8 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
     handleHttpContract(
       c,
       "chatApproval",
-      async (body) => respondToChatApproval(state, body),
+      async (body) =>
+        respondToChatApproval(state, body, permissionAccess(state, c)),
       { operation: "chat approval" }
     )
   )
@@ -278,7 +385,8 @@ export function registerChatRoutes(api: Hono, state: AppState): void {
     handleHttpContract(
       c,
       "chatPermissionMode",
-      async (body) => updateChatPermissionMode(state, body),
+      async (body) =>
+        updateChatPermissionMode(state, body, permissionAccess(state, c)),
       { operation: "chat permission-mode" }
     )
   )

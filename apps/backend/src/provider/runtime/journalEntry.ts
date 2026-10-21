@@ -1,5 +1,5 @@
 import type { ProviderRuntimeEvent as CanonicalProviderRuntimeEvent } from "./contracts"
-import type { ProviderRuntimeEvent as LegacyProviderRuntimeEvent } from "../types"
+import type { LegacyProviderEvent } from "../types"
 import { canonicalToLegacy } from "./legacyBridge"
 
 /**
@@ -25,7 +25,7 @@ export type ProviderRuntimeJournalEntry =
     }
   | {
       readonly shape: "legacy"
-      readonly event: LegacyProviderRuntimeEvent
+      readonly event: LegacyProviderEvent
     }
 
 /** `metadata_json.schema` of a canonical row. `undefined | 1 | 2` are legacy. */
@@ -58,7 +58,7 @@ export interface JournalTruncationRecord {
 
 export type LegacyViewBridge = (
   event: CanonicalProviderRuntimeEvent
-) => LegacyProviderRuntimeEvent | null
+) => LegacyProviderEvent | null
 
 export function canonicalJournalEntry(
   event: CanonicalProviderRuntimeEvent
@@ -67,7 +67,7 @@ export function canonicalJournalEntry(
 }
 
 export function legacyJournalEntry(
-  event: LegacyProviderRuntimeEvent
+  event: LegacyProviderEvent
 ): ProviderRuntimeJournalEntry {
   return { shape: "legacy", event }
 }
@@ -192,7 +192,7 @@ export function stripRaw(
 export function legacyViewOf(
   entry: ProviderRuntimeJournalEntry,
   bridge: LegacyViewBridge = canonicalToLegacy
-): LegacyProviderRuntimeEvent | null {
+): LegacyProviderEvent | null {
   if (entry.shape === "legacy") return entry.event
   return bridge(entry.event)
 }
@@ -205,9 +205,9 @@ export function legacyViewOf(
  * decorate through this one function, so they cannot disagree.
  */
 export function decorateLegacyViewWithTruncation(
-  legacy: LegacyProviderRuntimeEvent,
+  legacy: LegacyProviderEvent,
   truncation: JournalTruncationRecord
-): LegacyProviderRuntimeEvent {
+): LegacyProviderEvent {
   return {
     ...legacy,
     payload: {

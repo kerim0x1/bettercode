@@ -6,10 +6,11 @@ import { openDatabase } from "../persistence/db"
 import { runMigrations } from "../persistence/migrations"
 import { AgentPermissionPolicy } from "./agent-permission-policy"
 import {
+  AgentPermissionRuntime,
   bindAgentPermissionRuntimeContext,
   clearAgentPermissionRuntimeContext,
-  configureAgentPermissionRuntime,
   runWithAgentPermissionRuntimeContext,
+  setDefaultAgentPermissionRuntime,
 } from "./agent-permission-runtime"
 import { gateToolCall } from "./agent-loop/tool-gate"
 import { evaluateBetterC0deProjectToolPermission } from "./project-tool-policy"
@@ -27,7 +28,7 @@ const cleanupDirectories: string[] = []
 const cleanupDatabases: Array<ReturnType<typeof openDatabase>> = []
 
 afterEach(() => {
-  configureAgentPermissionRuntime(null)
+  setDefaultAgentPermissionRuntime(null)
   for (const db of cleanupDatabases.splice(0)) {
     try {
       db.close()
@@ -59,7 +60,9 @@ describe("durable agent permission provider matrix", () => {
       pathScope: "src",
       behavior: "deny",
     })
-    configureAgentPermissionRuntime(policy)
+    // The direct gate, the Claude project policy and the Hub all consult the
+    // installed runtime, as they do in a running backend.
+    setDefaultAgentPermissionRuntime(new AgentPermissionRuntime({ policy }))
 
     const directContext = {
       threadId: "direct-thread",

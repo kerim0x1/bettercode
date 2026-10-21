@@ -11,6 +11,7 @@ import {
   LONG_CONTEXT_NOTE,
   PriceBook,
   priceModels,
+  dayCost,
   type PricedTokens,
 } from "./pricing"
 import {
@@ -296,10 +297,15 @@ export async function collectCodexUsage(options: {
   }
 
   const modelByRollout = new Map<string, string>()
+  const dayByRollout = new Map<string, string>()
   for (const thread of threads) {
     const model = stringValue(thread.model)
     if (thread.rollout_path && model) {
       modelByRollout.set(localPath(thread.rollout_path), model)
+    }
+    const created = numberValue(thread.created_at)
+    if (thread.rollout_path && created > 0) {
+      dayByRollout.set(localPath(thread.rollout_path), localDay(created * 1000))
     }
   }
   const rollouts = threads
@@ -343,6 +349,25 @@ export async function collectCodexUsage(options: {
   const { pricing, costByModel } = priceModels(priceBook, modelTokens, [
     LONG_CONTEXT_NOTE,
   ])
+  // Each rollout's cost lands on the day its thread started, like its tokens.
+  for (const usage of split.values) {
+    const model = modelByRollout.get(usage.file)
+    const day = dayByRollout.get(usage.file)
+    if (!model || !day) continue
+    const cost = dayCost(priceBook, [
+      [
+        model,
+        {
+          input: usage.input,
+          output: usage.output,
+          cacheRead: usage.cacheRead,
+          cacheWrite5m: usage.cacheWrite,
+          cacheWrite1h: 0,
+        },
+      ],
+    ])
+    if (cost !== null) addDay(daily, day, { cost })
+  }
 
   const summary = summarize({
     daily,
@@ -432,7 +457,7 @@ export async function collectCodexUsage(options: {
       .map(([date, bucket]) => ({ date, ...bucket })),
     pricing,
     pricesFile: priceBook.file,
-    models: topEntries(models, 8).map((entry) => ({
+    models: topEntries(models, 20).map((entry) => ({
       ...entry,
       ...(costByModel.has(entry.id) ? { cost: costByModel.get(entry.id) } : {}),
     })),

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { useAppearanceStore } from "@/lib/appearance-store"
 import { usePluginStore } from "@/lib/plugin-store"
 import { usePreferencesStore } from "@/lib/preferences-store"
-import { gitUserProfile } from "@/services/backend"
+import { gitUserProfile } from "@/services/backend/gitApi"
 
 /**
  * Startup initialization for persisted state + local git user info.

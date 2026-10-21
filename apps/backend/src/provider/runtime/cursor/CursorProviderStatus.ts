@@ -444,7 +444,7 @@ function unauthenticatedCursorAbout(version: string | null): CursorAboutResult {
     status: "error",
     auth: { status: "unauthenticated" },
     message:
-      "Cursor Agent is not authenticated. Run `agent login` and try again.",
+      "Cursor Agent is not authenticated. Run `cursor-agent login` and try again.",
   }
 }
 

@@ -173,6 +173,19 @@ export class PriceBook {
     return this.overrides[key] ?? BUILT_IN[key] ?? null
   }
 
+  /**
+   * What the cache reads saved against paying the input rate for the same
+   * tokens; `null` when the model has no rate.
+   */
+  cacheSavings(model: string, tokens: PricedTokens): number | null {
+    const found = this.rateFor(model)
+    if (!found) return null
+    return (
+      (tokens.cacheRead * Math.max(0, found.input - found.cacheRead)) /
+      PER_MILLION
+    )
+  }
+
   /** `null` when the model has no rate, so the caller can report the gap. */
   cost(model: string, tokens: PricedTokens): CostBreakdown | null {
     const found = this.rateFor(model)
@@ -218,6 +231,7 @@ export function priceModels(
   const unpricedModels: string[] = []
   let pricedTokens = 0
   let unpricedTokens = 0
+  let cacheSavings = 0
   for (const [model, tokens] of byModel) {
     const cost = book.cost(model, tokens)
     if (!cost) {
@@ -228,6 +242,7 @@ export function priceModels(
     addCost(breakdown, cost)
     pricedTokens += tokenTotal(tokens)
     costByModel.set(model, costTotal(cost))
+    cacheSavings += book.cacheSavings(model, tokens) ?? 0
   }
   if (pricedTokens === 0) return { pricing: null, costByModel }
   return {
@@ -240,9 +255,29 @@ export function priceModels(
       unpricedModels: unpricedModels.sort(),
       hasOverrides: book.hasOverrides,
       notes,
+      cacheSavings,
     },
     costByModel,
   }
+}
+
+/**
+ * One day's cost from that day's tokens per model; `null` when none of the
+ * models has a rate, so the day reads as unpriced rather than free.
+ */
+export function dayCost(
+  book: PriceBook,
+  byModel: Iterable<readonly [string, PricedTokens]>
+): number | null {
+  let total = 0
+  let priced = false
+  for (const [model, tokens] of byModel) {
+    const cost = book.cost(model, tokens)
+    if (!cost) continue
+    total += costTotal(cost)
+    priced = true
+  }
+  return priced ? total : null
 }
 
 export function tokenTotal(tokens: PricedTokens): number {

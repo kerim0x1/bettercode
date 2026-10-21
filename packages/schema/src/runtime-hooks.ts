@@ -7,11 +7,15 @@
  * environment and report a failure in the same words.
  */
 
-export type RuntimeHookEvent =
-  | "on_message_send"
-  | "on_response_complete"
-  | "on_file_change"
-  | "on_commit"
+/** Every event a hook can run on (`hooks.json`'s `event`). */
+export const RUNTIME_HOOK_EVENTS = [
+  "on_message_send",
+  "on_response_complete",
+  "on_file_change",
+  "on_commit",
+] as const
+
+export type RuntimeHookEvent = (typeof RUNTIME_HOOK_EVENTS)[number]
 
 export type RuntimeHookPayload = Record<string, unknown>
 

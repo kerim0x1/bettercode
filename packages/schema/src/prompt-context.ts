@@ -75,8 +75,15 @@ function providerScopeKey(value: string | null | undefined): string {
     .replace(/[_\s]+/g, "-")
 }
 
-/** A provider kind folded onto the name its skills and options are keyed by. */
-export function canonicalProviderKind(
+/**
+ * A provider kind folded onto the key its skills and options are *stored*
+ * under (`codex`, `claude`, `openai`, `grok-cli`, ...). This is a storage key,
+ * not the runtime provider kind: it maps `anthropic-cli` to `claude` and keeps
+ * the hyphenated `grok-cli`, whereas `canonicalProviderKindAlias`
+ * (provider-kind) resolves the kind the runtime routes by (`anthropic_cli`,
+ * `grok_cli`). Do not use one where the other is expected.
+ */
+export function skillScopeProviderKey(
   value: string | null | undefined
 ): string {
   const key = providerScopeKey(value)
@@ -96,8 +103,14 @@ export function canonicalProviderKind(
   return key
 }
 
+/**
+ * @deprecated Renamed to `skillScopeProviderKey`: it is a skill-scope storage
+ * key, not the canonical runtime provider kind (see provider-kind).
+ */
+export const canonicalProviderKind = skillScopeProviderKey
+
 function providerUsesNativeSkills(providerKind: string): boolean {
-  return ["codex", "claude"].includes(canonicalProviderKind(providerKind))
+  return ["codex", "claude"].includes(skillScopeProviderKey(providerKind))
 }
 
 function isProjectPromptSkill(skill: RuntimePromptSkill): boolean {
@@ -134,10 +147,10 @@ function runtimeSkillAppliesToProvider(
   }
 
   const kindScopes = (skill.providerKinds ?? [])
-    .map(canonicalProviderKind)
+    .map(skillScopeProviderKey)
     .filter(Boolean)
   if (kindScopes.length > 0) {
-    return kindScopes.includes(canonicalProviderKind(input.providerKind))
+    return kindScopes.includes(skillScopeProviderKey(input.providerKind))
   }
 
   return true

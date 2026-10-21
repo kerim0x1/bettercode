@@ -49,16 +49,24 @@ const PROVIDER_HUB_EXPORTS = [
 
 // Ratchet: lower it when you extract more, never raise it to fit new code.
 // Split plan baseline: 4 674 lines before the split; 4 040 after (f)–(d);
-// 3 975 after moving binding recovery and runtime-mode resolution out.
-const PROVIDER_HUB_MAX_LINES = 3_990
+// 3 975 after moving binding recovery and runtime-mode resolution out;
+// 2 644 after moving status, sessions, capacity, approval routing, the
+// public types and the errors into their own modules (MOD-08).
+const PROVIDER_HUB_MAX_LINES = 2_650
 
 const EXTRACTED_MODULES = [
   "HubAuditLog.ts",
   "HubApprovalRequests.ts",
+  "HubApprovalRouter.ts",
   "ProviderCatalogs.ts",
+  "ProviderHubErrors.ts",
+  "ProviderHubTypes.ts",
   "ProviderMaintenanceCoordinator.ts",
   "ProviderMetadataCache.ts",
   "ProviderSessionRecovery.ts",
+  "ProviderSessionRegistry.ts",
+  "ProviderStatusService.ts",
+  "ProviderTurnCapacity.ts",
   "providerTurnOptions.ts",
 ] as const
 
@@ -112,6 +120,27 @@ describe("ProviderHub structure", () => {
     expect(hub).not.toMatch(/withProviderUpdateLock/)
     expect(hub).not.toMatch(/function providerUpdateFailureMessage/)
     expect(hub).not.toMatch(/class ProviderUpdateError/)
+    // Status: snapshots, redaction and the coalesced listing live in the
+    // status service; the hub only delegates.
+    // (`listInstancesInFlightMaxEntries` is a public option and stays.)
+    expect(hub).not.toMatch(
+      /listInstancesUncoalesced|this\.listInstancesInFlight\b/
+    )
+    expect(hub).not.toMatch(/function redactProviderConfig\(/)
+    expect(hub).not.toMatch(/function readInstanceStatusProbe\(/)
+    expect(hub).not.toMatch(/isSensitiveProviderFieldName|getMasterKey/)
+    // Sessions: live-session accounting and the admission queue belong to
+    // the session registry.
+    expect(hub).not.toMatch(/knownLiveSessions|sessionAdmissionWaiters/)
+    expect(hub).not.toMatch(/suppressedSessionExitCorrelation/)
+    expect(hub).not.toMatch(/recoverSessionForThreadUnderAdmission/)
+    expect(hub).not.toMatch(/function readAdapterSessions\(/)
+    // Capacity: limits and their hard caps live in ProviderTurnCapacity.
+    expect(hub).not.toMatch(/ACTIVE_TURNS_HARD_MAX|LIVE_SESSIONS_HARD_MAX/)
+    expect(hub).not.toMatch(/function boundedProviderOperationalLimit\(/)
+    // Errors and public types are declared once, outside the hub.
+    expect(hub).not.toMatch(/class \w+Error extends Error/)
+    expect(hub).not.toMatch(/export interface ProviderRuntimeInstance\b/)
 
     const modules = importStatements(hub).map((entry) => entry.module)
     for (const gone of [
@@ -165,6 +194,19 @@ describe("ProviderHub structure", () => {
       cache.ProviderMetadataInputError
     )
     expect(hubModule.ProviderUpdateError).toBe(maintenance.ProviderUpdateError)
+    const errors = await import("./ProviderHubErrors")
+    for (const name of [
+      "ProviderBackendQuarantinedError",
+      "ProviderInstanceUnavailableError",
+      "ProviderSessionAdmissionCapacityError",
+      "ProviderSessionCapacityError",
+      "ProviderSessionInspectionError",
+      "ProviderStaleSessionCleanupError",
+      "ProviderTurnCapacityError",
+      "ProviderTurnConflictError",
+    ] as const) {
+      expect(hubModule[name], name).toBe(errors[name])
+    }
   })
 
   it("does not grow back past the ratchet", () => {

@@ -76,12 +76,28 @@ export const shellRunSchema = z
   .strict()
 export type ShellRunBody = z.infer<typeof shellRunSchema>
 
+/**
+ * The launch a run or PTY capability is bound to: the shell, the PTY argument
+ * vector and the command environment of the request that will spend it,
+ * with the same limits that request has. An absent field means "the
+ * default"; the backend refuses the capability for any other launch.
+ */
+export const shellCapabilityLaunchSchema = z
+  .object({
+    shell: z.string().max(1_024).optional(),
+    args: terminalArgsSchema.optional(),
+    env: shellEnvironmentSchema.optional(),
+  })
+  .strict()
+export type ShellCapabilityLaunch = z.infer<typeof shellCapabilityLaunchSchema>
+
 export const shellCapabilityRequestSchema = z.discriminatedUnion("operation", [
   z
     .object({
       operation: z.literal("run"),
       command: shellCommandSchema,
       cwd: z.string().max(SHELL_CWD_MAX_CHARS),
+      launch: shellCapabilityLaunchSchema.optional(),
     })
     .strict(),
   z
@@ -90,6 +106,7 @@ export const shellCapabilityRequestSchema = z.discriminatedUnion("operation", [
       cwd: z.string().max(SHELL_CWD_MAX_CHARS),
       sessionId: shellSessionIdSchema.optional(),
       command: shellCommandSchema.optional(),
+      launch: shellCapabilityLaunchSchema.optional(),
     })
     .strict(),
   z

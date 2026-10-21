@@ -1,4 +1,4 @@
-import { getAgentWorkspaceTrust } from "@/services/backend"
+import { getAgentWorkspaceTrust } from "@/services/backend/chatApi"
 
 export interface CliScanContext {
   projectPath: string
@@ -15,8 +15,12 @@ type WorkspaceTrustLookup = typeof getAgentWorkspaceTrust
 
 /**
  * Resolve the renderer's selected workspace against the backend-owned trust
- * record. A lookup failure keeps the project selected but fails closed so the
- * shell scans user-global CLI configuration only.
+ * record. Only an explicit trust decision counts: the backend reports
+ * `trusted` (with `explicit: false`) for every folder it has no record for,
+ * and that compatibility default is not consent to read the repository's own
+ * CLI configuration. A lookup failure keeps the project selected but fails
+ * closed so the shell scans user-global CLI configuration only. (The shell
+ * re-checks the backend record itself; this value is advisory.)
  */
 export async function resolveCliScanContext(
   projectPath: string | null | undefined,
@@ -29,7 +33,7 @@ export async function resolveCliScanContext(
     const { trust } = await lookup(selectedProjectPath)
     return {
       projectPath: trust.workspacePath.trim() || selectedProjectPath,
-      workspaceTrusted: trust.state === "trusted",
+      workspaceTrusted: trust.state === "trusted" && trust.explicit === true,
     }
   } catch {
     return {
@@ -50,7 +54,7 @@ export function describeCliScanProjectScope(
     case "unavailable":
       return " User config only; the selected project is unavailable."
     case "untrusted":
-      return " User config only; project config was skipped because the workspace is untrusted."
+      return " User config only; project config was skipped because the workspace is not trusted."
     default:
       return ""
   }

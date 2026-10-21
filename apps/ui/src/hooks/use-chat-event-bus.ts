@@ -1,10 +1,12 @@
 import { useRef, useState } from "react"
 import {
   PROVIDER_HANDOFF_ACTIVITY,
+  isRecord,
+  parseRealtimeEvent,
   providerHandoffProgressSchema,
 } from "@betterc0de/schema"
 import { handleProviderEvent } from "@/lib/provider-events"
-import { useChatStore, type ThreadActivity } from "@/lib/chat-store"
+import { useChatStore } from "@/lib/chat-store"
 import { useWsConnection } from "@/hooks/use-ws-connection"
 import { useProviderEvents } from "@/hooks/use-provider-events"
 import { maybeNotifyRuntimeEvent } from "@/lib/native-notifications"
@@ -12,7 +14,10 @@ import { mergeCanonicalRuntimeEventFields } from "@/lib/provider-runtime-event-f
 import type { UiProvider } from "@/lib/provider-types"
 import type { SetPlanModalContent } from "@/lib/plan-modal"
 import { loadMessages } from "@/services/backend/coreApi"
+import { reportDroppedRealtimeEvent } from "@/services/backend/wsClient"
 import { remoteTitleChange } from "@/lib/thread-metadata-sync"
+import { storedThreadSettingsChange } from "@/lib/thread-settings-sync"
+import { applyThreadResumePush } from "@/lib/chat-resume-store"
 
 /**
  * Wires up every "inbound event from a provider" subscription the app
@@ -26,6 +31,10 @@ import { remoteTitleChange } from "@/lib/thread-metadata-sync"
  * the chat store. The two callbacks the dispatcher needs — opening the
  * plan modal and responding to tool-approval requests — come in as
  * props so the hook stays agnostic about where those live in the app.
+ *
+ * Every WebSocket payload is parsed with its channel's schema
+ * (`parseRealtimeEvent`, `@betterc0de/schema`) before it reaches a store; a
+ * frame that does not match is dropped and logged, never cast.
  *
  * Returns `wsRef` + `wsReady` for callers that want to inspect the
  * connection state (e.g. to show a reconnect toast).
@@ -49,7 +58,15 @@ export function useChatEventBus({
   useWsConnection({
     wsRef,
     setWsReady,
-    onEvent: (event) => {
+    onEvent: (frame) => {
+      const parsed = parseRealtimeEvent(frame.channel, frame.data)
+      if (parsed.kind === "unknown") return
+      if (parsed.kind === "invalid") {
+        reportDroppedRealtimeEvent(parsed.channel, parsed.issue)
+        return
+      }
+      const event = parsed.event
+
       if (event.channel === "provider.replayGap") {
         const store = useChatStore.getState()
         const loadedThreadIds = store.threads
@@ -69,17 +86,37 @@ export function useChatEventBus({
         return
       }
 
-      // A chat renamed on a paired phone; see thread-metadata-sync.ts.
+      // A chat renamed on a paired phone (thread-metadata-sync.ts), or its
+      // settings changed on another client (thread-settings-sync.ts).
       if (event.channel === "thread.metadata") {
         const store = useChatStore.getState()
         const change = remoteTitleChange(store.threads, event.data)
         if (change) store.updateThreadTitle(change.threadId, change.title)
+        const { threadId, settings } = event.data
+        if (settings) {
+          void storedThreadSettingsChange(settings).then(
+            (settingsChange) =>
+              useChatStore
+                .getState()
+                .applyStoredThreadSettings(threadId, settingsChange),
+            (error: unknown) => {
+              console.warn("[thread-settings] push not applied", error)
+            }
+          )
+        }
+        // A limit or a restart stopped the chat, or it resumed (chat-resume-store).
+        if (event.data.resume !== undefined)
+          applyThreadResumePush(
+            threadId,
+            event.data.resume,
+            event.data.resumePrompt
+          )
         return
       }
 
       if (event.channel === "thread.activity") {
-        const activity = event.data as ThreadActivity
-        if (activity?.threadId && activity?.id) {
+        const activity = event.data
+        if (activity.threadId && activity.id) {
           useChatStore
             .getState()
             .upsertThreadActivity(activity.threadId, activity)
@@ -130,18 +167,9 @@ export function useChatEventBus({
       }
 
       if (event.channel === "provider.runtimeEvent") {
-        const data = event.data as Record<string, unknown> & {
-          event_type?: string
-          thread_id?: string
-          type?: string
-          threadId?: string
-          payload?: Record<string, unknown>
-        }
-        const eventType = data.event_type ?? data.type
-        const threadId = data.thread_id ?? data.threadId
-        if (!eventType || !threadId) return
+        const { data, eventType, threadId } = event
         const payload = mergeCanonicalRuntimeEventFields(
-          data.payload ?? data,
+          isRecord(data.payload) ? data.payload : data,
           data
         )
         maybeNotifyRuntimeEvent({ threadId, type: eventType, payload })

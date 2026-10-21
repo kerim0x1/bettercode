@@ -2,7 +2,7 @@ import {
   readFile,
   writeFile,
   type WorkspaceContentSearchResult,
-} from "@/services/backend"
+} from "@/services/backend/workspaceApi"
 import {
   normalizeEditorPath,
   resolveWorkspaceFilePath,

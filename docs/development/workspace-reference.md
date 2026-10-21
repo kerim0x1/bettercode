@@ -59,7 +59,9 @@ the **Browser preview** row on its Overview page. It uses the focused chat's
 project or worktree, and selected page elements and visual changes go to that
 chat. The narrow panel places the address bar above the selection and inspector
 controls. The inspector fills the panel; closing it returns to the live page.
-Switching workspace views keeps the open page and its navigation state.
+Switching workspace views keeps the open page and its navigation state. A
+browser hidden for five minutes is closed to free its page process and opens
+again when you return to it.
 
 Editor and Canvas sidebars have direct Files, Search, Git, Diff and Code Map
 tabs, with outline and references in the view menu. Entering the editor without
@@ -170,13 +172,17 @@ npm ci               # installs locked dependencies and prepares Node native mod
 npm run dev          # Vite + backend + Electron
 ```
 
-To produce an installer for your platform:
+To produce installers, run the command for the machine you are on:
 
 ```bash
 npm run build:win    # or build:mac / build:linux
 ```
 
-Artifacts land in `release/`.
+It builds the app, then runs the `package`, `smoke` and `installers` steps of
+`release:check`: an unpacked package, a launch of that package, and installers
+built from it. Packaging always targets the host, so naming another OS (for
+example `build:mac` on Windows) fails in preflight. Artifacts land in
+`release/`.
 
 ### Connecting an AI CLI
 
@@ -226,6 +232,20 @@ The sidebar shows provider updates that run during the current session. Dismisse
 results stay hidden through status refreshes; a new update result can appear
 again. Successful updates dismiss automatically, while failures remain available
 for inspection in provider settings.
+
+Image generation and commit messages use their own models, not the chat's:
+`image_generation_model` (run through the Codex CLI), and
+`commit_message_codex_model` / `commit_message_claude_model`. They have no
+settings screen. To replace a retired model before an app update brings a new
+default, set the key in `settings.json` in the data directory while
+BetterC0de is closed.
+
+An agent turn ends as timed out after 30 minutes without any provider
+activity; time spent waiting for your approval or answer does not count. Any
+turn ends after 12 hours. `BETTERC0DE_PROVIDER_TURN_TIMEOUT_MS` and
+`BETTERC0DE_PROVIDER_TURN_MAX_DURATION_MS` change these limits, and
+`BETTERC0DE_PROVIDER_MAX_IDLE_SESSIONS` sets how many idle agent sessions
+stay running per provider instance (4 by default); see `.env.example`.
 
 ### Skills and browser inspection
 
@@ -350,12 +370,23 @@ File-checkpoint branch labels use the originating chat's project or worktree,
 including when another chat is focused. Hook and background-task lifecycle
 events remain inspectable in the chat without spurious unhandled-event logs.
 
-Opening a folder is treated as the decision to trust it, so Agent Mode works
-immediately in projects you open yourself. Trust is what allows a repository's
-own configuration — MCP servers and formatter commands declared in the repo —
-to run. To review each project explicitly instead, turn off
-**Settings → Permissions → Trust opened workspaces automatically**; you can
-also mark any workspace untrusted there, which always wins.
+Opening a folder does not trust it. Agent Mode turns in a project start only
+after you choose **Settings → Permissions → Trust project**; until then the
+chat explains how to trust it. Trust is also what allows a repository's own
+configuration to run: MCP servers declared in the repository (local commands
+and remote URLs), formatter commands, and Claude Code's project and local
+settings, including their hooks. Without an explicit trust record Claude Code
+reads only your user settings. Folderless chats run in BetterC0de's own scratch
+workspace and need no trust decision. **Trust opened workspaces automatically**
+on the same page (off by default for new installs; an existing install keeps
+its saved choice) trusts a project on its first Agent Mode turn instead. You
+can mark any workspace untrusted there, which always wins.
+
+**Sync from CLI** and the onboarding import copy only user-level CLI
+configuration (`~/.claude`, `~/.codex`, …) into BetterC0de's global MCP,
+skill and agent lists. A repository's `.mcp.json`, `.claude/` settings,
+`.codex/config.toml`, skills and agents, and Claude's per-project entries in
+`~/.claude.json`, stay with that workspace and run only when it is trusted.
 
 ### Importing editor themes
 
@@ -385,7 +416,7 @@ Four coordinated workspace apps:
 
 - React/Vite renderer in `apps/ui`
 - Electron shell in `apps/shell`
-- Node/Hono backend in `apps/backend`, spawned as a local sidecar by default
+- Node/Hono backend in `apps/backend`, forked as a supervised local sidecar
 - Expo/React Native companion app in `apps/mobile`
 
 Shared Zod schemas and cross-cutting types live in `packages/schema`.
@@ -443,12 +474,16 @@ snapshot before acknowledgement. Desktop and Mobile preserve newer live updates
 when older thread-list requests finish.
 
 The backend is a TypeScript/Node process bound to loopback with a per-launch
-bearer token. Set `BETTERC0DE_BACKEND=in-process` only for the optional
-in-process development/runtime mode.
+bearer token. It always runs as a child process of Electron; there is no
+in-process mode.
 
 ## Runtime Layout
 
-- Electron spawns `apps/backend` by default and supervises its lifecycle.
+- Electron forks `apps/backend` and supervises it. After a crash it restarts
+  the backend with backoff; after five crashes within two minutes it stops and
+  the window shows a **Restart backend** banner. A backend that fails three
+  `/health` checks in a row (one every 20 seconds) is ended and restarted.
+  See [Desktop shell and backend process](../architecture/overview.md#desktop-shell-and-backend-process).
 - The renderer talks to the backend through `apps/ui/src/services/backend`, which dispatches over HTTP (loopback) and a WebSocket for streaming events.
 - The backend exposes the application capabilities through two transport adapters:
   - HTTP routes in `apps/backend/src/http/routes`
@@ -480,15 +515,20 @@ that link in a trusted browser, or scanning it inside the native BetterC0de
 Remote app, gives the device the live chats, projects, approvals, diffs, and
 files owned by the desktop host.
 
-On the same Wi-Fi (or any private network) that is all it takes: the phone
-scans the QR and gets a full session, nothing to install. For access away from
-home, Tailscale on both devices advertises the tailnet address automatically
-and the phone pairs through the encrypted tunnel; or put the port behind a
-trusted HTTPS tunnel or reverse proxy and save its public URL in Remote Access
-settings. Plaintext from a public address is refused by default and, when
-explicitly enabled, read-only. BetterC0de does not proxy remote traffic through
-a cloud service. See [Remote Access](../remote-access.md) for the full setup
-and security model.
+A full session needs an encrypted connection: HTTPS, Tailscale, or this
+computer. With Tailscale on both devices, **Tailscale HTTPS** publishes the
+desktop as `https://<machine>.<tailnet>.ts.net` and the phone pairs through
+the encrypted tunnel, at home or away, even with **Local network** off so
+nothing listens on the Wi-Fi; alternatively put the port behind a trusted HTTPS tunnel or reverse
+proxy and save its public URL in Remote Access settings. Pairing over plain
+HTTP on the same Wi-Fi works too, but gives a read-only session that ends
+after one hour, for HTTP and the WebSocket alike, because anyone on that
+network can read the traffic. Plaintext from a public address is refused by
+default and, when explicitly enabled, read-only for one hour as well. Sessions
+end after 30 days, or after 7 days without use. Pairing links expire after 10
+minutes by default and never last more than an hour. BetterC0de does not proxy
+remote traffic through a cloud service. See [Remote Access](../remote-access.md)
+for the full setup and security model.
 
 A paired remote device is not the desktop. It cannot store provider
 credentials, update provider CLIs, take heap snapshots, mint speech tokens,
@@ -500,51 +540,65 @@ human-typed bypass command) is off by default; the desktop owner can enable
 shell access on this computer to every paired device with a full session.
 Read-only sessions and paired devices themselves cannot turn it on. Turning it
 off immediately ends every terminal and running command a paired device holds.
+The same grant governs **Bypass Permission**: without it, a Bypass message from
+a paired device runs as Ask first and switching a running chat to Bypass is
+refused (`remote_bypass_disabled`). A paired device never saves permanent
+permission rules; its **Always allow** applies to the session only.
 "Open in…" targets are desktop-only for paired devices, except Terminal, Git
-Bash and WSL, which follow the same grant.
+Bash and WSL, which follow the same grant. Turning Remote Access off revokes
+every paired device and every unused pairing link.
 
 ## Backend (`apps/backend/`)
 
 TypeScript + Node 22 + Hono + `better-sqlite3` + `ws` + `pino`. Key modules:
 
-- `apps/backend/src/index.ts` — default spawned-process entry
-- `apps/backend/src/inProcess.ts` — the ordered list of startup phases (implemented in `apps/backend/src/bootstrap/`); returns a handle with `{ port, token, stop() }`
+- `apps/backend/src/index.ts` — the child-process entry Electron forks; waits for the settings key on the IPC channel, then starts the backend
+- `apps/backend/src/inProcess.ts` — the ordered list of startup phases (implemented in `apps/backend/src/bootstrap/`); returns a handle with `{ port, token, stop() }`. Tests and smoke scripts call it directly.
 - `apps/backend/src/appState.ts` — shared service container
 - `apps/backend/src/persistence/` — SQLite (migrations, EventStore, CommandReceiptStore, projection queries)
-- `apps/backend/src/provider/` — provider adapter interface, registry, service; Claude via `@anthropic-ai/sdk`; OpenAI + Grok + OpenRouter + LMStudio via the `openai` SDK with a `baseURL` override
+- `apps/backend/src/provider/` — the provider hub and the CLI runtime adapters in `runtime/` (Claude Code, Codex, Cursor, Grok CLI, Claude Terminal, BetterC0de compatibility), and the frozen legacy stack for API-key providers: Claude via `@anthropic-ai/sdk`; OpenAI + Grok + OpenRouter + LMStudio via the `openai` SDK with a `baseURL` override. See [Provider Pipeline](../architecture/overview.md#provider-pipeline)
+- `apps/backend/src/services/desktop-config/` — MCP servers, hooks, rules, skills and subagents in the runtime home, written only through `/api/v1/config/*` by the desktop's main process
 - `apps/backend/src/services/` — shell (subprocess wrappers), git (21 ops via `execFile`), workspace (search/read/write with path-traversal guards), project. Workspace searches are capped (result count, visited entries, scanned files/bytes, and a deadline); `/workspace/search` and `/workspace/search-content` answer with `{ entries|results, truncated, truncatedReason }` so a cut-short list never looks complete. Every surface that lists those results (file tree, @-mentions, search sidebar, references, symbols, `/find`, `/debug-rg`) ends a cut-short list with a static "cut short" row, and a rename whose search was cut short warns that files past the cut still hold the old name.
-- `apps/backend/src/auth/` — CLI detection (`claude`/`codex --version`), key resolution (settings → env → CLI config)
+- `apps/backend/src/auth/` — API key resolution (settings → env → CLI config), the backup-key pool, and removal of the retired `auth.json` credential store; CLI detection is in `apps/backend/src/cli/`
 - `apps/backend/src/settings/` — Zod schema + file-persisted settings service
 - `apps/backend/src/security/token.ts` — 256-bit bearer token + `crypto.timingSafeEqual`
 - `apps/backend/src/ws/server.ts` — `ws.Server` with `{type:"auth", token}` handshake, event broadcast, RPC dispatch
 
 ## Frontend (`apps/ui/src/services/backend/`)
 
-The renderer's backend access layer:
+The renderer's backend transport. There is no `index.ts` barrel; import the module that defines a function. These modules do not use stores or hooks (ESLint warns):
 
 - `runtime.ts` — transport selection (Electron sidecar / optional remote HTTP), config injection
 - `coreApi.ts` — settings, threads, projects
 - `providersApi.ts` — provider catalogs and runtime status
-- `chatApi.ts` — chat send/interrupt/title/question flows
+- `chatApi.ts` — `/chat/*`, `/permissions/*` and thread-activity requests only. Turn orchestration is `apps/ui/src/lib/chat/send-message.ts`; request shaping is `lib/chat/request-builders.ts`
+- `autonomyApi.ts` — Autonomous Work start, resume, pause, stop and task
 - `gitApi.ts` — git actions and payload shaping
 - `workspaceApi.ts` — workspace IO, shell helpers. `searchEntriesDetailed` / `searchContentDetailed` return the truncation flag; `searchEntries` / `searchContent` are array-only wrappers for callers that do not show a list
 - `wsClient.ts` — WebSocket connection + event subscription
 
 ## Electron Boundaries
 
-- `apps/shell/main.cjs` — app lifecycle, window creation, backend loading
+- `apps/shell/main.cjs` — app lifecycle and the startup and quit order; it wires the modules in `apps/shell/shared/` (full table in [Desktop shell and backend process](../architecture/overview.md#desktop-shell-and-backend-process))
+- `apps/shell/shared/backend-process.cjs` — backend spawn, the IPC startup handshake, health probe, stop and restart
+- `apps/shell/shared/app-windows.cjs` / `app-ipc.cjs` — the app's windows, and its IPC handlers registered through `trusted-ipc.cjs`
+- `apps/shell/shared/backend-supervisor.cjs` — restart backoff, crash-loop limit and `/health` liveness for the backend
+- `apps/shell/shared/backend-environment.cjs` — the environment the backend is started with
+- `apps/shell/shared/rotating-log-file.cjs` — the size-capped `logs/app.log` in the data directory
 - `apps/shell/shared/urlPolicy.cjs` — trusted sender and navigation policy
 - `apps/shell/shared/runtimeConfig.cjs` — injected renderer port and runtime metadata; the bearer stays in the main process
 
 ## Scripts
 
-- `npm run dev` — Vite + Electron with the supervised local backend
-- `npm run backend:build` — compile `apps/backend` (TypeScript → `dist`)
-- `npm run backend:dev` — watch-mode TypeScript compile for `apps/backend` (does not rebuild native modules — run `backend:rebuild` separately if you reinstall)
+- `npm run dev` — builds the schema and backend, then runs Vite, the schema and backend watchers, and Electron with the supervised local backend
+- `npm run backend:build` — compile `apps/backend` (TypeScript → `dist`) with `apps/backend/tsconfig.build.json`, which leaves tests and `testUtils` out of `dist`; `typecheck:backend` still checks them through `tsconfig.json`
+- `npm run backend:dev` — the same compile in watch mode (does not rebuild native modules — run `backend:rebuild` separately if you reinstall)
+- `npm run schema:dev` — watch-mode compile of `packages/schema`
 - `npm run backend:rebuild` — rerun `electron-rebuild`
 - `npm run build` — build the shared schemas and backend, then typecheck and build the renderer with chunk and size checks
-- `npm run package:dir:win` / `package:dir:mac` / `package:dir:linux` — electron-builder dir builds
-- `npm run package` — full Windows NSIS installer
+- `npm run package` — `npm run build`, then the `package`, `smoke` and `installers` steps of `release:check` for this machine (no clean install, no phone app). `build:electron`, `electron:build` and `build:win` / `build:mac` / `build:linux` run the same; the `build:*` scripts add `--platform win|mac|linux`, and preflight fails when that is not the host OS
+- `npm run package:dir` — the same up to the packaged-app smoke, without installers; `package:dir:win` / `package:dir:mac` / `package:dir:linux` add the platform check
+- `npm run test:coverage` — UI and backend suites with V8 coverage (reports in each app's `coverage/` folder). It needs `@vitest/coverage-v8`, which is not a dependency of the repository; install the version matching `vitest` first
 
 - `npm run mobile:android` / `npm run mobile:ios` — generate the native project, then build and start a development build on a device, emulator or simulator
 - `npm run mobile:start` — start Metro for an already installed development build
@@ -583,7 +637,9 @@ or context options keeps that model selected.
 
 Each desktop chat pane shows its own model, reasoning and permission settings.
 Changing a model affects that chat only, including older chats and newly opened
-panes. The initially blank panel and a panel whose last chat tab was closed also
+panes. A chat's permission level, model selection and orchestration are stored
+with the chat in the backend, so they survive a restart and a paired browser
+shows the same ones. The initially blank panel and a panel whose last chat tab was closed also
 receive their own chat identity when used alongside other panels. An open model
 picker closes when focus moves to another pane; model-picker
 commands open it in the focused pane.
@@ -654,9 +710,9 @@ Under the hood:
   after quitting.
 
 If Codex is installed but unauthenticated, `GET /api/v1/cli/status` returns
-`codex.authenticated: false` and the onboarding flow can surface a
-"Login to ChatGPT" call-to-action that spawns `codex login` on the user's
-behalf.
+`codex.authenticated: false`; run `codex login` in a terminal. BetterC0de has
+no ChatGPT sign-in of its own: the former **Sign in with ChatGPT** option was
+removed, and tokens it left in `auth.json` are deleted at startup.
 
 ## Native modules
 
@@ -675,24 +731,26 @@ testing CI builds or a specific Claude Code binary.
 
 ## Verification
 
-`npm run verify:source` runs the whole gate CI uses (workspace versions,
+`npm run verify:source` runs the fast source gate (workspace versions,
 schema build, Desktop/Backend/Mobile typechecks, lint, packaging tests, and all three test suites).
+CI runs the full `npm run release:check`; see [ci.md](ci.md).
 Individually:
 
 - `npm run typecheck` / `npm run typecheck:backend` — renderer / backend types
+- `npm run typecheck:shell` — Electron main and preload syntax (the gate); `npm run typecheck:shell:checkjs` type-checks them from JSDoc and is not clean yet, so no gate runs it
 - `npm test` / `npm run test:backend` — renderer / backend test suites
-- `npm run lint`
+- `npm run lint` — some rules are warnings while existing code is fixed; see [ci.md](ci.md#lint-rules-and-ratchets)
 - `npm run smoke:multichat` — real composer, model-dropdown and file-review interactions in
   an isolated Electron profile, covering pane ownership, provider changes,
   picker commands, review actions, failed restores, drafts, history, context
-  usage, file mentions, dictation, permission confirmation and autonomous
-  continuation after focus changes, delayed project selection, and terminal
-  event/working-directory ownership
+  usage, file mentions, dictation, permission confirmation, delayed project
+  selection, and terminal event/working-directory ownership. Autonomous Work
+  continuation is covered by the backend's `services/chat/autonomy*.test.ts`
 - `node --check apps/shell/main.cjs` — main-process syntax
 - `npm run perf:backend` — backend startup time and memory budget
 - `npm run build:frontend` — also enforces the chunk-cycle and bundle-size
   budgets, including how many bytes load before the first frame
-- `npm run package:dir:win` / `:mac` / `:linux` — local package smoke build
+- `npm run package:dir` — package this machine's app and launch it (packaged-app smoke)
 
 ## Naming Rules
 

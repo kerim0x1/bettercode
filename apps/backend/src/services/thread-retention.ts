@@ -2,10 +2,9 @@ import type { CheckpointReactor } from "../checkpointing/CheckpointReactor"
 import { logger } from "../observability/logger"
 import {
   cancelPendingApprovals,
-  sessionPermissions,
+  forgetSessionPermission,
 } from "../provider/permissions"
 import { clearSessionRules } from "../provider/session-permission-rules"
-import type { ProviderService } from "../provider/service"
 import type { ThreadTurnCoordinator } from "../provider/threadTurnCoordinator"
 import type { EventNdjsonLogger, ProviderHub } from "../provider/runtime"
 import type { AssistantTranscriptRecoveryStore } from "../provider/runtime/AssistantTranscriptRecoveryStore"
@@ -13,7 +12,10 @@ import type { ThreadService } from "./threads"
 import type { CheckpointRevertOperationStore } from "./checkpoint-revert-operations"
 import type { WorktreeManager } from "./worktree"
 import { deleteThreadCheckpointRefs } from "./git"
+import type { TerminalPtyService } from "./terminalPty"
+import type { ShellSessionService } from "./shell"
 import { withExclusiveWorkspaceMaintenance } from "./workspace-exclusive-maintenance"
+import type { WorkspaceRecoveryGate } from "./workspace-recovery-gate"
 
 export interface ThreadRetentionOptions {
   readonly archiveAfterDays?: number
@@ -23,6 +25,15 @@ export interface ThreadRetentionOptions {
 }
 
 interface ThreadRetentionDependencies {
+  /** Ends a purged thread's terminals before its workspace is removed. */
+  readonly terminalPtys: Pick<TerminalPtyService, "shutdownForWorkspace">
+  /** Ends a purged thread's shell commands before its workspace is removed. */
+  readonly shellSessions: Pick<ShellSessionService, "closeSessionsForWorkspace">
+  /** The instance's recovery gate a purge holds its exclusive barrier on. */
+  readonly workspaceRecoveryGate: Pick<
+    WorkspaceRecoveryGate,
+    "acquireExclusiveAfterQuiesce"
+  >
   readonly forgetThreadGoal?: (threadId: string) => void
   readonly orchestrator?: Pick<
     import("./orchestrator/service").OrchestratorService,
@@ -38,10 +49,14 @@ interface ThreadRetentionDependencies {
   readonly worktrees: Pick<WorktreeManager, "findForThread" | "removeForThread">
   readonly threadTurnCoordinator: Pick<ThreadTurnCoordinator, "withTeardown">
   readonly providerHub: Pick<ProviderHub, "withThreadTeardown">
-  readonly providers: Pick<
-    ProviderService,
-    "withThreadTeardown" | "forgetThread"
-  >
+  /** The direct-API (legacy) provider stack's per-thread teardown. */
+  readonly providers: {
+    withThreadTeardown<T>(
+      threadId: string,
+      operation: () => Promise<T> | T
+    ): Promise<T>
+    forgetThread(threadId: string): void
+  }
   readonly providerEventLoggers: readonly Pick<
     EventNdjsonLogger,
     "removeThread"
@@ -244,7 +259,7 @@ export class ThreadRetentionScheduler {
             )
             dependencies.transcriptRecoveryStore?.removeThread(threadId)
             cancelPendingApprovals(threadId)
-            sessionPermissions.delete(threadId)
+            forgetSessionPermission(threadId)
             clearSessionRules(threadId)
             dependencies.providers.forgetThread(threadId)
             dependencies.forgetThreadGoal?.(threadId)
@@ -253,7 +268,7 @@ export class ThreadRetentionScheduler {
             return true
           }
           return workspaces.length > 0
-            ? withExclusiveWorkspaceMaintenance(workspaces, purge)
+            ? withExclusiveWorkspaceMaintenance(dependencies, workspaces, purge)
             : purge()
         })
       )

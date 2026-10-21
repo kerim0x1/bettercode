@@ -9,9 +9,20 @@ import { AgentPermissionPolicy } from "../../provider/agent-permission-policy"
 import { openDatabase } from "../../persistence/db"
 import { runMigrations } from "../../persistence/migrations"
 import {
-  registerWorkspaceRoutes,
-  resolveApprovedWorkspaceRoot,
+  registerWorkspaceRoutes as registerWorkspaceRoutesUnfilled,
+  resolveApprovedWorkspaceRoot as resolveApprovedWorkspaceRootUnfilled,
 } from "./workspace"
+import { withInertStateArgument } from "../../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const registerWorkspaceRoutes = withInertStateArgument(
+  registerWorkspaceRoutesUnfilled,
+  1
+)
+const resolveApprovedWorkspaceRoot = withInertStateArgument(
+  resolveApprovedWorkspaceRootUnfilled,
+  0
+)
 
 describe("workspace route root authorization", () => {
   it("registers an explicitly opened folder before its first thread while preserving trust decisions", async () => {

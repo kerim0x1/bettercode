@@ -125,6 +125,10 @@ export function createClaudePreToolUseApprovalHook() {
  * Whether the imagegen gate may auto-allow after hard mode, session, and
  * project-policy checks. The MCP tool itself must not enter SDK
  * `allowedTools`, because that would skip `canUseTool` entirely.
+ *
+ * Image generation runs the local Codex CLI, writes files and spends the
+ * user's quota, so it is execute-class work: like a shell command it is
+ * auto-approved only under explicit `bypass`, never under allow-edits.
  */
 export function isImagegenAutoAllowed(
   mode: string | null | undefined,
@@ -139,8 +143,7 @@ export function isImagegenAutoAllowed(
   ) {
     return false
   }
-  const normalized = normalizeLevel(permissionLevel)
-  return normalized === "allow-edits" || normalized === "bypass"
+  return normalizeLevel(permissionLevel) === "bypass"
 }
 
 /**

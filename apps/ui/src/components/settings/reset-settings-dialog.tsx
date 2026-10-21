@@ -34,10 +34,10 @@ export function ResetSettingsDialog({
         showCloseButton={false}
         className={cn("sm:max-w-md", isSimple && "gap-3 p-4")}
       >
-        <DialogTitle>Reset all settings?</DialogTitle>
+        <DialogTitle>Reset preferences and appearance?</DialogTitle>
         <DialogDescription>
-          This will reset all BetterC0de UI preferences and appearance settings
-          to their defaults. This action cannot be undone.
+          Layout, model choices and appearance go back to their defaults. This
+          can't be undone.
         </DialogDescription>
         <div className="rounded-lg border border-border/50 bg-muted/30 p-3 text-xs text-muted-foreground">
           <p className="mb-1.5 font-medium">What will be reset:</p>
@@ -49,6 +49,7 @@ export function ResetSettingsDialog({
           </ul>
           <p className="mt-3 mb-1.5 font-medium">What stays:</p>
           <ul className="ml-1 list-inside list-disc space-y-0.5">
+            <li>Chat, notification and privacy settings</li>
             <li>API keys and provider configurations</li>
             <li>Custom rules and skills</li>
             <li>MCP servers and hooks</li>

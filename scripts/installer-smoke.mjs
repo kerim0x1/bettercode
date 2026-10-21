@@ -326,10 +326,11 @@ function verifyMacSignature(appPath) {
     if (certificateConfigured) {
       throw new Error(`codesign verification failed:\n${verify.stderr.trim()}`)
     }
-    // Without an identity electron-builder skips signing: the Electron
-    // binaries keep their linker signatures (so the app runs, as the launch
-    // test proves), but the bundle as a whole has no valid seal. Releases are
-    // unsigned by decision, so this is recorded, not flagged.
+    // Without an identity electron-builder skips signing; the after-pack fuses
+    // hook then seals the bundle ad hoc so it still runs on Apple Silicon. An
+    // ad hoc seal can still fail a strict deep verify, and Gatekeeper rejects
+    // it either way. Releases are unsigned by decision, so this is recorded,
+    // not flagged.
     log(`Bundle not code-signed, as intended: ${verify.stderr.trim().split("\n").at(-1)}`)
   }
 

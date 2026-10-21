@@ -3,13 +3,18 @@
  * Codex plugins). Namespaced `cliPlugin:*` to stay clear of the `plugin:*`
  * channels that belong to BetterC0de's own provider-plugin system.
  *
- * Mutations are confirmed IN-APP by the renderer (ConfirmActionDialog in
- * marketplace-cli-plugins-tab.tsx) before the IPC call — the previous
- * native `dialog.showMessageBox` gate was replaced on user request.
- * Argument validation stays here as the last line of defense.
+ * Toggle and uninstall are confirmed in the app by the renderer
+ * (ConfirmActionDialog in marketplace-cli-plugins-tab.tsx). Install is
+ * confirmed here, in a native main-process dialog that shows the exact CLI
+ * command: an installed plugin brings hooks, MCP servers and commands that
+ * the CLI runs in later sessions, so a renderer alone must not be able to
+ * add one. Argument validation stays here as the last line of defense.
  */
 
+const path = require("path")
+const { BrowserWindow, dialog } = require("electron")
 const { IpcChannel } = require("./shared/ipc-contract.cjs")
+const { confirmCommandApproval } = require("./shared/command-approval.cjs")
 const { safeHandle, rawHandle } = require("./shared/ipc-handlers-factory.cjs")
 const {
   getCliPluginInventory,
@@ -22,6 +27,7 @@ const {
   setCodexPluginEnabled,
   validateCliPluginId,
 } = require("./cli-plugins.cjs")
+const { resolveCliBinary } = require("./shared/spawn-cli.cjs")
 
 const EMPTY_INVENTORY = Object.freeze({
   claude: { cliDetected: false, plugins: [] },
@@ -34,6 +40,51 @@ function validateSource(source) {
     throw new Error(`Unknown CLI plugin source: ${source}`)
   }
   return source
+}
+
+/** The command line `claudePluginInstall` / `codexPluginAdd` runs. */
+function cliPluginInstallCommand(cli, pluginId) {
+  return cli === "claude"
+    ? `claude plugin install ${pluginId}`
+    : `codex plugin add ${pluginId}`
+}
+
+/**
+ * Ask the user, in a native dialog, to allow installing `pluginId` into
+ * the `cli` CLI. Resolves true only on an explicit "Install".
+ */
+async function confirmCliPluginInstall(
+  cli,
+  pluginId,
+  { parent = null, dialogImpl = dialog, resolveBinary = resolveCliBinary } = {},
+) {
+  const cliLabel = cli === "claude" ? "Claude Code" : "Codex"
+  let binary = null
+  try {
+    binary = resolveBinary(cli)
+  } catch {
+    binary = null
+  }
+  return confirmCommandApproval(dialogImpl, parent, {
+    title: `Install ${cliLabel} plugin?`,
+    message: `Install the ${cliLabel} plugin ${JSON.stringify(pluginId)}?`,
+    command: cliPluginInstallCommand(cli, pluginId),
+    context: binary ? `Runs: ${path.normalize(binary)}` : undefined,
+    notice:
+      `A plugin can add hooks, MCP servers, skills and commands that ${cliLabel} ` +
+      "runs in every later session on this computer. Only install plugins you trust.",
+    allowLabel: "Install",
+  })
+}
+
+function parentWindowOf(event) {
+  try {
+    return event?.sender && BrowserWindow
+      ? BrowserWindow.fromWebContents(event.sender)
+      : null
+  } catch {
+    return null
+  }
 }
 
 let registered = false
@@ -72,9 +123,14 @@ function registerCliPluginHandlers() {
 
   safeHandle(
     IpcChannel.CliPluginInstall,
-    async (_event, { source, id } = {}) => {
+    async (event, { source, id } = {}) => {
       const cli = validateSource(source)
       const pluginId = validateCliPluginId(id)
+      const allowed = await confirmCliPluginInstall(cli, pluginId, {
+        parent: parentWindowOf(event),
+      })
+      // "cancelled": the renderer treats it as the user's choice, not an error.
+      if (!allowed) throw new Error("Plugin installation was cancelled.")
       if (cli === "claude") {
         await claudePluginInstall(pluginId)
       } else {
@@ -101,4 +157,8 @@ function registerCliPluginHandlers() {
   console.log("[cli-plugins-ipc] Handlers registered")
 }
 
-module.exports = { registerCliPluginHandlers }
+module.exports = {
+  registerCliPluginHandlers,
+  cliPluginInstallCommand,
+  confirmCliPluginInstall,
+}

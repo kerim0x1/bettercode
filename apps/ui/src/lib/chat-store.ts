@@ -10,10 +10,14 @@ import {
   saveThreadMessage as saveThreadMessageDb,
   saveThread as saveThreadDb,
   deleteThreadDb,
+  loadMessage,
   loadMessages,
-  loadThreadActivities,
-} from "@/services/backend"
-import { autoCheckpointFromToolCalls } from "@/lib/checkpoint-store"
+} from "@/services/backend/coreApi"
+import { loadThreadActivities } from "@/services/backend/chatApi"
+import {
+  autoCheckpointFromToolCalls,
+  useCheckpointStore,
+} from "@/lib/checkpoint-store"
 import { resolveThreadRuntimePath } from "@/lib/thread-context"
 import { parseQuestionsFromText } from "@/lib/question-parser"
 import { createLogger } from "@/lib/logger"
@@ -27,14 +31,10 @@ import type {
 } from "@betterc0de/schema"
 import {
   type AutonomousStatus,
-  type AutonomousStopReason,
-  type AutonomousTask,
   type ChatState,
   type ThreadStreamState,
   type ThreadSettings,
   emptyStreamState,
-  AUTONOMOUS_MAX_ITERATIONS,
-  AUTONOMOUS_DEFAULT_TIME_BUDGET_MIN,
   PERSIST_DEBOUNCE_MS,
   type ThreadContextPatch,
 } from "./chat/types"
@@ -42,10 +42,210 @@ import {
   applyLru,
   generateId,
   hydrationInFlight,
+  mergeMessageSnapshot,
   metaSaveTimeouts,
+  oldestMessageSequence,
+  type LruOptions,
 } from "./chat/pure-helpers"
+import { deriveThreadAttention } from "@/lib/pending-attention"
+import {
+  applyThreadSettingsChange,
+  queueThreadSettingsChange,
+  threadSettingsChange,
+  unsettledThreadSettingKeys,
+} from "@/lib/thread-settings-sync"
+import {
+  keepLoadedMessagePayloads,
+  messageHasOmittedAttachmentData,
+  messageHasOmittedPayload,
+  withFullMessagePayloads,
+} from "./chat/message-payloads"
 
 const log = createLogger("chat-store")
+
+/**
+ * Transcript paging. Opening a chat reads only its newest page; older rows
+ * load when the transcript asks for them (scrolling up, "Show earlier
+ * messages"). The provider history sent with a turn uses at most the newest
+ * 80 messages of the active context (see `buildWireHistory`), so the first
+ * page must stay above that.
+ */
+export const INITIAL_MESSAGE_PAGE_SIZE = 100
+export const OLDER_MESSAGE_PAGE_SIZE = 100
+/** Backend maximum; used when a command needs the whole transcript. */
+const FULL_TRANSCRIPT_PAGE_SIZE = 2_000
+
+/** The threads listed directly above and below `threadId`. */
+function sidebarNeighbourIds(
+  threads: ReadonlyArray<{ id: string }>,
+  threadId: string
+): [string | undefined, string | undefined] {
+  const index = threads.findIndex((thread) => thread.id === threadId)
+  if (index < 0) return [undefined, undefined]
+  return [threads[index - 1]?.id, threads[index + 1]?.id]
+}
+
+/** Rows the LRU must keep: an open approval, question or plan review. */
+function lruOptionsFor(
+  state: Pick<ChatState, "activitiesByThread">
+): LruOptions {
+  return {
+    keepResident: (threadId) => {
+      const activities = state.activitiesByThread[threadId]
+      return Boolean(
+        activities?.length &&
+        deriveThreadAttention(threadId, activities).total > 0
+      )
+    },
+  }
+}
+
+// ── Local messages a server snapshot may not contain yet ────────────────
+// A forced hydration merges the server page into the transcript (see
+// `mergeMessageSnapshot`). These two registries name the local rows that
+// survive the merge even though the page lacks them.
+
+/** Message ids whose save is still queued or in flight, per thread. */
+const unsyncedMessageIds = new Map<string, Map<string, number>>()
+/** Ids added to a thread while one of its hydrations was reading. */
+const hydrationWatchers = new Map<string, Set<Set<string>>>()
+
+function markMessageUnsynced(threadId: string, messageId: string) {
+  let ids = unsyncedMessageIds.get(threadId)
+  if (!ids) {
+    ids = new Map()
+    unsyncedMessageIds.set(threadId, ids)
+  }
+  ids.set(messageId, (ids.get(messageId) ?? 0) + 1)
+}
+
+function markMessageSynced(threadId: string, messageId: string) {
+  const ids = unsyncedMessageIds.get(threadId)
+  const pending = ids?.get(messageId)
+  if (!ids || pending === undefined) return
+  if (pending > 1) ids.set(messageId, pending - 1)
+  else ids.delete(messageId)
+  if (ids.size === 0) unsyncedMessageIds.delete(threadId)
+}
+
+function watchLocalMessages(threadId: string): {
+  readonly ids: Set<string>
+  readonly stop: () => void
+} {
+  const ids = new Set<string>()
+  let watchers = hydrationWatchers.get(threadId)
+  if (!watchers) {
+    watchers = new Set()
+    hydrationWatchers.set(threadId, watchers)
+  }
+  watchers.add(ids)
+  return {
+    ids,
+    stop: () => {
+      const current = hydrationWatchers.get(threadId)
+      current?.delete(ids)
+      if (current?.size === 0) hydrationWatchers.delete(threadId)
+    },
+  }
+}
+
+function noteLocalMessage(threadId: string, messageId: string) {
+  hydrationWatchers.get(threadId)?.forEach((ids) => ids.add(messageId))
+}
+
+/**
+ * Rows projected from a backend response (`persist: false`) that the
+ * backend stores itself. Until a page shows them they may still be in the
+ * backend's write path, so a refresh keeps them for a short while.
+ */
+const awaitingServerMessages = new Map<string, Map<string, number>>()
+const AWAITING_SERVER_GRACE_MS = 120_000
+
+function markMessageAwaitingServer(threadId: string, messageId: string) {
+  let ids = awaitingServerMessages.get(threadId)
+  if (!ids) {
+    ids = new Map()
+    awaitingServerMessages.set(threadId, ids)
+  }
+  ids.set(messageId, Date.now())
+}
+
+/** Rows a server page returned are no longer waiting for the server. */
+function noteServerMessages(
+  threadId: string,
+  page: ReadonlyArray<{ id: string }>
+) {
+  const ids = awaitingServerMessages.get(threadId)
+  if (!ids) return
+  for (const message of page) ids.delete(message.id)
+  if (ids.size === 0) awaitingServerMessages.delete(threadId)
+}
+
+function localMessageIdsToKeep(
+  threadId: string,
+  watched: ReadonlySet<string>
+): Set<string> {
+  const keep = new Set(watched)
+  unsyncedMessageIds.get(threadId)?.forEach((_count, id) => keep.add(id))
+  const awaiting = awaitingServerMessages.get(threadId)
+  if (awaiting) {
+    const now = Date.now()
+    awaiting.forEach((insertedAt, id) => {
+      if (now - insertedAt < AWAITING_SERVER_GRACE_MS) keep.add(id)
+      else awaiting.delete(id)
+    })
+    if (awaiting.size === 0) awaitingServerMessages.delete(threadId)
+  }
+  return keep
+}
+
+function withoutKey<T>(record: Record<string, T>, key: string) {
+  if (!(key in record)) return record
+  const rest = { ...record }
+  delete rest[key]
+  return rest
+}
+
+function withCursor(
+  cursors: Record<string, number>,
+  threadId: string,
+  cursor: number | undefined
+): Record<string, number> {
+  if (cursor === undefined) return withoutKey(cursors, threadId)
+  if (cursors[threadId] === cursor) return cursors
+  return { ...cursors, [threadId]: cursor }
+}
+
+const olderPageInFlight = new Map<string, Promise<void>>()
+/** Full-message reads in flight, keyed by thread and message id. */
+const fullMessageInFlight = new Map<string, Promise<void>>()
+/** Full-message reads `ensureFullThreadMessages` runs at once. */
+const FULL_MESSAGE_FETCH_CONCURRENCY = 4
+
+/**
+ * A message read light still carries placeholders for its diff text or
+ * attachment data. Writing it back as-is would ask the backend to store
+ * the placeholders, so the full copy is read first and its payloads are
+ * folded in; everything else stays as the store has it.
+ */
+async function withPersistablePayloads(
+  threadId: string,
+  message: ChatMessage
+): Promise<ChatMessage> {
+  if (!messageHasOmittedPayload(message)) return message
+  const restored = withFullMessagePayloads(
+    message,
+    await loadMessage(threadId, message.id)
+  )
+  // The backend keeps stored diff text over a placeholder, but rejects an
+  // attachment without its data.
+  if (messageHasOmittedAttachmentData(restored)) {
+    throw new Error(
+      `Attachment data for message ${message.id} is unavailable; not saving placeholders.`
+    )
+  }
+  return restored
+}
 
 // Re-exports so the 45+ importers of `@/lib/chat-store` keep resolving
 // ToolCall/TokenUsage/ChatQuestion/ChatMessage/ChatThread and the local types.
@@ -217,7 +417,14 @@ function upsertActivitySorted(
   existing: ReadonlyArray<ThreadActivity>,
   activity: ThreadActivity
 ): ThreadActivity[] {
-  const idx = existing.findIndex((item) => item.id === activity.id)
+  // Updates almost always target a recent activity, so search from the tail.
+  let idx = -1
+  for (let index = existing.length - 1; index >= 0; index -= 1) {
+    if (existing[index].id === activity.id) {
+      idx = index
+      break
+    }
+  }
   if (idx >= 0) {
     activity = retainNewerHandoff(existing[idx], activity)
     const next = existing.slice()
@@ -284,25 +491,49 @@ function persistThreadNow(threadId: string) {
   })
 }
 
+/** Tail of each thread's save queue; saves for one thread run in order. */
+const persistQueues = new Map<string, Promise<void>>()
+
 function persistMessage(threadId: string, message: ChatMessage) {
   const thread = useChatStore.getState().threads.find((t) => t.id === threadId)
   if (!thread) return
 
+  markMessageUnsynced(threadId, message.id)
   // Order matters: the backend's `POST /threads/:id/messages` calls
   // `assertThreadExists` before inserting. If the message save lands
   // before the corresponding thread meta upsert commits, SQLite 404s the
   // insert and the message is lost. Chain with `.then` so the message
   // save only fires after the meta upsert settles.
-  upsertThreadMetaDb(thread)
-    .then(() => saveThreadMessageDb(threadId, message))
-    .catch((err) => {
+  //
+  // Saves for one thread are queued behind each other, so two quick
+  // messages reach the server (and its sequence order) in the order they
+  // were added. An empty queue starts the save synchronously.
+  const save = () =>
+    upsertThreadMetaDb(
+      useChatStore.getState().threads.find((t) => t.id === threadId) ?? thread
+    )
+      .then(() => withPersistablePayloads(threadId, message))
+      .then((persistable) => saveThreadMessageDb(threadId, persistable))
+  const previous = persistQueues.get(threadId)
+  const saved = previous ? previous.then(save, save) : save()
+  const settled: Promise<void> = saved.then(
+    () => {
+      // A failed save stays unsynced, so a refresh keeps showing it.
+      markMessageSynced(threadId, message.id)
+    },
+    (err) => {
       log.error(
         "[chat-store] Failed to persist thread message",
         threadId,
         message.id,
         describeError(err)
       )
-    })
+    }
+  )
+  persistQueues.set(threadId, settled)
+  void settled.finally(() => {
+    if (persistQueues.get(threadId) === settled) persistQueues.delete(threadId)
+  })
 }
 
 function forkTitle(title: string): string {
@@ -412,6 +643,19 @@ const activityHydrationInFlight = new Map<string, Promise<void>>()
 const forcedMessageHydrationQueued = new Map<string, Promise<void>>()
 const forcedActivityHydrationQueued = new Map<string, Promise<void>>()
 
+/**
+ * Writes the store's per-thread settings to the localStorage cache, after
+ * the backend's copies were merged in (use-persisted-threads).
+ */
+export function cacheThreadSettings(): void {
+  persistThreadSettings(
+    useChatStore.getState().settingsByThread as Record<
+      string,
+      Record<string, unknown>
+    >
+  )
+}
+
 function persistThreadSettings(
   settings: Record<string, Record<string, unknown>>
 ) {
@@ -474,6 +718,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activitiesLoadedByThread: {},
   messagesLoadedByThread: {},
   messageHydrationErrorsByThread: {},
+  olderMessagesCursorByThread: {},
+  olderMessagesLoadingByThread: {},
   lruOrder: [],
   pinnedThreadIds: new Set(),
   draftsByThread: {},
@@ -484,31 +730,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
     loadPersistedThreadSettings() as ChatState["settingsByThread"],
   lastUsage: null,
 
-  // Autonomous Work Mode (structured task list + time budget)
-  autonomousMode: false,
-  autonomousTask: null,
-  autonomousStatus: "idle",
-  autonomousThreadId: null,
-  autonomousIterations: 0,
-  autonomousMaxIterations: AUTONOMOUS_MAX_ITERATIONS,
-  autonomousTaskList: null,
-  autonomousTimeBudgetMin: AUTONOMOUS_DEFAULT_TIME_BUDGET_MIN,
-  autonomousStartedAt: null,
-  autonomousStopReason: null,
+  // Autonomous Work runs, as the backend reports them.
+  autonomyByThread: {},
 
   setActiveThread: (id) => {
     if (!id) {
       set({ activeThreadId: null })
       return
     }
-    set((s) => ({ activeThreadId: id, ...applyLru(s, id) }))
+    set((s) => {
+      // The sidebar neighbours are prefetched below. Keeping the resident
+      // ones avoids evicting a thread only to read it again a moment later.
+      const neighbours = sidebarNeighbourIds(s.threads, id)
+      const base = lruOptionsFor(s)
+      return {
+        activeThreadId: id,
+        ...applyLru({ ...s, activeThreadId: id }, id, {
+          keepResident: (threadId) =>
+            neighbours.includes(threadId) ||
+            base.keepResident?.(threadId) === true,
+        }),
+      }
+    })
     const state = get()
     void state.hydrateThreadMessages(id)
     void state.hydrateThreadActivities(id)
     const idx = state.threads.findIndex((t) => t.id === id)
     if (idx >= 0) {
-      const prev = state.threads[idx - 1]?.id
-      const next = state.threads[idx + 1]?.id
+      const [prev, next] = sidebarNeighbourIds(state.threads, id)
       if (prev) void state.hydrateThreadMessages(prev)
       if (next) void state.hydrateThreadMessages(next)
       if (prev) void state.hydrateThreadActivities(prev)
@@ -538,23 +787,51 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     const promise = (async () => {
+      // Rows added while the read runs are not in its snapshot; the merge
+      // below must not drop them.
+      const watcher = watchLocalMessages(threadId)
       try {
-        const raw = (await loadMessages(threadId)) as ChatMessage[] | null
-        const msgs = Array.isArray(raw) ? raw : []
+        const raw = (await loadMessages(threadId, {
+          limit: INITIAL_MESSAGE_PAGE_SIZE,
+          light: true,
+        })) as ChatMessage[] | null
+        const page = Array.isArray(raw) ? raw : []
+        noteServerMessages(threadId, page)
+        const pageHasOlder =
+          page.length >= INITIAL_MESSAGE_PAGE_SIZE &&
+          oldestMessageSequence(page) !== undefined
         set((state) => {
           const messageHydrationErrorsByThread = {
             ...state.messageHydrationErrorsByThread,
           }
           delete messageHydrationErrorsByThread[threadId]
+          const local =
+            state.threads.find((t) => t.id === threadId)?.messages ?? []
+          // Merge rather than replace: a forced refresh (replay gap) must not
+          // erase a message sent or answered while this read was running,
+          // nor the older history the user already paged in.
+          const merged = mergeMessageSnapshot({
+            local,
+            // Payloads already read in full survive a light re-read.
+            page: keepLoadedMessagePayloads(page, local),
+            pageHasOlder,
+            previousCursor: state.olderMessagesCursorByThread[threadId],
+            keepLocalIds: localMessageIdsToKeep(threadId, watcher.ids),
+          })
           return {
             threads: state.threads.map((t) =>
-              t.id === threadId ? { ...t, messages: msgs } : t
+              t.id === threadId ? { ...t, messages: merged.messages } : t
             ),
             messagesLoadedByThread: {
               ...state.messagesLoadedByThread,
               [threadId]: true,
             },
             messageHydrationErrorsByThread,
+            olderMessagesCursorByThread: withCursor(
+              state.olderMessagesCursorByThread,
+              threadId,
+              merged.olderCursor
+            ),
           }
         })
       } catch (err) {
@@ -583,10 +860,184 @@ export const useChatStore = create<ChatState>((set, get) => ({
           },
         }))
       } finally {
+        watcher.stop()
         hydrationInFlight.delete(threadId)
       }
     })()
     hydrationInFlight.set(threadId, promise)
+    return promise
+  },
+
+  loadOlderThreadMessages: (threadId, options) => {
+    const existing = olderPageInFlight.get(threadId)
+    if (existing) return existing
+    const start = get()
+    const cursor = start.olderMessagesCursorByThread[threadId]
+    if (cursor === undefined || !start.messagesLoadedByThread[threadId]) {
+      return Promise.resolve()
+    }
+    const limit = Math.min(
+      FULL_TRANSCRIPT_PAGE_SIZE,
+      Math.max(1, Math.floor(options?.limit ?? OLDER_MESSAGE_PAGE_SIZE))
+    )
+    const promise = (async () => {
+      set((state) => ({
+        olderMessagesLoadingByThread: {
+          ...state.olderMessagesLoadingByThread,
+          [threadId]: true,
+        },
+      }))
+      try {
+        const raw = (await loadMessages(threadId, {
+          limit,
+          beforeSequence: cursor,
+          light: options?.light !== false,
+        })) as ChatMessage[] | null
+        const page = Array.isArray(raw) ? raw : []
+        noteServerMessages(threadId, page)
+        set((state) => {
+          const olderMessagesLoadingByThread = withoutKey(
+            state.olderMessagesLoadingByThread,
+            threadId
+          )
+          const thread = state.threads.find((t) => t.id === threadId)
+          // An eviction or a refresh moved the cursor while this read ran;
+          // its rows no longer line up with the transcript.
+          if (
+            !thread ||
+            !state.messagesLoadedByThread[threadId] ||
+            state.olderMessagesCursorByThread[threadId] !== cursor
+          ) {
+            return { olderMessagesLoadingByThread }
+          }
+          const known = new Set(thread.messages.map((message) => message.id))
+          const older = page.filter((message) => !known.has(message.id))
+          const oldest = oldestMessageSequence(page)
+          const nextCursor =
+            page.length >= limit && oldest !== undefined && oldest < cursor
+              ? oldest
+              : undefined
+          return {
+            threads:
+              older.length === 0
+                ? state.threads
+                : state.threads.map((t) =>
+                    t.id === threadId
+                      ? { ...t, messages: [...older, ...t.messages] }
+                      : t
+                  ),
+            olderMessagesCursorByThread: withCursor(
+              state.olderMessagesCursorByThread,
+              threadId,
+              nextCursor
+            ),
+            olderMessagesLoadingByThread,
+          }
+        })
+      } catch (err) {
+        log.error(
+          "[chat-store] Failed to load earlier thread messages",
+          threadId,
+          describeError(err)
+        )
+        set((state) => ({
+          olderMessagesLoadingByThread: withoutKey(
+            state.olderMessagesLoadingByThread,
+            threadId
+          ),
+        }))
+      } finally {
+        olderPageInFlight.delete(threadId)
+      }
+    })()
+    olderPageInFlight.set(threadId, promise)
+    return promise
+  },
+
+  ensureFullThreadMessages: async (threadId, options) => {
+    const payloads = options?.payloads !== false
+    await get().hydrateThreadMessages(threadId)
+    // Bounded: 2,000 rows per page covers a million-message transcript.
+    for (let page = 0; page < 500; page += 1) {
+      const state = get()
+      const cursor = state.olderMessagesCursorByThread[threadId]
+      if (cursor === undefined || !state.messagesLoadedByThread[threadId]) {
+        break
+      }
+      // Rows read for a whole-conversation command arrive in full, so only
+      // the light pages read before need a second look below.
+      await state.loadOlderThreadMessages(threadId, {
+        limit: FULL_TRANSCRIPT_PAGE_SIZE,
+        light: !payloads,
+      })
+      // A failed read leaves the cursor in place; stop instead of spinning.
+      if (get().olderMessagesCursorByThread[threadId] === cursor) break
+    }
+    if (!payloads) return
+    const pending = (
+      get().threads.find((thread) => thread.id === threadId)?.messages ?? []
+    )
+      .filter(messageHasOmittedPayload)
+      .map((message) => message.id)
+    const worker = async () => {
+      for (let next = pending.shift(); next; next = pending.shift()) {
+        const messageId = next
+        await get()
+          .hydrateFullMessage(threadId, messageId)
+          .catch((err) => {
+            log.error(
+              "[chat-store] Failed to load full message",
+              threadId,
+              messageId,
+              describeError(err)
+            )
+          })
+      }
+    }
+    await Promise.all(
+      Array.from(
+        { length: Math.min(FULL_MESSAGE_FETCH_CONCURRENCY, pending.length) },
+        worker
+      )
+    )
+  },
+
+  hydrateFullMessage: (threadId, messageId) => {
+    const key = `${threadId}\u0000${messageId}`
+    const existing = fullMessageInFlight.get(key)
+    if (existing) return existing
+    const current = get()
+      .threads.find((thread) => thread.id === threadId)
+      ?.messages.find((message) => message.id === messageId)
+    if (!current || !messageHasOmittedPayload(current)) {
+      return Promise.resolve()
+    }
+    const promise = (async () => {
+      try {
+        const full = await loadMessage(threadId, messageId)
+        set((state) => {
+          // An evicted thread is read again (light) when it is reopened.
+          if (!state.messagesLoadedByThread[threadId]) return state
+          let changed = false
+          const threads = state.threads.map((thread) => {
+            if (thread.id !== threadId) return thread
+            const messages = thread.messages.map((message) => {
+              if (message.id !== messageId) return message
+              // Fold into the message as it is now, not as it was when the
+              // read started: a streamed update must not be rolled back.
+              const next = withFullMessagePayloads(message, full)
+              if (next !== message) changed = true
+              return next
+            })
+            return changed ? { ...thread, messages } : thread
+          })
+          return changed ? { threads } : state
+        })
+      } finally {
+        fullMessageInFlight.delete(key)
+      }
+    })()
+    fullMessageInFlight.set(key, promise)
     return promise
   },
 
@@ -670,6 +1121,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (!(key in prev)) return state
         const next = { ...prev }
         delete next[key]
+        // The backend keeps some of these with the chat; it hears the clear.
+        queueThreadSettingsChange(threadId, threadSettingsChange(prev, next))
         // If the thread now has no overrides, drop its row entirely so
         // `settingsByThread` doesn't grow with empty objects.
         if (Object.keys(next).length === 0) {
@@ -699,6 +1152,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       }
       persistThreadSettings(updated as Record<string, Record<string, unknown>>)
+      queueThreadSettingsChange(
+        threadId,
+        threadSettingsChange(prev, updated[threadId])
+      )
       return { settingsByThread: updated }
     }),
 
@@ -728,6 +1185,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
           previous
         ),
       }
+      persistThreadSettings(
+        settingsByThread as Record<string, Record<string, unknown>>
+      )
+      queueThreadSettingsChange(
+        threadId,
+        threadSettingsChange(previous, settingsByThread[threadId])
+      )
+      return { settingsByThread }
+    }),
+
+  applyStoredThreadSettings: (threadId, change) =>
+    set((state) => {
+      // Another client changed what the backend keeps with this chat. The
+      // backend already has it, so nothing is written back.
+      if (!state.threads.some((thread) => thread.id === threadId)) return state
+      const next = applyThreadSettingsChange(
+        state.settingsByThread[threadId],
+        change,
+        unsettledThreadSettingKeys(threadId)
+      )
+      if (!next) return state
+      const settingsByThread = { ...state.settingsByThread }
+      if (Object.keys(next).length === 0) delete settingsByThread[threadId]
+      else settingsByThread[threadId] = next
       persistThreadSettings(
         settingsByThread as Record<string, Record<string, unknown>>
       )
@@ -792,7 +1273,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       }
       return {
-        ...applyLru(withThread, id),
+        ...applyLru(
+          { ...withThread, activeThreadId: id },
+          id,
+          lruOptionsFor(withThread)
+        ),
         activeThreadId: id,
         settingsByThread: withThread.settingsByThread,
       }
@@ -801,21 +1286,49 @@ export const useChatStore = create<ChatState>((set, get) => ({
       get().settingsByThread as Record<string, Record<string, unknown>>
     )
     persistThreadNow(id)
+    // After the chat is saved: the backend keeps its model selection too.
+    queueThreadSettingsChange(
+      id,
+      threadSettingsChange(undefined, inheritedModelSettings)
+    )
     return id
   },
 
-  forkThread: async (sourceThreadId, into) => {
-    const initial = get()
-    if (!initial.messagesLoadedByThread[sourceThreadId]) {
-      await initial.hydrateThreadMessages(sourceThreadId)
-    }
+  forkThread: async (sourceThreadId, into, options) => {
+    // A fork copies the whole conversation, not just the pages on screen.
+    await get().ensureFullThreadMessages(sourceThreadId)
 
     const source = get().threads.find((thread) => thread.id === sourceThreadId)
     if (!source) return null
+    // "Fork from here" keeps the history up to and including one message.
+    const throughMessageId = options?.throughMessageId
+    const throughIndex = throughMessageId
+      ? source.messages.findIndex((message) => message.id === throughMessageId)
+      : source.messages.length - 1
+    if (throughMessageId && throughIndex < 0) {
+      log.error(
+        "[chat-store] Cannot fork: the message to fork from is gone",
+        sourceThreadId,
+        throughMessageId
+      )
+      return null
+    }
+    const sourceMessages = source.messages.slice(0, throughIndex + 1)
+    // A copy is written as a new chat; placeholders have no stored copy to
+    // fall back on there.
+    const missingPayload = sourceMessages.find(messageHasOmittedPayload)
+    if (missingPayload) {
+      log.error(
+        "[chat-store] Cannot fork: a message is missing its diff or attachment data",
+        sourceThreadId,
+        missingPayload.id
+      )
+      return null
+    }
 
     const id = generateId()
     const now = new Date().toISOString()
-    const messages = source.messages.map(cloneMessageForFork)
+    const messages = sourceMessages.map(cloneMessageForFork)
     // Forking into a project starts a fresh binding: the source chat's branch
     // and worktree belong to wherever it was running, not to the new repo.
     const thread: ChatThread = {
@@ -836,7 +1349,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       codexThreadId: null,
       messages,
       messageCount: messages.length,
-      usage: source.usage ? clonePlain(source.usage) : undefined,
+      // The source's totals describe its whole conversation, not a part.
+      usage:
+        source.usage && sourceMessages.length === source.messages.length
+          ? clonePlain(source.usage)
+          : undefined,
       createdAt: now,
       updatedAt: now,
     }
@@ -860,6 +1377,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Provider goals are session-scoped. A fork gets its own provider
       // session and must not inherit a goal that belongs to the source chat.
       if (copiedSettings) delete copiedSettings.goal
+      // A fork is not one of the models its source was compared with.
+      if (copiedSettings) delete copiedSettings.compareGroupId
       const settingsByThread =
         copiedSettings && Object.keys(copiedSettings).length > 0
           ? {
@@ -885,10 +1404,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         settingsByThread,
       }
       return {
-        ...applyLru(withThread, id),
+        ...applyLru(
+          { ...withThread, activeThreadId: id },
+          id,
+          lruOptionsFor(withThread)
+        ),
         activeThreadId: id,
-        activitiesByThread: withThread.activitiesByThread,
-        activitiesLoadedByThread: withThread.activitiesLoadedByThread,
         settingsByThread,
       }
     })
@@ -897,6 +1418,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (forkedSettings) {
       persistThreadSettings(
         get().settingsByThread as Record<string, Record<string, unknown>>
+      )
+      queueThreadSettingsChange(
+        id,
+        threadSettingsChange(undefined, forkedSettings)
       )
     }
 
@@ -917,6 +1442,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const isFirstUserMessage =
       thread && thread.messages.length === 0 && message.role === "user"
 
+    noteLocalMessage(threadId, message.id)
     set((state) => ({
       threads: state.threads.map((t) =>
         t.id === threadId
@@ -939,6 +1465,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     if (options?.persist !== false) persistMessage(threadId, message)
+    else markMessageAwaitingServer(threadId, message.id)
   },
 
   appendStreamDelta: (threadId, delta) => {
@@ -1535,6 +2062,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         createdAt: new Date().toISOString(),
       }
       if (options?.persist === false) {
+        noteLocalMessage(threadId, assistantMessage.id)
+        markMessageAwaitingServer(threadId, assistantMessage.id)
         set((state) => ({
           threads: state.threads.map((thread) =>
             thread.id !== threadId
@@ -1641,19 +2170,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
           delete restHydrationErrors[threadId]
           delete restDrafts[threadId]
           delete restSettings[threadId]
+          unsyncedMessageIds.delete(threadId)
+          awaitingServerMessages.delete(threadId)
           persistThreadSettings(
             restSettings as Record<string, Record<string, unknown>>
           )
           return {
             threads: state.threads.filter((t) => t.id !== threadId),
-            ...(state.autonomousThreadId === threadId
-              ? {
-                  autonomousMode: false,
-                  autonomousThreadId: null,
-                  autonomousStatus: "idle" as const,
-                  autonomousStopReason: "user" as const,
-                }
-              : {}),
+            // The backend ended the run with the chat.
+            autonomyByThread: withoutKey(state.autonomyByThread, threadId),
             settingsByThread: restSettings,
             activeThreadId:
               state.activeThreadId === threadId ? null : state.activeThreadId,
@@ -1662,10 +2187,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
             activitiesLoadedByThread: restActivitiesLoaded,
             messagesLoadedByThread: restLoaded,
             messageHydrationErrorsByThread: restHydrationErrors,
+            olderMessagesCursorByThread: withoutKey(
+              state.olderMessagesCursorByThread,
+              threadId
+            ),
+            olderMessagesLoadingByThread: withoutKey(
+              state.olderMessagesLoadingByThread,
+              threadId
+            ),
             draftsByThread: restDrafts,
             lruOrder: state.lruOrder.filter((x) => x !== threadId),
           }
         })
+        // File snapshots of a deleted chat can never be restored.
+        useCheckpointStore.getState().clearCheckpointsForThread(threadId)
       })
       .catch((err) => {
         log.error(
@@ -1716,74 +2251,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }))
   },
 
-  setAutonomousMode: (enabled) => {
-    set({
-      autonomousMode: enabled,
-      autonomousThreadId: enabled ? get().activeThreadId : null,
-      autonomousStatus: "idle",
-      autonomousIterations: enabled ? 0 : get().autonomousIterations,
-    })
-  },
-
-  setAutonomousTask: (task) => set({ autonomousTask: task }),
-
-  setAutonomousStatus: (status) => {
+  setThreadAutonomy: (threadId, autonomy) => {
     set((state) => {
-      // Stamp the run start time on idle→working so the loop can enforce the
-      // wall-clock budget. Don't clear startedAt on paused/completed — the
-      // status bar still wants to show "Ran for 42m" after the run ended.
-      if (status === "working" && state.autonomousStatus !== "working") {
-        return { autonomousStatus: status, autonomousStartedAt: Date.now() }
+      if (!autonomy) {
+        const rest = withoutKey(state.autonomyByThread, threadId)
+        return rest === state.autonomyByThread
+          ? state
+          : { autonomyByThread: rest }
       }
-      return { autonomousStatus: status }
-    })
-  },
-
-  incrementAutonomousIteration: () => {
-    set((state) => ({ autonomousIterations: state.autonomousIterations + 1 }))
-  },
-
-  resetAutonomous: () => {
-    set({
-      autonomousMode: false,
-      autonomousThreadId: null,
-      autonomousTask: null,
-      autonomousStatus: "idle",
-      autonomousIterations: 0,
-      autonomousMaxIterations: AUTONOMOUS_MAX_ITERATIONS,
-      autonomousTaskList: null,
-      autonomousTimeBudgetMin: AUTONOMOUS_DEFAULT_TIME_BUDGET_MIN,
-      autonomousStartedAt: null,
-      autonomousStopReason: null,
-    })
-  },
-
-  setAutonomousMaxIterations: (n) =>
-    set({ autonomousMaxIterations: Math.max(1, Math.floor(n)) }),
-
-  setAutonomousIterations: (n) =>
-    set({ autonomousIterations: Math.max(0, Math.floor(n)) }),
-
-  setAutonomousTaskList: (list: AutonomousTask[] | null) =>
-    set({ autonomousTaskList: list }),
-
-  markAutonomousTaskDone: (id, done) =>
-    set((state) => {
-      if (!state.autonomousTaskList) return state
+      // A control's response can arrive after a newer push of the same run.
+      const current = state.autonomyByThread[threadId]
+      if (current?.id === autonomy.id && current.updatedAt > autonomy.updatedAt)
+        return state
       return {
-        autonomousTaskList: state.autonomousTaskList.map((t) =>
-          t.id === id ? { ...t, done } : t
-        ),
+        autonomyByThread: { ...state.autonomyByThread, [threadId]: autonomy },
       }
-    }),
-
-  setAutonomousTimeBudget: (min) =>
-    set({ autonomousTimeBudgetMin: Math.max(0, Math.floor(min)) }),
-
-  setAutonomousStartedAt: (ts) => set({ autonomousStartedAt: ts }),
-
-  setAutonomousStopReason: (reason: AutonomousStopReason | null) =>
-    set({ autonomousStopReason: reason }),
+    })
+  },
 }))
 
 // Local alias to avoid a name collision with the re-exported selector module.
@@ -1795,7 +2279,7 @@ function toolInputPathLocal(input: unknown): string {
 // Generate thread title using Haiku 4.5 (cheap + fast) via dedicated IPC
 async function generateThreadTitle(threadId: string, userMessage: string) {
   try {
-    const { generateTitle } = await import("@/services/backend")
+    const { generateTitle } = await import("@/services/backend/chatApi")
     const title = await generateTitle(userMessage)
     if (title && title.length > 0 && title.length < 80) {
       const currentThread = useChatStore

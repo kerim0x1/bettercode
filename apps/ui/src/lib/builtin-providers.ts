@@ -42,7 +42,10 @@ export const builtinProviders: UiProvider[] = [
   {
     id: "cursor",
     name: "Cursor",
-    logo: "",
+    // The cube mark from the "Open in" menu, black-on-transparent and
+    // inverted on dark like the Grok mark (see below).
+    logo: assetUrl("icons/providers/cursor.svg"),
+    invertDark: true,
     providerKind: "cursor",
     providerInstanceId: "cursor",
     models: [],

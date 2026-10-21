@@ -18,20 +18,20 @@ import { HttpError } from "../errors"
 import {
   acquireCheckpointRecoveryMutationLease,
   withCheckpointRecoveryMutation,
+  type CheckpointRecoveryFenceState,
 } from "../http/checkpointRecoveryFence"
 import { remoteTerminalRefusalFor } from "../http/remoteTerminalPolicy"
 import { logger } from "../observability/logger"
-import {
-  closeTerminalPtySession,
-  openTerminalPtySession,
-  readTerminalPtySession,
-  resizeTerminalPtySession,
-  subscribeTerminalPtySession,
-  writeTerminalPtySession,
-  type TerminalPtyEvent,
+import type {
+  TerminalPtyEvent,
+  TerminalPtyService,
+  TerminalPtySnapshot,
 } from "../services/terminalPty"
 import { getProjectShell } from "../services/workspace"
-import { resolveApprovedWorkspaceRoot } from "../services/workspace/authorization"
+import {
+  resolveApprovedWorkspaceRoot,
+  type WorkspaceRegistryState,
+} from "../services/workspace/authorization"
 import type { WsConnection, WsPrincipal, WsRemotePrincipal } from "./server"
 
 /** Output goes out at most this often, */
@@ -51,8 +51,17 @@ export interface TerminalLaunch {
   readonly args?: readonly string[]
 }
 
+/**
+ * What the channel needs from the backend: the registry that approves a
+ * terminal's workspace, the recovery fence its shell and its input hold, and
+ * the taint a process tree that cannot be ended raises, and the terminals.
+ */
+export type RemoteTerminalChannelState = WorkspaceRegistryState &
+  CheckpointRecoveryFenceState &
+  Pick<AppState, "taintBackend" | "terminalPtys">
+
 export interface RemoteTerminalChannelOptions {
-  readonly state: AppState
+  readonly state: RemoteTerminalChannelState
   /** `remote_access_allow_terminal`, read on every call. */
   readonly terminalGranted: () => boolean
   /** How long a terminal no device is attached to keeps running. */
@@ -110,6 +119,11 @@ export class RemoteTerminalChannel {
     this.detachedMs = options.detachedMs ?? TERMINAL_LIMITS.detachedMs
   }
 
+  /** The PTY service the terminals run in. */
+  private get ptys(): TerminalPtyService {
+    return this.options.state.terminalPtys
+  }
+
   /** Whether `method` is one of the terminal's. */
   static handles(method: string): boolean {
     return METHODS.has(method)
@@ -149,9 +163,7 @@ export class RemoteTerminalChannel {
           params
         )
         const terminal = this.owned(device, terminalId)
-        if (
-          !resizeTerminalPtySession(terminal.id, cols, rows, terminal.ownerId)
-        )
+        if (!this.ptys.resizeSession(terminal.id, cols, rows, terminal.ownerId))
           throw ended()
         return { ok: true }
       }
@@ -266,9 +278,9 @@ export class RemoteTerminalChannel {
     const lease = await acquireCheckpointRecoveryMutationLease(state, {
       workspaces: [cwd],
     })
-    let opened: ReturnType<typeof openTerminalPtySession>
+    let opened: TerminalPtySnapshot
     try {
-      opened = openTerminalPtySession({
+      opened = this.ptys.openSession({
         ownerId,
         ownerExpiresAt: device.expiresAt,
         cwd,
@@ -283,7 +295,7 @@ export class RemoteTerminalChannel {
             { err: error, sessionId: device.sessionId },
             "a remote terminal's process tree could not be ended"
           )
-          state.taintBackend?.(error, "remote terminal process tree")
+          state.taintBackend(error, "remote terminal process tree")
         },
       })
     } catch (error) {
@@ -305,7 +317,7 @@ export class RemoteTerminalChannel {
       unsubscribe: null,
     }
     this.terminals.set(terminal.id, terminal)
-    terminal.unsubscribe = subscribeTerminalPtySession(
+    terminal.unsubscribe = this.ptys.subscribeSession(
       terminal.id,
       (event) => this.onEvent(terminal, event),
       ownerId
@@ -349,7 +361,7 @@ export class RemoteTerminalChannel {
             )
           }
           if (
-            !writeTerminalPtySession(terminal.id, params.data, terminal.ownerId)
+            !this.ptys.writeSession(terminal.id, params.data, terminal.ownerId)
           )
             throw ended()
           terminal.nextInputSeq += 1
@@ -376,7 +388,7 @@ export class RemoteTerminalChannel {
 
   /** Brings the record up to date; false (and forgotten) once the PTY is gone. */
   private refresh(terminal: RemoteTerminal): boolean {
-    const snapshot = readTerminalPtySession(
+    const snapshot = this.ptys.readSession(
       terminal.id,
       Number.MAX_SAFE_INTEGER,
       terminal.ownerId
@@ -412,8 +424,8 @@ export class RemoteTerminalChannel {
       terminal.detachedTimer = null
     }
     const lastSeq =
-      readTerminalPtySession(terminal.id, afterSeq, terminal.ownerId)
-        ?.lastSeq ?? 0
+      this.ptys.readSession(terminal.id, afterSeq, terminal.ownerId)?.lastSeq ??
+      0
     const attachment: Attachment = {
       connection,
       stopListening: connection.onClose(() => {
@@ -489,7 +501,7 @@ export class RemoteTerminalChannel {
       this.scheduleFlush(terminal, SOCKET_RETRY_MS)
       return
     }
-    const snapshot = readTerminalPtySession(
+    const snapshot = this.ptys.readSession(
       terminal.id,
       attachment.sentSeq,
       terminal.ownerId
@@ -566,7 +578,7 @@ export class RemoteTerminalChannel {
     if (this.terminals.get(terminal.id) !== terminal) return
     this.tell(terminal, reason)
     this.forget(terminal)
-    closeTerminalPtySession(terminal.id, terminal.ownerId)
+    this.ptys.closeSession(terminal.id, terminal.ownerId)
   }
 
   /** The attached device hears why its terminal is gone; the log, who and why. */

@@ -1,4 +1,4 @@
-import type { PortableMcpServerResolver } from "../../provider/runtime/cursor/AcpMcpServers"
+import type { PortableMcpServerResolver } from "../../provider/runtime/acp/AcpMcpServers"
 import { CODE_SEARCH_SERVER, type CodeSearchServerResolver } from "./contracts"
 
 /** Reserve the built-in identity and put it before the generic MCP connection cap. */

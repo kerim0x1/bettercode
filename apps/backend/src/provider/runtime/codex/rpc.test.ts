@@ -166,7 +166,8 @@ describe("CodexRpcClient child stream lifecycle", () => {
     expect(notified).toHaveBeenCalledWith("ready", { text: "é" })
   })
 
-  it("bounds an unterminated UTF-8 stdout frame before readline can accumulate it", async () => {
+  it("skips an oversized line, fails only its call and keeps the app-server", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {})
     terminateProviderChildProcessTree.mockResolvedValue(undefined)
     const client = new CodexRpcClient({
       binaryPath: "codex",
@@ -175,17 +176,69 @@ describe("CodexRpcClient child stream lifecycle", () => {
     const child = attachFakeChild(client)
     const errors: Error[] = []
     client.on("child-error", (error) => errors.push(error))
+    const notified = vi.fn()
+    client.onNotification("turn/diff/updated", notified)
     const pending = client.call("turn/start")
     void pending.catch(() => {})
     try {
-      child.stdout.write(Buffer.from("é".repeat(30)))
-      child.stdout.write(Buffer.from("é".repeat(30)))
-      expect(errors).toHaveLength(1)
-      await expect(pending).rejects.toThrow(/stdout line exceeded 100 bytes/i)
-      expect(terminateProviderChildProcessTree).toHaveBeenCalledWith(child)
+      // An unterminated oversized frame is not accumulated in memory.
+      child.stdout.write(Buffer.from('{"id":1,"result":"' + "é".repeat(60)))
+      child.stdout.write(Buffer.from("é".repeat(60) + '"}\n'))
+      await expect(pending).rejects.toThrow(
+        /response for turn\/start exceeded the 100-byte line cap/i
+      )
+      // An oversized notification is dropped; the next one still arrives.
+      child.stdout.write(
+        `{"method":"turn/diff/updated","params":{"diff":"${"x".repeat(200)}"}}\n`
+      )
+      child.stdout.write(
+        '{"method":"turn/diff/updated","params":{"diff":"ok"}}\n'
+      )
+      expect(notified).toHaveBeenCalledTimes(1)
+      expect(notified).toHaveBeenCalledWith("turn/diff/updated", { diff: "ok" })
+      expect(errors).toEqual([])
+      expect(terminateProviderChildProcessTree).not.toHaveBeenCalled()
+      expect(client.isAlive()).toBe(true)
     } finally {
       await client.close()
+      warn.mockRestore()
     }
+  })
+
+  it("logs a throwing notification handler instead of swallowing it", () => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => {})
+    try {
+      const client = new CodexRpcClient({ binaryPath: "codex" })
+      const child = attachFakeChild(client)
+      const after = vi.fn()
+      client.onNotification("*", () => {
+        throw new Error("translator bug")
+      })
+      client.onNotification("*", after)
+      child.stdout.write('{"method":"item/started","params":{}}\n')
+      expect(after).toHaveBeenCalledTimes(1)
+      expect(error).toHaveBeenCalledWith(
+        expect.objectContaining({ method: "item/started" }),
+        expect.stringContaining("notification handler threw")
+      )
+    } finally {
+      error.mockRestore()
+    }
+  })
+
+  it("answers a server request when no handler is registered", () => {
+    const client = new CodexRpcClient({ binaryPath: "codex" })
+    const child = attachFakeChild(client)
+    child.stdout.write('{"id":"srv-1","method":"item/tool/call","params":{}}\n')
+    const written = child.stdin.write.mock.calls.map((call) =>
+      JSON.parse(String((call as unknown[])[0]))
+    )
+    expect(written).toContainEqual(
+      expect.objectContaining({
+        id: "srv-1",
+        error: expect.objectContaining({ code: -32601 }),
+      })
+    )
   })
 
   it("survives a stdin error without throwing and reports it", async () => {

@@ -119,6 +119,39 @@ test("backend development reload still fires when output actually changes", asyn
   reloader.close()
 })
 
+// Regression: the backend requires @betterc0de/schema from packages/schema/dist.
+// Watching only apps/backend/dist kept a stale schema loaded, so a new
+// settings field (chat_folders) was rejected as unknown until a full restart.
+test("backend development reload also fires for a watched package build", async () => {
+  const watched = new Map()
+  const digests = { "backend/dist": "backend", "schema/dist": "schema-v1" }
+  let reloads = 0
+
+  const reloader = createBackendDevReloader({
+    directories: ["backend/dist", "schema/dist"],
+    debounceMs: 5,
+    digest: (dir) => digests[dir],
+    watch: (directory, _options, callback) => {
+      const watcher = new EventEmitter()
+      watcher.close = () => watched.delete(directory)
+      watched.set(directory, callback)
+      return watcher
+    },
+    onReload: async () => {
+      reloads += 1
+    },
+  })
+
+  assert.deepEqual([...watched.keys()], ["backend/dist", "schema/dist"])
+  digests["schema/dist"] = "schema-v2"
+  watched.get("schema/dist")("change", "settings.js")
+  await new Promise((resolve) => setTimeout(resolve, 25))
+
+  assert.equal(reloads, 1)
+  reloader.close()
+  assert.equal(watched.size, 0)
+})
+
 test("computeBuildDigest tracks content, not write timestamps", () => {
   const { computeBuildDigest } = require("../apps/shell/backend-dev-reloader.cjs")
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "bc0de-digest-"))

@@ -1253,6 +1253,27 @@ export interface ProviderModel {
   readonly catalog?: ProviderModelCatalog
 }
 
+/** A user message for a provider's running turn ("steering"). */
+export interface ProviderSteerTurnInput {
+  readonly threadId: ThreadId
+  readonly message: string
+  /** File inputs only; metadata-only attachments are left out. */
+  readonly attachments?: ReadonlyArray<ChatAttachment>
+}
+
+/**
+ * How a steer went. Anything but `steered` means nothing reached the turn:
+ * `unsupported` (this provider or its version takes no input mid-turn),
+ * `not_running` (no turn to add it to) or `not_steerable` (the running
+ * step, such as a review or a compaction, takes no input).
+ */
+export type ProviderSteerTurnResult =
+  | { readonly status: "steered"; readonly turnId: string | null }
+  | {
+      readonly status: "unsupported" | "not_running" | "not_steerable"
+      readonly reason?: string
+    }
+
 export interface ProviderAdapterShape {
   readonly provider: ProviderKind
   readonly displayName: string
@@ -1297,6 +1318,12 @@ export interface ProviderAdapterShape {
   listSessions?(): Promise<ReadonlyArray<ProviderSession>>
   sendTurn(input: ProviderSendTurnInput): Promise<void>
   interruptTurn(threadId: ThreadId): Promise<void>
+  /**
+   * Adds the user's message to the running turn without ending it. Optional:
+   * a provider without mid-turn input leaves it out, and the app stops the
+   * turn and sends the message as the next one instead.
+   */
+  steerTurn?(input: ProviderSteerTurnInput): Promise<ProviderSteerTurnResult>
   /**
    * Switch the provider-native permission mode. Applies live to a running
    * turn when the provider supports mid-stream control, otherwise queued

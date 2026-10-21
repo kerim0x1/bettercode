@@ -68,6 +68,8 @@ export function mergeDiffs(
     oldText: string
     newText: string
     isNew: boolean
+    /** Light transcript placeholder: the text is still to be read. */
+    textOmitted?: boolean
   }[]
 ) {
   const map = new Map<string, (typeof diffs)[0]>()
@@ -80,6 +82,8 @@ export function mergeDiffs(
         existing.oldText += (existing.oldText ? "\n" : "") + d.oldText
       if (d.newText)
         existing.newText += (existing.newText ? "\n" : "") + d.newText
+      // Showing half of a merged diff would look complete; wait for all.
+      if (d.textOmitted) existing.textOmitted = true
     } else {
       map.set(d.path, { ...d })
     }

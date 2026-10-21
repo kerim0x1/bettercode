@@ -10,6 +10,7 @@ import {
   type ResolveSourceTargetOptions,
   type SourceOpenTarget,
 } from "@/lib/source-target"
+import { getElectronApi } from "@/services/ipc-facade"
 
 export interface OpenSourceTargetOptions extends ResolveSourceTargetOptions {
   /** Open the file in a reusable preview tab. */
@@ -132,8 +133,9 @@ export function activeThreadWorkspacePath(): string | null {
 async function openExternalTarget(url: string): Promise<boolean> {
   if (typeof window === "undefined") return false
   try {
-    if (window.electronAPI?.openExternal) {
-      await window.electronAPI.openExternal(url)
+    const desktopBridge = getElectronApi()
+    if (desktopBridge?.openExternal) {
+      await desktopBridge.openExternal(url)
       return true
     }
     window.open(url, "_blank", "noopener,noreferrer")

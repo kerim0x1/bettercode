@@ -58,8 +58,8 @@ export function EditorModeSplitView({
 
   return (
     <>
-      {/* Code surface */}
-      <div className="editor-code-panel flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/40 bg-background">
+      {/* Code surface: a card on the shell, like the agent chat. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/40 bg-background">
         <ErrorBoundary label="Editor">
           <EditorPanel
             projectPath={projectPath}

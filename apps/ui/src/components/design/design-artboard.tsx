@@ -30,6 +30,8 @@ interface DesignArtboardProps {
   onDomTree?: (tree: DomNode | null) => void
   onConsoleEntries?: (entries: ConsoleLog[]) => void
   onNavigate?: (url: string) => void
+  /** The guest's webContents id once attached; null when it is destroyed. */
+  onGuestChange?: (webContentsId: number | null) => void
   /** Rendered inside the frame when no URL is set (empty-state matrix). */
   emptyState: ReactNode
   hideLabel?: boolean
@@ -55,6 +57,7 @@ export const DesignArtboard = forwardRef<
     onDomTree,
     onConsoleEntries,
     onNavigate,
+    onGuestChange,
     emptyState,
     hideLabel,
   },
@@ -98,6 +101,7 @@ export const DesignArtboard = forwardRef<
             onShortcut={onShortcut}
             onDomTree={onDomTree}
             onConsoleEntries={onConsoleEntries}
+            onGuestChange={onGuestChange}
             onNavigate={
               onNavigate ? (nextUrl) => onNavigate(nextUrl) : undefined
             }

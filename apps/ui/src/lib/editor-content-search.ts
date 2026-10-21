@@ -1,3 +1,4 @@
+import { isWholeWordMatch } from "@betterc0de/schema/search-text"
 import { normalizeEditorPath, relativeEditorPath } from "@/lib/editor-path"
 import type { EditorTab } from "@/lib/editor-store"
 import type {
@@ -184,21 +185,6 @@ function compileOpenEditorSearchRegex(query: string, caseSensitive: boolean) {
     const message = err instanceof Error ? err.message : String(err)
     throw new Error(`Invalid search regex: ${message}`)
   }
-}
-
-function isWholeWordMatch(
-  line: string,
-  index: number,
-  length: number
-): boolean {
-  return (
-    !isSearchWordChar(line[index - 1]) &&
-    !isSearchWordChar(line[index + length])
-  )
-}
-
-function isSearchWordChar(value: string | undefined): boolean {
-  return Boolean(value && /[A-Za-z0-9_$-]/.test(value))
 }
 
 function makeOpenEditorSearchPreview(

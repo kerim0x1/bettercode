@@ -3,7 +3,7 @@ import { useChatStore } from "@/lib/chat-store"
 import { createLogger } from "@/lib/logger"
 import { buildThreadCompactionOutput } from "@/lib/thread-compaction"
 import type { UiProvider } from "@/lib/provider-types"
-import { getAutoCompactionDecision } from "@/services/backend"
+import { getAutoCompactionDecision } from "@/services/backend/chatApi"
 
 const log = createLogger("auto-thread-compaction")
 

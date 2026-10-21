@@ -3,6 +3,7 @@ import {
   resolveTurnBooleanOption,
   resolveTurnModelId,
   resolveTurnStringOption,
+  runtimeModeForTurn,
 } from "./providerTurnOptions"
 import type { ProviderSendTurnInput } from "./contracts"
 
@@ -93,5 +94,41 @@ describe("provider turn option resolution", () => {
         true
       )
     ).toBe(false)
+  })
+})
+
+describe("runtimeModeForTurn", () => {
+  it("maps permission levels through the shared alias table", () => {
+    // The old "Full Access" picker label means allow-edits, never bypass.
+    expect(runtimeModeForTurn({ permissionLevel: "full-access" })).toBe(
+      "auto-accept-edits"
+    )
+    expect(runtimeModeForTurn({ permissionLevel: "full" })).toBe(
+      "auto-accept-edits"
+    )
+    expect(runtimeModeForTurn({ permissionLevel: "bypass" })).toBe(
+      "full-access"
+    )
+    expect(runtimeModeForTurn({ permissionLevel: "read" })).toBe("read-only")
+    expect(runtimeModeForTurn({ permissionLevel: "ask" })).toBe(
+      "approval-required"
+    )
+  })
+
+  it("fails closed for unknown spellings and keeps the caller default when unset", () => {
+    expect(runtimeModeForTurn({ permissionLevel: "everything" })).toBe(
+      "approval-required"
+    )
+    expect(runtimeModeForTurn({})).toBeUndefined()
+    expect(runtimeModeForTurn({ permissionLevel: "default" })).toBeUndefined()
+  })
+
+  it("lets interaction modes win over the level", () => {
+    expect(
+      runtimeModeForTurn({ chatMode: "plan", permissionLevel: "bypass" })
+    ).toBe("plan")
+    expect(
+      runtimeModeForTurn({ chatMode: "ask", permissionLevel: "bypass" })
+    ).toBe("read-only")
   })
 })

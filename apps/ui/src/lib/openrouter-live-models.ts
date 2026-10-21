@@ -1,4 +1,5 @@
 import type { OpenRouterLiveModel } from "@/services/backend/providersApi"
+import { prettyModelId } from "@/lib/model-display-name"
 
 /**
  * Pure helpers that turn the backend's live OpenRouter catalog subset into
@@ -60,10 +61,11 @@ export function openRouterModelTier(id: string, name: string): string {
 }
 
 /**
- * The dedicated "OpenRouter" picker entry shows exactly what the user typed
- * under Settings → Providers → OpenRouter → Custom models. Ids are shown
- * verbatim — a custom entry is the user's own contract with OpenRouter, so
- * no prettifying that could hide a typo.
+ * The dedicated "OpenRouter" picker entry lists exactly what the user typed
+ * under Settings → Providers → OpenRouter → Custom models, each named in
+ * readable form ("google/gemini-4-argon" → "Gemini 4 Argon"). The id itself
+ * is kept unchanged and stays visible in Settings and the picker's hint, so
+ * a typo can still be spotted.
  */
 export function openRouterCustomUiModels(
   customModels: ReadonlyArray<string>
@@ -74,7 +76,7 @@ export function openRouterCustomUiModels(
     const id = typeof raw === "string" ? raw.trim() : ""
     if (!id || seen.has(id)) continue
     seen.add(id)
-    out.push({ id, name: id, context: "custom", tier: "Custom" })
+    out.push({ id, name: prettyModelId(id), context: "custom", tier: "Custom" })
   }
   return out
 }

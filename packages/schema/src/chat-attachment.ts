@@ -27,6 +27,18 @@ export const chatAttachmentSchema = z
   .strict()
 export type ChatAttachment = z.infer<typeof chatAttachmentSchema>
 
+/**
+ * An attachment as a transcript read returns it. A light read
+ * (`GET /threads/:id/messages?light=1`) replaces an inline `data:` URL with
+ * an empty `data:` URL of the same media type and sets `dataOmitted`; the
+ * full message (`GET /threads/:id/messages/:messageId`) carries the data.
+ * Never send an attachment with `dataOmitted` back to the backend.
+ */
+export const chatMessageAttachmentSchema = chatAttachmentSchema.extend({
+  dataOmitted: z.literal(true).optional(),
+})
+export type ChatMessageAttachment = z.infer<typeof chatMessageAttachmentSchema>
+
 /** A message's attachments, as `/chat/send` accepts them. */
 export const chatAttachmentsSchema = z
   .array(chatAttachmentSchema)

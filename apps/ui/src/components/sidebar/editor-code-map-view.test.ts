@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { filterWorkspaceMapFiles } from "./editor-code-map-view"
-import type { WorkspaceMapFile } from "@/services/backend"
+import type { WorkspaceMapFile } from "@/services/backend/workspaceApi"
 
 function file(
   path: string,

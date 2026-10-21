@@ -1,179 +1,119 @@
-import { copyText } from "@/lib/clipboard"
-import { useState, useRef, useCallback, useEffect, useMemo } from "react"
-import { cn } from "@/lib/utils"
-import { assetUrl } from "@/lib/asset-url"
-import { useAppearanceStore } from "@/lib/appearance-store"
+import { useCallback, useEffect, useRef, useState } from "react"
+import {
+  ChevronDownIcon,
+  Columns2Icon,
+  Maximize2Icon,
+  Minimize2Icon,
+  PlusIcon,
+  Rows2Icon,
+  SquareTerminalIcon,
+  XIcon,
+} from "lucide-react"
+import { toast } from "sonner"
+import { useConfirm } from "@/components/dialogs/confirm-provider"
+import { NoFolderEmptyState } from "@/components/layout/panes/no-folder-empty-state"
+import { ShellIcon } from "@/components/terminal/shell-icon"
+import { TerminalSplitView } from "@/components/terminal/terminal-split-view"
+import { TerminalTabStrip } from "@/components/terminal/terminal-tab-strip"
+import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
-  DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
-  XIcon,
-  TerminalIcon,
-  PlusIcon,
-  MaximizeIcon,
-  MinimizeIcon,
-  CircleDotIcon,
-} from "lucide-react"
-import {
-  detectShells,
-  runShellCommandDetailed,
-} from "@/services/backend/workspaceApi"
+  MENU_HEADING,
+  MENU_ITEM,
+  MENU_ITEM_HINT,
+  MENU_PANEL,
+  MENU_WIDTH_SM,
+} from "@/components/ui/menu-chrome"
+import { useAppearanceStore } from "@/lib/appearance-store"
 import { createLogger } from "@/lib/logger"
 import {
   TERMINAL_CLOSE_ACTIVE_SESSION_EVENT,
   TERMINAL_NEW_SESSION_EVENT,
+  TERMINAL_SPLIT_EVENT,
   terminalSessionTargetsPanel,
   type TerminalCloseActiveSessionEventDetail,
   type TerminalNewSessionEventDetail,
+  type TerminalSplitEventDetail,
 } from "@/lib/terminal-events"
+import {
+  EMPTY_TERMINAL_GROUP,
+  MAX_TERMINAL_PANES_PER_TAB,
+  activeTerminalTab,
+  layoutTerminalIds,
+} from "@/lib/terminal-layout"
+import {
+  claimTerminalEvent,
+  closeTerminal,
+  closeTerminalTab,
+  createTerminalTab,
+  focusTerminalInput,
+  isTerminalBusy,
+  loadTerminalShells,
+  renameTerminalTabTitle,
+  setActiveTerminalTab,
+  splitTerminal,
+  terminalScopeKey,
+  useTerminalStore,
+} from "@/lib/terminal-sessions"
+import { cn } from "@/lib/utils"
+import type { ShellInfo } from "@/services/backend/workspaceApi"
 
-// M11: route catches through the shared logger so failures land in the error log store.
 const log = createLogger("terminal-panel")
-
-interface TerminalLine {
-  id: string
-  type: "input" | "output" | "error" | "system"
-  text: string
-  timestamp: number
-}
-
-type ShellType = "cmd" | "powershell" | "gitbash" | "wsl" | "bash" | "zsh"
-
-interface ShellInfo {
-  id: ShellType
-  name: string
-  default?: boolean
-}
-
-interface TerminalTab {
-  id: string
-  label: string
-  cwd: string
-  shell: ShellType
-  lines: TerminalLine[]
-  history: string[]
-  historyIndex: number
-}
 
 interface TerminalPanelProps {
   threadId?: string | null
   open: boolean
   onClose: () => void
+  /** The chat's workspace or worktree; terminals start there. */
   cwd?: string
   mode?: "agent" | "editor" | "design"
+  /**
+   * `panel`: the chat's bottom panel, part of the column's height, with a
+   * maximize toggle. `fill`: a workspace pane's Terminal tab.
+   */
+  variant?: "panel" | "fill"
 }
 
-function ShellIcon({
-  shell,
-  className,
-}: {
-  shell: string
-  className?: string
-}) {
-  const cls = cn("size-3 shrink-0", className)
-  switch (shell) {
-    case "powershell":
-      return (
-        <img
-          src={assetUrl("icons/shells/powershell.svg")}
-          alt=""
-          className={cn(cls, "dark:invert")}
-        />
-      )
-    case "gitbash":
-      return (
-        <img src={assetUrl("icons/shells/git.svg")} alt="" className={cls} />
-      )
-    case "wsl":
-      return (
-        <img src={assetUrl("icons/shells/linux.svg")} alt="" className={cls} />
-      )
-    case "zsh":
-      return <TerminalIcon className={cn(cls, "text-emerald-500")} />
-    case "bash":
-      return (
-        <img
-          src={assetUrl("icons/shells/gnubash.svg")}
-          alt=""
-          className={cls}
-        />
-      )
-    default:
-      return <TerminalIcon className={cls} />
-  }
-}
-
-let defaultShell: ShellType = "cmd"
-
-function createTab(
-  cwd: string,
-  shell?: ShellType,
-  initialCommand?: string | null
-): TerminalTab {
-  const s = shell || defaultShell
-  const shellNames: Record<string, string> = {
-    cmd: "CMD",
-    powershell: "powershell",
-    gitbash: "bash",
-    wsl: "WSL",
-    bash: "bash",
-    zsh: "zsh",
-  }
-  return {
-    id: crypto.randomUUID(),
-    label: shellNames[s] || s,
-    cwd,
-    shell: s,
-    lines: initialCommand
-      ? [
-          {
-            id: crypto.randomUUID(),
-            type: "system",
-            text: "Prepared command. Press Enter to run.",
-            timestamp: Date.now(),
-          },
-        ]
-      : [],
-    history: [],
-    historyIndex: -1,
-  }
-}
-
-// Per-instance registry: multiple TerminalPanel instances (one per pane/tab)
-// each contribute to window.__BETTERC0DE_TERMINALS__ without overwriting the
-// others. Without this, one terminal's unmount wiped the whole shared list.
-type RegisteredTerminals = NonNullable<Window["__BETTERC0DE_TERMINALS__"]>
-const terminalRegistry = new Map<string, RegisteredTerminals>()
 let terminalPanelSeq = 0
-function syncGlobalTerminals() {
-  const all: RegisteredTerminals = []
-  for (const list of terminalRegistry.values()) all.push(...list)
-  window.__BETTERC0DE_TERMINALS__ = all
-}
 
+const ICON_BUTTON =
+  "grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40"
+
+/** The model picker's menu chrome, rows highlighted in `accent/50`. */
+const SHELL_MENU_CLASS = cn(
+  MENU_PANEL,
+  MENU_WIDTH_SM,
+  "**:data-[slot$=-item]:focus:bg-accent/50 **:data-[slot$=-item]:data-highlighted:bg-accent/50"
+)
+
+/**
+ * The chat's interactive terminals: a tab strip with a shell picker, split
+ * panes, and real shells (PTYs) that keep running while the panel is hidden.
+ * Each chat has its own set; they start in its workspace or worktree.
+ */
 export function TerminalPanel({
   open,
   onClose,
   cwd,
-  mode: _mode = "agent",
+  mode = "agent",
   threadId,
+  variant = "panel",
 }: TerminalPanelProps) {
-  const resolvedCwd = cwd || "~"
-  const [tabs, setTabs] = useState<TerminalTab[]>(() => [
-    createTab(resolvedCwd),
-  ])
-  const [activeTabId, setActiveTabId] = useState(tabs[0].id)
-  const [sidebarOpen, _setSidebarOpen] = useState(true)
-  const terminalTitleEnabled = useAppearanceStore(
+  const scopeKey = terminalScopeKey(threadId, cwd)
+  const group = useTerminalStore(
+    (state) => state.groups[scopeKey] ?? EMPTY_TERMINAL_GROUP
+  )
+  const terminals = useTerminalStore((state) => state.terminals)
+  const titlesEnabled = useAppearanceStore(
     (state) => state.terminalTitleEnabled
   )
-  const terminalTabLabel = useCallback(
-    (tab: TerminalTab) => (terminalTitleEnabled ? tab.label : "Terminal"),
-    [terminalTitleEnabled]
-  )
+  const confirm = useConfirm()
+  const [expanded, setExpanded] = useState(false)
 
   const instanceIdRef = useRef<string>("")
   if (!instanceIdRef.current) {
@@ -181,498 +121,374 @@ export function TerminalPanel({
     instanceIdRef.current = `terminal-panel-${terminalPanelSeq}`
   }
 
-  useEffect(() => {
-    terminalRegistry.set(
-      instanceIdRef.current,
-      tabs.map((t) => ({
-        id: t.id,
-        label: terminalTabLabel(t),
-        shell: t.shell,
-        output: t.lines
-          .filter((l) => l.type !== "system")
-          .map((l) => l.text)
-          .join("\n"),
-        lineCount: t.lines.length,
-      }))
-    )
-    syncGlobalTerminals()
-    const id = instanceIdRef.current
-    return () => {
-      terminalRegistry.delete(id)
-      syncGlobalTerminals()
-    }
-  }, [tabs, terminalTabLabel])
+  const activeTab = activeTerminalTab(group)
+  const activeTerminalId = activeTab?.activeTerminalId ?? null
+  const canSplit =
+    activeTab !== null &&
+    layoutTerminalIds(activeTab.layout).length < MAX_TERMINAL_PANES_PER_TAB
 
-  const [input, setInput] = useState("")
-  const [isRunning, setIsRunning] = useState(false)
-  const [availableShells, setAvailableShells] = useState<ShellInfo[]>([
-    { id: "cmd", name: "Command Prompt", default: true },
-  ])
-  const [expanded, setExpanded] = useState(false)
-  const [, setCopied] = useState(false)
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const shells = await detectShells()
-        if (Array.isArray(shells) && shells.length > 0) {
-          // Narrow the API's `id: string` to the local ShellType union via a
-          // runtime cast — the backend's detected shell list is open-ended
-          // but in practice always one of the known kinds.
-          setAvailableShells(shells as unknown as ShellInfo[])
-          const def = (shells as unknown as ShellInfo[]).find((s) => s.default)
-          if (def) defaultShell = def.id
-        }
-      } catch {
-        log.warn("Failed to load available shells")
-      }
-    })()
-  }, [])
-
-  const activeTab = useMemo(
-    () => tabs.find((t) => t.id === activeTabId) ?? tabs[0],
-    [tabs, activeTabId]
-  )
-
-  // Each session keeps its cwd (including `cd`); project changes only seed new sessions.
-
-  useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 100)
-  }, [open, activeTabId])
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTo({
-        top: scrollRef.current.scrollHeight,
-        behavior: "smooth",
+  const newTerminal = useCallback(
+    (shell?: string) => {
+      if (!cwd) return
+      createTerminalTab(scopeKey, {
+        cwd,
+        ...(shell ? { shell } : {}),
+        focus: true,
       })
+    },
+    [cwd, scopeKey]
+  )
+
+  const split = useCallback(
+    (direction: "right" | "down") => {
+      if (!activeTerminalId) return
+      const created = splitTerminal(
+        activeTerminalId,
+        direction === "right" ? "row" : "column"
+      )
+      if (!created) {
+        toast.info(
+          `A tab holds up to ${MAX_TERMINAL_PANES_PER_TAB} terminals. Open a new tab instead.`,
+          { id: "terminal-split-limit" }
+        )
+      }
+    },
+    [activeTerminalId]
+  )
+
+  /** After a close: hide the panel once the chat has no terminal left. */
+  const afterClose = useCallback(() => {
+    const next = useTerminalStore.getState().groups[scopeKey]
+    if (!next) {
+      onClose()
+      return
     }
-  }, [activeTab?.lines])
+    const nextActive = activeTerminalTab(next)?.activeTerminalId
+    if (nextActive) focusTerminalInput(nextActive)
+  }, [onClose, scopeKey])
 
-  const addLine = useCallback(
-    (tabId: string, type: TerminalLine["type"], text: string) => {
-      setTabs((prev) =>
-        prev.map((t) =>
-          t.id === tabId
-            ? {
-                ...t,
-                lines: [
-                  ...t.lines,
-                  {
-                    id: crypto.randomUUID(),
-                    type,
-                    text,
-                    timestamp: Date.now(),
-                  },
-                ],
-              }
-            : t
-        )
-      )
-    },
-    []
-  )
-
-  const runCommand = useCallback(
-    async (cmd: string) => {
-      if (!cmd.trim() || isRunning) return
-      const tabId = activeTabId
-      setTabs((prev) =>
-        prev.map((t) =>
-          t.id === tabId
-            ? {
-                ...t,
-                history: [cmd, ...t.history.filter((h) => h !== cmd)].slice(
-                  0,
-                  50
-                ),
-                historyIndex: -1,
-              }
-            : t
-        )
-      )
-      addLine(tabId, "input", cmd)
-      setInput("")
-      setIsRunning(true)
-
-      if (cmd.trim() === "clear" || cmd.trim() === "cls") {
-        setTabs((prev) =>
-          prev.map((t) => (t.id === tabId ? { ...t, lines: [] } : t))
-        )
-        setIsRunning(false)
-        return
-      }
-      if (cmd.trim().startsWith("cd ")) {
-        const newDir = cmd.trim().slice(3).trim()
-        const resolved =
-          newDir.startsWith("/") || newDir.startsWith("C:")
-            ? newDir
-            : `${activeTab.cwd}/${newDir}`
-        setTabs((prev) =>
-          prev.map((t) => (t.id === tabId ? { ...t, cwd: resolved } : t))
-        )
-        addLine(tabId, "system", `\u2192 ${resolved}`)
-        setIsRunning(false)
-        return
-      }
-
-      try {
-        // Human-origin: user typed this command in the terminal UI.
-        // `humanOrigin:true` + `permissionLevel:"bypass"` lets the backend
-        // permission gate skip the LLM-approval flow for direct user input.
-        const out = await runShellCommandDetailed(
-          cmd,
-          activeTab.cwd || ".",
-          activeTab.shell,
-          undefined,
-          { humanOrigin: true, permissionLevel: "bypass" }
-        )
-        // The detailed response includes structured fields; show `combined`
-        // (interleaved stdout+stderr) since that's what the legacy direct-
-        // fetch path was rendering after JSON.stringify-ing the response.
-        const result =
-          typeof out.combined === "string" && out.combined.length > 0
-            ? out.combined
-            : ""
-        if (result.trim()) {
-          // Detect errors in output
-          const lowerResult = result.toLowerCase()
-          const isError =
-            lowerResult.includes("error") ||
-            lowerResult.includes("not found") ||
-            lowerResult.includes("not recognized") ||
-            lowerResult.includes("cannot find") ||
-            lowerResult.includes("failed") ||
-            lowerResult.includes("denied") ||
-            lowerResult.includes("exception") ||
-            lowerResult.includes("fatal") ||
-            (lowerResult.startsWith("'") && lowerResult.includes("' is not"))
-          addLine(tabId, isError ? "error" : "output", result)
-        }
-      } catch (err) {
-        addLine(tabId, "error", String(err))
-      } finally {
-        setIsRunning(false)
-        setTimeout(() => inputRef.current?.focus(), 50)
-      }
-    },
-    [activeTabId, activeTab, isRunning, addLine]
-  )
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter") {
-        runCommand(input)
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault()
-        const tab = tabs.find((t) => t.id === activeTabId)
-        if (tab && tab.history.length > 0) {
-          const newIndex = Math.min(
-            tab.historyIndex + 1,
-            tab.history.length - 1
-          )
-          setTabs((prev) =>
-            prev.map((t) =>
-              t.id === activeTabId ? { ...t, historyIndex: newIndex } : t
-            )
-          )
-          setInput(tab.history[newIndex] ?? "")
-        }
-      } else if (e.key === "ArrowDown") {
-        e.preventDefault()
-        const tab = tabs.find((t) => t.id === activeTabId)
-        if (tab) {
-          const newIndex = tab.historyIndex - 1
-          if (newIndex < 0) {
-            setTabs((prev) =>
-              prev.map((t) =>
-                t.id === activeTabId ? { ...t, historyIndex: -1 } : t
-              )
-            )
-            setInput("")
-          } else {
-            setTabs((prev) =>
-              prev.map((t) =>
-                t.id === activeTabId ? { ...t, historyIndex: newIndex } : t
-              )
-            )
-            setInput(tab.history[newIndex] ?? "")
-          }
-        }
-      } else if (e.key === "l" && e.ctrlKey) {
-        e.preventDefault()
-        setTabs((prev) =>
-          prev.map((t) => (t.id === activeTabId ? { ...t, lines: [] } : t))
-        )
-      }
-    },
-    [input, tabs, activeTabId, runCommand]
-  )
-
-  const addTab = useCallback(
-    (
-      shell?: ShellType,
-      tabCwd = resolvedCwd,
-      initialCommand?: string | null
-    ) => {
-      const newTab = createTab(tabCwd, shell, initialCommand)
-      setTabs((prev) => [...prev, newTab])
-      setActiveTabId(newTab.id)
-      if (initialCommand) setInput(initialCommand)
-    },
-    [resolvedCwd]
-  )
-
-  useEffect(() => {
-    const onNewSession = (event: Event) => {
-      const detail = (event as CustomEvent<TerminalNewSessionEventDetail>)
-        .detail
-      if (
-        !terminalSessionTargetsPanel(detail ?? {}, {
-          id: instanceIdRef.current,
-          mode: _mode,
-          threadId,
+  const requestCloseTerminal = useCallback(
+    async (terminalId: string) => {
+      if (isTerminalBusy(terminalId)) {
+        const confirmed = await confirm({
+          title: "Close this terminal?",
+          description:
+            "A program is still running in it. Closing the terminal ends it.",
+          confirmLabel: "Close terminal",
+          destructive: true,
         })
-      )
-        return
-      const shell = detail?.shell as ShellType | undefined
-      addTab(shell, detail?.cwd || resolvedCwd, detail?.initialCommand)
-    }
-    window.addEventListener(TERMINAL_NEW_SESSION_EVENT, onNewSession)
-    return () => {
-      window.removeEventListener(TERMINAL_NEW_SESSION_EVENT, onNewSession)
-    }
-  }, [_mode, addTab, resolvedCwd, threadId])
-
-  const closeTab = useCallback(
-    (tabId: string) => {
-      setTabs((prev) => {
-        const filtered = prev.filter((t) => t.id !== tabId)
-        if (filtered.length === 0) {
-          // Schedule onClose outside of setState to avoid "Cannot update while rendering" error
-          setTimeout(() => onClose(), 0)
-          return prev
-        }
-        if (activeTabId === tabId) {
-          setTimeout(() => setActiveTabId(filtered[filtered.length - 1].id), 0)
-        }
-        return filtered
-      })
+        if (!confirmed) return
+      }
+      closeTerminal(terminalId)
+      afterClose()
     },
-    [activeTabId, onClose]
+    [afterClose, confirm]
   )
 
+  const requestCloseTab = useCallback(
+    async (tabId: string) => {
+      const tab = useTerminalStore
+        .getState()
+        .groups[scopeKey]?.tabs.find((candidate) => candidate.id === tabId)
+      if (!tab) return
+      const busy = layoutTerminalIds(tab.layout).filter(isTerminalBusy).length
+      if (busy > 0) {
+        const confirmed = await confirm({
+          title: "Close this tab?",
+          description:
+            busy === 1
+              ? "A program is still running in this tab. Closing the tab ends it."
+              : `Programs are still running in ${busy} of this tab's terminals. Closing the tab ends them.`,
+          confirmLabel: "Close tab",
+          destructive: true,
+        })
+        if (!confirmed) return
+      }
+      closeTerminalTab(scopeKey, tabId)
+      afterClose()
+    },
+    [afterClose, confirm, scopeKey]
+  )
+
+  // Opening the panel gives an empty chat its first terminal and the
+  // keyboard to the active one. Switching chats while it is open does not
+  // start a shell on its own: the empty state offers one.
+  const wasOpenRef = useRef(false)
   useEffect(() => {
-    const onCloseActiveSession = (event: Event) => {
+    if (!open) {
+      wasOpenRef.current = false
+      return
+    }
+    // Opened before the chat's folder was known: wait for it.
+    if (wasOpenRef.current || !cwd) return
+    wasOpenRef.current = true
+    const current = useTerminalStore.getState().groups[scopeKey]
+    const active = current ? activeTerminalTab(current) : null
+    if (active) focusTerminalInput(active.activeTerminalId)
+    else createTerminalTab(scopeKey, { cwd, focus: true })
+  }, [open, cwd, scopeKey])
+
+  useEffect(() => {
+    const panel = { id: instanceIdRef.current, mode, threadId }
+    const onNewSession = (event: Event) => {
+      const detail =
+        (event as CustomEvent<TerminalNewSessionEventDetail>).detail ?? {}
+      if (!terminalSessionTargetsPanel(detail, panel)) return
+      const target = detail.cwd || cwd
+      if (!target || !claimTerminalEvent(event)) return
+      createTerminalTab(scopeKey, {
+        cwd: target,
+        ...(detail.shell ? { shell: detail.shell } : {}),
+        ...(detail.initialCommand
+          ? { initialInput: detail.initialCommand }
+          : {}),
+        focus: true,
+      })
+    }
+    const onCloseActive = (event: Event) => {
       const detail = (
         event as CustomEvent<TerminalCloseActiveSessionEventDetail>
       ).detail
-      if (detail?.targetPanelId !== instanceIdRef.current) return
-      closeTab(activeTabId)
+      if (detail?.targetPanelId !== panel.id || !activeTerminalId) return
+      void requestCloseTerminal(activeTerminalId)
     }
-    window.addEventListener(
-      TERMINAL_CLOSE_ACTIVE_SESSION_EVENT,
-      onCloseActiveSession
-    )
+    const onSplit = (event: Event) => {
+      const detail = (event as CustomEvent<TerminalSplitEventDetail>).detail
+      if (detail?.targetPanelId !== panel.id) return
+      split(detail.direction)
+    }
+    window.addEventListener(TERMINAL_NEW_SESSION_EVENT, onNewSession)
+    window.addEventListener(TERMINAL_CLOSE_ACTIVE_SESSION_EVENT, onCloseActive)
+    window.addEventListener(TERMINAL_SPLIT_EVENT, onSplit)
     return () => {
+      window.removeEventListener(TERMINAL_NEW_SESSION_EVENT, onNewSession)
       window.removeEventListener(
         TERMINAL_CLOSE_ACTIVE_SESSION_EVENT,
-        onCloseActiveSession
+        onCloseActive
       )
+      window.removeEventListener(TERMINAL_SPLIT_EVENT, onSplit)
     }
-  }, [activeTabId, closeTab])
-
-  const _copyOutput = useCallback(async () => {
-    const text = activeTab.lines
-      .filter((l) => l.type === "output" || l.type === "error")
-      .map((l) => l.text)
-      .join("\n")
-    if (!(await copyText(text))) return
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-  }, [activeTab])
+  }, [
+    activeTerminalId,
+    cwd,
+    mode,
+    requestCloseTerminal,
+    scopeKey,
+    split,
+    threadId,
+  ])
 
   if (!open) return null
 
   return (
     <div
       data-terminal-panel-id={instanceIdRef.current}
-      data-terminal-thread={threadId}
+      data-terminal-thread={threadId ?? undefined}
       className={cn(
-        "betterc0de-terminal flex h-full flex-col bg-card transition-all duration-200"
+        "betterc0de-terminal flex min-h-0 flex-col bg-background text-foreground",
+        variant === "panel"
+          ? cn(
+              "shrink-0 border-t border-border/60",
+              expanded ? "h-[75%]" : "h-[40%] min-h-[180px]"
+            )
+          : "h-full"
       )}
     >
-      {/* Top bar: shell tabs + actions */}
-      <div className="flex h-[30px] items-center border-b border-border bg-sidebar">
-        {/* Shell tabs */}
-        <div className="flex min-w-0 flex-1 items-center overflow-x-auto">
-          {tabs.map((tab) => (
+      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border/60 px-1.5 font-sans">
+        <TerminalTabStrip
+          tabs={group.tabs}
+          activeTabId={activeTab?.id ?? null}
+          terminals={terminals}
+          titlesEnabled={titlesEnabled}
+          onSelect={(tabId) => {
+            setActiveTerminalTab(scopeKey, tabId)
+            const tab = group.tabs.find((candidate) => candidate.id === tabId)
+            if (tab) focusTerminalInput(tab.activeTerminalId)
+          }}
+          onClose={(tabId) => void requestCloseTab(tabId)}
+          onRename={(tabId, title) =>
+            renameTerminalTabTitle(scopeKey, tabId, title)
+          }
+        />
+        <div className="flex shrink-0 items-center gap-0.5">
+          <NewTerminalControls disabled={!cwd} onNew={newTerminal} />
+          <button
+            type="button"
+            className={ICON_BUTTON}
+            aria-label="Split terminal right"
+            title="Split right (Ctrl+D)"
+            disabled={!canSplit}
+            onClick={() => split("right")}
+          >
+            <Columns2Icon className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            className={ICON_BUTTON}
+            aria-label="Split terminal down"
+            title="Split down (Ctrl+Shift+D)"
+            disabled={!canSplit}
+            onClick={() => split("down")}
+          >
+            <Rows2Icon className="size-3.5" />
+          </button>
+          {variant === "panel" ? (
             <button
-              key={tab.id}
               type="button"
-              onClick={() => setActiveTabId(tab.id)}
-              className={cn(
-                "flex h-[30px] items-center gap-1.5 border-r border-border px-2.5 text-[11px] transition-colors",
-                tab.id === activeTabId
-                  ? "bg-card text-foreground"
-                  : "text-muted-foreground hover:text-foreground/80"
-              )}
+              className={ICON_BUTTON}
+              aria-label={
+                expanded ? "Restore terminal size" : "Maximize terminal"
+              }
+              aria-pressed={expanded}
+              title={expanded ? "Restore size" : "Maximize"}
+              onClick={() => setExpanded((value) => !value)}
             >
-              <ShellIcon shell={tab.shell} />
-              <span>{terminalTabLabel(tab)}</span>
-              {isRunning && tab.id === activeTabId && (
-                <CircleDotIcon className="size-2 shrink-0 animate-pulse text-[#4ec9b0]" />
+              {expanded ? (
+                <Minimize2Icon className="size-3.5" />
+              ) : (
+                <Maximize2Icon className="size-3.5" />
               )}
             </button>
-          ))}
-        </div>
-
-        {/* Right actions */}
-        <div className="flex h-full items-center gap-0 pr-1">
-          {/* New tab */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className="flex h-full items-center px-1.5 text-muted-foreground/70 transition-colors hover:text-foreground/80"
-              >
-                <PlusIcon className="size-3" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-[180px]">
-              {availableShells.map((s) => (
-                <DropdownMenuItem
-                  key={s.id}
-                  className="gap-2"
-                  onClick={() => addTab(s.id)}
-                >
-                  <ShellIcon shell={s.id} />
-                  <span className="flex-1 text-[11px]">{s.name}</span>
-                  {s.default && (
-                    <span className="rounded bg-muted px-1 text-[9px] text-muted-foreground">
-                      default
-                    </span>
-                  )}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
+          ) : null}
           <button
             type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="flex h-full items-center px-1.5 text-muted-foreground/70 transition-colors hover:text-foreground/80"
-          >
-            {expanded ? (
-              <MinimizeIcon className="size-3" />
-            ) : (
-              <MaximizeIcon className="size-3" />
-            )}
-          </button>
-          <button
-            type="button"
+            className={ICON_BUTTON}
+            aria-label="Hide terminal"
+            title={
+              variant === "panel"
+                ? "Hide (Ctrl+`). Terminals keep running."
+                : "Back to the chat. Terminals keep running."
+            }
             onClick={onClose}
-            className="flex h-full items-center px-1.5 text-muted-foreground/70 transition-colors hover:text-foreground/80"
           >
-            <XIcon className="size-3" />
+            <XIcon className="size-3.5" />
           </button>
         </div>
       </div>
-
-      {/* Main area: sidebar + terminal */}
       <div className="flex min-h-0 flex-1">
-        {/* Session sidebar */}
-        {sidebarOpen && (
-          <div className="w-[160px] shrink-0 overflow-y-auto border-r border-border bg-sidebar">
-            <div className="px-2.5 py-1.5 text-[10px] tracking-wider text-muted-foreground/70 uppercase">
-              {tabs.length} Terminal
-            </div>
-            {tabs.map((tab) => (
-              <div
-                key={tab.id}
-                onClick={() => setActiveTabId(tab.id)}
-                className={cn(
-                  "group flex cursor-pointer items-center gap-1.5 px-2.5 py-1 text-[11px] transition-colors",
-                  tab.id === activeTabId
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground/80"
-                )}
-              >
-                <ShellIcon shell={tab.shell} />
-                <span className="flex-1 truncate">{terminalTabLabel(tab)}</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    closeTab(tab.id)
-                  }}
-                  className="rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-accent"
-                >
-                  <XIcon className="size-2.5 text-muted-foreground/70" />
-                </button>
-              </div>
-            ))}
+        {!cwd ? (
+          <div className="min-w-0 flex-1 font-sans">
+            <NoFolderEmptyState />
           </div>
+        ) : activeTab ? (
+          <TerminalSplitView
+            key={activeTab.id}
+            scopeKey={scopeKey}
+            tab={activeTab}
+            titlesEnabled={titlesEnabled}
+            onRequestClose={(terminalId) =>
+              void requestCloseTerminal(terminalId)
+            }
+          />
+        ) : (
+          <NoTerminalState onNew={() => newTerminal()} />
         )}
-
-        {/* Terminal output */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div
-            ref={scrollRef}
-            className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-2 font-mono text-[12px] leading-[1.65]"
-            onClick={() => inputRef.current?.focus()}
-          >
-            {activeTab.lines.map((line) => (
-              <div
-                key={line.id}
-                className={cn(
-                  "overflow-hidden break-all whitespace-pre-wrap",
-                  line.type === "input" && "text-foreground",
-                  line.type === "output" && "text-foreground/90",
-                  line.type === "error" && "font-medium text-[#f44747]",
-                  line.type === "system" && "text-[#569cd6] italic"
-                )}
-              >
-                {line.type === "input" ? (
-                  <span className="break-all">
-                    <span className="text-[#4ec9b0]">&gt;</span>{" "}
-                    <span className="text-[#dcdcaa]">{line.text}</span>
-                  </span>
-                ) : (
-                  line.text
-                )}
-              </div>
-            ))}
-            {isRunning && (
-              <div className="flex items-center gap-1.5 py-1 text-[11px] text-muted-foreground/60">
-                <span className="inline-flex gap-[2px]">
-                  <span className="size-1 animate-bounce rounded-full bg-[#4ec9b0] [animation-delay:0ms]" />
-                  <span className="size-1 animate-bounce rounded-full bg-[#4ec9b0] [animation-delay:150ms]" />
-                  <span className="size-1 animate-bounce rounded-full bg-[#4ec9b0] [animation-delay:300ms]" />
-                </span>
-              </div>
-            )}
-            {/* Inline input prompt */}
-            {!isRunning && (
-              <div className="flex min-w-0 items-center">
-                <span className="shrink-0 text-[#4ec9b0]">&gt;</span>
-                <input
-                  ref={inputRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  spellCheck={false}
-                  autoComplete="off"
-                  className="ml-1 min-w-0 flex-1 bg-transparent font-mono text-[12px] text-[#dcdcaa] caret-[#4ec9b0] outline-none"
-                  autoFocus
-                />
-              </div>
-            )}
-          </div>
-        </div>
       </div>
+    </div>
+  )
+}
+
+/** A chat whose terminals were all closed, shown after switching to it. */
+function NoTerminalState({ onNew }: { onNew: () => void }) {
+  return (
+    <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center font-sans">
+      <SquareTerminalIcon
+        className="size-7 text-muted-foreground/50"
+        strokeWidth={1.25}
+        aria-hidden="true"
+      />
+      <div className="space-y-1">
+        <p className="text-sm font-medium text-muted-foreground">
+          No terminal in this chat
+        </p>
+        <p className="text-xs text-muted-foreground/70">
+          Terminals start in the chat's folder and keep running while hidden.
+        </p>
+      </div>
+      <Button size="sm" variant="outline" onClick={onNew}>
+        <PlusIcon data-icon="inline-start" />
+        New terminal
+      </Button>
+    </div>
+  )
+}
+
+/** `+` opens the default shell; the chevron picks one of the detected shells. */
+function NewTerminalControls({
+  disabled,
+  onNew,
+}: {
+  disabled: boolean
+  onNew: (shell?: string) => void
+}) {
+  const [shells, setShells] = useState<ShellInfo[] | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  const loadShells = () => {
+    if (shells) return
+    setFailed(false)
+    loadTerminalShells().then(setShells, (error: unknown) => {
+      log.warn("Failed to load available shells", error)
+      setFailed(true)
+    })
+  }
+
+  return (
+    <div className="flex items-center">
+      <button
+        type="button"
+        className={ICON_BUTTON}
+        aria-label="New terminal"
+        title="New terminal (Ctrl+N in a terminal)"
+        disabled={disabled}
+        onClick={() => onNew()}
+      >
+        <PlusIcon className="size-3.5" />
+      </button>
+      <DropdownMenu
+        onOpenChange={(open) => {
+          if (open) loadShells()
+        }}
+      >
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className={cn(ICON_BUTTON, "w-4")}
+            aria-label="Choose a shell for a new terminal"
+            title="Choose shell"
+            disabled={disabled}
+          >
+            <ChevronDownIcon className="size-3" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className={SHELL_MENU_CLASS}>
+          <div className={MENU_HEADING}>New terminal</div>
+          {shells === null ? (
+            <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
+              {failed ? "Couldn't list the shells." : "Looking for shells…"}
+            </div>
+          ) : shells.length === 0 ? (
+            <DropdownMenuItem className={MENU_ITEM} onSelect={() => onNew()}>
+              <ShellIcon shell={undefined} />
+              Default shell
+            </DropdownMenuItem>
+          ) : (
+            shells.map((shell) => (
+              <DropdownMenuItem
+                key={shell.id}
+                className={MENU_ITEM}
+                onSelect={() => onNew(shell.id)}
+              >
+                <ShellIcon shell={shell.id} />
+                <span className="min-w-0 flex-1 truncate">{shell.name}</span>
+                {shell.default ? (
+                  <span className={cn(MENU_ITEM_HINT, "mt-0")}>Default</span>
+                ) : null}
+              </DropdownMenuItem>
+            ))
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   )
 }

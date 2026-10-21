@@ -7,6 +7,7 @@ import { resolveProviderTarget } from "@/lib/resolve-provider-target"
 import { mergeCanonicalRuntimeEventFields } from "@/lib/provider-runtime-event-fields"
 import type { UiProvider } from "@/lib/provider-types"
 import type { SetPlanModalContent } from "@/lib/plan-modal"
+import { getElectronApi } from "@/services/ipc-facade"
 
 /**
  * Subscribes the chat app to all non-WebSocket provider event sources
@@ -40,9 +41,10 @@ export function useProviderEvents({
 }) {
   // Plugin events
   useEffect(() => {
-    if (!window.electronAPI?.onPluginEvent) return
+    const desktopBridge = getElectronApi()
+    if (!desktopBridge?.onPluginEvent) return
     const cbs = { setPlanModalContent, respondToolApproval }
-    const cleanup = window.electronAPI.onPluginEvent((event) => {
+    const cleanup = desktopBridge.onPluginEvent((event) => {
       const runtimeEvent = event as Record<string, unknown> & {
         threadId: string
         type: string

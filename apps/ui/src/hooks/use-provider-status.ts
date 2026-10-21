@@ -1,12 +1,9 @@
-import { useCallback, useEffect, useState } from "react"
+import type { ProviderStatus } from "@/services/backend/providersApi"
 import {
-  getProviderStatus,
-  type ProviderStatus,
-} from "@/services/backend/providersApi"
-import { useVisibilityInterval } from "@/hooks/use-visibility-interval"
-import { SETTINGS_UPDATED_EVENT } from "@/lib/settings-store"
-
-const POLL_INTERVAL_MS = 30_000
+  providerStatusResource,
+  refreshProviderStatus,
+} from "@/lib/provider-catalog-store"
+import { useSharedResource } from "@/lib/shared-resource"
 
 /**
  * Live provider-status map keyed by `providerKind` (e.g. `"anthropic"`,
@@ -16,11 +13,11 @@ const POLL_INTERVAL_MS = 30_000
  * Data is sourced from `GET /providers/status`; the backend assembles
  * `{provider, name, configured, authType, hint}` per registered adapter.
  *
- * The hook self-refreshes on three signals:
- *   - mount,
- *   - every 30 s while the window is visible (paused via
- *     `useVisibilityInterval` when the user switches away),
- *   - on the `betterc0de:settings-updated` DOM event the settings store
+ * Every caller shares one snapshot and one poller (see
+ * `provider-catalog-store`). It refreshes on three signals:
+ *   - the first mounted caller, when the cached map is missing or stale,
+ *   - every 30 s while the window is visible and any caller is mounted,
+ *   - the `betterc0de:settings-updated` DOM event the settings store
  *     dispatches after a successful `updateSettings()`.
  *
  * Last-known state is preserved on fetch failures — the model picker
@@ -31,38 +28,6 @@ export function useProviderStatus(): {
   status: Map<string, ProviderStatus>
   refetch: () => void
 } {
-  const [status, setStatus] = useState<Map<string, ProviderStatus>>(
-    () => new Map()
-  )
-
-  const refetch = useCallback(async () => {
-    try {
-      const list = await getProviderStatus()
-      const next = new Map<string, ProviderStatus>()
-      for (const item of list) next.set(item.provider, item)
-      setStatus(next)
-    } catch {
-      // Keep last-known state — covers transient backend-not-ready,
-      // sidecar restart, network blip. Never disable a provider just
-      // because the status route 5xx'd for a moment.
-    }
-  }, [])
-
-  useEffect(() => {
-    void refetch()
-  }, [refetch])
-
-  useVisibilityInterval(() => {
-    void refetch()
-  }, POLL_INTERVAL_MS)
-
-  useEffect(() => {
-    const handler = () => {
-      void refetch()
-    }
-    window.addEventListener(SETTINGS_UPDATED_EVENT, handler)
-    return () => window.removeEventListener(SETTINGS_UPDATED_EVENT, handler)
-  }, [refetch])
-
-  return { status, refetch: () => void refetch() }
+  const status = useSharedResource(providerStatusResource)
+  return { status, refetch: refreshProviderStatus }
 }

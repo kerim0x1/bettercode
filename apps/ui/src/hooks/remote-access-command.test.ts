@@ -23,6 +23,7 @@ const tailscaleServing = {
   state: "running" as const,
   magicDnsName: "desk.tail1234.ts.net",
   tailnetIpv4Addresses: ["100.101.102.103"],
+  selfAddresses: ["100.101.102.103"],
   httpsCertificates: true,
   serveEnabled: true,
   serveActive: true,
@@ -106,7 +107,9 @@ describe("/remote command", () => {
   it("lists the Tailscale state in status and hides it from a paired browser", async () => {
     vi.mocked(getRemoteStatus).mockResolvedValue(enabledStatus)
     const desktop = await executeRemoteAccessCommand(["status"])
-    expect(desktop).toContain("| Tailscale | Connected · 100.101.102.103 |")
+    expect(desktop).toContain(
+      "| Tailscale | Connected · desk.tail1234.ts.net · 100.101.102.103 |"
+    )
     expect(desktop).toContain("| Tailscale HTTPS | Off |")
 
     window.__BETTERC0DE__ = {

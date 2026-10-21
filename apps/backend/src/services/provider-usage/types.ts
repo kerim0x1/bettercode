@@ -19,6 +19,11 @@ export interface UsageDailyPoint {
   tokens: number
   messages: number
   sessions: number
+  /**
+   * USD at list prices for that day's priced models. Absent where the store
+   * keeps no per-model split for the day (or no model on it has a rate).
+   */
+  cost?: number
 }
 
 export interface UsageEntry {
@@ -49,6 +54,8 @@ export interface UsagePricing {
   hasOverrides: boolean
   /** Caveats specific to how this provider's cost was derived. */
   notes: string[]
+  /** USD the cache reads saved against paying the input rate for them. */
+  cacheSavings: number
 }
 
 export interface UsageList {

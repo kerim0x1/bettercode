@@ -10,7 +10,7 @@ import type { ThreadActivityProjection } from "../../persistence/projections"
 import { ProviderRuntimeJournalReplayer } from "./ProviderRuntimeJournalReplayer"
 import { ProviderRuntimeJournalRecoveryStore } from "./ProviderRuntimeJournalRecoveryStore"
 import { ProviderRuntimeProjectionReceiptStore } from "./ProviderRuntimeProjectionReceiptStore"
-import type { ProviderRuntimeEvent } from "../types"
+import type { LegacyProviderEvent } from "../types"
 import {
   InMemoryPendingSourceProposedPlanImplementationStore,
   ProviderRuntimeBridgeError,
@@ -52,8 +52,8 @@ function makeBroadcaster(clientCount = 2) {
 }
 
 function toolCallEvent(
-  input?: Partial<ProviderRuntimeEvent>
-): ProviderRuntimeEvent {
+  input?: Partial<LegacyProviderEvent>
+): LegacyProviderEvent {
   return {
     event_type: "tool_call",
     thread_id: "thread-1",
@@ -92,7 +92,7 @@ function makeCanonicalHarness(
     readonly appendSequenceStart?: number
     readonly legacyView?: (
       event: CanonicalProviderRuntimeEvent
-    ) => ProviderRuntimeEvent | null
+    ) => LegacyProviderEvent | null
     readonly append?: (rows: JournaledRow[]) => Array<{ sequence: number }>
   } = {}
 ) {
@@ -111,7 +111,7 @@ function makeCanonicalHarness(
   } as unknown as EventStore)
   const activities: ThreadActivityProjection[] = []
   const frames: unknown[] = []
-  const projected: ProviderRuntimeEvent[] = []
+  const projected: LegacyProviderEvent[] = []
   const receipts = { markProjected: vi.fn() }
   const lifecycleStore = {
     hasProviderTurn: vi.fn(() => true),
@@ -136,7 +136,7 @@ function makeCanonicalHarness(
     onFatalProjectionFailure: fatal,
     sequenceStart: options.sequenceStart ?? 100,
     ...(options.legacyView ? { legacyView: options.legacyView } : {}),
-    projectedSink: (event: ProviderRuntimeEvent) =>
+    projectedSink: (event: LegacyProviderEvent) =>
       projected.push(structuredClone(event)),
   })
   return {
@@ -192,10 +192,10 @@ function withFrozenClock<T>(run: () => T): T {
   }
 }
 
-function runtimeFrames(frames: ReadonlyArray<unknown>): ProviderRuntimeEvent[] {
+function runtimeFrames(frames: ReadonlyArray<unknown>): LegacyProviderEvent[] {
   return frames
     .filter(
-      (frame): frame is { channel: string; data: ProviderRuntimeEvent } =>
+      (frame): frame is { channel: string; data: LegacyProviderEvent } =>
         (frame as { channel?: unknown }).channel === "provider.runtimeEvent"
     )
     .map((frame) => frame.data)
@@ -322,7 +322,7 @@ describe("ProviderRuntimeIngestion", () => {
       broadcaster: makeBroadcaster(),
       logger: makeLogger(),
     })
-    const failures: Array<ProviderRuntimeEvent> = [
+    const failures: Array<LegacyProviderEvent> = [
       {
         event_type: "turn_error",
         thread_id: "thread-terminal",
@@ -374,7 +374,7 @@ describe("ProviderRuntimeIngestion", () => {
       broadcaster: makeBroadcaster(),
       logger: makeLogger(),
     })
-    const event: ProviderRuntimeEvent = {
+    const event: LegacyProviderEvent = {
       event_type: "turn_completed",
       thread_id: "thread-terminal",
       payload: { dispatchTurnId: "dispatch-replayed" },
@@ -555,7 +555,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(fatal).toHaveBeenCalledTimes(2)
     expect(persist).toHaveBeenCalledTimes(2)
     const runtimeFrames = broadcaster.frames.filter(
-      (frame): frame is { channel: string; data: ProviderRuntimeEvent } =>
+      (frame): frame is { channel: string; data: LegacyProviderEvent } =>
         typeof frame === "object" &&
         frame !== null &&
         (frame as { channel?: unknown }).channel === "provider.runtimeEvent"
@@ -610,10 +610,10 @@ describe("ProviderRuntimeIngestion", () => {
     })
     const notices = () =>
       broadcaster.frames.filter(
-        (frame): frame is { channel: string; data: ProviderRuntimeEvent } =>
+        (frame): frame is { channel: string; data: LegacyProviderEvent } =>
           (frame as { channel?: unknown }).channel ===
             "provider.runtimeEvent" &&
-          (frame as { data: ProviderRuntimeEvent }).data.event_type ===
+          (frame as { data: LegacyProviderEvent }).data.event_type ===
             "runtime.warning"
       )
 
@@ -907,7 +907,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(
       broadcaster.frames
         .filter(
-          (frame): frame is { channel: string; data: ProviderRuntimeEvent } =>
+          (frame): frame is { channel: string; data: LegacyProviderEvent } =>
             typeof frame === "object" &&
             frame !== null &&
             (frame as { channel?: unknown }).channel === "provider.runtimeEvent"
@@ -976,7 +976,7 @@ describe("ProviderRuntimeIngestion", () => {
       broadcaster,
       logger: makeLogger(),
     })
-    const contentEvent: ProviderRuntimeEvent = {
+    const contentEvent: LegacyProviderEvent = {
       event_type: "content_delta",
       thread_id: "thread-ephemeral",
       payload: {
@@ -984,7 +984,7 @@ describe("ProviderRuntimeIngestion", () => {
         delta: "private transient response",
       },
     }
-    const terminalEvent: ProviderRuntimeEvent = {
+    const terminalEvent: LegacyProviderEvent = {
       event_type: "turn_completed",
       thread_id: "thread-ephemeral",
       payload: { turn_id: "turn-ephemeral", status: "completed" },
@@ -1114,7 +1114,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(
       broadcaster.frames
         .filter(
-          (frame): frame is { channel: string; data: ProviderRuntimeEvent } =>
+          (frame): frame is { channel: string; data: LegacyProviderEvent } =>
             (frame as { channel?: unknown }).channel === "provider.runtimeEvent"
         )
         .map((frame) => frame.data.event_type)
@@ -1185,30 +1185,53 @@ describe("ProviderRuntimeIngestion", () => {
       output: string
       payloadTruncated?: boolean
       journal_truncation?: { fields: string[] }
+      outputTruncated?: boolean
+      outputBytes?: number
     }
-    expect(livePayload.output.length).toBeLessThan(2 * 1024 * 1024)
-    expect(livePayload.output).toMatch(/^x+$/)
+    // The journal bounds the event to its row limit; the activity then keeps
+    // only the head and tail of that copy within the activity budget.
+    expect(
+      Buffer.byteLength(JSON.stringify(livePayload), "utf8")
+    ).toBeLessThanOrEqual(64 * 1024)
+    expect(livePayload.output).toMatch(/^x+\n… \[output truncated: .+\] …\nx+$/)
+    expect(livePayload.outputTruncated).toBe(true)
+    expect(livePayload.outputBytes).toBe(
+      JSON.parse(bigRow!.payload_json).payload.output.length
+    )
     expect(livePayload.payloadTruncated).toBe(true)
     expect(livePayload.journal_truncation?.fields).toEqual(["output"])
     const broadcastBig = broadcaster.frames.find(
-      (frame): frame is { channel: string; data: ProviderRuntimeEvent } =>
+      (frame): frame is { channel: string; data: LegacyProviderEvent } =>
         (frame as { channel?: unknown }).channel === "provider.runtimeEvent" &&
-        (frame as { data: ProviderRuntimeEvent }).data.event_type ===
+        (frame as { data: LegacyProviderEvent }).data.event_type ===
           "tool_result"
     )
+    // The wire copy is bounded like the activity: head and tail of the
+    // journaled output with the marker, the original size recorded.
+    const broadcastPayload = broadcastBig?.data.payload as {
+      output: string
+      outputTruncated?: boolean
+      outputBytes?: number
+      payloadTruncated?: boolean
+    }
     expect(
-      (broadcastBig?.data.payload as { output: string }).output.length
-    ).toBeLessThan(2 * 1024 * 1024)
-    expect(JSON.parse(bigRow!.payload_json).payload.output).toBe(
-      (broadcastBig?.data.payload as { output: string }).output
+      Buffer.byteLength(JSON.stringify(broadcastPayload), "utf8")
+    ).toBeLessThanOrEqual(64 * 1024)
+    expect(broadcastPayload.output).toMatch(
+      /^x+\n… \[output truncated: .+\] …\nx+$/
     )
+    expect(broadcastPayload.outputTruncated).toBe(true)
+    expect(broadcastPayload.outputBytes).toBe(
+      JSON.parse(bigRow!.payload_json).payload.output.length
+    )
+    expect(broadcastPayload.payloadTruncated).toBe(true)
     expect(
       projectionReceipts.markProjected.mock.calls.map((call) => call[0])
     ).toEqual([501, 502])
     expect(
       broadcaster.frames
         .filter(
-          (frame): frame is { channel: string; data: ProviderRuntimeEvent } =>
+          (frame): frame is { channel: string; data: LegacyProviderEvent } =>
             (frame as { channel?: unknown }).channel === "provider.runtimeEvent"
         )
         .map((frame) => frame.data.event_type)
@@ -1314,12 +1337,12 @@ describe("ProviderRuntimeIngestion", () => {
         journalRetryBaseMs: 10,
         journalRetryMaxMs: 10,
       })
-      const terminal: ProviderRuntimeEvent = {
+      const terminal: LegacyProviderEvent = {
         event_type: "turn_completed",
         thread_id: "thread-journal-retry",
         payload: { turn_id: "turn-1" },
       }
-      const later: ProviderRuntimeEvent = {
+      const later: LegacyProviderEvent = {
         event_type: "session.updated",
         thread_id: "thread-journal-retry",
         payload: { status: "ready" },
@@ -1333,7 +1356,7 @@ describe("ProviderRuntimeIngestion", () => {
 
       const runtimeEvents = broadcaster.frames
         .filter(
-          (frame): frame is { channel: string; data: ProviderRuntimeEvent } =>
+          (frame): frame is { channel: string; data: LegacyProviderEvent } =>
             typeof frame === "object" &&
             frame !== null &&
             (frame as { channel?: unknown }).channel === "provider.runtimeEvent"
@@ -1348,7 +1371,7 @@ describe("ProviderRuntimeIngestion", () => {
 
   it("spools a journal retry queue before graceful shutdown", () => {
     const enqueue = vi.fn(() => true)
-    const event: ProviderRuntimeEvent = {
+    const event: LegacyProviderEvent = {
       event_type: "turn_completed",
       thread_id: "thread-shutdown-journal",
       payload: { turn_id: "turn-1" },
@@ -1379,17 +1402,17 @@ describe("ProviderRuntimeIngestion", () => {
     const enqueue = vi.fn(() => true)
     const fatal = vi.fn()
     const logger = makeLogger()
-    const first: ProviderRuntimeEvent = {
+    const first: LegacyProviderEvent = {
       event_type: "content_delta",
       thread_id: "thread-overflow",
       payload: { turn_id: "turn-1", delta: "first" },
     }
-    const overflow: ProviderRuntimeEvent = {
+    const overflow: LegacyProviderEvent = {
       event_type: "content_delta",
       thread_id: "thread-overflow",
       payload: { turn_id: "turn-1", delta: "second" },
     }
-    const rejectedAfterStop: ProviderRuntimeEvent = {
+    const rejectedAfterStop: LegacyProviderEvent = {
       event_type: "turn_completed",
       thread_id: "thread-overflow",
       payload: { turn_id: "turn-1" },
@@ -1429,7 +1452,7 @@ describe("ProviderRuntimeIngestion", () => {
   it("spools the current event instead of dropping it when the retry queue byte limit is exceeded", () => {
     const enqueue = vi.fn(() => true)
     const fatal = vi.fn()
-    const event: ProviderRuntimeEvent = {
+    const event: LegacyProviderEvent = {
       event_type: "content_delta",
       thread_id: "thread-byte-overflow",
       payload: { turn_id: "turn-1", delta: "larger than one byte" },
@@ -2443,7 +2466,7 @@ describe("ProviderRuntimeIngestion", () => {
       logger,
       sequenceStart: 20,
     })
-    const event: ProviderRuntimeEvent = {
+    const event: LegacyProviderEvent = {
       event_type: "tool.denied",
       thread_id: "thread-1",
       payload: {
@@ -2941,7 +2964,7 @@ describe("ProviderRuntimeIngestion", () => {
     const broadcaster = makeBroadcaster()
     const logger = makeLogger()
     const updateThreadTitle = vi.fn()
-    const event: ProviderRuntimeEvent = {
+    const event: LegacyProviderEvent = {
       event_type: "thread.metadata.updated",
       thread_id: "thread-1",
       payload: {
@@ -3540,7 +3563,7 @@ describe("ProviderRuntimeIngestion", () => {
     const broadcaster = makeBroadcaster()
     const logger = makeLogger()
     const checkpointDiffStore = { recordRuntimeEvent: vi.fn() }
-    const event: ProviderRuntimeEvent = {
+    const event: LegacyProviderEvent = {
       event_type: "turn.diff.updated",
       thread_id: "thread-1",
       payload: {
@@ -3571,7 +3594,7 @@ describe("ProviderRuntimeIngestion", () => {
   it("still broadcasts provider events when checkpoint diff persistence fails", () => {
     const broadcaster = makeBroadcaster()
     const logger = makeLogger()
-    const event: ProviderRuntimeEvent = {
+    const event: LegacyProviderEvent = {
       event_type: "turn.diff.updated",
       thread_id: "thread-1",
       payload: {
@@ -3642,7 +3665,7 @@ describe("ProviderRuntimeIngestion", () => {
     })
     ingestion.start()
 
-    const failingEvent: ProviderRuntimeEvent = {
+    const failingEvent: LegacyProviderEvent = {
       event_type: "turn.started",
       thread_id: "thread-1",
       payload: {
@@ -3651,7 +3674,7 @@ describe("ProviderRuntimeIngestion", () => {
         turn_id: "turn-fails-in-sidecar",
       },
     }
-    const followUpEvent: ProviderRuntimeEvent = {
+    const followUpEvent: LegacyProviderEvent = {
       event_type: "runtime.error",
       thread_id: "thread-1",
       payload: {
@@ -4208,7 +4231,7 @@ describe("canonical ingestion behind the journal", () => {
     options: {
       readonly legacyView?: (
         event: CanonicalProviderRuntimeEvent
-      ) => ProviderRuntimeEvent | null
+      ) => LegacyProviderEvent | null
       readonly receipts?: boolean
       readonly sequenceStart?: number
     } = {}
@@ -4826,7 +4849,7 @@ describe("canonical ingestion behind the journal", () => {
           (entry) => entry.name === "turn.completed status completed"
         )!.event
       )
-      const later: ProviderRuntimeEvent = {
+      const later: LegacyProviderEvent = {
         event_type: "session.updated",
         thread_id: "thread-fixture",
         payload: { status: "ready" },
@@ -4907,7 +4930,7 @@ describe("canonical ingestion behind the journal", () => {
 
   it("hands the legacy view to projectedSink exactly once per live event, after the receipt, never on replay", () => {
     const calls: string[] = []
-    const projected: ProviderRuntimeEvent[] = []
+    const projected: LegacyProviderEvent[] = []
     const ingestion = new ProviderRuntimeIngestion({
       eventBus: new EventEmitter(),
       eventJournal: { persist: vi.fn(() => (calls.push("journal"), 77)) },
@@ -4929,7 +4952,7 @@ describe("canonical ingestion behind the journal", () => {
       CANONICAL_JOURNAL_FIXTURES.find((entry) => entry.name === "tool.started")!
         .event
     )
-    const legacyStarted: ProviderRuntimeEvent = {
+    const legacyStarted: LegacyProviderEvent = {
       event_type: "turn_started",
       thread_id: "thread-fixture",
       payload: { turn_id: "turn-1", dispatchTurnId: "dispatch-1" },
@@ -4962,7 +4985,7 @@ describe("canonical ingestion behind the journal", () => {
   })
 
   it("does not hand a declined, bridge-failed or projection-blocked event to projectedSink", () => {
-    const projected: ProviderRuntimeEvent[] = []
+    const projected: LegacyProviderEvent[] = []
     const byName = (name: string) =>
       cloneFixtureEvent(
         CANONICAL_JOURNAL_FIXTURES.find((entry) => entry.name === name)!.event

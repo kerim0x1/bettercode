@@ -1,24 +1,37 @@
-import { getRemoteBaseUrl, invoke } from "./runtime"
+import type {
+  PendingRemotePairingLink,
+  RemoteBootstrapResponse,
+  RemoteEndpoint,
+  RemotePairingGrant,
+  RemotePairingLink,
+  RemoteSession,
+  RemoteSessionClient,
+  RemoteSessionList,
+  RemoteStatus,
+  TailscaleRemoteStatus,
+} from "@betterc0de/schema/remote-protocol"
+import type {
+  HttpContractRequest,
+  HttpContractResponse,
+} from "@betterc0de/schema/http-contracts"
+import { invokeContract } from "./contracts"
+import { getRemoteBaseUrl } from "./runtime"
 
-/** The app a paired device identified itself as (the phone app sends this). */
-export interface RemoteSessionClient {
-  name: string
-  version: string
-  platform: string | null
-}
-
-export interface RemoteSession {
-  id: string
-  label: string
-  createdAt: string
-  lastSeenAt: string
-  expiresAt: string
-  client?: RemoteSessionClient | null
-  /**
-   * The device's running terminals and shell commands; only the desktop's
-   * own list of devices has it.
-   */
-  terminals?: number
+// The records the desktop's `/remote/*` routes answer are defined once, in
+// `@betterc0de/schema/remote-protocol`, and the routes' contracts in
+// `remote-contracts.ts`: the backend checks its responses against them, this
+// module checks what it reads, and the phone app derives its own types.
+export type {
+  PendingRemotePairingLink,
+  RemoteBootstrapResponse,
+  RemoteEndpoint,
+  RemotePairingGrant,
+  RemotePairingLink,
+  RemoteSession,
+  RemoteSessionClient,
+  RemoteSessionList,
+  RemoteStatus,
+  TailscaleRemoteStatus,
 }
 
 /** "2 terminals open", or `null` when the device runs none. */
@@ -50,66 +63,47 @@ export function describeRemoteClient(
   return `${name} ${client.version}${platform ? ` on ${platform}` : ""}`
 }
 
-export interface RemoteBootstrapResponse {
-  enabled: boolean
-  authenticated: boolean
-  authentication: "local" | "remote" | null
-  session: RemoteSession | null
-  environmentId: string | null
+/** What a device that pairs through this address may do, and for how long. */
+export type RemotePairingAccess = "full" | "read-only"
+
+function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase()
+  return host === "localhost" || host === "::1" || /^127(\.\d+){3}$/.test(host)
 }
 
-export interface RemoteEndpoint {
+/**
+ * Mirrors the backend's pairing policy: a full 30-day session needs an
+ * encrypted transport — HTTPS, this computer, or the tailnet (the WireGuard
+ * tunnel). Plain HTTP across any other network, a private LAN included, is
+ * readable by everyone on it, so pairing there yields a one-hour read-only
+ * session.
+ */
+export function remotePairingAccess(endpoint: {
   id: string
-  label: string
-  httpBaseUrl: string
-  wsBaseUrl: string
-  reachability: "loopback" | "lan" | "private-network" | "public"
-  hostedHttpsCompatible: boolean
-  isDefault: boolean
-}
-
-export interface RemoteStatus {
-  enabled: boolean
-  listeningOnNetwork: boolean
-  environmentId: string
-  host: string
-  port: number
-  authentication: "local" | "remote" | null
-  currentSessionId: string | null
-  endpoints: RemoteEndpoint[]
-}
-
-export interface TailscaleRemoteStatus {
-  /** Backend has the integration wired (always true on a real backend). */
-  available: boolean
-  installed: boolean
-  state: "running" | "needs-login" | "stopped" | "unavailable"
-  magicDnsName: string | null
-  tailnetIpv4Addresses: string[]
-  /** The tailnet issues HTTPS certificates (admin console → DNS → HTTPS). */
-  httpsCertificates: boolean
-  /** The persisted setting. */
-  serveEnabled: boolean
-  /** Tailscale currently maps `https://<magicDnsName>` to this backend. */
-  serveActive: boolean
-  servePort: number
-  httpsBaseUrl: string | null
-}
-
-export interface RemotePairingLink {
-  endpointId: string
-  label: string
   url: string
-  isDefault: boolean
+}): RemotePairingAccess {
+  if (endpoint.id === "tailscale" || endpoint.id === "tailscale-ip") {
+    return "full"
+  }
+  if (endpoint.id === "loopback") return "full"
+  try {
+    const url = new URL(endpoint.url)
+    if (url.protocol === "https:") return "full"
+    if (isLoopbackHostname(url.hostname)) return "full"
+  } catch {
+    // An unparsable address cannot be shown to be encrypted.
+  }
+  return "read-only"
 }
 
-export interface RemotePairingGrant {
-  id: string
-  credential: string
-  label: string
-  createdAt: string
-  expiresAt: string
-  links: RemotePairingLink[]
+/** Pending links that have not expired by `now`, newest first. */
+export function activePairingLinks(
+  links: readonly PendingRemotePairingLink[],
+  now = Date.now()
+): PendingRemotePairingLink[] {
+  return links
+    .filter((link) => Date.parse(link.expiresAt) > now)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
 }
 
 function remoteOrigin(): string {
@@ -118,98 +112,119 @@ function remoteOrigin(): string {
   return window.location.origin
 }
 
-async function publicRemoteRequest<T>(
-  path: string,
-  init?: RequestInit
-): Promise<T> {
-  const response = await fetch(`${remoteOrigin()}/api/v1/remote${path}`, {
-    ...init,
+/**
+ * The two public routes (`/remote/bootstrap`, `/remote/pair`) go straight to
+ * the desktop with the browser's cookie, before there is a session for the
+ * backend transport to use. Their answers are checked against the same
+ * contracts as every other route.
+ */
+async function publicRemoteRequest<K extends "remoteBootstrap" | "remotePair">(
+  name: K,
+  body?: HttpContractRequest<K>
+): Promise<HttpContractResponse<K>> {
+  // Keep validation schemas off the first-frame path, as `invokeContract` does.
+  const { httpContracts } = await import("@betterc0de/schema/http-contracts")
+  const contract = httpContracts[name]
+  if (body !== undefined) contract.request.parse(body)
+  const response = await fetch(`${remoteOrigin()}/api/v1${contract.path}`, {
+    method: contract.method,
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
+    headers: { "Content-Type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
-  const body = (await response.json().catch(() => ({}))) as {
-    error?: unknown
-  } & T
+  const payload: unknown = await response.json().catch(() => ({}))
   if (!response.ok) {
+    const error = (payload as { error?: unknown } | null)?.error
     throw new Error(
-      typeof body.error === "string" ? body.error : `HTTP ${response.status}`
+      typeof error === "string" ? error : `HTTP ${response.status}`
     )
   }
-  return body
+  try {
+    return contract.response.parse(payload) as HttpContractResponse<K>
+  } catch {
+    // Never include the payload: it carries the session.
+    throw new Error(
+      `Invalid backend response for ${contract.method} ${contract.path}`
+    )
+  }
 }
 
 export function getRemoteBootstrap(): Promise<RemoteBootstrapResponse> {
-  return publicRemoteRequest<RemoteBootstrapResponse>("/bootstrap")
+  return publicRemoteRequest("remoteBootstrap")
 }
 
 export function pairRemoteBrowser(
   credential: string,
   label: string
 ): Promise<RemoteBootstrapResponse> {
-  return publicRemoteRequest<RemoteBootstrapResponse>("/pair", {
-    method: "POST",
-    body: JSON.stringify({ credential, label }),
-  })
+  return publicRemoteRequest("remotePair", { credential, label })
 }
 
 export function getRemoteStatus(): Promise<RemoteStatus> {
-  return invoke<RemoteStatus>("/remote/status")
+  return invokeContract("remoteStatus")
 }
 
 export function createRemotePairingLink(
   label = "Pairing link",
   ttlMinutes = 10
 ): Promise<RemotePairingGrant> {
-  return invoke<RemotePairingGrant>("/remote/pairing-links", {
-    method: "POST",
+  return invokeContract("remotePairingLinkCreate", {
     body: { label, ttlMinutes },
   })
 }
 
+/** Unredeemed, unexpired pairing links. Desktop host only. */
+export async function listRemotePairingLinks(): Promise<
+  PendingRemotePairingLink[]
+> {
+  return (await invokeContract("remotePairingLinkList")).pairingLinks
+}
+
+/** Withdraws one pairing link before anyone redeems it. Desktop host only. */
+export function revokeRemotePairingLink(
+  pairingId: string
+): Promise<{ revoked: boolean }> {
+  return invokeContract("remotePairingLinkRevoke", { params: { pairingId } })
+}
+
+/** Withdraws every pairing link nobody has redeemed. Desktop host only. */
+export function revokeAllRemotePairingLinks(): Promise<{ revoked: number }> {
+  return invokeContract("remotePairingLinkRevokeAll")
+}
+
 export function getTailscaleStatus(): Promise<TailscaleRemoteStatus> {
-  return invoke<TailscaleRemoteStatus>("/remote/tailscale")
+  return invokeContract("remoteTailscaleStatus")
 }
 
 export function setTailscaleServe(
   enabled: boolean
 ): Promise<TailscaleRemoteStatus> {
-  return invoke<TailscaleRemoteStatus>("/remote/tailscale/serve", {
-    method: "POST",
-    body: { enabled },
-  })
+  return invokeContract("remoteTailscaleServe", { body: { enabled } })
 }
 
-export function listRemoteSessions(): Promise<{
-  currentSessionId: string | null
-  sessions: RemoteSession[]
-}> {
-  return invoke("/remote/sessions")
+export function listRemoteSessions(): Promise<RemoteSessionList> {
+  return invokeContract("remoteSessionList")
 }
 
 export function revokeRemoteSession(
   sessionId: string
 ): Promise<{ revoked: boolean }> {
-  return invoke(`/remote/sessions/${encodeURIComponent(sessionId)}`, {
-    method: "DELETE",
-  })
+  return invokeContract("remoteSessionRevoke", { params: { sessionId } })
 }
 
 /** Ends a device's terminals and shell commands; the device stays paired. */
 export function endRemoteSessionTerminals(
   sessionId: string
 ): Promise<{ ended: number }> {
-  return invoke(`/remote/sessions/${encodeURIComponent(sessionId)}/terminals`, {
-    method: "DELETE",
+  return invokeContract("remoteSessionTerminalsEnd", {
+    params: { sessionId },
   })
 }
 
 export function revokeOtherRemoteSessions(): Promise<{ revoked: number }> {
-  return invoke("/remote/sessions/revoke-others", { method: "POST" })
+  return invokeContract("remoteSessionRevokeOthers")
 }
 
 export function logoutRemoteSession(): Promise<{ loggedOut: boolean }> {
-  return invoke("/remote/logout", { method: "POST" })
+  return invokeContract("remoteLogout")
 }

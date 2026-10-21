@@ -41,8 +41,14 @@ module.exports = Object.freeze({
    * remaining finite even if a child keeps emitting heartbeats.
    */
   BACKEND_STARTUP_HARD_TIMEOUT_MS: 5 * 60_000,
-  /** Total time allotted for graceful backend shutdown before SIGKILL. */
-  BACKEND_SHUTDOWN_TIMEOUT_MS: 10_000,
+  /**
+   * Total time allotted for graceful backend shutdown before SIGKILL. The
+   * backend's own hard deadline (SHUTDOWN_HARD_TIMEOUT_MS in
+   * apps/backend/src/constants.ts) is 10 s and starts only when the shutdown
+   * message arrives; the extra 5 s lets its final steps (event-log flush,
+   * transcript replay, db.close) finish instead of being killed mid-way.
+   */
+  BACKEND_SHUTDOWN_TIMEOUT_MS: 15_000,
   /** Time to wait for IPC delivery confirmation before falling back to SIGTERM. */
   BACKEND_IPC_SHUTDOWN_ACK_MS: 1500,
   /** Time to confirm that the backend actually exited after a forced tree kill. */
@@ -53,6 +59,40 @@ module.exports = Object.freeze({
   BACKEND_HEALTH_PROBE_INTERVAL_MS: 200,
   /** Per-request timeout for the `/health` probe. */
   BACKEND_HEALTH_PROBE_REQUEST_TIMEOUT_MS: 2000,
+  /** Time to list a forcibly stopped backend's descendants with `ps` (POSIX). */
+  BACKEND_PROCESS_TREE_SNAPSHOT_TIMEOUT_MS: 2000,
+  /**
+   * Upper bound for the whole shutdown sequence after a fatal main-process
+   * error: CLI and plugin shutdown (parallel, ≤10 s), backend (≤15 s, plus
+   * 2 s taskkill and 3 s exit confirmation) and the crash-report flush (5 s).
+   */
+  FATAL_SHUTDOWN_DEADLINE_MS: 45_000,
+
+  // ── Backend supervision (after a successful start) ────────────────────
+  /** Unexpected exits within the window below that count as a crash loop. */
+  BACKEND_CRASH_LOOP_MAX_CRASHES: 5,
+  /** Sliding window for crash-loop detection. */
+  BACKEND_CRASH_LOOP_WINDOW_MS: 2 * 60_000,
+  /** First automatic restart delay; doubles per crash in the window. */
+  BACKEND_RESTART_BASE_DELAY_MS: 1_000,
+  /** Longest automatic restart delay. */
+  BACKEND_RESTART_MAX_DELAY_MS: 30_000,
+  /** Interval between liveness `/health` checks while the backend is up. */
+  BACKEND_LIVENESS_INTERVAL_MS: 20_000,
+  /** Per-check timeout; a wedged event loop never answers. */
+  BACKEND_LIVENESS_TIMEOUT_MS: 10_000,
+  /** Consecutive failed checks before the backend is restarted. */
+  BACKEND_LIVENESS_MAX_MISSES: 3,
+  /** Grace period after system resume before the first liveness check. */
+  BACKEND_LIVENESS_RESUME_GRACE_MS: 5_000,
+
+  // ── Renderer recovery ─────────────────────────────────────────────────
+  /** A second renderer crash within this window asks before reloading. */
+  RENDERER_CRASH_WINDOW_MS: 60_000,
+
+  // ── Updates ───────────────────────────────────────────────────────────
+  /** Interval between release-feed checks in a long-running session. */
+  UPDATE_CHECK_INTERVAL_MS: 6 * 60 * 60_000,
 
   // ── Dev server ───────────────────────────────────────────────────────
   /** Fallback Vite dev-server port used when VITE_DEV_PORT env var is unset. */

@@ -2,22 +2,23 @@ import path from "node:path"
 import { configureBackendLogging, logger } from "../observability/logger"
 import { SettingsService } from "../settings/service"
 import { AssistantTranscriptRecoveryStore } from "../provider/runtime/AssistantTranscriptRecoveryStore"
-import { AuthStore } from "../auth/store"
+import { removeLegacyCredentialStore } from "../auth/legacyCredentialCleanup"
+import { migrateDesktopConfig } from "../services/desktop-config/migration"
+import { desktopConfigStoreFor } from "../services/desktop-config/store"
 import { RemoteAccessService } from "../remote/service"
 import { RemoteProviderTurnOwnership } from "../remote/providerTurnOwnership"
 import {
   createTailscaleRemoteAccess,
   reconcileTailscaleServe,
 } from "../remote/tailscale"
-import { closeShellSessionsForOwner } from "../services/shell"
-import { shutdownTerminalPtySessionsForOwner } from "../services/terminalPty"
 import type { BootRoot, PersistenceContext, SettingsContext } from "./context"
 
 /**
  * Phase 2: settings, logging, remote access (with the per-session process
  * cleanup that follows a revocation), the assistant transcript recovery
- * store with its startup replay, and the OAuth credential store. Binds the
- * settings service into the permission policy the moment it exists.
+ * store with its startup replay, and removal of the retired OAuth credential
+ * store. Binds the settings service into the permission policy the moment it
+ * exists.
  */
 export function loadSettingsAndRemote(
   root: BootRoot,
@@ -29,7 +30,14 @@ export function loadSettingsAndRemote(
   // ── Settings ──────────────────────────────────────────────────────────
   const settings = new SettingsService(config.settingsPath)
   persistence.bindSettingsForTrust(settings)
-  if (settings.get().remote_access_enabled === true) {
+  // Remote Access listens on the network only while "Local network" is on.
+  // Without it the backend stays on loopback, where Tailscale Serve (which
+  // tailscaled itself accepts) or a tunnel still reaches it: no firewall
+  // rule, nothing listening on the Wi-Fi.
+  if (
+    settings.get().remote_access_enabled === true &&
+    settings.get().remote_access_lan !== false
+  ) {
     config.host = process.env.BETTERC0DE_REMOTE_HOST?.trim() || "0.0.0.0"
   }
   // Tailscale Serve proxies from this machine; its forwarded headers are
@@ -38,6 +46,11 @@ export function loadSettingsAndRemote(
   config.trustLoopbackProxyHeaders =
     settings.get().remote_access_tailscale_serve === true
   configureBackendLogging(settings.get())
+  // Rules, skills, MCP servers and hooks live in the runtime home's files,
+  // which this backend owns. Values an older version kept in settings.json
+  // are merged into them once, then removed from settings (never throws).
+  const desktopConfig = desktopConfigStoreFor(config)
+  if (desktopConfig) migrateDesktopConfig(desktopConfig, settings)
   const remoteAccess = new RemoteAccessService(db, {
     isEnabled: () => settings.get().remote_access_enabled === true,
   })
@@ -55,8 +68,8 @@ export function loadSettingsAndRemote(
       .catch(() => undefined)
       .then(async () => {
         const results = await Promise.allSettled([
-          closeShellSessionsForOwner(ownerId),
-          shutdownTerminalPtySessionsForOwner(ownerId),
+          root.shellSessions.closeSessionsForOwner(ownerId),
+          root.terminalPtys.shutdownForOwner(ownerId),
           remoteProviderTurns.revokeSession(sessionId),
         ])
         const failures = results.flatMap((result) =>
@@ -135,11 +148,11 @@ export function loadSettingsAndRemote(
   }
   options.signal?.throwIfAborted()
 
-  // ── OAuth / credential store ─────────────────────────────────────────
-  // Separate from settings.json so OAuth tokens (frequently rotated) don't
-  // invalidate the settings cache and so refresh tokens get their own
-  // encrypted-at-rest blast radius. See apps/backend/src/auth/store.ts.
-  const authStore = new AuthStore(config.authPath)
+  // ── Retired OAuth credential store ───────────────────────────────────
+  // Nothing reads provider credentials from auth.json any more (API keys
+  // live in settings, CLI providers use their own login). Drop the stale
+  // ChatGPT tokens an earlier build may have left there.
+  removeLegacyCredentialStore(config.authPath)
   return {
     settings,
     remoteAccess,
@@ -148,7 +161,6 @@ export function loadSettingsAndRemote(
     unsubscribeRemoteOwnerCleanup,
     transcriptRecoveryStore,
     transcriptRecoveryTarget,
-    authStore,
   }
 }
 

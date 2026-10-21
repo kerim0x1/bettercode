@@ -3,7 +3,7 @@ import {
   ComposerSuggestionItem,
   ComposerSuggestionPanel,
 } from "@/components/chat/composer-suggestion-panel"
-import { searchEntriesDetailed } from "@/services/backend"
+import { searchEntriesDetailed } from "@/services/backend/workspaceApi"
 import { SearchTruncationNotice } from "@/components/search-truncation-notice"
 import { findComposerTextarea } from "@/lib/composer-input"
 import { getFileIconUrl, getFolderIconUrl } from "@/lib/file-icons"
@@ -282,36 +282,4 @@ export function FileMentionResultsPanel({
       </ComposerSuggestionPanel>
     </div>
   )
-}
-
-/** Hook to detect @ in input */
-export function useFileMentions() {
-  const [active, setActive] = useState(false)
-  const [query, setQuery] = useState("")
-
-  const checkInput = useCallback((text: string) => {
-    // Find the last @ that's not inside a code block
-    const atIdx = text.lastIndexOf("@")
-    if (
-      atIdx >= 0 &&
-      !text.slice(atIdx).includes(" ") &&
-      text.length > atIdx + 1
-    ) {
-      setActive(true)
-      setQuery(text.slice(atIdx + 1))
-    } else if (atIdx === text.length - 1 && text.endsWith("@")) {
-      setActive(true)
-      setQuery("")
-    } else {
-      setActive(false)
-      setQuery("")
-    }
-  }, [])
-
-  const close = useCallback(() => {
-    setActive(false)
-    setQuery("")
-  }, [])
-
-  return { active, query, checkInput, close }
 }

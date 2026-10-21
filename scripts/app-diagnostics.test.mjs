@@ -13,6 +13,7 @@ function setup(t, options = {}) {
   let time = 100_000
   const diagnostics = createAppDiagnostics({
     logger, appVersion: "1.2.3", os: "win32", arch: "x64", installId: "persistent-installation", now: () => time,
+    automaticReports: true,
     fetchImpl: async (_url, options) => { payloads.push(JSON.parse(options.body)); return new Response(null, { status: 204 }) },
     ...options,
   })
@@ -93,4 +94,72 @@ test("smoke tests can disable automatic uploads while retaining manual reports",
   assert.equal(payloads.length, 0)
   await diagnostics.sendReport({ message: "User report", stack: "" })
   assert.equal(payloads.length, 1)
+})
+
+test("automatic reports stay off until the user opts in, and consent is read at report time", async (t) => {
+  let consented = false
+  const { diagnostics, payloads } = setup(t, { automaticReports: () => consented })
+  await diagnostics.reportError(new Error("Before consent"))
+  assert.deepEqual(
+    await diagnostics.sendReport({ message: "Renderer error", stack: "", automatic: true }),
+    { ok: false, error: "Automatic reports are disabled.", retryAfterMs: 0 },
+  )
+  assert.equal(payloads.length, 0)
+  consented = true
+  await diagnostics.reportError(new Error("After consent"))
+  assert.equal(payloads.length, 1)
+  assert.match(payloads[0].message, /After consent/)
+})
+
+test("the default is no automatic reporting", async (t) => {
+  const { diagnostics, payloads } = setup(t, { automaticReports: undefined })
+  await diagnostics.reportError(new Error("Unconsented failure"))
+  assert.equal(payloads.length, 0)
+})
+
+test("secrets, emails and the home directory are redacted before buffering, upload and the log file", async (t) => {
+  const written = []
+  const logSink = { write: (line) => written.push(line), flushSync() {}, close() {} }
+  const { diagnostics, logger, payloads } = setup(t, { logSink })
+  logger.error("[backend] request failed Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123")
+  logger.warn("key sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ for jane.doe@example.com")
+  await diagnostics.sendReport({
+    message: "Manual report with xai-ABCDEFGHIJKLMNOPQRSTUV",
+    stack: "Error\n    at token=hunter2hunter2",
+    logs: "renderer: api_key=\"super-secret-value\"",
+  })
+  assert.equal(payloads.length, 1)
+  const uploaded = JSON.stringify(payloads[0])
+  for (const secret of ["abcdefghijklmnopqrstuvwxyz0123", "sk-ant-api03", "jane.doe@example.com",
+    "xai-ABCDEFGHIJKLMNOPQRSTUV", "hunter2hunter2", "super-secret-value"]) {
+    assert.equal(uploaded.includes(secret), false, secret)
+    assert.equal(written.join("\n").includes(secret), false, secret)
+  }
+  assert.match(payloads[0].logs, /Bearer \[REDACTED\]/)
+  assert.match(payloads[0].logs, /\[EMAIL\]/)
+  assert.equal(written.length, 2)
+})
+
+test("renderer chatter below warning level stays out of the persistent log", (t) => {
+  const written = []
+  const logSink = { write: (line) => written.push(line), flushSync() {}, close() {} }
+  const { diagnostics } = setup(t, { logSink })
+  const contents = new EventEmitter()
+  contents.mainFrame = {}
+  diagnostics.attachRenderer(contents)
+  contents.emit("console-message", { message: "Rendered sidebar", level: "info", frame: contents.mainFrame })
+  contents.emit("console-message", { message: "Request failed", level: "error", frame: contents.mainFrame })
+  assert.equal(written.length, 1)
+  assert.match(written[0], /Request failed/)
+})
+
+test("installation IDs are attached only while the provider returns one", async (t) => {
+  let installId = null
+  const { diagnostics, payloads, advance } = setup(t, { installId: undefined, getInstallId: () => installId })
+  await diagnostics.sendReport({ message: "First", stack: "" })
+  installId = "opted-in-installation"
+  advance(10_000)
+  await diagnostics.sendReport({ message: "Second", stack: "" })
+  assert.equal(payloads[0].installId, null)
+  assert.equal(payloads[1].installId, "opted-in-installation")
 })

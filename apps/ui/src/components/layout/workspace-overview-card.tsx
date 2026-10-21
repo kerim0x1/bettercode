@@ -23,6 +23,7 @@ import {
   FileCode2Icon,
   FileIcon,
   GitBranchIcon,
+  ImageIcon,
   GitCommitHorizontalIcon,
   GlobeIcon,
   LinkIcon,
@@ -31,7 +32,8 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useChatStore } from "@/lib/chat-store"
-import { gitDiff, gitStatus, isGitRepo } from "@/services/backend"
+import { attachmentDataOmitted } from "@/lib/chat/message-payloads"
+import { gitDiff, gitStatus, isGitRepo } from "@/services/backend/gitApi"
 import { useVisibilityInterval } from "@/hooks/use-visibility-interval"
 import type { WorkspaceTab } from "@/lib/preferences-store"
 
@@ -188,12 +190,18 @@ export function WorkspaceOverviewCard({
     }> = []
     const seen = new Set<string>()
     for (const message of messages ?? []) {
-      for (const attachment of message.attachments ?? []) {
-        const key = `att:${attachment.url}`
+      for (const [index, attachment] of (message.attachments ?? []).entries()) {
+        // A light transcript page carries no inline data for this one; the
+        // row shows an icon instead of fetching the image for a thumbnail.
+        const omitted = attachmentDataOmitted(attachment)
+        const key = omitted
+          ? `att:${message.id}:${index}`
+          : `att:${attachment.url}`
         if (seen.has(key)) continue
         seen.add(key)
         const label =
           attachment.filename ||
+          (omitted ? "Attachment" : null) ||
           attachment.url.split(/[/\\]/).pop() ||
           attachment.url
         out.push({
@@ -204,7 +212,7 @@ export function WorkspaceOverviewCard({
               ? "link"
               : "file",
           label,
-          url: attachment.url,
+          url: omitted ? undefined : attachment.url,
         })
       }
       for (const diff of message.diffs ?? []) {
@@ -325,6 +333,8 @@ export function WorkspaceOverviewCard({
                       alt=""
                       className="size-4 shrink-0 rounded-[3px] border border-border/40 object-cover"
                     />
+                  ) : source.kind === "image" ? (
+                    <ImageIcon className={iconClass} strokeWidth={1.75} />
                   ) : source.kind === "link" ? (
                     <LinkIcon className={iconClass} strokeWidth={1.75} />
                   ) : source.kind === "diff" ? (

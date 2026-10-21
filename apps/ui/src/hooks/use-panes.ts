@@ -5,6 +5,11 @@ import { createEmptyThreadForTab } from "@/lib/thread-create"
 import { snapshotComposerModelSettings } from "@/lib/composer-settings"
 import { isComposerShortcutTextEntryTarget } from "@/lib/composer-shortcuts"
 import {
+  chatSlotFromKeyEvent,
+  openChatListSlot,
+  setChatJumpAvailable,
+} from "@/lib/chat-list-nav"
+import {
   activateThreadTab,
   appendPaneBalanced,
   canSplit,
@@ -574,7 +579,15 @@ export function usePanes() {
       )
   }, [openThreadInPane])
 
+  // With one pane, Ctrl/Cmd+number opens the sidebar's chats; the hints
+  // that show the numbers need to know.
+  useEffect(() => {
+    setChatJumpAvailable(layout.panes.length <= 1)
+  }, [layout.panes.length])
+
   // Keyboard: Ctrl+1..8 switch pane, Ctrl+T new pane, Ctrl+W close pane.
+  // With a single pane, Ctrl+1..9 open the 1st..9th chat of the sidebar's
+  // visible order instead (lib/chat-list-nav.ts).
   // Agent only (use-composer-tabs handles the other modes).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -582,10 +595,17 @@ export function usePanes() {
       if (!(e.ctrlKey || e.metaKey)) return
       const panes = layoutRef.current.panes
       const num = parseInt(e.key)
-      if (num >= 1 && num <= 8 && num <= panes.length) {
+      if (panes.length > 1 && num >= 1 && num <= 8 && num <= panes.length) {
         e.preventDefault()
         setActivePane(panes[num - 1].id)
         return
+      }
+      if (panes.length <= 1) {
+        const slot = chatSlotFromKeyEvent(e)
+        if (slot !== null && openChatListSlot(slot)) {
+          e.preventDefault()
+          return
+        }
       }
       if (e.key === "t" && !e.shiftKey) {
         e.preventDefault()

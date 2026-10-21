@@ -64,11 +64,12 @@ export const TOOL_USE_GUIDE = [
   "  - Preserve existing indentation and formatting style.",
   "",
   "**Bash** — Execute shell commands: build, test, git, npm, cargo, etc.",
-  "  - Use shell syntax that matches the runtime OS (PowerShell on Windows, bash on Linux/macOS).",
+  "  - Use the syntax of the shell the tool actually runs. On Linux and macOS that is bash. On Windows it depends on the agent: bash (Git Bash) when available, otherwise PowerShell or cmd.exe. If unsure, check with a harmless command before relying on shell-specific syntax.",
+  "  - On Windows, keep each command on one line unless the shell is bash; cmd.exe rejects multi-line commands.",
   "  - Quote file paths that contain spaces with double quotes.",
   "  - Avoid interactive commands (`-i` flags, interactive editors).",
   "  - Prefer short-running commands. Set reasonable timeouts for long operations.",
-  "  - Chain dependent commands with shell-appropriate operators (`&&` for bash; `;` for PowerShell when required).",
+  "  - Chain dependent commands with the shell's operator (`&&` in bash and cmd.exe; `;` with an explicit success check in Windows PowerShell 5).",
   "",
   "**Grep** — Search file contents using regex patterns.",
   "  - Use `output_mode: 'files_with_matches'` for broad discovery, `'content'` for specific matches.",
@@ -146,6 +147,27 @@ export const CODE_QUALITY = [
   "- Run the project's existing linters/formatters if available. Don't introduce new tools without asking.",
   "- Be careful not to introduce security vulnerabilities: injection, XSS, SQL injection, OWASP top 10.",
 ].join("\n")
+
+/**
+ * Settings → Chat → Visual Replies (on by default). The chat shows the fence
+ * in a sandboxed frame whose policy allows exactly what this promises
+ * (apps/ui/src/lib/visual-reply.ts).
+ */
+export const VISUAL_REPLIES_INSTRUCTIONS = [
+  "# Visual Replies",
+  "",
+  "When a chart, table, diagram or UI mockup says more than text, you can answer with a ```html-render fenced block. The chat shows it as a live page.",
+  "- Write one complete, self-contained HTML document with inline <style> and <script>, under about 200 KB.",
+  "- It runs sandboxed without network access: no fetch, XHR or WebSocket. Scripts may load only from cdn.jsdelivr.net, cdnjs.cloudflare.com or unpkg.com, stylesheets from fonts.googleapis.com or cdn.jsdelivr.net, fonts from fonts.gstatic.com; images may use https: or data: URLs. Forms, popups and links do not work.",
+  "- Match the app with the CSS variables --bc-bg, --bc-surface, --bc-fg, --bc-muted, --bc-muted-fg, --bc-border, --bc-accent, --bc-accent-fg, --bc-font and --bc-mono; they follow the user's light or dark theme.",
+  "- Use it only when a visual genuinely helps; plain Markdown stays the default.",
+].join("\n")
+
+/** Optional parts of the system instruction that follow user settings. */
+export interface SystemInstructionOptions {
+  /** Settings → Chat → Visual Replies: describe ```html-render pages. */
+  visualReplies?: boolean
+}
 
 // Canvas Mode instructions live in ./design-prompts (core protocol, per-target
 // and per-color-mode blocks, and the Design Brief builder) — injected below via
@@ -652,6 +674,45 @@ function buildEnvBlock(env: EnvContext): string {
 // ─── COMPOSER ────────────────────────────────────────────────────────────────
 
 /**
+ * An MCP server as the system prompt sees it. Only `name` is ever rendered.
+ *
+ * Command lines, arguments, environment, headers and URLs routinely carry
+ * credentials (`postgresql://user:pass@host`, `--api-key=…`, query-string
+ * tokens), and the prompt goes to every model provider on every turn —
+ * third-party routers and provider-side logging included. The model never
+ * needs them: it can only call tools the runtime actually exposes. The
+ * transport fields remain accepted so existing callers keep compiling, but
+ * they are deliberately ignored.
+ */
+export interface PromptMcpServer {
+  name: string
+  /** Accepted for compatibility; never rendered. */
+  command?: string
+  /** Accepted for compatibility; never rendered. */
+  args?: string[]
+  /** Accepted for compatibility; never rendered. */
+  url?: string | null
+}
+
+const MAX_PROMPT_MCP_NAME_CHARS = 128
+
+/** One line, no markdown control characters, bounded length. */
+function promptMcpName(name: string): string {
+  let printable = ""
+  for (const character of String(name ?? "")) {
+    const codePoint = character.codePointAt(0) ?? 0
+    printable += codePoint < 32 || codePoint === 127 ? " " : character
+  }
+  const collapsed = printable
+    .replace(/[`*_[\]<>]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  return collapsed.length > MAX_PROMPT_MCP_NAME_CHARS
+    ? `${collapsed.slice(0, MAX_PROMPT_MCP_NAME_CHARS - 1)}…`
+    : collapsed
+}
+
+/**
  * Build the complete system instruction from modular sections.
  *
  * Composition order:
@@ -661,6 +722,7 @@ function buildEnvBlock(env: EnvContext): string {
  * 4. SPECIAL_MODE_INSTRUCTIONS[specialMode]  (if set)
  * 5. SAFETY_INSTRUCTIONS
  * 6. TONE_AND_STYLE
+ *    VISUAL_REPLIES_INSTRUCTIONS             (if options.visualReplies)
  * 7. CODE_QUALITY
  * 8. PERMISSION_INSTRUCTIONS[level]          (if restrictive)
  * 9. Environment context                     (if provided)
@@ -671,18 +733,14 @@ export function buildSystemInstruction(
   permissionLevel?: string | null,
   envContext?: EnvContext | null,
   skills?: { name: string; content: string }[],
-  mcps?: {
-    name: string
-    command?: string
-    args?: string[]
-    url?: string | null
-  }[],
+  mcps?: PromptMcpServer[],
   customRules?: string | null,
   subagents?: PromptSubagentContext[],
   projectRules?: string | null,
   appMode?: "agent" | "editor" | "design" | null,
   designContext?: DesignBrief | null,
-  designDefaults?: DesignDefaults | null
+  designDefaults?: DesignDefaults | null,
+  options?: SystemInstructionOptions | null
 ): string {
   const parts: string[] = []
 
@@ -731,6 +789,12 @@ export function buildSystemInstruction(
 
   // 7. Tone & style
   parts.push(TONE_AND_STYLE)
+
+  // 7b. Visual replies: opt in, so a caller that does not know the user's
+  //     setting never promises pages the chat would show as code.
+  if (options?.visualReplies) {
+    parts.push(VISUAL_REPLIES_INSTRUCTIONS)
+  }
 
   // 7. Code quality
   parts.push(CODE_QUALITY)
@@ -790,16 +854,18 @@ export function buildSystemInstruction(
     }
   }
 
-  // 13. Available MCP servers
-  if (mcps && mcps.length > 0) {
+  // 13. Available MCP servers — names only (see PromptMcpServer).
+  const mcpNames = [
+    ...new Set(
+      (mcps ?? []).map((mcp) => promptMcpName(mcp.name)).filter(Boolean)
+    ),
+  ]
+  if (mcpNames.length > 0) {
     parts.push(
       "\n\n## Configured MCP Servers\nThese server configurations are available to provider runtimes that support MCP. Do not assume or invoke an MCP tool unless that tool is present in your active tool list.\n"
     )
-    for (const mcp of mcps) {
-      const target = mcp.command
-        ? `${mcp.command} ${(mcp.args || []).join(" ")}`.trim()
-        : mcp.url || "configuration only"
-      parts.push(`- **${mcp.name}**: \`${target}\`\n`)
+    for (const name of mcpNames) {
+      parts.push(`- **${name}**\n`)
     }
   }
 

@@ -13,7 +13,7 @@
  */
 
 import { cn } from "@/lib/utils"
-import { useCallback, useEffect } from "react"
+import { useCallback, useEffect, useRef } from "react"
 import { MentionChips } from "@/components/chat/mention-chips"
 import { ComposerContextChips } from "@/components/chat/composer-context-chips"
 import { ComposerDraftSync } from "@/components/chat/composer-draft-sync"
@@ -23,7 +23,10 @@ import { ComposerAttachments } from "@/components/chat/composer-attachments"
 import { ComposerMinimalFooter } from "@/components/chat/composer-minimal-footer"
 import { ComposerFullFooter } from "@/components/chat/composer-full-footer"
 import { ComposerInlineModelTrigger } from "@/components/chat/composer-inline-model-trigger"
-import type { ComposerFooterProps } from "./chat-composer-types"
+import type {
+  ChatComposerProps,
+  ComposerFooterProps,
+} from "./chat-composer-types"
 import { useAppearanceStore } from "@/lib/appearance-store"
 import { useBetterC0deProjectBehavior } from "@/lib/betterc0de-project-behavior"
 import {
@@ -34,7 +37,13 @@ import {
 } from "@/components/ai-elements/prompt-input"
 import { handleError } from "@/lib/errors/handle"
 import { useChatStore } from "@/lib/chat-store"
+import { useSettingsStore } from "@/lib/settings-store"
+import {
+  alternateDelivery,
+  type WhileWorkingDelivery,
+} from "@/lib/chat/steer-delivery"
 import { ComposerOrchestrationBadge } from "./composer-orchestration"
+import { ComposerCompareBar, useCompareSubmit } from "./composer-compare"
 
 /**
  * Bridges the empty-state suggestion cards (chat-transcript.tsx) into the
@@ -60,8 +69,7 @@ function ComposerInsertPromptSync({ threadId }: { threadId: string | null }) {
   return null
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function ChatComposer(props: any) {
+export function ChatComposer(props: ChatComposerProps) {
   const {
     threadId = null,
     isActive = true,
@@ -75,9 +83,6 @@ export function ChatComposer(props: any) {
     setThinkingMode,
     autonomousMode,
     autonomousStatus,
-    autonomousTask,
-    autonomousIterations,
-    autonomousMaxIterations,
     chatMode,
     setChatMode,
     permissionLevel,
@@ -111,7 +116,24 @@ export function ChatComposer(props: any) {
     checkMention,
     appMode,
     activeProjectPath,
+    submitToThread,
   } = props
+  // Several models chosen in a new chat: one chat per model on send.
+  const submitWithCompare = useCompareSubmit({
+    threadId,
+    providers,
+    selectedProviderId,
+    selectedModel,
+    thinkingMode,
+    handleSubmit,
+    submitToThread,
+  })
+  // Ctrl/Cmd+Enter while the agent works sends the other way than Enter
+  // (queue or steer). The choice is armed only while the key starts the
+  // form's submit and is then bound to that submit event, so a submit that
+  // never reaches `onSubmit` cannot leave it behind for the next one.
+  const armedDelivery = useRef<WhileWorkingDelivery | undefined>(undefined)
+  const deliveryBySubmit = useRef(new WeakMap<Event, WhileWorkingDelivery>())
   const fileContextEnabled = useAppearanceStore((s) => s.fileContextEnabled)
   const projectBehavior = useBetterC0deProjectBehavior(activeProjectPath)
   const handleAttachmentError = useCallback((error: { message: string }) => {
@@ -128,9 +150,6 @@ export function ChatComposer(props: any) {
     setThinkingMode,
     autonomousMode,
     autonomousStatus,
-    autonomousTask,
-    autonomousIterations,
-    autonomousMaxIterations,
     chatMode,
     setChatMode,
     permissionLevel,
@@ -196,7 +215,19 @@ export function ChatComposer(props: any) {
           imageAttachmentPolicy={projectBehavior.imageAttachmentPolicy}
           multiple
           onError={handleAttachmentError}
-          onSubmit={handleSubmit}
+          onSubmitCapture={(event) => {
+            if (armedDelivery.current)
+              deliveryBySubmit.current.set(
+                event.nativeEvent,
+                armedDelivery.current
+              )
+          }}
+          onSubmit={(message, event) => {
+            const delivery = deliveryBySubmit.current.get(event.nativeEvent)
+            return submitWithCompare(
+              delivery ? { ...message, delivery } : message
+            )
+          }}
           className={cn(
             minimalChat
               ? "w-full [&_[data-slot=input-group]]:rounded-xl [&_[data-slot=input-group]]:border-transparent [&_[data-slot=input-group]]:bg-background [&_[data-slot=input-group]]:shadow-none [&_[data-slot=input-group]]:transition-colors [&_[data-slot=input-group]:focus-within]:border-border/60"
@@ -245,13 +276,39 @@ export function ChatComposer(props: any) {
             onKeyUp={(e) => {
               checkSlash(e.currentTarget.value, e.currentTarget.selectionStart)
             }}
+            onKeyDown={(e) => {
+              // Idle, Ctrl+Enter keeps inserting a line and Cmd+Enter sends.
+              if (
+                !isStreaming ||
+                e.key !== "Enter" ||
+                !(e.ctrlKey || e.metaKey) ||
+                e.shiftKey ||
+                e.altKey ||
+                e.nativeEvent.isComposing ||
+                !e.currentTarget.value.trim()
+              )
+                return
+              e.preventDefault()
+              const form = e.currentTarget.form
+              if (!form) return
+              armedDelivery.current = alternateDelivery(
+                useSettingsStore.getState().whileWorkingEnter
+              )
+              try {
+                form.requestSubmit()
+              } finally {
+                armedDelivery.current = undefined
+              }
+            }}
           />
           {/* The footer is its own container so the chips can react to the
             column they live in (design side panel vs. wide agent chat). */}
+          <ComposerCompareBar {...footerProps} />
           <ComposerOrchestrationBadge
             threadId={threadId}
             currentProvider={currentProvider}
             providers={providers}
+            isStreaming={isStreaming}
           />
           <PromptInputFooter
             className={cn(

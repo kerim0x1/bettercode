@@ -319,16 +319,33 @@ describe("MCP prompt context", () => {
     expect(prompt).not.toContain("installed and available")
   })
 
-  it("renders remote MCP endpoints without inventing a command", () => {
+  it("renders server names only, never command lines, arguments or URLs", () => {
     const prompt = buildSystemInstruction(
       "agent",
       null,
       "ask-on-edit",
       null,
       [],
-      [{ name: "Remote", url: "https://mcp.example.test" }]
+      [
+        {
+          name: "Database",
+          command: "pg-mcp",
+          args: ["postgresql://user:hunter2@db.internal/app", "--api-key=sk-1"],
+        },
+        { name: "Remote", url: "https://mcp.example.test/?token=secret" },
+        { name: "Remote", url: "https://duplicate.example.test" },
+        { name: "Multi\nline `name`", command: "x" },
+      ]
     )
 
-    expect(prompt).toContain("- **Remote**: `https://mcp.example.test`")
+    expect(prompt).toContain("- **Database**\n")
+    expect(prompt).toContain("- **Remote**\n")
+    expect(prompt.match(/- \*\*Remote\*\*/g)).toHaveLength(1)
+    expect(prompt).toContain("- **Multi line name**\n")
+    expect(prompt).not.toContain("pg-mcp")
+    expect(prompt).not.toContain("hunter2")
+    expect(prompt).not.toContain("sk-1")
+    expect(prompt).not.toContain("mcp.example.test")
+    expect(prompt).not.toContain("token=secret")
   })
 })

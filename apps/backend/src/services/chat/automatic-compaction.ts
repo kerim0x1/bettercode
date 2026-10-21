@@ -2,6 +2,10 @@ import { type ChatSendBody } from "@betterc0de/schema"
 import { randomUUID } from "node:crypto"
 import type { AppState } from "../../appState"
 import { HttpError } from "../../errors"
+import type { ThreadActivityProjectionQuery } from "../../persistence/projections"
+import type { ProviderSessionBindingStore } from "../../provider/runtime/ProviderSessionBindingStore"
+import type { ThreadTurnCoordinator } from "../../provider/threadTurnCoordinator"
+import type { ThreadService } from "../threads"
 import { logger } from "../../observability/logger"
 import { commitContextCheckpoint } from "./context-checkpoint"
 import {
@@ -122,28 +126,35 @@ interface ServerAutomaticCompaction {
   readonly generation: number
 }
 
+/**
+ * What the compaction preflight reads: the durable transcript, the last
+ * context-window report, and whether a turn owns the thread.
+ */
+export interface AutoCompactionDecisionState {
+  readonly threads: Pick<ThreadService, "listMessages">
+  readonly threadActivities: Pick<
+    ThreadActivityProjectionQuery,
+    "latestByThreadKind"
+  >
+  readonly providerSessionBindings: Pick<ProviderSessionBindingStore, "list">
+  readonly threadTurnCoordinator: Pick<ThreadTurnCoordinator, "activeOwner">
+}
+
 export async function resolveAutoCompactionDecisionForThread(
-  state: AppState,
+  state: AutoCompactionDecisionState,
   input: AutoCompactionDecisionRequest
 ): Promise<{
   readonly decision: AutoCompactionDecision
   readonly messages: ReadonlyArray<unknown>
 }> {
-  // `threads` is always the full durable service in production, but keeping
-  // the preflight tolerant of a partially initialized state preserves
-  // fail-closed startup/test seams: without a durable transcript there is no
-  // eligible history to compact, so the policy cannot invent one.
-  const messages =
-    typeof state.threads?.listMessages === "function"
-      ? state.threads.listMessages(input.threadId, {
-          limit: 2_000,
-        })
-      : []
+  const messages = state.threads.listMessages(input.threadId, {
+    limit: 2_000,
+  })
   const context = autoCompactionContextSnapshot(messages, {
     excludeMessageId: input.excludeMessageId,
   })
   const latestUsage = contextWindowUsageFromActivity(
-    state.threadActivities?.latestByThreadKind?.(
+    state.threadActivities.latestByThreadKind(
       input.threadId,
       "context-window.updated"
     ) ?? null
@@ -169,17 +180,16 @@ export async function resolveAutoCompactionDecisionForThread(
     }
   }
 
-  const activeBinding =
-    state.providerSessionBindings
-      ?.list?.()
-      .some(
-        (binding) =>
-          binding.threadId === input.threadId &&
-          (Boolean(binding.activeTurnId) ||
-            binding.status === "starting" ||
-            binding.status === "running" ||
-            binding.status === "closing")
-      ) ?? false
+  const activeBinding = state.providerSessionBindings
+    .list()
+    .some(
+      (binding) =>
+        binding.threadId === input.threadId &&
+        (Boolean(binding.activeTurnId) ||
+          binding.status === "starting" ||
+          binding.status === "running" ||
+          binding.status === "closing")
+    )
   const coordinatorActive =
     !input.ignoreCoordinatorOwner &&
     Boolean(state.threadTurnCoordinator.activeOwner(input.threadId))
@@ -370,14 +380,11 @@ export function errorType(error: unknown): string {
   return error instanceof Error ? error.name : typeof error
 }
 
-export function autoSaveConversationsEnabled(state: AppState): boolean {
-  const settings = (
-    state as AppState & {
-      readonly settings?: { get?: () => { auto_save_conversations?: boolean } }
-    }
-  ).settings
+export function autoSaveConversationsEnabled(
+  state: Pick<AppState, "settings">
+): boolean {
   try {
-    return settings?.get?.().auto_save_conversations !== false
+    return state.settings.get().auto_save_conversations !== false
   } catch (error) {
     logger.warn(
       { err: error },

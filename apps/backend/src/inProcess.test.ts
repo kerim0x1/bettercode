@@ -26,8 +26,9 @@ import {
 } from "./provider/agent-permission-runtime"
 import {
   captureCheckpoint,
+  GitProcessService,
   hasCheckpointRef,
-  resumeGitProcessAdmissions,
+  setDefaultGitProcessService,
 } from "./services/git"
 import {
   __observeStartupCleanupForTests,
@@ -96,12 +97,18 @@ const EXPECTED_STARTUP_CLEANUP_ORDER = [
   "provider runtime ingestion",
   "checkpoint reactor",
   "thread goals",
+  "thread autonomy",
+  "chat resume",
   "checkpoint ref cleanup scheduler",
   "thread retention scheduler",
   "tool output archive stores",
   "transcript recovery timer",
   "provider session reaper",
   "vacuum timer",
+  "pull request watcher",
+  // Unwound before the timers above, so no scheduled run starts during an
+  // unwind.
+  "automations",
 ]
 
 const TRACKED_HANDLE_TYPES = [
@@ -376,7 +383,8 @@ describe("startNodeBackend", () => {
     const threadId = "thread-large-checkpoint"
     const baseCheckpointRef = checkpointRefForThreadTurn(threadId, 0)
     const checkpointRef = checkpointRefForThreadTurn(threadId, 1)
-    resumeGitProcessAdmissions()
+    // Git outside a backend: the previous test's backend closed its own.
+    setDefaultGitProcessService(new GitProcessService())
     await captureCheckpoint({ cwd, checkpointRef: baseCheckpointRef })
     // Between the journal's 1 MiB limit and Git's 2 MiB output limit.
     const content = `${"x".repeat(128)}\n`.repeat(10_000)

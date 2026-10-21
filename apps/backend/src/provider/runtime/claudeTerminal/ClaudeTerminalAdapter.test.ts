@@ -2,7 +2,11 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { ClaudeTerminalAdapter, delayWithSignal } from "./ClaudeTerminalAdapter"
+import {
+  ClaudeTerminalAdapter,
+  claudeProjectDirectoryName,
+  delayWithSignal,
+} from "./ClaudeTerminalAdapter"
 import type { ProviderRuntimeEvent, ThreadId } from "../contracts"
 import type { NativePtyHandle } from "./NativePty"
 import * as nativePty from "./NativePty"
@@ -39,7 +43,9 @@ function makeFakeClaudeBinary(logPath: string): string {
       "const sessionId = readArg('--resume') || readArg('--session-id') || '00000000-0000-4000-8000-000000000000'",
       "const cwd = process.cwd()",
       "const home = process.env.HOME || process.env.USERPROFILE || process.cwd()",
-      "const projectDir = path.join(home, '.claude', 'projects', path.resolve(cwd).replace(/[/.]/g, '-'))",
+      // Claude Code's own project-directory naming: every non-alphanumeric
+      // character becomes "-".
+      "const projectDir = path.join(home, '.claude', 'projects', path.resolve(cwd).replace(/[^a-zA-Z0-9]/g, '-'))",
       "fs.mkdirSync(projectDir, { recursive: true })",
       "const sessionPath = path.join(projectDir, `${sessionId}.jsonl`)",
       "const lines = [",
@@ -64,7 +70,9 @@ function writeClaudeSessionFile(input: {
     input.homePath,
     ".claude",
     "projects",
-    fs.realpathSync.native(path.resolve(input.cwd)).replace(/[/.]/g, "-")
+    fs.realpathSync
+      .native(path.resolve(input.cwd))
+      .replace(/[^a-zA-Z0-9]/g, "-")
   )
   fs.mkdirSync(projectDir, { recursive: true })
   fs.writeFileSync(
@@ -734,3 +742,71 @@ describe.skipIf(process.platform === "win32")("ClaudeTerminalAdapter", () => {
     expect(args).not.toContain("--dangerously-skip-permissions")
   })
 })
+
+describe("Claude Code project directory naming", () => {
+  it("replaces every non-alphanumeric character like the CLI does", () => {
+    expect(
+      claudeProjectDirectoryName("C:\\Users\\me\\.betterc0de-dev-userdata")
+    ).toBe("C--Users-me--betterc0de-dev-userdata")
+    expect(claudeProjectDirectoryName("/home/me/my_repo v2")).toBe(
+      "-home-me-my-repo-v2"
+    )
+  })
+
+  it("cuts long names and appends the CLI's base-36 string hash", () => {
+    const longPath = `/work/${"a".repeat(240)}`
+    const name = claudeProjectDirectoryName(longPath)
+    let hash = 0
+    for (let index = 0; index < longPath.length; index += 1) {
+      hash = ((hash << 5) - hash + longPath.charCodeAt(index)) | 0
+    }
+    expect(name).toBe(
+      `${longPath.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 200)}-${Math.abs(
+        hash
+      ).toString(36)}`
+    )
+  })
+})
+
+describe.skipIf(process.platform === "win32")(
+  "ClaudeTerminalAdapter permission levels and prompt delivery",
+  () => {
+    it("treats full-access as allow-edits and never skips Claude's permission prompts", async () => {
+      const cwd = makeTempDir("betterc0de-claude-terminal-full-repo-")
+      const homePath = makeTempDir("betterc0de-claude-terminal-full-home-")
+      fs.mkdirSync(path.join(homePath, ".claude"), { recursive: true })
+      fs.writeFileSync(
+        path.join(homePath, ".claude", "credentials.json"),
+        "{}\n"
+      )
+      const logPath = path.join(
+        makeTempDir("betterc0de-claude-terminal-full-log-"),
+        "args.jsonl"
+      )
+      const adapter = new ClaudeTerminalAdapter({
+        binaryPath: makeFakeClaudeBinary(logPath),
+        homePath,
+      })
+
+      await adapter.sendTurn({
+        threadId: "thread-full-access",
+        message: "- edit the readme",
+        modelId: "claude-opus-4-7",
+        projectPath: cwd,
+        history: [],
+        permissionLevel: "full-access",
+      })
+
+      const args = JSON.parse(
+        fs.readFileSync(logPath, "utf8").trim()
+      ) as string[]
+      expect(args).not.toContain("--dangerously-skip-permissions")
+      const tools = (args[args.indexOf("--tools") + 1] ?? "").split(",")
+      expect(tools).toContain("Edit")
+      expect(tools).not.toContain("Bash")
+      // The prompt follows `--`, so a leading "-" is not read as an option.
+      expect(args.at(-2)).toBe("--")
+      expect(args.at(-1)).toBe("- edit the readme")
+    })
+  }
+)

@@ -35,7 +35,7 @@ import {
   type WorkspaceMapFile,
   type WorkspaceMapFileKind,
   type WorkspaceMapOverview,
-} from "@/services/backend"
+} from "@/services/backend/workspaceApi"
 
 import "./editor-code-map-view.css"
 

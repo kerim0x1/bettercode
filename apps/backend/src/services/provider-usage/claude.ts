@@ -2,7 +2,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { detectCliAsync, isClaudeCliAuthenticatedAsync } from "../../cli/detect"
-import { scanWithCache } from "./cache"
+import { scanAppendOnlyWithCache, type AppendScan } from "./cache"
 import { commandOutput, runCommand } from "./command"
 import {
   forEachLine,
@@ -25,6 +25,7 @@ import {
 import {
   PriceBook,
   priceModels,
+  dayCost,
   tokenTotal,
   type PricedTokens,
 } from "./pricing"
@@ -108,8 +109,15 @@ function bump(
   target[key] = (target[key] ?? 0) + by
 }
 
-async function scanTranscript(file: string): Promise<ClaudeFileAggregate> {
-  const aggregate: ClaudeFileAggregate = {
+/**
+ * Adds a transcript's assistant messages to an aggregate, from the start or,
+ * for a transcript that only grew, from where the last scan stopped.
+ */
+async function scanTranscript(
+  file: string,
+  from: AppendScan<ClaudeFileAggregate> | null
+): Promise<AppendScan<ClaudeFileAggregate> | null> {
+  const aggregate: ClaudeFileAggregate = from?.value ?? {
     days: {},
     dayModels: {},
     efforts: {},
@@ -119,82 +127,90 @@ async function scanTranscript(file: string): Promise<ClaudeFileAggregate> {
     sessions: {},
     messages: 0,
   }
-  const lastSeen = new Map<string, number>()
-  await forEachLine(file, (line) => {
-    // Cheap reject first: assistant rows are the only ones carrying usage.
-    if (line.length < 40 || line.indexOf('"type":"assistant"') < 0) return
-    const row = parseJson(line)
-    if (!row || row.type !== "assistant") return
-    const message = record(row.message)
-    if (!message) return
-    const usage = record(message.usage)
-    if (!usage) return
-    const input = numberValue(usage.input_tokens)
-    const output = numberValue(usage.output_tokens)
-    const cacheRead = numberValue(usage.cache_read_input_tokens)
-    const cacheWrite = numberValue(usage.cache_creation_input_tokens)
-    // Writes are billed per TTL: 1.25x for five minutes, 2x for an hour.
-    const creation = record(usage.cache_creation)
-    const write1h = numberValue(creation?.ephemeral_1h_input_tokens)
-    const write5m = creation
-      ? numberValue(creation.ephemeral_5m_input_tokens)
-      : cacheWrite
-    const reasoning = numberValue(
-      record(usage.output_tokens_details)?.thinking_tokens
-    )
-    const total = input + output + cacheRead + cacheWrite
-    aggregate.messages += 1
+  // Transcripts are chronological, so a resumed scan measures each session's
+  // next gap from its latest message.
+  const lastSeen = new Map<string, number>(
+    Object.entries(aggregate.sessions).map(([id, session]) => [id, session[1]])
+  )
+  const offset = await forEachLine(
+    file,
+    (line) => {
+      // Cheap reject first: assistant rows are the only ones carrying usage.
+      if (line.length < 40 || line.indexOf('"type":"assistant"') < 0) return
+      const row = parseJson(line)
+      if (!row || row.type !== "assistant") return
+      const message = record(row.message)
+      if (!message) return
+      const usage = record(message.usage)
+      if (!usage) return
+      const input = numberValue(usage.input_tokens)
+      const output = numberValue(usage.output_tokens)
+      const cacheRead = numberValue(usage.cache_read_input_tokens)
+      const cacheWrite = numberValue(usage.cache_creation_input_tokens)
+      // Writes are billed per TTL: 1.25x for five minutes, 2x for an hour.
+      const creation = record(usage.cache_creation)
+      const write1h = numberValue(creation?.ephemeral_1h_input_tokens)
+      const write5m = creation
+        ? numberValue(creation.ephemeral_5m_input_tokens)
+        : cacheWrite
+      const reasoning = numberValue(
+        record(usage.output_tokens_details)?.thinking_tokens
+      )
+      const total = input + output + cacheRead + cacheWrite
+      aggregate.messages += 1
 
-    const timestamp = stringValue(row.timestamp)
-    const stamp = timestamp ? Date.parse(timestamp) : Number.NaN
-    const model = stringValue(message.model)
-    if (Number.isFinite(stamp)) {
-      const day = localDay(stamp)
-      const bucket = aggregate.days[day] ?? [0, 0, 0, 0, 0, 0, 0]
-      bucket[0] += total
-      bucket[1] += 1
-      bucket[2] += input
-      bucket[3] += output
-      bucket[4] += reasoning
-      bucket[5] += cacheRead
-      bucket[6] += cacheWrite
-      aggregate.days[day] = bucket
-      if (model && model !== "<synthetic>") {
-        const byModel = aggregate.dayModels[day] ?? {}
-        const entry = byModel[model] ?? [0, 0, 0, 0, 0]
-        entry[0] += input
-        entry[1] += output
-        entry[2] += cacheRead
-        entry[3] += write5m
-        entry[4] += write1h
-        byModel[model] = entry
-        aggregate.dayModels[day] = byModel
+      const timestamp = stringValue(row.timestamp)
+      const stamp = timestamp ? Date.parse(timestamp) : Number.NaN
+      const model = stringValue(message.model)
+      if (Number.isFinite(stamp)) {
+        const day = localDay(stamp)
+        const bucket = aggregate.days[day] ?? [0, 0, 0, 0, 0, 0, 0]
+        bucket[0] += total
+        bucket[1] += 1
+        bucket[2] += input
+        bucket[3] += output
+        bucket[4] += reasoning
+        bucket[5] += cacheRead
+        bucket[6] += cacheWrite
+        aggregate.days[day] = bucket
+        if (model && model !== "<synthetic>") {
+          const byModel = aggregate.dayModels[day] ?? {}
+          const entry = byModel[model] ?? [0, 0, 0, 0, 0]
+          entry[0] += input
+          entry[1] += output
+          entry[2] += cacheRead
+          entry[3] += write5m
+          entry[4] += write1h
+          byModel[model] = entry
+          aggregate.dayModels[day] = byModel
+        }
       }
-    }
 
-    bump(aggregate.efforts, stringValue(row.effort))
-    bump(aggregate.speeds, stringValue(usage.speed))
-    bump(aggregate.skills, stringValue(row.attributionSkill))
-    bump(aggregate.plugins, stringValue(row.attributionPlugin))
+      bump(aggregate.efforts, stringValue(row.effort))
+      bump(aggregate.speeds, stringValue(usage.speed))
+      bump(aggregate.skills, stringValue(row.attributionSkill))
+      bump(aggregate.plugins, stringValue(row.attributionPlugin))
 
-    const sessionId = stringValue(row.sessionId)
-    if (sessionId && Number.isFinite(stamp)) {
-      const session = aggregate.sessions[sessionId] ?? [stamp, stamp, 0, 0]
-      if (stamp < session[0]) session[0] = stamp
-      if (stamp > session[1]) session[1] = stamp
-      session[2] += 1
-      // Active time, not wall clock: a chat resumed a week later would
-      // otherwise report the week as its length.
-      const previous = lastSeen.get(sessionId)
-      if (previous !== undefined) {
-        const gap = stamp - previous
-        if (gap > 0 && gap <= SESSION_IDLE_GAP_MS) session[3] += gap
+      const sessionId = stringValue(row.sessionId)
+      if (sessionId && Number.isFinite(stamp)) {
+        const session = aggregate.sessions[sessionId] ?? [stamp, stamp, 0, 0]
+        if (stamp < session[0]) session[0] = stamp
+        if (stamp > session[1]) session[1] = stamp
+        session[2] += 1
+        // Active time, not wall clock: a chat resumed a week later would
+        // otherwise report the week as its length.
+        const previous = lastSeen.get(sessionId)
+        if (previous !== undefined) {
+          const gap = stamp - previous
+          if (gap > 0 && gap <= SESSION_IDLE_GAP_MS) session[3] += gap
+        }
+        lastSeen.set(sessionId, stamp)
+        aggregate.sessions[sessionId] = session
       }
-      lastSeen.set(sessionId, stamp)
-      aggregate.sessions[sessionId] = session
-    }
-  })
-  return aggregate
+    },
+    { from: from?.offset ?? 0, completeLinesOnly: true }
+  )
+  return offset === null ? null : { value: aggregate, offset }
 }
 
 function readStatsCache(home: string): ClaudeStatsCache | null {
@@ -413,11 +429,11 @@ export async function collectClaudeUsage(options: {
     authType: "cli",
   })
   const files = await listJsonlFiles(path.join(home, "projects"))
-  const scan = await scanWithCache<ClaudeFileAggregate>({
+  const scan = await scanAppendOnlyWithCache<ClaudeFileAggregate>({
     dataDir: options.dataDir,
     scope: "claude",
     files,
-    compute: scanTranscript,
+    scan: scanTranscript,
   })
 
   const daily = new Map<string, DayBucket>()
@@ -583,6 +599,28 @@ export async function collectClaudeUsage(options: {
   }
 
   const priceBook = new PriceBook(options.dataDir)
+  // A day's cost where the transcripts split its tokens by model. Days only
+  // the stats cache remembers carry one total per model, which can't be
+  // priced, so they stay without a cost instead of a guess.
+  for (const [date, byModel] of transcriptDayModels) {
+    const cost = dayCost(
+      priceBook,
+      Object.entries(byModel).map(
+        ([model, entry]) =>
+          [
+            model,
+            {
+              input: entry[0],
+              output: entry[1],
+              cacheRead: entry[2],
+              cacheWrite5m: entry[3],
+              cacheWrite1h: entry[4],
+            },
+          ] as const
+      )
+    )
+    if (cost !== null) addDay(daily, date, { cost })
+  }
   const priceNotes: string[] = []
   if (stats && observed1h > 0) {
     priceNotes.push(
@@ -701,7 +739,7 @@ export async function collectClaudeUsage(options: {
     if (report.at > 0) limitsObservedAt = new Date(report.at).toISOString()
   }
 
-  const modelEntries: UsageEntry[] = topEntries(models, 8).map((entry) => ({
+  const modelEntries: UsageEntry[] = topEntries(models, 20).map((entry) => ({
     ...entry,
     label: entry.id,
     ...(costByModel.has(entry.id) ? { cost: costByModel.get(entry.id) } : {}),

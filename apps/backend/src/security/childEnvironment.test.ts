@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   isSafeShellEnvironmentOverrideKey,
+  restrictedChildEnvironment,
   sanitizedChildEnvironment,
   sanitizedShellEnvironment,
 } from "./childEnvironment"
@@ -121,5 +122,132 @@ describe("sanitizedChildEnvironment", () => {
     expect(env.PATH).toBe(process.env.PATH)
     expect(env.NODE_OPTIONS).toBeUndefined()
     expect(env.FEATURE_FLAG).toBe("on")
+  })
+})
+
+describe("provider and agent CLI environment", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it("inherits the user's non-secret environment the agent's tools need", () => {
+    vi.stubEnv("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock")
+    vi.stubEnv("JAVA_HOME", "/opt/jdk")
+    vi.stubEnv("GOPATH", "/home/me/go")
+    vi.stubEnv("AWS_PROFILE", "dev")
+    vi.stubEnv("CLAUDE_CODE_USE_BEDROCK", "1")
+    vi.stubEnv("GIT_AUTHOR_NAME", "Me")
+
+    const env = sanitizedChildEnvironment()
+    expect(env).toMatchObject({
+      SSH_AUTH_SOCK: "/tmp/ssh-agent.sock",
+      JAVA_HOME: "/opt/jdk",
+      GOPATH: "/home/me/go",
+      AWS_PROFILE: "dev",
+      CLAUDE_CODE_USE_BEDROCK: "1",
+      GIT_AUTHOR_NAME: "Me",
+    })
+  })
+
+  it("withholds credentials, internal variables and launcher artefacts", () => {
+    vi.stubEnv("AWS_SECRET_ACCESS_KEY", "aws-secret")
+    vi.stubEnv("AWS_SESSION_TOKEN", "aws-session")
+    vi.stubEnv("DATABASE_PASSWORD", "db")
+    vi.stubEnv("MYSERVICEPASSWORD", "db")
+    vi.stubEnv("GH_TOKEN", "gh")
+    vi.stubEnv("BETTERC0DE_INTERNAL_AUTH", "internal")
+    vi.stubEnv("ELECTRON_NO_ATTACH_CONSOLE", "1")
+    vi.stubEnv("npm_config_prefix", "/tmp/npm")
+    vi.stubEnv("NODE_ENV", "production")
+    vi.stubEnv("CLAUDECODE", "1")
+
+    const env = sanitizedChildEnvironment({ OPENAI_API_KEY: "instance" })
+    for (const key of [
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_SESSION_TOKEN",
+      "DATABASE_PASSWORD",
+      "MYSERVICEPASSWORD",
+      "GH_TOKEN",
+      "BETTERC0DE_INTERNAL_AUTH",
+      "ELECTRON_NO_ATTACH_CONSOLE",
+      "npm_config_prefix",
+      "NODE_ENV",
+      "CLAUDECODE",
+    ]) {
+      expect(env, key).not.toHaveProperty(key)
+    }
+    expect(env.OPENAI_API_KEY).toBe("instance")
+  })
+
+  it.runIf(process.platform === "win32")(
+    "keeps cmd.exe from searching the workspace for provider launches",
+    () => {
+      expect(
+        sanitizedChildEnvironment().NoDefaultCurrentDirectoryInExePath
+      ).toBe("1")
+      expect(
+        restrictedChildEnvironment().NoDefaultCurrentDirectoryInExePath
+      ).toBe("1")
+      expect(sanitizedShellEnvironment()).not.toHaveProperty(
+        "NoDefaultCurrentDirectoryInExePath"
+      )
+    }
+  )
+})
+
+describe("backend helper environment", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it("is an allowlist: unrelated variables such as GIT_DIR never reach git", () => {
+    vi.stubEnv("GIT_DIR", "/elsewhere/.git")
+    vi.stubEnv("JAVA_HOME", "/opt/jdk")
+    vi.stubEnv("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock")
+    const env = restrictedChildEnvironment()
+    expect(env).not.toHaveProperty("GIT_DIR")
+    expect(env).not.toHaveProperty("JAVA_HOME")
+    expect(env.SSH_AUTH_SOCK).toBe("/tmp/ssh-agent.sock")
+  })
+})
+
+describe("shell environment", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it("keeps the SSH agent, session bus and Windows system variables", () => {
+    vi.stubEnv("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock")
+    vi.stubEnv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
+    vi.stubEnv("XDG_RUNTIME_DIR", "/run/user/1000")
+    vi.stubEnv("NUMBER_OF_PROCESSORS", "8")
+    vi.stubEnv("PROGRAMDATA", "C:\\ProgramData")
+    const env = sanitizedShellEnvironment()
+    expect(env.SSH_AUTH_SOCK).toBe("/tmp/ssh-agent.sock")
+    expect(env.DBUS_SESSION_BUS_ADDRESS).toBe("unix:path=/run/user/1000/bus")
+    expect(env.XDG_RUNTIME_DIR).toBe("/run/user/1000")
+    expect(env.NUMBER_OF_PROCESSORS).toBe("8")
+    expect(env.PROGRAMDATA).toBe("C:\\ProgramData")
+  })
+
+  it("refuses overrides that make a shell run other code at startup or trace time", () => {
+    for (const key of [
+      "ZDOTDIR",
+      "SHELLOPTS",
+      "BASHOPTS",
+      "PS4",
+      "PROMPT_COMMAND",
+      "BASH_XTRACEFD",
+      "EDITOR",
+      "PAGER",
+      "JAVA_TOOL_OPTIONS",
+      "GIT_ASKPASS",
+      "CDPATH",
+    ]) {
+      expect(isSafeShellEnvironmentOverrideKey(key), key).toBe(false)
+    }
+    expect(isSafeShellEnvironmentOverrideKey("BETTERC0DE_HOOK_EVENT")).toBe(
+      true
+    )
   })
 })

@@ -8,8 +8,10 @@ import { logger } from "../observability/logger"
 /**
  * One-shot migration from any pre-BetterC0de-layout data directories into the
  * current `~/.betterc0de[-dev]/userdata/` location chosen by `defaultDataDir`
- * / `resolveBetterC0deUserDataDir` (see `node-backend/src/config.ts` and
- * `electron/main.cjs`).
+ * (apps/backend/src/config.ts) or by the desktop's `resolveUserDataDir`
+ * (apps/shell/shared/runtime-paths.cjs). The desktop adopts a legacy
+ * installation's settings key first, with the same candidate list
+ * (apps/shell/shared/legacy-data.cjs).
  *
  * Legacy locations probed, newest-first (first match with real data wins):
  *   1. `~/.betterc0de/betterc0de.db`              — super-legacy flat layout

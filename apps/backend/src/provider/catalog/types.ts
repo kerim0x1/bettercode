@@ -27,7 +27,6 @@ export type KeySource =
   | { kind: "settings" }
   | { kind: "environment" }
   | { kind: "cliConfig"; cli: string }
-  | { kind: "oauth" }
 
 export interface ResolvedApiKey {
   key: string

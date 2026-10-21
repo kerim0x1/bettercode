@@ -1,28 +1,42 @@
 # Direct dependency license inventory
 
-Generated from the installed package manifests for the repository lockfile on 2026-09-21. This covers direct workspace dependencies, not the complete transitive graph. License metadata is an inventory, not a substitute for the packages' license texts. Recheck when updating dependencies. See [third-party notices](../../THIRD_PARTY_NOTICES.md).
+Generated from the installed package manifests for the repository lockfile on 2026-10-07. This covers direct workspace dependencies, not the complete transitive graph. License metadata is an inventory, not a substitute for the packages' license texts. Recheck when updating dependencies. See [third-party notices](../../THIRD_PARTY_NOTICES.md).
 
 | Package | Installed version | Declared license |
 | --- | --- | --- |
 | @anthropic-ai/claude-agent-sdk | 0.2.141 | SEE LICENSE IN README.md |
 | @anthropic-ai/sdk | 0.105.0 | MIT |
+| @codemirror/autocomplete | 6.20.3 | MIT |
+| @codemirror/commands | 6.11.1 | MIT |
+| @codemirror/lang-css | 6.3.1 | MIT |
+| @codemirror/lang-html | 6.4.12 | MIT |
+| @codemirror/lang-javascript | 6.2.5 | MIT |
+| @codemirror/lang-json | 6.0.2 | MIT |
+| @codemirror/lang-markdown | 6.5.2 | MIT |
+| @codemirror/lang-python | 6.2.1 | MIT |
+| @codemirror/lang-yaml | 6.1.3 | MIT |
+| @codemirror/language | 6.12.4 | MIT |
+| @codemirror/search | 6.7.2 | MIT |
+| @codemirror/state | 6.7.6 | MIT |
+| @codemirror/view | 6.43.13 | MIT |
+| @electron/fuses | 1.8.0 | MIT |
 | @electron/notarize | 3.1.1 | MIT |
 | @electron/rebuild | 4.0.4 | MIT |
 | @eslint/js | 9.39.4 | MIT |
 | @expo-google-fonts/figtree | 0.4.1 | MIT AND OFL-1.1 |
 | @expo/metro-runtime | 56.0.17 | MIT |
-| @floating-ui/dom | 1.8.0 | MIT |
 | @fontsource-variable/figtree | 5.2.10 | OFL-1.1 |
 | @hono/node-server | 1.19.17 | MIT |
 | @hugeicons/core-free-icons | 4.1.2 | MIT |
 | @hugeicons/react | 1.1.6 | MIT |
+| @lezer/highlight | 1.2.4 | MIT |
 | @modelcontextprotocol/sdk | 1.29.0 | MIT |
 | @monaco-editor/react | 4.7.0 | MIT |
 | @radix-ui/react-use-controllable-state | 1.2.2 | MIT |
+| @react-native/jest-preset | 0.85.3 | MIT |
 | @remotion/cli | 4.0.496 | SEE LICENSE IN LICENSE.md |
 | @remotion/media-utils | 4.0.496 | MIT |
 | @remotion/player | 4.0.496 | SEE LICENSE IN LICENSE.md |
-| @shikijs/transformers | 4.0.2 | MIT |
 | @streamdown/cjk | 1.0.3 | Apache-2.0 |
 | @streamdown/code | 1.1.1 | Apache-2.0 |
 | @streamdown/math | 1.0.2 | Apache-2.0 |
@@ -30,9 +44,9 @@ Generated from the installed package manifests for the repository lockfile on 20
 | @tailwindcss/postcss | 4.2.4 | MIT |
 | @tailwindcss/vite | 4.2.4 | MIT |
 | @tanstack/react-virtual | 3.13.24 | MIT |
+| @testing-library/react-native | 14.0.1 | MIT |
 | @types/better-sqlite3 | 7.6.13 | MIT |
 | @types/color | 4.2.1 | MIT |
-| @types/dompurify | 3.0.5 | MIT |
 | @types/node | 24.12.3 | MIT |
 | @types/react | 19.2.14 | MIT |
 | @types/react-dom | 19.2.3 | MIT |
@@ -51,9 +65,10 @@ Generated from the installed package manifests for the repository lockfile on 20
 | css-loader | 7.1.4 | MIT |
 | dompurify | 3.4.15 | (MPL-2.0 OR Apache-2.0) |
 | electron | 41.5.0 | MIT |
-| electron-builder | 26.8.1 | MIT |
+| electron-builder | 26.15.3 | MIT |
 | electron-updater | 6.8.9 | MIT |
 | embla-carousel-react | 8.6.0 | MIT |
+| esbuild | 0.28.1 | MIT |
 | eslint | 9.39.4 | MIT |
 | eslint-plugin-react-hooks | 7.1.1 | MIT |
 | eslint-plugin-react-refresh | 0.5.2 | MIT |
@@ -62,18 +77,24 @@ Generated from the installed package manifests for the repository lockfile on 20
 | expo-camera | 56.0.8 | MIT |
 | expo-constants | 56.0.21 | MIT |
 | expo-dev-client | 56.0.26 | MIT |
+| expo-device | 56.0.4 | MIT |
+| expo-file-system | 56.0.8 | MIT |
 | expo-font | 56.0.7 | MIT |
 | expo-haptics | 56.0.3 | MIT |
+| expo-image-manipulator | 56.0.26 | MIT |
+| expo-image-picker | 56.0.25 | MIT |
 | expo-linking | 56.0.15 | MIT |
 | expo-router | 56.2.15 | MIT |
 | expo-secure-store | 56.0.4 | MIT |
+| expo-splash-screen | 56.0.15 | MIT |
 | expo-status-bar | 56.0.4 | MIT |
-| fast-glob | 3.3.3 | MIT |
-| fuse.js | 7.3.0 | Apache-2.0 |
+| expo-system-ui | 56.0.5 | MIT |
 | globals | 16.5.0 | MIT |
 | hono | 4.13.8 | MIT |
+| husky | 9.1.7 | MIT |
 | ignore | 7.0.5 | MIT |
-| lowlight | 3.3.0 | MIT |
+| jest | 29.7.0 | MIT |
+| jest-expo | 56.0.5 | MIT |
 | lucide-react | 1.14.0 | ISC |
 | lucide-react-native | 1.25.0 | ISC |
 | material-icon-theme | 5.38.1 | MIT |
@@ -92,7 +113,6 @@ Generated from the installed package manifests for the repository lockfile on 20
 | radix-ui | 1.4.3 | MIT |
 | react | 19.2.3 | MIT |
 | react-dom | 19.2.3 | MIT |
-| react-dropzone | 15.0.0 | MIT |
 | react-native | 0.85.3 | MIT |
 | react-native-gesture-handler | 2.31.2 | MIT |
 | react-native-reanimated | 4.3.1 | MIT |
@@ -100,7 +120,9 @@ Generated from the installed package manifests for the repository lockfile on 20
 | react-native-screens | 4.25.2 | MIT |
 | react-native-svg | 15.15.4 | MIT |
 | react-native-web | 0.21.2 | MIT |
+| react-native-webview | 13.16.1 | MIT |
 | react-native-worklets | 0.8.3 | MIT |
+| recharts | 3.10.1 | MIT |
 | remotion | 4.0.496 | SEE LICENSE IN LICENSE.md |
 | shadcn | 4.7.0 | MIT |
 | shiki | 4.0.2 | MIT |
@@ -108,10 +130,8 @@ Generated from the installed package manifests for the repository lockfile on 20
 | streamdown | 2.5.0 | Apache-2.0 |
 | tailwind-merge | 3.5.0 | MIT |
 | tailwindcss | 4.2.4 | MIT |
-| tar | 7.5.22 | BlueOak-1.0.0 |
+| test-renderer | 1.2.0 | MIT |
 | thinking-orbs | 0.3.1 | MIT |
-| tippy.js | 6.3.7 | MIT |
-| tokenlens | 1.3.1 | MIT |
 | tw-animate-css | 1.4.0 | MIT |
 | typescript | 5.9.3 | Apache-2.0 |
 | typescript | 6.0.3 | Apache-2.0 |
@@ -119,7 +139,7 @@ Generated from the installed package manifests for the repository lockfile on 20
 | use-stick-to-bottom | 1.1.4 | MIT |
 | vite | 7.3.5 | MIT |
 | vitest | 4.1.5 | MIT |
-| wait-on | 8.0.5 | MIT |
 | ws | 8.21.0 | MIT |
+| yaml | 2.9.0 | ISC |
 | zod | 4.3.6 | MIT |
 | zustand | 5.0.13 | MIT |

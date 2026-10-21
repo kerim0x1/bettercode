@@ -1,0 +1,1149 @@
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
+import {
+  ExternalLinkIcon,
+  GitBranchIcon,
+  GitPullRequestCreateIcon,
+  Loader2Icon,
+  SparklesIcon,
+  TriangleAlertIcon,
+} from "lucide-react"
+import type { GitStatus } from "@betterc0de/schema"
+import type {
+  GitHubBranchComparison,
+  GitHubPullRequestCreateResult,
+  GitHubRepositoryInfo,
+} from "@betterc0de/schema/http-contracts"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
+import { PullRequestWakeSwitch } from "@/components/pull-requests/pull-request-wake-switch"
+import { PullRequestStateIcon } from "@/components/pull-requests/pull-request-status"
+import { useChatStore } from "@/lib/chat-store"
+import { generateWorkspaceCommitMessage } from "@/lib/git-commit-message"
+import {
+  baseBranchOptions,
+  cleanBranchName,
+  createPullRequestBlocker,
+  fallbackPullRequestTitle,
+  githubSetupHint,
+  pullRequestErrorMessage,
+  pushPlan,
+  type CreatePullRequestBlocker,
+} from "@/lib/pull-request-create"
+import { openPullRequestsPage } from "@/lib/pull-requests-page"
+import { openSourceReference } from "@/lib/source-opener"
+import {
+  pullRequestForBranch,
+  pullRequestState,
+  refreshPullRequests,
+} from "@/lib/thread-pull-request"
+import {
+  generateBranchName,
+  generatePrContent,
+} from "@/services/backend/chatApi"
+import {
+  gitCheckoutBranch,
+  gitCommit,
+  gitListBranches,
+  gitListPullRequests,
+  gitPush,
+  gitStageAll,
+  gitStatus,
+  type GitPullRequest,
+} from "@/services/backend/gitApi"
+import {
+  githubCompareBranch,
+  githubCreatePullRequest,
+  githubRepository,
+} from "@/services/backend/github-api"
+
+const FIELD_LABEL = "text-xs font-medium text-muted-foreground"
+const GH_CLI_URL = "https://cli.github.com"
+
+interface RepositoryContext {
+  repository: GitHubRepositoryInfo
+  status: GitStatus
+  branches: string[]
+  existing: GitPullRequest | null
+}
+
+function changeCount(status: GitStatus): number {
+  return status.staged.length + status.modified.length + status.untracked.length
+}
+
+function samePath(left: string | null | undefined, right: string): boolean {
+  const normalize = (value: string) =>
+    value.replace(/[\\/]+$/, "").toLowerCase()
+  return Boolean(left) && normalize(left!) === normalize(right)
+}
+
+export interface CreatePullRequestDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  cwd: string
+  /** The chat the pull request belongs to. */
+  threadId?: string | null
+  /** Commit the working tree first, then push and create. */
+  commitFirst?: boolean
+  /** Starting commit message (the Git panel's commit box). */
+  commitMessage?: string
+  /** The working tree was committed (the caller clears its draft). */
+  onCommitted?: () => void
+}
+
+/**
+ * Creates a pull request for the checked-out branch of `cwd`: title and
+ * description written from the branch's commits and diff (editable), the
+ * base branch (the repository's default first) and a draft switch. On
+ * submit it commits first when asked ("Commit, push & create PR"), publishes
+ * or pushes the branch, then opens the pull request through `gh`.
+ *
+ * What stops it gets its own panel instead of the form: GitHub CLI missing
+ * or signed out, no GitHub remote, the default branch checked out (with a
+ * generated branch name to create), or a pull request that already exists.
+ * The new pull request is linked to the chat by its branch, and the
+ * sidebar's pull request lists refresh at once.
+ */
+export function CreatePullRequestDialog({
+  open,
+  onOpenChange,
+  cwd,
+  threadId,
+  commitFirst = false,
+  commitMessage,
+  onCommitted,
+}: CreatePullRequestDialogProps) {
+  const requestRef = useRef(0)
+  const { loading, context, setContext, loadError, load } =
+    useRepositoryContext(cwd, requestRef)
+  const [title, setTitle] = useState("")
+  const [body, setBody] = useState("")
+  const [base, setBase] = useState("")
+  const [draft, setDraft] = useState(false)
+  const [commitMsg, setCommitMsg] = useState("")
+  const [generatingContent, setGeneratingContent] = useState(false)
+  const [generatingCommit, setGeneratingCommit] = useState(false)
+  const [generationNote, setGenerationNote] = useState<string | null>(null)
+  const [step, setStep] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<GitHubPullRequestCreateResult | null>(
+    null
+  )
+  const autoGeneratedRef = useRef(false)
+  // Read when the dialog opens; a later change of the caller's draft must
+  // not reset an open dialog.
+  const commitMessageRef = useRef(commitMessage)
+  commitMessageRef.current = commitMessage
+
+  const blocker = useMemo<CreatePullRequestBlocker | null>(
+    () =>
+      context
+        ? createPullRequestBlocker({
+            repository: context.repository,
+            branch: context.status.branch,
+            existing: context.existing,
+          })
+        : null,
+    [context]
+  )
+  const needsCommit =
+    commitFirst && context !== null && changeCount(context.status) > 0
+  const working = step !== null
+
+  // The base starts at the repository's default branch.
+  useEffect(() => {
+    if (!context) return
+    setBase(
+      (current) =>
+        current ||
+        context.repository.defaultBranch ||
+        baseBranchOptions(null, context.branches, context.status.branch)[0] ||
+        "main"
+    )
+  }, [context])
+
+  useEffect(() => {
+    if (!open) return
+    autoGeneratedRef.current = false
+    setContext(null)
+    setTitle("")
+    setBody("")
+    setBase("")
+    setDraft(false)
+    setCommitMsg(commitMessageRef.current ?? "")
+    setGenerationNote(null)
+    setError(null)
+    setResult(null)
+    setStep(null)
+    void load()
+    return () => {
+      // Answers that arrive after closing belong to nobody.
+      requestRef.current += 1
+    }
+  }, [open, load, setContext])
+
+  const generateContent = useCallback(
+    async (overwrite: boolean) => {
+      if (!context || !base) return
+      const request = requestRef.current
+      setGeneratingContent(true)
+      setGenerationNote(null)
+      let comparison: GitHubBranchComparison | null = null
+      try {
+        comparison = await githubCompareBranch({
+          cwd,
+          base,
+          includeWorkingTree: needsCommit,
+        })
+        const content = await generatePrContent({
+          cwd,
+          baseBranch: base,
+          headBranch: context.status.branch,
+          commitSummary: comparison.commits,
+          diffSummary: comparison.diffStat,
+          diffPatch: comparison.patch,
+        })
+        if (request !== requestRef.current) return
+        setTitle((current) =>
+          overwrite || !current.trim() ? content.title.trim() : current
+        )
+        setBody((current) =>
+          overwrite || !current.trim() ? content.body.trim() : current
+        )
+      } catch (generationFailure) {
+        if (request !== requestRef.current) return
+        setTitle((current) =>
+          current.trim()
+            ? current
+            : fallbackPullRequestTitle(comparison, context.status.branch)
+        )
+        setGenerationNote(
+          `Couldn't write a description: ${pullRequestErrorMessage(generationFailure)}`
+        )
+      } finally {
+        if (request === requestRef.current) setGeneratingContent(false)
+      }
+    },
+    [base, context, cwd, needsCommit]
+  )
+
+  const generateCommit = useCallback(async () => {
+    const request = requestRef.current
+    setGeneratingCommit(true)
+    try {
+      const message = await generateWorkspaceCommitMessage(cwd)
+      if (request === requestRef.current)
+        setCommitMsg((current) => (current.trim() ? current : message))
+    } catch (generationFailure) {
+      if (request === requestRef.current)
+        setGenerationNote(
+          `Couldn't write a commit message: ${pullRequestErrorMessage(generationFailure)}`
+        )
+    } finally {
+      if (request === requestRef.current) setGeneratingCommit(false)
+    }
+  }, [cwd])
+
+  // Write a first draft once the repository is ready for a pull request.
+  useEffect(() => {
+    if (!open || loading || !context || blocker || !base) return
+    if (autoGeneratedRef.current) return
+    autoGeneratedRef.current = true
+    if (needsCommit && !commitMsg.trim()) void generateCommit()
+    void generateContent(false)
+  }, [
+    open,
+    loading,
+    context,
+    blocker,
+    base,
+    needsCommit,
+    commitMsg,
+    generateCommit,
+    generateContent,
+  ])
+
+  /** The new pull request belongs to the chat through its branch. */
+  const linkToChat = useCallback(
+    (branch: string) => {
+      if (threadId) {
+        const store = useChatStore.getState()
+        const thread = store.threads.find((entry) => entry.id === threadId)
+        const threadCwd = thread?.worktreePath?.trim() || thread?.projectPath
+        if (thread && samePath(threadCwd, cwd) && thread.branch !== branch)
+          store.updateThreadContext(threadId, { branch })
+      }
+      refreshPullRequests()
+    },
+    [cwd, threadId]
+  )
+
+  const submit = async () => {
+    if (!context || blocker || working) return
+    setError(null)
+    try {
+      const { created, branch } = await commitPushAndCreate({
+        cwd,
+        context,
+        commitMessage: needsCommit ? commitMsg : null,
+        base,
+        title,
+        body,
+        draft,
+        onStep: setStep,
+        onCommitted,
+      })
+      linkToChat(branch)
+      setResult(created)
+    } catch (submitFailure) {
+      setError(pullRequestErrorMessage(submitFailure))
+      // A commit that went through stays; show the tree as it is now.
+      if (needsCommit) void load()
+    } finally {
+      setStep(null)
+    }
+  }
+
+  const head = context?.status.branch ?? ""
+  const description = context?.repository.slug
+    ? `${head || "No branch"} → ${base || "…"} in ${context.repository.slug}`
+    : loading
+      ? "Reading the repository…"
+      : "Open a pull request on GitHub for this branch."
+  const canSubmit =
+    Boolean(context) &&
+    !blocker &&
+    !result &&
+    !working &&
+    !loading &&
+    Boolean(title.trim()) &&
+    Boolean(base) &&
+    (!needsCommit || Boolean(commitMsg.trim()))
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Closing mid-push would hide a half-done publish; let it finish.
+        if (!next && working) return
+        onOpenChange(next)
+      }}
+    >
+      <DialogContent className="gap-4 sm:max-w-xl">
+        <div className="flex flex-col gap-1.5 pr-8">
+          <DialogTitle>
+            {needsCommit
+              ? "Commit, push and create a pull request"
+              : "Create pull request"}
+          </DialogTitle>
+          <DialogDescription className="truncate font-mono text-xs">
+            {description}
+          </DialogDescription>
+        </div>
+
+        <LoadState loading={loading && !context} error={loadError} />
+
+        {result ? (
+          <CreatedPanel
+            result={result}
+            cwd={cwd}
+            threadId={threadId}
+            onLeave={() => onOpenChange(false)}
+          />
+        ) : context && blocker ? (
+          <BlockerPanel
+            blocker={blocker}
+            cwd={cwd}
+            threadId={threadId}
+            onLeave={() => onOpenChange(false)}
+            onChanged={() => {
+              autoGeneratedRef.current = false
+              void load()
+            }}
+          />
+        ) : context ? (
+          <PullRequestFields
+            needsCommit={needsCommit}
+            changes={changeCount(context.status)}
+            commitMsg={commitMsg}
+            onCommitMsgChange={setCommitMsg}
+            generatingCommit={generatingCommit}
+            onGenerateCommit={() => void generateCommit()}
+            title={title}
+            onTitleChange={setTitle}
+            body={body}
+            onBodyChange={setBody}
+            generatingContent={generatingContent}
+            onGenerateContent={() => void generateContent(true)}
+            base={base}
+            onBaseChange={setBase}
+            baseOptions={baseBranchOptions(
+              context.repository.defaultBranch,
+              context.branches,
+              head
+            )}
+            draft={draft}
+            onDraftChange={setDraft}
+            pushNote={pushNote(context, needsCommit)}
+            disabled={working}
+          />
+        ) : null}
+
+        {generationNote && !result ? (
+          <p className="text-[11px] text-muted-foreground">{generationNote}</p>
+        ) : null}
+        {error ? (
+          <p
+            role="alert"
+            className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-[12px] text-destructive"
+          >
+            {error}
+          </p>
+        ) : null}
+
+        <DialogActions
+          step={step}
+          done={Boolean(result) || blocker?.kind === "existing"}
+          showSubmit={!result && !blocker}
+          canSubmit={canSubmit}
+          submitLabel={
+            needsCommit ? "Commit, push & create" : "Create pull request"
+          }
+          onCancel={() => onOpenChange(false)}
+          onSubmit={() => void submit()}
+        />
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/**
+ * The repository as the dialog needs it: GitHub access and default branch,
+ * the working tree, local branches and an existing pull request of the
+ * branch. `requestRef` drops answers that a newer load or a close outdated.
+ */
+function useRepositoryContext(cwd: string, requestRef: { current: number }) {
+  const [loading, setLoading] = useState(true)
+  const [context, setContext] = useState<RepositoryContext | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const load = useCallback(async () => {
+    const request = ++requestRef.current
+    setLoading(true)
+    setLoadError(null)
+    try {
+      const [repository, status, branchList, listing] = await Promise.all([
+        githubRepository(cwd),
+        gitStatus(cwd),
+        gitListBranches(cwd).catch(() => ({ branches: [], current: "" })),
+        gitListPullRequests(cwd).catch(() => ({
+          available: false,
+          pullRequests: [],
+        })),
+      ])
+      if (request !== requestRef.current) return
+      setContext({
+        repository,
+        status,
+        branches: branchList.branches,
+        existing: status.branch
+          ? pullRequestForBranch(listing.pullRequests, status.branch)
+          : null,
+      })
+    } catch (loadFailure) {
+      if (request !== requestRef.current) return
+      setLoadError(pullRequestErrorMessage(loadFailure))
+    } finally {
+      if (request === requestRef.current) setLoading(false)
+    }
+  }, [cwd, requestRef])
+  return { loading, context, setContext, loadError, load }
+}
+
+function LoadState({
+  loading,
+  error,
+}: {
+  loading: boolean
+  error: string | null
+}) {
+  if (error) {
+    return (
+      <Alert variant="destructive">
+        <TriangleAlertIcon aria-hidden="true" />
+        <AlertTitle>Couldn't read the repository</AlertTitle>
+        <AlertDescription>{error}</AlertDescription>
+      </Alert>
+    )
+  }
+  if (!loading) return null
+  return (
+    <p
+      role="status"
+      className="flex items-center gap-2 text-xs text-muted-foreground"
+    >
+      <Loader2Icon
+        aria-hidden="true"
+        className="size-3.5 motion-safe:animate-spin"
+      />
+      Checking the branch and GitHub…
+    </p>
+  )
+}
+
+function DialogActions({
+  step,
+  done,
+  showSubmit,
+  canSubmit,
+  submitLabel,
+  onCancel,
+  onSubmit,
+}: {
+  /** The running step ("Pushing…"), or null. */
+  step: string | null
+  done: boolean
+  showSubmit: boolean
+  canSubmit: boolean
+  submitLabel: string
+  onCancel: () => void
+  onSubmit: () => void
+}) {
+  return (
+    <DialogFooter>
+      {step ? (
+        <p
+          role="status"
+          className="mr-auto flex items-center gap-2 self-center text-xs text-muted-foreground"
+        >
+          <Loader2Icon
+            aria-hidden="true"
+            className="size-3.5 motion-safe:animate-spin"
+          />
+          {step}
+        </p>
+      ) : null}
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={step !== null}
+        onClick={onCancel}
+      >
+        {done ? "Close" : "Cancel"}
+      </Button>
+      {showSubmit ? (
+        <Button
+          size="sm"
+          className="gap-1.5"
+          disabled={!canSubmit}
+          aria-busy={step !== null}
+          onClick={onSubmit}
+        >
+          <GitPullRequestCreateIcon aria-hidden="true" className="size-3.5" />
+          {submitLabel}
+        </Button>
+      ) : null}
+    </DialogFooter>
+  )
+}
+
+/**
+ * Commits when asked (staging everything when nothing is staged, like the
+ * Git panel's commit), publishes or pushes the branch, then opens the pull
+ * request. A branch behind its upstream stops before anything is pushed.
+ */
+async function commitPushAndCreate(input: {
+  cwd: string
+  context: RepositoryContext
+  /** Null: nothing to commit. */
+  commitMessage: string | null
+  base: string
+  title: string
+  body: string
+  draft: boolean
+  onStep: (step: string) => void
+  onCommitted?: () => void
+}): Promise<{ created: GitHubPullRequestCreateResult; branch: string }> {
+  const { cwd, context } = input
+  let status = context.status
+  if (input.commitMessage !== null) {
+    const message = input.commitMessage.trim()
+    if (!message) throw new Error("Write a commit message first.")
+    input.onStep("Committing…")
+    if (status.staged.length === 0) await gitStageAll(cwd)
+    await gitCommit(cwd, message)
+    input.onCommitted?.()
+    status = await gitStatus(cwd)
+  }
+  const plan = pushPlan(status, context.repository.remote ?? "origin")
+  if (plan.kind === "behind") {
+    throw new Error(
+      `${status.branch} is ${plan.behind} ${plan.behind === 1 ? "commit" : "commits"} behind its upstream. Pull first, then create the pull request.`
+    )
+  }
+  if (plan.kind === "publish") {
+    input.onStep(`Publishing ${plan.branch}…`)
+    await gitPush(cwd, {
+      setUpstream: true,
+      branch: plan.branch,
+      remote: plan.remote,
+    })
+  } else if (plan.kind === "push") {
+    input.onStep("Pushing…")
+    await gitPush(cwd)
+  }
+  input.onStep("Creating the pull request…")
+  const created = await githubCreatePullRequest({
+    cwd,
+    head: status.branch,
+    base: input.base,
+    title: input.title.trim(),
+    body: input.body,
+    draft: input.draft,
+  })
+  return { created, branch: status.branch }
+}
+
+/** What happens to the branch before the pull request opens. */
+function pushNote(context: RepositoryContext, needsCommit: boolean): string {
+  const remote = context.repository.remote ?? "origin"
+  const plan = pushPlan(context.status, remote)
+  const commit = needsCommit
+    ? `Commits ${changeCount(context.status)} changed ${changeCount(context.status) === 1 ? "file" : "files"}, then `
+    : ""
+  switch (plan.kind) {
+    case "publish":
+      return `${commit}${commit ? "publishes" : "Publishes"} ${plan.branch} to ${remote} before opening the pull request.`
+    case "push":
+      return `${commit}${commit ? "pushes" : "Pushes"} ${context.status.ahead} ${context.status.ahead === 1 ? "commit" : "commits"} before opening the pull request.`
+    case "behind":
+      return `The branch is ${plan.behind} behind its upstream: pull first.`
+    default:
+      return needsCommit
+        ? `${commit}pushes it before opening the pull request.`
+        : "The branch is up to date on GitHub."
+  }
+}
+
+function PullRequestFields({
+  needsCommit,
+  changes,
+  commitMsg,
+  onCommitMsgChange,
+  generatingCommit,
+  onGenerateCommit,
+  title,
+  onTitleChange,
+  body,
+  onBodyChange,
+  generatingContent,
+  onGenerateContent,
+  base,
+  onBaseChange,
+  baseOptions,
+  draft,
+  onDraftChange,
+  pushNote: note,
+  disabled,
+}: {
+  needsCommit: boolean
+  changes: number
+  commitMsg: string
+  onCommitMsgChange: (value: string) => void
+  generatingCommit: boolean
+  onGenerateCommit: () => void
+  title: string
+  onTitleChange: (value: string) => void
+  body: string
+  onBodyChange: (value: string) => void
+  generatingContent: boolean
+  onGenerateContent: () => void
+  base: string
+  onBaseChange: (value: string) => void
+  baseOptions: string[]
+  draft: boolean
+  onDraftChange: (value: boolean) => void
+  pushNote: string
+  disabled: boolean
+}) {
+  const ids = {
+    commit: useId(),
+    title: useId(),
+    body: useId(),
+    base: useId(),
+    draft: useId(),
+  }
+  const options =
+    baseOptions.includes(base) || !base ? baseOptions : [base, ...baseOptions]
+  return (
+    <div className="flex max-h-[min(62vh,640px)] flex-col gap-3.5 overflow-y-auto pr-1">
+      {needsCommit ? (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <label htmlFor={ids.commit} className={FIELD_LABEL}>
+              Commit message ({changes} changed{" "}
+              {changes === 1 ? "file" : "files"})
+            </label>
+            <GenerateButton
+              busy={generatingCommit}
+              disabled={disabled}
+              label="Generate commit message"
+              onClick={onGenerateCommit}
+            />
+          </div>
+          <Textarea
+            id={ids.commit}
+            value={commitMsg}
+            readOnly={generatingCommit}
+            disabled={disabled}
+            aria-busy={generatingCommit}
+            onChange={(event) => onCommitMsgChange(event.target.value)}
+            placeholder={"Summary of the changes\n\n- What changed and why"}
+            className="max-h-40 min-h-20 rounded-xl text-xs"
+          />
+        </div>
+      ) : null}
+
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <label htmlFor={ids.title} className={FIELD_LABEL}>
+            Title
+          </label>
+          <GenerateButton
+            busy={generatingContent}
+            disabled={disabled}
+            label="Generate title and description"
+            onClick={onGenerateContent}
+          />
+        </div>
+        <Input
+          id={ids.title}
+          value={title}
+          disabled={disabled}
+          readOnly={generatingContent}
+          aria-busy={generatingContent}
+          onChange={(event) => onTitleChange(event.target.value)}
+          placeholder={
+            generatingContent
+              ? "Writing a title…"
+              : "What this pull request does"
+          }
+          className="h-8 rounded-xl text-xs"
+        />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={ids.body} className={FIELD_LABEL}>
+          Description (Markdown)
+        </label>
+        <Textarea
+          id={ids.body}
+          value={body}
+          disabled={disabled}
+          readOnly={generatingContent}
+          aria-busy={generatingContent}
+          onChange={(event) => onBodyChange(event.target.value)}
+          placeholder={
+            generatingContent
+              ? "Reading the commits and writing a description…"
+              : "## Summary\n\n## Testing"
+          }
+          className="max-h-72 min-h-36 rounded-xl font-mono text-xs leading-relaxed"
+        />
+      </div>
+
+      <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
+        <div className="flex min-w-48 flex-1 flex-col gap-1.5">
+          <label htmlFor={ids.base} className={FIELD_LABEL}>
+            Base branch
+          </label>
+          <Select
+            value={base}
+            onValueChange={onBaseChange}
+            disabled={disabled || options.length === 0}
+          >
+            <SelectTrigger id={ids.base} size="sm" className="w-full text-xs">
+              <GitBranchIcon aria-hidden="true" className="size-3.5" />
+              <SelectValue placeholder="Choose a base branch" />
+            </SelectTrigger>
+            <SelectContent position="popper">
+              {options.map((branch) => (
+                <SelectItem key={branch} value={branch} className="text-xs">
+                  {branch}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex h-8 items-center gap-2">
+          <Switch
+            id={ids.draft}
+            size="sm"
+            checked={draft}
+            disabled={disabled}
+            onCheckedChange={onDraftChange}
+            aria-label="Create as draft"
+          />
+          <label htmlFor={ids.draft} className="text-xs">
+            Create as draft
+          </label>
+        </div>
+      </div>
+      <p className="text-[11px] text-muted-foreground">{note}</p>
+    </div>
+  )
+}
+
+function GenerateButton({
+  busy,
+  disabled,
+  label,
+  onClick,
+}: {
+  busy: boolean
+  disabled: boolean
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      className="gap-1 text-[11px] text-muted-foreground"
+      disabled={busy || disabled}
+      aria-busy={busy}
+      title={label}
+      aria-label={label}
+      onClick={onClick}
+    >
+      {busy ? (
+        <Loader2Icon
+          aria-hidden="true"
+          className="size-3 motion-safe:animate-spin"
+        />
+      ) : (
+        <SparklesIcon aria-hidden="true" className="size-3" />
+      )}
+      {busy ? "Writing…" : "Generate"}
+    </Button>
+  )
+}
+
+function PullRequestLinks({
+  cwd,
+  number,
+  url,
+  onLeave,
+}: {
+  cwd: string
+  number: number
+  url: string
+  /** Closes the dialog when the page takes over. */
+  onLeave: () => void
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Button
+        variant="outline"
+        size="xs"
+        className="gap-1.5"
+        onClick={() => {
+          onLeave()
+          openPullRequestsPage({ cwd, number })
+        }}
+      >
+        View pull request
+      </Button>
+      <Button
+        variant="ghost"
+        size="xs"
+        className="gap-1.5"
+        onClick={() => void openSourceReference(url)}
+      >
+        <ExternalLinkIcon aria-hidden="true" className="size-3" />
+        Open on GitHub
+      </Button>
+    </div>
+  )
+}
+
+function CreatedPanel({
+  result,
+  cwd,
+  threadId,
+  onLeave,
+}: {
+  result: GitHubPullRequestCreateResult
+  cwd: string
+  threadId?: string | null
+  onLeave: () => void
+}) {
+  const { pullRequest } = result
+  return (
+    <div className="flex flex-col gap-3">
+      <div
+        role="status"
+        className="flex items-start gap-2.5 rounded-xl border border-border/60 bg-card px-3 py-2.5"
+      >
+        <PullRequestStateIcon
+          state={pullRequestState(pullRequest)}
+          className="mt-0.5"
+        />
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-medium">
+            {result.created
+              ? `Pull request #${pullRequest.number} created`
+              : `Pull request #${pullRequest.number} already exists`}
+          </p>
+          <p className="truncate text-xs text-muted-foreground">
+            {pullRequest.title}
+          </p>
+        </div>
+      </div>
+      <PullRequestLinks
+        cwd={cwd}
+        number={pullRequest.number}
+        url={pullRequest.url}
+        onLeave={onLeave}
+      />
+      {threadId ? <PullRequestWakeSwitch threadId={threadId} /> : null}
+    </div>
+  )
+}
+
+function BlockerPanel({
+  blocker,
+  cwd,
+  threadId,
+  onChanged,
+  onLeave,
+}: {
+  blocker: CreatePullRequestBlocker
+  cwd: string
+  threadId?: string | null
+  onChanged: () => void
+  onLeave: () => void
+}) {
+  if (blocker.kind === "github") {
+    const hint = githubSetupHint(blocker.status)
+    return (
+      <Alert>
+        <TriangleAlertIcon aria-hidden="true" />
+        <AlertTitle>
+          {blocker.status === "gh_missing"
+            ? "GitHub CLI isn't installed"
+            : blocker.status === "gh_signed_out"
+              ? "GitHub CLI isn't signed in"
+              : blocker.status === "no_remote"
+                ? "No GitHub remote"
+                : "GitHub isn't reachable"}
+        </AlertTitle>
+        <AlertDescription className="flex flex-col gap-2 text-xs">
+          <span>{blocker.message}</span>
+          {hint && hint !== blocker.message ? <span>{hint}</span> : null}
+          <span className="flex flex-wrap gap-2">
+            <Button variant="outline" size="xs" onClick={onChanged}>
+              Check again
+            </Button>
+            {blocker.status === "gh_missing" ? (
+              <Button
+                variant="ghost"
+                size="xs"
+                className="gap-1.5"
+                onClick={() => void openSourceReference(GH_CLI_URL)}
+              >
+                <ExternalLinkIcon aria-hidden="true" className="size-3" />
+                Get GitHub CLI
+              </Button>
+            ) : null}
+          </span>
+        </AlertDescription>
+      </Alert>
+    )
+  }
+  if (blocker.kind === "existing") {
+    const { pullRequest } = blocker
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="flex items-start gap-2.5 rounded-xl border border-border/60 bg-card px-3 py-2.5">
+          <PullRequestStateIcon
+            state={pullRequestState(pullRequest)}
+            className="mt-0.5"
+          />
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-medium">
+              This branch already has pull request #{pullRequest.number}
+            </p>
+            <p className="truncate text-xs text-muted-foreground">
+              {pullRequest.title}
+            </p>
+          </div>
+        </div>
+        <PullRequestLinks
+          cwd={cwd}
+          number={pullRequest.number}
+          url={pullRequest.url}
+          onLeave={onLeave}
+        />
+        {threadId ? <PullRequestWakeSwitch threadId={threadId} /> : null}
+      </div>
+    )
+  }
+  return (
+    <NewBranchPanel
+      currentBranch={blocker.kind === "default_branch" ? blocker.branch : null}
+      cwd={cwd}
+      threadId={threadId}
+      onCreated={onChanged}
+    />
+  )
+}
+
+/** On the default branch (or none): a new branch, named for the work, to open the pull request from. */
+function NewBranchPanel({
+  currentBranch,
+  cwd,
+  threadId,
+  onCreated,
+}: {
+  currentBranch: string | null
+  cwd: string
+  threadId?: string | null
+  onCreated: () => void
+}) {
+  const id = useId()
+  const [name, setName] = useState("")
+  const [generating, setGenerating] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [failure, setFailure] = useState<string | null>(null)
+  const generatedRef = useRef(false)
+
+  const generate = useCallback(async () => {
+    const store = useChatStore.getState()
+    const thread = threadId
+      ? store.threads.find((entry) => entry.id === threadId)
+      : null
+    const seed =
+      thread?.title && thread.title !== "New Chat"
+        ? thread.title
+        : `Changes in ${cwd.split(/[/\\]/).filter(Boolean).pop() ?? "this project"}`
+    setGenerating(true)
+    setFailure(null)
+    try {
+      const { branch } = await generateBranchName({ cwd, message: seed })
+      setName((current) => (current.trim() ? current : cleanBranchName(branch)))
+    } catch {
+      setName((current) =>
+        current.trim()
+          ? current
+          : cleanBranchName(`feature/${seed.toLowerCase()}`)
+      )
+    } finally {
+      setGenerating(false)
+    }
+  }, [cwd, threadId])
+
+  useEffect(() => {
+    if (generatedRef.current) return
+    generatedRef.current = true
+    void generate()
+  }, [generate])
+
+  const create = async () => {
+    const branch = cleanBranchName(name)
+    if (!branch) return
+    setCreating(true)
+    setFailure(null)
+    try {
+      await gitCheckoutBranch(cwd, branch, true)
+      if (threadId) {
+        const store = useChatStore.getState()
+        const thread = store.threads.find((entry) => entry.id === threadId)
+        const threadCwd = thread?.worktreePath?.trim() || thread?.projectPath
+        if (thread && samePath(threadCwd, cwd))
+          store.updateThreadContext(threadId, { branch })
+      }
+      onCreated()
+    } catch (createFailure) {
+      setFailure(pullRequestErrorMessage(createFailure))
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <Alert>
+        <GitBranchIcon aria-hidden="true" />
+        <AlertTitle>
+          {currentBranch
+            ? `${currentBranch} is the default branch`
+            : "No branch is checked out"}
+        </AlertTitle>
+        <AlertDescription className="text-xs">
+          A pull request needs a branch of its own. Create one here; your
+          changes and commits that aren't on GitHub yet come along.
+        </AlertDescription>
+      </Alert>
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={id} className={FIELD_LABEL}>
+          New branch
+        </label>
+        <div className="flex items-center gap-2">
+          <Input
+            id={id}
+            value={name}
+            disabled={creating}
+            readOnly={generating}
+            aria-busy={generating}
+            onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void create()
+            }}
+            placeholder={
+              generating ? "Naming the branch…" : "feature/short-name"
+            }
+            className="h-8 flex-1 rounded-xl font-mono text-xs"
+          />
+          <GenerateButton
+            busy={generating}
+            disabled={creating}
+            label="Suggest a branch name"
+            onClick={() => {
+              setName("")
+              void generate()
+            }}
+          />
+          <Button
+            size="xs"
+            disabled={!cleanBranchName(name) || creating || generating}
+            aria-busy={creating}
+            onClick={() => void create()}
+          >
+            {creating ? "Creating…" : "Create branch"}
+          </Button>
+        </div>
+        {failure ? (
+          <p role="alert" className="text-[11px] text-destructive">
+            {failure}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  )
+}

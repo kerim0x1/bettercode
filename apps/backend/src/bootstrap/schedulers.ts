@@ -3,8 +3,17 @@ import { incrementalVacuum } from "../persistence/db"
 import { ProviderSessionReaper } from "../provider/runtime"
 import { ThreadRetentionScheduler } from "../services/thread-retention"
 import { threadGoals } from "../services/chat/goal-registry"
+import { threadAutonomyRuns } from "../services/chat/autonomy-registry"
 import { stopAllToolOutputArchiveStores } from "../services/tool-output-archive-store"
-import { positiveEnvInteger, positiveEnvMs } from "./env"
+import { PullRequestWatcher } from "../services/github-pull-request-watch"
+import { startAutomations } from "../services/automations/registry"
+import { chatResumes } from "../services/chat/resume-registry"
+import {
+  nonNegativeEnvCount,
+  positiveEnvInteger,
+  positiveEnvMs,
+  readTuningEnv,
+} from "./env"
 import type {
   BootRoot,
   PersistenceContext,
@@ -39,6 +48,9 @@ export function startRetention(
   } = providersCtx
   const threadRetention = new ThreadRetentionScheduler(
     {
+      terminalPtys: root.terminalPtys,
+      shellSessions: root.shellSessions,
+      workspaceRecoveryGate: root.workspaceRecoveryGate,
       orchestrator: providersCtx.state.orchestrator,
       threads,
       worktrees,
@@ -49,8 +61,13 @@ export function startRetention(
       transcriptRecoveryStore,
       checkpointReactor,
       checkpointReverts,
-      forgetThreadGoal: (threadId) =>
-        threadGoals.get(providersCtx.state)?.forgetThread(threadId),
+      // A purged chat's turn schedulers: its goal, its Autonomous Work run
+      // and its resume after a limit or a restart.
+      forgetThreadGoal: (threadId) => {
+        threadGoals.get(providersCtx.state)?.forgetThread(threadId)
+        threadAutonomyRuns.get(providersCtx.state)?.forgetThread(threadId)
+        chatResumes.get(providersCtx.state)?.forgetThread(threadId)
+      },
     },
     {
       archiveAfterDays: positiveEnvInteger(
@@ -116,6 +133,17 @@ export function startTimers(
           sweepIntervalMs: positiveEnvMs(
             "BETTERC0DE_PROVIDER_SESSION_REAPER_SWEEP_MS"
           ),
+          // Idle sessions kept warm per provider instance; 0 keeps none and
+          // "unlimited" removes the cap.
+          maxIdleSessionsPerInstance: readTuningEnv(
+            "BETTERC0DE_PROVIDER_MAX_IDLE_SESSIONS",
+            nonNegativeEnvCount,
+            (name) =>
+              logger.warn(
+                { name },
+                "Ignoring an invalid environment setting; the default applies"
+              )
+          ),
         })
   providerSessionReaper?.start()
   startupCleanup.push({
@@ -147,5 +175,27 @@ export function startTimers(
       if (vacuumTimer) clearInterval(vacuumTimer)
     },
   })
-  return { transcriptRecoveryTimer, providerSessionReaper, vacuumTimer }
+
+  // Pull request wake-ups (services/github-pull-request-watch): the chats
+  // that asked for them are checked at the sidebar's two-minute pull request
+  // cadence. Its timer is unref'd and reads the state only when it fires.
+  const pullRequestWatcher = new PullRequestWatcher(providersCtx.state)
+  pullRequestWatcher.start()
+  startupCleanup.push({
+    name: "pull request watcher",
+    run: () => pullRequestWatcher.stop(),
+  })
+
+  // Automations (services/automations): one unref'd timer that wakes for the
+  // next scheduled run, plus the runs webhooks and "Run now" start. The
+  // graceful shutdown stops it early, with the goal and Autonomous Work
+  // schedulers.
+  const stopAutomations = startAutomations(providersCtx.state)
+  startupCleanup.push({ name: "automations", run: stopAutomations })
+  return {
+    transcriptRecoveryTimer,
+    providerSessionReaper,
+    vacuumTimer,
+    pullRequestWatcher,
+  }
 }

@@ -5,6 +5,8 @@ import {
   type CanvasObject,
   type CanvasObjectKind,
 } from "@/lib/canvas-objects"
+import { CanvasGuestStatesContext } from "@/hooks/use-canvas-live-guests"
+import { canvasObjectGuestId } from "@/lib/canvas-live-guests"
 import { CanvasObjectCard } from "./canvas-object-card"
 
 function render(object: CanvasObject, selected = false, editing = false) {
@@ -151,5 +153,33 @@ describe("CanvasObjectCard", () => {
     expect(render(createCanvasObject("frame", at), true)).toContain(
       "ring-primary"
     )
+  })
+
+  it("shows a light placeholder instead of a page the board has paused", () => {
+    const embed = createCanvasObject("embed", at, {
+      source: "web",
+      url: "https://example.com/",
+    } as Partial<CanvasObject>)
+    expect(render(embed)).toContain("<iframe")
+    const paused = renderToStaticMarkup(
+      <CanvasGuestStatesContext.Provider
+        value={new Map([[canvasObjectGuestId(embed.id), "offscreen"]])}
+      >
+        <CanvasObjectCard
+          object={embed}
+          selected={false}
+          editing={false}
+          panActive={false}
+          zoom={1}
+          onSelect={vi.fn()}
+          onEdit={vi.fn()}
+          onChange={vi.fn()}
+          onMoveStart={vi.fn()}
+        />
+      </CanvasGuestStatesContext.Provider>
+    )
+    expect(paused).not.toContain("<iframe")
+    expect(paused).toContain('data-canvas-paused="offscreen"')
+    expect(paused).toContain("Paused off screen.")
   })
 })

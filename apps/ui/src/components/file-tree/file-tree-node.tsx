@@ -12,6 +12,7 @@ import {
   FolderContextMenu,
   type FolderContextAction,
 } from "@/components/file-tree/folder-context-menu"
+import { getElectronApi } from "@/services/ipc-facade"
 
 export interface TreeEntry {
   name: string
@@ -95,10 +96,12 @@ export function FileTreeNode({
   const absolutePath = resolveEntryPath(item.path)
   const relativePath = relativeEntryPath(item.path)
 
+  // A click opens a file in its own tab, next to the ones already open,
+  // instead of a preview tab the next click would replace.
   const handleRowClick = () => {
     if (isRenaming) return
     if (isFolder) toggleExpanded(item.path)
-    else onFileSelect?.(item.path, { preview: true })
+    else onFileSelect?.(item.path, { preview: false })
   }
 
   const handleRowDoubleClick = () => {
@@ -136,7 +139,7 @@ export function FileTreeNode({
       icon: "open-external",
       hint: "Opens this folder in a new window in editor mode",
       onClick: () => {
-        void window.electronAPI?.windowOpenWith?.({
+        void getElectronApi()?.windowOpenWith?.({
           mode: "editor",
           cwd: absolutePath,
         })
@@ -165,9 +168,11 @@ export function FileTreeNode({
       ? "Open folder with system default"
       : "Open file with system default",
     onClick: () => {
-      void window.electronAPI?.openPath?.(absolutePath).catch((err) => {
-        console.warn("[file-tree] open path failed:", err)
-      })
+      void getElectronApi()
+        ?.openPath?.(absolutePath)
+        .catch((err) => {
+          console.warn("[file-tree] open path failed:", err)
+        })
     },
   })
   ctxActions.push({

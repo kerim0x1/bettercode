@@ -16,7 +16,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { readFile } from "@/services/backend"
+import { readFile } from "@/services/backend/workspaceApi"
 
 // [PERF] Monaco is ~4 MB of JS + web workers. Defer it until the file-editor
 // modal actually opens instead of paying the parse cost at startup.
@@ -136,7 +136,7 @@ export function FileEditorModal({
     if (!filePath || !isDirty) return
     setSaving(true)
     try {
-      const { writeFile } = await import("@/services/backend")
+      const { writeFile } = await import("@/services/backend/workspaceApi")
       const dir = filePath.substring(
         0,
         Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\")) + 1

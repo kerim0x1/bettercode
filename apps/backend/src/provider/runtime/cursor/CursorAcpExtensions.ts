@@ -34,8 +34,7 @@ export function registerCursorExtensions(
     const answersPromise = waitForUserInputAnswers(
       ctx.pendingUserInputs,
       requestId,
-      questions,
-      ctx.pendingRequestTimeoutMs
+      questions
     )
     try {
       ctx.emitEvent({

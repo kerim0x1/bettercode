@@ -16,17 +16,47 @@ function text(value) {
 
 function collectAppMemory(app) {
   const metrics = app.getAppMetrics()
-  const sumBytes = (key) => {
-    const values = metrics.map((metric) => number(metric.memory?.[key])).filter((value) => value !== null)
+  const sumBytes = (list, key) => {
+    const values = list.map((metric) => number(metric.memory?.[key])).filter((value) => value !== null)
     // Electron reports these values in KiB; Node's OS memory values use bytes.
     return values.length ? values.reduce((sum, value) => sum + value, 0) * 1024 : null
   }
+  // Per process type (Browser, Tab, GPU, Utility, …), so a leak in renderers
+  // or webview guests is distinguishable from the main or GPU process.
+  const groups = new Map()
+  for (const metric of metrics) {
+    const type = text(metric?.type) ?? "Unknown"
+    const group = groups.get(type) ?? []
+    group.push(metric)
+    groups.set(type, group)
+  }
+  const byType = [...groups.entries()]
+    .map(([type, list]) => ({
+      type,
+      processCount: list.length,
+      workingSetBytes: sumBytes(list, "workingSetSize"),
+      privateBytes: sumBytes(list, "privateBytes"),
+    }))
+    .sort((a, b) => (b.workingSetBytes ?? 0) - (a.workingSetBytes ?? 0))
+  const largestProcesses = metrics
+    .map((metric) => ({
+      type: text(metric?.type) ?? "Unknown",
+      // Utility processes carry a service name; it identifies the subsystem.
+      name: text(metric?.serviceName) ?? text(metric?.name),
+      workingSetBytes: number(metric.memory?.workingSetSize) === null ? null : metric.memory.workingSetSize * 1024,
+      privateBytes: number(metric.memory?.privateBytes) === null ? null : metric.memory.privateBytes * 1024,
+    }))
+    .filter((entry) => entry.workingSetBytes !== null)
+    .sort((a, b) => b.workingSetBytes - a.workingSetBytes)
+    .slice(0, 5)
   return {
     scope: "electron-processes",
     processCount: metrics.length,
     // Summing working sets can count shared pages more than once.
-    workingSetBytesSum: sumBytes("workingSetSize"),
-    privateBytesSum: sumBytes("privateBytes"),
+    workingSetBytesSum: sumBytes(metrics, "workingSetSize"),
+    privateBytesSum: sumBytes(metrics, "privateBytes"),
+    byType,
+    largestProcesses,
   }
 }
 
@@ -116,6 +146,16 @@ function formatBugReportDeviceInfo(info) {
     `- CPU: ${value(info.cpu?.model)}; logical cores: ${value(info.cpu?.logicalCores)}; speed: ${value(info.cpu?.speedMHz)} MHz`,
     `- RAM: ${gib(info.memory?.usedBytes)} used / ${gib(info.memory?.totalBytes)} total (${value(info.memory?.usedPercent)}%); ${gib(info.memory?.freeBytes)} free`,
     `- App RAM (Electron processes): ${mib(info.appMemory?.workingSetBytesSum)} working set sum; ${mib(info.appMemory?.privateBytesSum)} private; process count: ${value(info.appMemory?.processCount)}`,
+    ...(Array.isArray(info.appMemory?.byType) && info.appMemory.byType.length > 0
+      ? [`- App RAM by process type: ${info.appMemory.byType
+        .map((group) => `${group.type} ×${group.processCount}: ${mib(group.workingSetBytes)} working set, ${mib(group.privateBytes)} private`)
+        .join("; ")}`]
+      : []),
+    ...(Array.isArray(info.appMemory?.largestProcesses) && info.appMemory.largestProcesses.length > 0
+      ? [`- Largest processes: ${info.appMemory.largestProcesses
+        .map((entry) => `${entry.type}${entry.name ? ` (${entry.name})` : ""} ${mib(entry.workingSetBytes)}`)
+        .join("; ")}`]
+      : []),
     `- GPU information: ${info.gpu.status}`,
     ...gpuLines,
     `- GPU renderer: ${value(info.gpu.renderer)}; software rendering: ${value(info.gpu.softwareRendering)}`,

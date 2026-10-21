@@ -38,7 +38,7 @@ import {
   searchContentDetailed,
   type WorkspaceContentSearchMatch,
   type WorkspaceContentSearchResult,
-} from "@/services/backend"
+} from "@/services/backend/workspaceApi"
 
 const SEARCH_RESULT_LIMIT = 500
 

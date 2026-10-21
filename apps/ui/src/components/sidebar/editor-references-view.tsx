@@ -29,7 +29,7 @@ import {
   searchContentDetailed,
   type WorkspaceContentSearchMatch,
   type WorkspaceContentSearchResult,
-} from "@/services/backend"
+} from "@/services/backend/workspaceApi"
 import { SearchTruncationNotice } from "@/components/search-truncation-notice"
 import { relativeEditorPath } from "@/lib/editor-path"
 import { openSourceTarget } from "@/lib/source-opener"

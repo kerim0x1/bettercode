@@ -13,11 +13,13 @@ import { cn } from "@/lib/utils"
 import { chatModeLabel } from "@/lib/chat-mode-labels"
 import type { ComposerFooterProps } from "./chat-composer-types"
 import { ComposerOrchestrationMenu } from "./composer-orchestration"
+import { ComposerCompareHint, useComposerCompare } from "./composer-compare"
 import {
   SimpleDropdown,
   SimpleDropdownSubItem,
 } from "@/components/ui/simple-dropdown"
 import { ProviderIcon } from "@/components/provider-icon"
+import { modelIconProvider } from "@/lib/model-vendor-logo"
 import { SimpleContextIndicator } from "@/components/chat/simple-context-indicator"
 import { VoiceInputControl } from "@/components/chat/voice-input-control"
 import { ComposerSubmit } from "@/components/chat/composer-submit"
@@ -100,8 +102,6 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
     setPermissionLevel,
     setContextWindow,
     selectedProvider,
-    selectedProviderId,
-    selectedModel,
     setSelectedModel,
     setSelectedProviderId,
     providers,
@@ -119,6 +119,8 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
     setAutonomousDialogOpen,
   } = props
   const promptInput = usePromptInputController()
+  // Shift/Ctrl/⌘-click in a new chat: one prompt to several models.
+  const compare = useComposerCompare(props)
   const planFollowUpActive =
     hasPendingPlan &&
     !/^\/goal(?:\s|$)/i.test(promptInput.textInput.value.trim())
@@ -441,14 +443,17 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
                 {favoriteEntries.map((fav) => {
                   const p = fav.provider
                   const m = fav.model
-                  const isSel =
-                    selectedProviderId === p.id && selectedModel === m.id
+                  const isSel = compare.isRowSelected(p.id, m.id)
                   return (
                     <DropdownMenuItem
                       key={fav.key}
-                      onClick={() => {
+                      onClick={(event) => {
+                        if (compare.handleModelClick(event, p, m.id)) return
                         selectProviderModel(p, m.id)
                       }}
+                      onKeyDown={(event) =>
+                        compare.handleModelKeyDown(event, p, m.id)
+                      }
                       className={cn("gap-2", isSel && "bg-accent")}
                     >
                       <ProviderIcon provider={p} />
@@ -535,9 +540,11 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
                       sortedModelsByProviderId.get(provider.id) ??
                       provider.models
                     ).map((model) => {
-                      const isSelected =
-                        selectedProviderId === provider.id &&
-                        selectedModel === model.id
+                      // While comparing, every chosen model is checked.
+                      const isSelected = compare.isRowSelected(
+                        provider.id,
+                        model.id
+                      )
                       // Context window is pinned to the model's maximum —
                       // no per-model 1M/200k submenu, the row selects directly.
                       const contextLabel = supportsModelContextWindow(
@@ -549,12 +556,29 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
                       return (
                         <DropdownMenuItem
                           key={model.id}
-                          onClick={() => {
+                          onClick={(event) => {
+                            if (
+                              compare.handleModelClick(
+                                event,
+                                provider,
+                                model.id
+                              )
+                            )
+                              return
                             selectProviderModel(provider, model.id)
                           }}
+                          onKeyDown={(event) =>
+                            compare.handleModelKeyDown(
+                              event,
+                              provider,
+                              model.id
+                            )
+                          }
                           className={cn("gap-2.5", isSelected && "bg-accent")}
                         >
-                          <ProviderIcon provider={provider} />
+                          <ProviderIcon
+                            provider={modelIconProvider(provider, model)}
+                          />
                           <div className="min-w-0 flex-1">
                             <span
                               className={cn(
@@ -594,6 +618,7 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
                 </DropdownMenuSub>
               )
             })}
+            <ComposerCompareHint compare={compare} />
           </DropdownMenuContent>
         </DropdownMenu>
       </PromptInputTools>
@@ -610,6 +635,7 @@ export function ComposerFullFooter(props: ComposerFooterProps) {
           <ComposerSubmit
             status={isStreaming ? "streaming" : undefined}
             onStop={handleStop}
+            provider={selectedProvider}
             size={planFollowUpActive && !isStreaming ? "sm" : "icon-sm"}
             className={cn(
               planFollowUpActive && !isStreaming && "rounded-full px-4"

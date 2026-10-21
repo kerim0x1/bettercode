@@ -2,10 +2,19 @@ import { spawn, type ChildProcess } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { StringDecoder } from "node:string_decoder"
 import { createServerConfig } from "../config"
 import { sanitizedChildEnvironment } from "../security/childEnvironment"
-import { buildWindowsCmdArgs } from "../security/windowsCommandLine"
+import {
+  buildWindowsCmdArgs,
+  resolveComSpec,
+} from "../security/windowsCommandLine"
 import { runWindowsTaskkillDetailed } from "../services/process-termination"
+import {
+  cliVersionAtLeast,
+  compareCliVersions,
+  normalizeCliVersion,
+} from "./versions"
 export interface CliStatus {
   installed: boolean
   version: string | null
@@ -361,36 +370,23 @@ export async function isCodexCliAuthenticatedAsync(): Promise<boolean> {
   )
 }
 
-function versionTuple(version: string | null): [number, number, number] | null {
-  if (!version) return null
-  const match = version.match(/^(\d+)\.(\d+)\.(\d+)/)
-  if (!match) return null
-  return [
-    Number.parseInt(match[1]!, 10),
-    Number.parseInt(match[2]!, 10),
-    Number.parseInt(match[3]!, 10),
-  ]
+/** Version order of two candidates; one without a readable version is lowest. */
+function compareCandidateVersions(a: string | null, b: string | null): number {
+  const order = compareCliVersions(a, b)
+  if (order !== null) return order
+  return (
+    Number(normalizeCliVersion(a) !== null) -
+    Number(normalizeCliVersion(b) !== null)
+  )
 }
 
-function compareVersionTuples(
-  a: [number, number, number] | null,
-  b: [number, number, number] | null
-): number {
-  if (!a && !b) return 0
-  if (!a) return -1
-  if (!b) return 1
-  for (let i = 0; i < 3; i += 1) {
-    const delta = a[i]! - b[i]!
-    if (delta !== 0) return delta
-  }
-  return 0
-}
+/** Oldest Codex CLI whose `app-server` the binary picker accepts. */
+const CODEX_APP_SERVER_CANDIDATE_MIN_VERSION = "0.130.0"
 
 function supportsCodexAppServer(version: string | null): boolean {
-  const parsed = versionTuple(version)
-  if (!parsed) return false
-  const [major, minor] = parsed
-  return major > 0 || minor >= 130
+  return cliVersionAtLeast(version, CODEX_APP_SERVER_CANDIDATE_MIN_VERSION, {
+    prereleaseMeetsRelease: true,
+  })
 }
 
 export async function detectCliAsync(
@@ -527,7 +523,6 @@ async function resolveCachedCodexBinaryAsync(
           binaryPath,
           version,
           supportsAppServer: supportsCodexAppServer(version),
-          versionTuple: versionTuple(version),
         }
       }
     )
@@ -542,7 +537,7 @@ async function resolveCachedCodexBinaryAsync(
         : (probed
             .filter((candidate) => candidate.supportsAppServer)
             .sort((a, b) =>
-              compareVersionTuples(b.versionTuple, a.versionTuple)
+              compareCandidateVersions(b.version, a.version)
             )[0] ??
           preferredProbe ??
           probed[0])
@@ -720,7 +715,7 @@ async function readVersionAsync(binaryPath: string): Promise<string | null> {
   const directExe =
     IS_WIN && path.isAbsolute(binaryPath) && /\.exe$/i.test(binaryPath)
   const viaCmd = IS_WIN && !directExe
-  const command = viaCmd ? process.env.ComSpec?.trim() || "cmd.exe" : binaryPath
+  const command = viaCmd ? resolveComSpec() : binaryPath
   const args = viaCmd
     ? buildWindowsCmdArgs(binaryPath, ["--version"])
     : ["--version"]
@@ -758,6 +753,10 @@ function runProbe(
     }
     let stdout = ""
     let stderr = ""
+    // A multi-byte character split across two chunks must not turn into
+    // replacement characters (Windows CLIs print localized text).
+    const stdoutDecoder = new StringDecoder("utf8")
+    const stderrDecoder = new StringDecoder("utf8")
     let settled = false
     let terminating = false
     let timedOut = false
@@ -769,19 +768,23 @@ function runProbe(
       child.removeListener("error", onError)
       child.removeListener("close", onClose)
     }
+    const append = (current: string, text: string) =>
+      (current + text).slice(0, 64 * 1024)
+    const decode = (decoder: StringDecoder, chunk: unknown): string =>
+      Buffer.isBuffer(chunk) ? decoder.write(chunk) : String(chunk)
     const finish = (status: number | null) => {
       if (settled) return
       settled = true
       cleanup()
+      stdout = append(stdout, stdoutDecoder.end())
+      stderr = append(stderr, stderrDecoder.end())
       resolve({ status, stdout, stderr })
     }
-    const append = (current: string, chunk: unknown) =>
-      (current + String(chunk)).slice(0, 64 * 1024)
     const onStdout = (chunk: unknown) => {
-      stdout = append(stdout, chunk)
+      stdout = append(stdout, decode(stdoutDecoder, chunk))
     }
     const onStderr = (chunk: unknown) => {
-      stderr = append(stderr, chunk)
+      stderr = append(stderr, decode(stderrDecoder, chunk))
     }
     const terminateAndFinish = () => {
       if (settled || terminating) return

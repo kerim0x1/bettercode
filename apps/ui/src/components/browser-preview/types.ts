@@ -62,6 +62,8 @@ export type ElectronWebviewElement = HTMLElement & {
   getURL(): string
   /** The guest's webContents id; how the shell attributes its requests. */
   getWebContentsId?(): number
+  getUserAgent?(): string
+  setUserAgent?(userAgent: string): void
 }
 
 export interface ElectronWebviewIpcEvent {

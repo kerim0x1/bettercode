@@ -2,7 +2,7 @@ import fs from "node:fs/promises"
 import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
 import { type ChildProcess, spawn } from "node:child_process"
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { defaultSettings } from "@betterc0de/schema"
 
 vi.mock("node:child_process", async (original) => ({
@@ -15,12 +15,14 @@ vi.mock("./process-termination", async (original) => ({
 }))
 
 import { runWindowsTaskkillDetailed } from "./process-termination"
-import {
-  activeNativeTextGenerationResourceCount,
-  resumeNativeTextGenerationAdmissions,
-  runNativeTextGeneration,
-  shutdownAllNativeTextGenerationResources,
-} from "./native-text-generation"
+import { NativeTextGenerationService } from "./native-text-generation"
+
+/** Each test gets its own operations, children and admission. */
+let nativeText: NativeTextGenerationService
+
+beforeEach(() => {
+  nativeText = new NativeTextGenerationService()
+})
 
 describe("native text process quarantine", () => {
   it.skipIf(process.platform !== "win32")(
@@ -53,7 +55,7 @@ describe("native text process quarantine", () => {
       let directory = ""
       vi.useFakeTimers()
       try {
-        const running = runNativeTextGeneration({
+        const running = nativeText.run({
           settings: {
             ...defaultSettings(),
             provider_instances: {
@@ -92,11 +94,11 @@ describe("native text process quarantine", () => {
         child.emit("close", 0, null)
         killer.emit("close", 0, null)
         await rejected
-        expect(activeNativeTextGenerationResourceCount()).toBe(0)
+        expect(nativeText.activeResourceCount()).toBe(0)
         await expect(fs.stat(directory)).rejects.toMatchObject({
           code: "ENOENT",
         })
-        resumeNativeTextGenerationAdmissions()
+        nativeText.resumeAdmissions()
       } finally {
         vi.useRealTimers()
         vi.restoreAllMocks()
@@ -128,7 +130,7 @@ describe("native text process quarantine", () => {
       let directory = ""
       vi.useFakeTimers()
       try {
-        const running = runNativeTextGeneration({
+        const running = nativeText.run({
           settings: {
             ...defaultSettings(),
             provider_instances: {
@@ -154,9 +156,9 @@ describe("native text process quarantine", () => {
         await vi.advanceTimersByTimeAsync(2_200)
         await rejected
         expect((await fs.stat(directory)).isDirectory()).toBe(true)
-        expect(activeNativeTextGenerationResourceCount()).toBe(2)
+        expect(nativeText.activeResourceCount()).toBe(2)
         await expect(
-          runNativeTextGeneration({
+          nativeText.run({
             settings: defaultSettings(),
             modelSelection: null,
             prompt: "blocked",
@@ -170,14 +172,12 @@ describe("native text process quarantine", () => {
           child.emit("close", 0, null)
           return { status: "closed", code: 0, signal: null }
         })
-        await expect(shutdownAllNativeTextGenerationResources()).resolves.toBe(
-          2
-        )
-        expect(activeNativeTextGenerationResourceCount()).toBe(0)
+        await expect(nativeText.shutdownAll()).resolves.toBe(2)
+        expect(nativeText.activeResourceCount()).toBe(0)
         await expect(fs.stat(directory)).rejects.toMatchObject({
           code: "ENOENT",
         })
-        resumeNativeTextGenerationAdmissions()
+        nativeText.resumeAdmissions()
       } finally {
         vi.useRealTimers()
         vi.restoreAllMocks()

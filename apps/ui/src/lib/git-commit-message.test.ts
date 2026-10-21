@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import {
-  generateCommitMessage,
-  gitDiff,
-  gitDiffStaged,
-  gitStatus,
-  readFile,
-} from "@/services/backend"
+import { generateCommitMessage } from "@/services/backend/chatApi"
+import { gitDiff, gitDiffStaged, gitStatus } from "@/services/backend/gitApi"
+import { readFile } from "@/services/backend/workspaceApi"
 import { generateWorkspaceCommitMessage } from "./git-commit-message"
 
-vi.mock("@/services/backend", () => ({
+vi.mock("@/services/backend/chatApi", () => ({
   generateCommitMessage: vi.fn(),
+}))
+vi.mock("@/services/backend/gitApi", () => ({
   gitDiff: vi.fn(),
   gitDiffStaged: vi.fn(),
   gitStatus: vi.fn(),
+}))
+vi.mock("@/services/backend/workspaceApi", () => ({
   readFile: vi.fn(),
 }))
 

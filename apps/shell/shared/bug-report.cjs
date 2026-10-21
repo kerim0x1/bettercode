@@ -2,8 +2,29 @@ const BUG_REPORT_URL = "https://betterc0de.com/api/bug/report"
 const COOLDOWN_MS = 10_000
 const { formatBugReportDeviceInfo } = require("./bug-report-device-info.cjs")
 
-/** One sender per main process: the limit applies across all renderer windows. */
-function createBugReportSender({ appVersion, os, arch = process.arch, installId = null, getLogs = () => "", getDeviceInfo = async () => null, fetchImpl = fetch, now = Date.now, timeoutMs = 15_000 }) {
+/**
+ * One sender per main process: the limit applies across all renderer windows.
+ *
+ * `redact` scrubs the message, stack and logs (including logs a renderer
+ * supplies) right before upload. `getInstallId` is asked per report, so the
+ * installation ID is only attached while the user has opted in to it.
+ */
+function createBugReportSender({
+  appVersion, os, arch = process.arch, installId = null, getInstallId = () => installId,
+  getLogs = () => "", getDeviceInfo = async () => null, redact = (text) => text,
+  fetchImpl = fetch, now = Date.now, timeoutMs = 15_000,
+}) {
+  const scrub = (text) => {
+    try { return redact(text) } catch { return "" }
+  }
+  const currentInstallId = () => {
+    try {
+      const id = getInstallId()
+      return typeof id === "string" && id ? id : null
+    } catch {
+      return null
+    }
+  }
   let nextAllowedAt = 0
   let pending = false
   const retryAfterMs = () => Math.max(0, nextAllowedAt - now())
@@ -25,18 +46,20 @@ function createBugReportSender({ appVersion, os, arch = process.arch, installId 
     try {
       // Diagnostics are best effort. A driver/API failure must not prevent the report.
       const deviceInfo = await Promise.resolve().then(getDeviceInfo).catch(() => null)
-      const logs = [input.logs, getLogs()].filter(Boolean).join("\n").slice(-64_000)
+      const logs = scrub([input.logs, getLogs()].filter(Boolean).join("\n")).slice(-64_000)
+      const reportMessage = scrub(input.message)
+      const stack = scrub(input.stack).slice(0, 32_000)
       const deviceSection = `\n\n${formatBugReportDeviceInfo(deviceInfo)}`
       // Preserve diagnostics even when the console already fills the payload limit.
       const messageLimit = 128_000 - deviceSection.length
-      const message = (input.message.length > messageLimit
-        ? `${input.message.slice(0, messageLimit - 12)}\n[truncated]`
-        : input.message) + deviceSection
+      const message = (reportMessage.length > messageLimit
+        ? `${reportMessage.slice(0, messageLimit - 12)}\n[truncated]`
+        : reportMessage) + deviceSection
       timeout = setTimeout(() => controller.abort(), timeoutMs)
       const response = await fetchImpl(BUG_REPORT_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, stack: input.stack, logs, installId, appVersion, os, arch, deviceInfo }),
+        body: JSON.stringify({ message, stack, logs, installId: currentInstallId(), appVersion, os, arch, deviceInfo }),
         signal: controller.signal,
         redirect: "error",
       })

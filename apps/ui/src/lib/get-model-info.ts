@@ -1,6 +1,8 @@
 import { anthropicModelDisplayName } from "@betterc0de/schema"
 import { builtinProviders } from "@/lib/builtin-providers"
 import { usePluginStore } from "@/lib/plugin-store"
+import { prettyModelId } from "@/lib/model-display-name"
+import { modelVendor } from "@/lib/model-vendor-logo"
 
 /**
  * Look up a model's display name + provider logo by model id, across both
@@ -47,6 +49,13 @@ export function getModelInfo(
     }
   if (/^o\d+(?:-|$)/i.test(openAiId))
     return { name: openAiId, logo: providerLogo("openai-api") }
+  // OpenRouter-style `vendor/model` ids: a readable name and the maker's mark.
+  if (modelId.includes("/")) {
+    return {
+      name: prettyModelId(modelId),
+      logo: modelVendor({ id: modelId })?.logo ?? "",
+    }
+  }
   return { name: modelId, logo: "" }
 }
 

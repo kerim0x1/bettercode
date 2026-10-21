@@ -738,6 +738,48 @@ describe("WsHub upgrade boundary", () => {
     ws.close()
   })
 
+  it("treats a plaintext private-network peer as insecure: read-only session, no desktop bearer", async () => {
+    // A LAN address is not encryption: anyone on the same Wi-Fi can replay
+    // what crosses it. The transport is admitted without the escape hatch,
+    // but a full session is downgraded and the desktop bearer refused, as
+    // on the HTTP side.
+    const { hub, url } = await startHub({
+      allowedOrigins: ["http://remote.example"],
+      trustProxyHeaders: true,
+      authenticateToken: () => ({
+        kind: "remote",
+        sessionId: "session-lan",
+        accessLevel: "full",
+        expiresAt: Date.now() + 60_000,
+      }),
+      sessionCookieName: "betterc0de_remote_session",
+    })
+    hub.setRpcHandler((_method, _params, principal) =>
+      principal.kind === "remote" ? principal.accessLevel : "local"
+    )
+    const lan = {
+      Host: "remote.example",
+      Origin: "http://remote.example",
+      "X-Forwarded-For": "192.168.1.40",
+    }
+
+    await expect(
+      rejectedUpgrade(url, { ...lan, Authorization: "Bearer secret" })
+    ).resolves.toBe(426)
+
+    const ws = new WebSocket(url, {
+      headers: { ...lan, Cookie: "betterc0de_remote_session=remote-session" },
+    })
+    await nextJson(ws)
+    const response = nextJson(ws)
+    ws.send(JSON.stringify({ id: "access", method: "access.level" }))
+    await expect(response).resolves.toEqual({
+      id: "access",
+      result: "read_only",
+    })
+    ws.close()
+  })
+
   it("keeps in-band auth only for an explicitly allowed remote origin", async () => {
     const { url } = await startHub({
       allowedOrigins: ["https://remote.example"],

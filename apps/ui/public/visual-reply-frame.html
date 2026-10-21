@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      Host page of a visual reply (apps/ui/src/lib/visual-reply.ts). The chat
+      loads it in <iframe sandbox="allow-scripts">: an opaque origin with no
+      forms, popups, downloads or top navigation, and no access to the app,
+      its storage or its bridge. The agent's page arrives from the chat by
+      postMessage and goes into a nested <iframe sandbox="allow-scripts"
+      srcdoc>, which inherits the policy below. The policy must equal
+      VISUAL_REPLY_CSP (visual-reply.test.ts checks it).
+
+      Why two frames: a srcdoc frame directly in the app would inherit the
+      app's own policy, which runs no inline script. And because this page is
+      the nested frame's container, its `frame-src 'none'` keeps the agent's
+      page from navigating anywhere, also in a paired browser, whose app
+      policy allows remote frames for previews. A sandboxed page cannot
+      navigate this page either.
+
+      Loaded any other way (as a top-level page, or framed without that
+      sandbox, so in a real origin) this page does nothing.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src https://fonts.gstatic.com data:; img-src data: blob: https:; connect-src 'none'; frame-src 'none'; form-action 'none'" />
+    <meta name="referrer" content="no-referrer" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+      }
+      iframe {
+        display: block;
+        width: 100%;
+        height: 100vh;
+        min-height: 100vh;
+        border: 0;
+      }
+    </style>
+    <script>
+      ;(() => {
+        "use strict"
+        const host = window.parent
+        if (self.origin !== "null" || !host || host === window) return
+        const MAX_CHARS = 2000000
+        const READY = "betterc0de:visual-reply:ready"
+        const RENDER = "betterc0de:visual-reply:render"
+        const HEIGHT = "betterc0de:visual-reply:height"
+        const ESCAPE = "betterc0de:visual-reply:escape"
+        let page = null
+        const show = (data) => {
+          if (page || typeof data.html !== "string") return
+          if (data.html.length > MAX_CHARS) return
+          page = document.createElement("iframe")
+          page.setAttribute("sandbox", "allow-scripts")
+          page.setAttribute("referrerpolicy", "no-referrer")
+          page.setAttribute(
+            "title",
+            typeof data.title === "string" && data.title
+              ? data.title.slice(0, 200)
+              : "Visual reply"
+          )
+          page.srcdoc = data.html
+          ;(document.body || document.documentElement).append(page)
+        }
+        // From the page, only its height and Escape go on to the chat. The
+        // page keeps this page's height (100vh) and scrolls itself: a page
+        // reports at least its own viewport, so sizing its frame from the
+        // report would grow without end for a page as tall as 100vh plus a
+        // margin. The chat's frame follows the report up to 900px instead.
+        const relay = (data) => {
+          if (
+            data.type === HEIGHT &&
+            typeof data.height === "number" &&
+            Number.isFinite(data.height) &&
+            data.height >= 0
+          ) {
+            const height = Math.ceil(data.height)
+            host.postMessage({ type: HEIGHT, height }, "*")
+          } else if (data.type === ESCAPE) {
+            host.postMessage({ type: ESCAPE }, "*")
+          }
+        }
+        window.addEventListener("message", (event) => {
+          const data = event.data
+          if (!data || typeof data !== "object") return
+          if (event.source === host) {
+            if (data.type === RENDER) show(data)
+          } else if (page && event.source === page.contentWindow) {
+            relay(data)
+          }
+        })
+        // Focus can rest on this page too.
+        document.addEventListener(
+          "keydown",
+          (event) => {
+            if (event.key === "Escape") host.postMessage({ type: ESCAPE }, "*")
+          },
+          true
+        )
+        host.postMessage({ type: READY }, "*")
+      })()
+    </script>
+  </head>
+  <body></body>
+</html>

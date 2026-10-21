@@ -1,34 +1,39 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-const coreApi = vi.hoisted(() => ({
-  getSettings: vi.fn(),
-  updateSettings: vi.fn(),
-}))
 const rulesIpc = vi.hoisted(() => ({
   save: vi.fn(),
 }))
 
-vi.mock("@/services/backend/coreApi", () => coreApi)
 vi.mock("@/services/ipc-facade", () => ({
   ipcApi: {
     rules: rulesIpc,
   },
+  // The bridge the tests stub on `window`, read at call time like the real one.
+  getElectronApi: () => window.electronAPI,
 }))
 vi.mock("@/lib/provider-metadata-events", () => ({
   dispatchProviderMetadataChanged: vi.fn(),
 }))
+const coreApi = vi.hoisted(() => ({ getUserRules: vi.fn() }))
+vi.mock("@/services/backend/coreApi", () => coreApi)
 
-import { getCustomRules, saveCustomRules } from "./runtime-config"
+import { HttpError } from "@/lib/errors"
+import {
+  canEditCustomRules,
+  customRulesDescription,
+  getCustomRules,
+  listRuntimeHooks,
+  readCustomRules,
+  saveCustomRules,
+} from "./runtime-config"
 
-describe("backend-owned custom rules", () => {
+describe("the user's rules (rules.md, owned by the backend)", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    coreApi.getSettings.mockResolvedValue({ custom_rules: "" })
-    coreApi.updateSettings.mockResolvedValue({ custom_rules: "" })
     rulesIpc.save.mockResolvedValue(undefined)
     vi.stubGlobal("window", {
       electronAPI: {
-        rulesGet: vi.fn().mockResolvedValue({ content: "" }),
+        rulesGet: vi.fn().mockResolvedValue({ content: "desktop rules" }),
         rulesSave: vi.fn(),
       },
     })
@@ -38,56 +43,93 @@ describe("backend-owned custom rules", () => {
     vi.unstubAllGlobals()
   })
 
-  it("prefers settings.custom_rules over the desktop compatibility file", async () => {
-    coreApi.getSettings.mockResolvedValue({
-      custom_rules: "backend rules",
-    })
-
-    await expect(getCustomRules()).resolves.toBe("backend rules")
-    expect(window.electronAPI?.rulesGet).not.toHaveBeenCalled()
+  it("reads rules.md through the desktop process", async () => {
+    await expect(getCustomRules()).resolves.toBe("desktop rules")
+    expect(window.electronAPI?.rulesGet).toHaveBeenCalledTimes(1)
+    expect(coreApi.getUserRules).not.toHaveBeenCalled()
+    expect(canEditCustomRules()).toBe(true)
   })
 
-  it("migrates a legacy rules file when the backend setting is empty", async () => {
-    vi.mocked(window.electronAPI!.rulesGet).mockResolvedValue({
-      content: "legacy rules",
-    })
-
-    await expect(getCustomRules()).resolves.toBe("legacy rules")
-    expect(coreApi.updateSettings).toHaveBeenCalledWith({
-      custom_rules: "legacy rules",
-    })
+  it("reads no rules when the desktop process cannot answer", async () => {
+    vi.mocked(window.electronAPI!.rulesGet).mockRejectedValue(
+      new Error("Backend is not ready.")
+    )
+    await expect(getCustomRules()).resolves.toBe("")
   })
 
-  it("falls back to the compatibility file while the backend is unavailable", async () => {
-    coreApi.getSettings.mockRejectedValue(new Error("backend starting"))
-    vi.mocked(window.electronAPI!.rulesGet).mockResolvedValue({
-      content: "startup rules",
-    })
-
-    await expect(getCustomRules()).resolves.toBe("startup rules")
-    expect(coreApi.updateSettings).not.toHaveBeenCalled()
-  })
-
-  it("writes the backend setting and mirrors packaged desktop clients", async () => {
+  it("saves through the desktop process only", async () => {
     await saveCustomRules("new rules")
-
-    expect(coreApi.updateSettings).toHaveBeenCalledWith({
-      custom_rules: "new rules",
-    })
     expect(rulesIpc.save).toHaveBeenCalledWith("new rules")
-    expect(coreApi.updateSettings.mock.invocationCallOrder[0]).toBeLessThan(
-      rulesIpc.save.mock.invocationCallOrder[0]!
+  })
+
+  it("shows a paired browser the rules from the backend, but saves only on the desktop", async () => {
+    vi.stubGlobal("window", { electronAPI: undefined })
+    coreApi.getUserRules.mockResolvedValue({ content: "backend rules" })
+    await expect(readCustomRules()).resolves.toEqual({
+      content: "backend rules",
+      unavailable: null,
+    })
+    expect(canEditCustomRules()).toBe(false)
+    await expect(saveCustomRules("remote rules")).rejects.toThrow(/desktop app/)
+    expect(rulesIpc.save).not.toHaveBeenCalled()
+  })
+
+  it("says why a paired browser has no rules to show", async () => {
+    vi.stubGlobal("window", { electronAPI: undefined })
+    coreApi.getUserRules.mockRejectedValue(
+      new HttpError(
+        "remote session is restricted to read-only monitoring",
+        403,
+        "/settings/rules",
+        { code: "remote_read_only" }
+      )
+    )
+    await expect(readCustomRules()).resolves.toEqual({
+      content: "",
+      unavailable: "read-only-session",
+    })
+    coreApi.getUserRules.mockRejectedValue(new Error("Backend is offline."))
+    await expect(readCustomRules()).resolves.toEqual({
+      content: "",
+      unavailable: "unreadable",
+    })
+    await expect(getCustomRules()).resolves.toBe("")
+  })
+
+  it("tells a paired browser its rules are read-only, or why it has none", () => {
+    expect(customRulesDescription(true, null)).toMatch(/^Define global/)
+    expect(customRulesDescription(false, null)).toMatch(/read-only/)
+    expect(customRulesDescription(false, "read-only-session")).toMatch(
+      /paired read-only/
+    )
+    expect(customRulesDescription(false, "unreadable")).toMatch(
+      /could not be loaded/
     )
   })
+})
 
-  it("does not require Electron IPC for remote clients", async () => {
-    vi.stubGlobal("window", { electronAPI: undefined })
+describe("hook approval state", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
 
-    await saveCustomRules("remote rules")
-
-    expect(coreApi.updateSettings).toHaveBeenCalledWith({
-      custom_rules: "remote rules",
+  it("keeps the desktop's approved flag, and omits it when not reported", async () => {
+    const hook = { event: "on_commit", command: "npm test", enabled: true }
+    vi.stubGlobal("window", {
+      electronAPI: {
+        hookList: vi.fn().mockResolvedValue([
+          { ...hook, id: "approved", approved: true },
+          { ...hook, id: "unapproved", approved: false },
+          { ...hook, id: "older-desktop" },
+        ]),
+      },
     })
-    expect(rulesIpc.save).not.toHaveBeenCalled()
+    const hooks = await listRuntimeHooks()
+    expect(hooks.map((entry) => [entry.id, entry.approved])).toEqual([
+      ["approved", true],
+      ["unapproved", false],
+      ["older-desktop", undefined],
+    ])
+    expect("approved" in hooks[2]!).toBe(false)
   })
 })

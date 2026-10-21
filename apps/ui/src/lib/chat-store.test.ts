@@ -4,18 +4,23 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest"
 // Mocks — must be declared before any import that pulls them in
 // ---------------------------------------------------------------------------
 
-vi.mock("@/services/backend", () => ({
+vi.mock("@/services/backend/coreApi", () => ({
   upsertThreadMeta: vi.fn().mockResolvedValue(undefined),
   saveThread: vi.fn().mockResolvedValue(undefined),
   saveThreadMessage: vi.fn().mockResolvedValue(undefined),
   deleteThreadDb: vi.fn().mockResolvedValue(undefined),
   loadMessages: vi.fn().mockResolvedValue([]),
+  loadMessage: vi.fn(),
+}))
+vi.mock("@/services/backend/chatApi", () => ({
   loadThreadActivities: vi.fn().mockResolvedValue([]),
   generateTitle: vi.fn().mockResolvedValue("AI Title"),
 }))
 
+const clearCheckpointsForThread = vi.hoisted(() => vi.fn())
 vi.mock("@/lib/checkpoint-store", () => ({
   autoCheckpointFromToolCalls: vi.fn().mockResolvedValue(undefined),
+  useCheckpointStore: { getState: () => ({ clearCheckpointsForThread }) },
 }))
 
 // Provide a minimal crypto.randomUUID so we get deterministic-ish IDs in Node
@@ -32,14 +37,16 @@ import { autoCheckpointFromToolCalls } from "@/lib/checkpoint-store"
 import { usePreferencesStore } from "@/lib/preferences-store"
 import { resolveComposerPreferences } from "@/lib/composer-settings"
 import type { ChatMessage, ThreadActivity } from "@/lib/chat-store"
+import type { ThreadAutonomy } from "@betterc0de/schema"
 import {
   upsertThreadMeta as upsertThreadMetaDb,
   saveThread as saveThreadDb,
   saveThreadMessage as _saveThreadMessageDb,
   deleteThreadDb,
+  loadMessage,
   loadMessages,
-  loadThreadActivities,
-} from "@/services/backend"
+} from "@/services/backend/coreApi"
+import { loadThreadActivities } from "@/services/backend/chatApi"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -57,18 +64,30 @@ function resetStore() {
     activitiesLoadedByThread: {},
     messagesLoadedByThread: {},
     messageHydrationErrorsByThread: {},
+    olderMessagesCursorByThread: {},
+    olderMessagesLoadingByThread: {},
     lruOrder: [],
     pinnedThreadIds: new Set(),
     draftsByThread: {},
     settingsByThread: {},
     lastUsage: null,
-    autonomousMode: false,
-    autonomousThreadId: null,
-    autonomousTask: null,
-    autonomousStatus: "idle" as const,
-    autonomousIterations: 0,
-    autonomousMaxIterations: 50,
+    autonomyByThread: {},
   })
+}
+
+function makeRun(overrides: Partial<ThreadAutonomy> = {}): ThreadAutonomy {
+  return {
+    id: "run",
+    status: "working",
+    tasks: [{ id: "parser", text: "Write the parser", done: false }],
+    iterations: 0,
+    maxIterations: 50,
+    timeBudgetMin: 90,
+    startedAt: 1,
+    updatedAt: 1,
+    stopReason: null,
+    ...overrides,
+  }
 }
 
 function makeMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
@@ -451,7 +470,10 @@ describe("chat-store", () => {
       // Allow microtask queue to drain (hydration is fire-and-forget)
       await new Promise((r) => setTimeout(r, 50))
 
-      expect(loadMessages).toHaveBeenCalledWith("unloaded-1")
+      expect(loadMessages).toHaveBeenCalledWith("unloaded-1", {
+        limit: 100,
+        light: true,
+      })
 
       vi.useFakeTimers()
     })
@@ -609,7 +631,10 @@ describe("chat-store", () => {
       useChatStore.getState().addMessage("deferred", msg)
 
       // Should trigger hydration
-      expect(loadMessages).toHaveBeenCalledWith("deferred")
+      expect(loadMessages).toHaveBeenCalledWith("deferred", {
+        limit: 100,
+        light: true,
+      })
     })
 
     it("uses first 40 chars of user message as temporary title", () => {
@@ -630,40 +655,41 @@ describe("chat-store", () => {
   // 6. deleteThread
   // -----------------------------------------------------------------------
   describe("deleteThread", () => {
-    it("ends only the deleted chat's autonomous run after deletion succeeds", async () => {
+    it("drops only the deleted chat's autonomous run after deletion succeeds", async () => {
       const owner = useChatStore.getState().createThread("Owner", "p")
-      useChatStore.getState().setAutonomousMode(true)
-      useChatStore.getState().setAutonomousStatus("working")
+      useChatStore.getState().setThreadAutonomy(owner, makeRun())
       const other = useChatStore.getState().createThread("Other", "p")
+      useChatStore
+        .getState()
+        .setThreadAutonomy(other, makeRun({ id: "other-run" }))
       useChatStore.getState().deleteThread(other)
       await vi.waitFor(() =>
         expect(
           useChatStore.getState().threads.some((t) => t.id === other)
         ).toBe(false)
       )
-      expect(useChatStore.getState().autonomousThreadId).toBe(owner)
-      expect(useChatStore.getState().autonomousStatus).toBe("working")
+      expect(useChatStore.getState().autonomyByThread).toEqual({
+        [owner]: makeRun(),
+      })
       useChatStore.getState().deleteThread(owner)
       await vi.waitFor(() =>
         expect(
           useChatStore.getState().threads.some((t) => t.id === owner)
         ).toBe(false)
       )
-      expect(useChatStore.getState().autonomousThreadId).toBeNull()
-      expect(useChatStore.getState().autonomousMode).toBe(false)
-      expect(useChatStore.getState().autonomousStatus).toBe("idle")
+      expect(useChatStore.getState().autonomyByThread).toEqual({})
     })
 
-    it("preserves the autonomous run when deleting its chat is denied", async () => {
+    it("keeps the autonomous run when deleting its chat is denied", async () => {
       const owner = useChatStore.getState().createThread("Owner", "p")
-      useChatStore.getState().setAutonomousMode(true)
-      useChatStore.getState().setAutonomousStatus("working")
+      useChatStore.getState().setThreadAutonomy(owner, makeRun())
       vi.mocked(deleteThreadDb).mockRejectedValueOnce(new Error("denied"))
       useChatStore.getState().deleteThread(owner)
       await Promise.resolve()
       await Promise.resolve()
-      expect(useChatStore.getState().autonomousThreadId).toBe(owner)
-      expect(useChatStore.getState().autonomousStatus).toBe("working")
+      expect(useChatStore.getState().autonomyByThread[owner]?.status).toBe(
+        "working"
+      )
     })
     it("removes thread from all maps after the database delete commits", async () => {
       const id = useChatStore.getState().createThread("T", "p")
@@ -687,6 +713,7 @@ describe("chat-store", () => {
       const state = useChatStore.getState()
       expect(state.threads.find((t) => t.id === id)).toBeUndefined()
       expect(state.lruOrder).not.toContain(id)
+      expect(clearCheckpointsForThread).toHaveBeenCalledWith(id)
       expect(state.draftsByThread[id]).toBeUndefined()
       expect(state.streamingByThread[id]).toBeUndefined()
       expect(state.messagesLoadedByThread[id]).toBeUndefined()
@@ -1429,7 +1456,7 @@ describe("chat-store", () => {
       const id = useChatStore.getState().createThread("T", "p")
       // Already loaded from createThread
       await useChatStore.getState().hydrateThreadMessages(id)
-      expect(loadMessages).not.toHaveBeenCalledWith(id)
+      expect(loadMessages).not.toHaveBeenCalled()
     })
 
     it("force reloads already-loaded threads after a replay gap", async () => {
@@ -1443,7 +1470,7 @@ describe("chat-store", () => {
 
       await useChatStore.getState().hydrateThreadMessages(id, true)
 
-      expect(loadMessages).toHaveBeenCalledWith(id)
+      expect(loadMessages).toHaveBeenCalledWith(id, { limit: 100, light: true })
       expect(
         useChatStore.getState().threads.find((thread) => thread.id === id)
           ?.messages
@@ -1545,6 +1572,352 @@ describe("chat-store", () => {
       expect(useChatStore.getState().activitiesByThread[id]).toEqual([
         expect.objectContaining({ id: "fresh-activity" }),
       ])
+    })
+  })
+
+  describe("transcript paging", () => {
+    function withSequence(message: ChatMessage, sequence: number): ChatMessage {
+      return { ...message, sequence } as ChatMessage
+    }
+
+    function rows(from: number, count: number): ChatMessage[] {
+      return Array.from({ length: count }, (_, index) =>
+        withSequence(
+          makeMessage({
+            id: `m${from + index}`,
+            content: `row ${from + index}`,
+          }),
+          from + index
+        )
+      )
+    }
+
+    async function flushMicrotasks() {
+      for (let index = 0; index < 10; index += 1) await Promise.resolve()
+    }
+
+    function unloadedThread(id: string) {
+      useChatStore.setState({
+        threads: [
+          {
+            id,
+            title: id,
+            projectName: "p",
+            projectPath: "",
+            messages: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+        messagesLoadedByThread: { [id]: false },
+      })
+    }
+
+    function messageIds(id: string) {
+      return (
+        useChatStore
+          .getState()
+          .threads.find((thread) => thread.id === id)
+          ?.messages.map((message) => message.id) ?? []
+      )
+    }
+
+    it("reads the newest page first and prepends older pages on demand", async () => {
+      unloadedThread("paged")
+      vi.mocked(loadMessages)
+        .mockResolvedValueOnce(rows(100, 100))
+        .mockResolvedValueOnce(rows(60, 40))
+
+      await useChatStore.getState().hydrateThreadMessages("paged")
+      expect(loadMessages).toHaveBeenCalledWith("paged", {
+        limit: 100,
+        light: true,
+      })
+      expect(useChatStore.getState().olderMessagesCursorByThread.paged).toBe(
+        100
+      )
+      expect(messageIds("paged")).toHaveLength(100)
+
+      await useChatStore.getState().loadOlderThreadMessages("paged")
+      expect(loadMessages).toHaveBeenLastCalledWith("paged", {
+        limit: 100,
+        beforeSequence: 100,
+        light: true,
+      })
+      const ids = messageIds("paged")
+      expect(ids).toHaveLength(140)
+      expect(ids[0]).toBe("m60")
+      expect(ids.at(-1)).toBe("m199")
+      // A short page means the start of the chat is loaded.
+      expect(
+        useChatStore.getState().olderMessagesCursorByThread.paged
+      ).toBeUndefined()
+      expect(
+        useChatStore.getState().olderMessagesLoadingByThread.paged
+      ).toBeUndefined()
+    })
+
+    it("loads every page for commands that need the whole conversation", async () => {
+      unloadedThread("full")
+      vi.mocked(loadMessages)
+        .mockResolvedValueOnce(rows(300, 100))
+        .mockResolvedValueOnce(rows(250, 50))
+
+      await useChatStore.getState().ensureFullThreadMessages("full")
+
+      expect(loadMessages).toHaveBeenLastCalledWith("full", {
+        limit: 2_000,
+        beforeSequence: 300,
+        light: false,
+      })
+      expect(messageIds("full")).toHaveLength(150)
+      expect(
+        useChatStore.getState().olderMessagesCursorByThread.full
+      ).toBeUndefined()
+    })
+
+    it("keeps a message sent while a forced refresh was reading", async () => {
+      const id = useChatStore.getState().createThread("T", "p")
+      let resolveSnapshot!: (messages: ChatMessage[]) => void
+      vi.mocked(loadMessages).mockImplementationOnce(
+        () =>
+          new Promise<ChatMessage[]>((resolve) => {
+            resolveSnapshot = resolve
+          })
+      )
+      const refresh = useChatStore.getState().hydrateThreadMessages(id, true)
+      const sent = makeMessage({ id: "sent-during-read", content: "hi" })
+      useChatStore.getState().addMessage(id, sent)
+      await flushMicrotasks()
+
+      resolveSnapshot([makeMessage({ id: "server-row", role: "assistant" })])
+      await refresh
+
+      expect(messageIds(id)).toEqual(["server-row", "sent-during-read"])
+    })
+
+    it("drops a saved message that the server no longer has", async () => {
+      const id = useChatStore.getState().createThread("T", "p")
+      useChatStore.getState().addMessage(id, makeMessage({ id: "reverted" }))
+      await flushMicrotasks()
+      vi.mocked(loadMessages).mockResolvedValueOnce([])
+
+      await useChatStore.getState().hydrateThreadMessages(id, true)
+
+      expect(messageIds(id)).toEqual([])
+    })
+  })
+
+  describe("light transcript payloads", () => {
+    const FULL_DIFF = {
+      path: "src/a.ts",
+      additions: 1,
+      deletions: 1,
+      oldText: "before",
+      newText: "after",
+      isNew: false,
+    }
+    const IMAGE_URL = `data:image/png;base64,${"A".repeat(64)}`
+
+    function fullMessage(id: string): ChatMessage {
+      return {
+        ...makeMessage({ id, role: "assistant", content: `full ${id}` }),
+        sequence: 1,
+        diffs: [FULL_DIFF],
+        attachments: [{ type: "image", filename: "a.png", url: IMAGE_URL }],
+      } as ChatMessage
+    }
+
+    function lightMessage(id: string): ChatMessage {
+      const full = fullMessage(id)
+      return {
+        ...full,
+        diffs: [{ ...FULL_DIFF, oldText: "", newText: "", textOmitted: true }],
+        attachments: [
+          {
+            type: "image",
+            filename: "a.png",
+            url: "data:image/png;base64,",
+            dataOmitted: true,
+          },
+        ],
+      }
+    }
+
+    function loadedThread(id: string, messages: ChatMessage[], loaded = true) {
+      useChatStore.setState({
+        threads: [
+          {
+            id,
+            title: id,
+            projectName: "p",
+            projectPath: "",
+            messages,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+        messagesLoadedByThread: { [id]: loaded },
+      })
+    }
+
+    function storedMessage(threadId: string, messageId: string) {
+      return useChatStore
+        .getState()
+        .threads.find((thread) => thread.id === threadId)
+        ?.messages.find((message) => message.id === messageId)
+    }
+
+    it("reads a message in full once and keeps newer local changes", async () => {
+      loadedThread("lazy", [lightMessage("m1")])
+      let resolveFull!: (message: ChatMessage) => void
+      vi.mocked(loadMessage).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveFull = resolve as (message: ChatMessage) => void
+          }) as ReturnType<typeof loadMessage>
+      )
+
+      const first = useChatStore.getState().hydrateFullMessage("lazy", "m1")
+      const second = useChatStore.getState().hydrateFullMessage("lazy", "m1")
+      expect(loadMessage).toHaveBeenCalledTimes(1)
+      expect(loadMessage).toHaveBeenCalledWith("lazy", "m1")
+
+      // The message changes while the full copy is in flight.
+      useChatStore.setState((state) => ({
+        threads: state.threads.map((thread) => ({
+          ...thread,
+          messages: thread.messages.map((message) => ({
+            ...message,
+            content: "streamed later",
+          })),
+        })),
+      }))
+      resolveFull(fullMessage("m1"))
+      await Promise.all([first, second])
+
+      const message = storedMessage("lazy", "m1")
+      expect(message?.content).toBe("streamed later")
+      expect(message?.diffs).toEqual([FULL_DIFF])
+      expect(message?.attachments).toEqual([
+        { type: "image", filename: "a.png", url: IMAGE_URL },
+      ])
+
+      // Nothing left to read.
+      await useChatStore.getState().hydrateFullMessage("lazy", "m1")
+      expect(loadMessage).toHaveBeenCalledTimes(1)
+    })
+
+    it("keeps payloads read in full when a light page is read again", async () => {
+      loadedThread("refresh", [fullMessage("m1")])
+      vi.mocked(loadMessages).mockResolvedValueOnce([lightMessage("m1")])
+
+      await useChatStore.getState().hydrateThreadMessages("refresh", true)
+
+      expect(storedMessage("refresh", "m1")?.diffs).toEqual([FULL_DIFF])
+      expect(loadMessage).not.toHaveBeenCalled()
+    })
+
+    it("leaves a thread evicted while the read ran alone", async () => {
+      loadedThread("evicted", [lightMessage("m1")])
+      vi.mocked(loadMessage).mockImplementation(async () => {
+        useChatStore.setState({ messagesLoadedByThread: { evicted: false } })
+        return fullMessage("m1")
+      })
+
+      await useChatStore.getState().hydrateFullMessage("evicted", "m1")
+
+      expect(storedMessage("evicted", "m1")?.diffs?.[0]?.textOmitted).toBe(true)
+    })
+
+    it("fills every placeholder for whole-conversation commands only", async () => {
+      loadedThread("all", [], false)
+      vi.mocked(loadMessages).mockResolvedValueOnce([
+        lightMessage("m1"),
+        { ...makeMessage({ id: "m2" }), sequence: 2 } as ChatMessage,
+      ])
+      vi.mocked(loadMessage).mockImplementation(async (_threadId, messageId) =>
+        fullMessage(messageId)
+      )
+
+      await useChatStore
+        .getState()
+        .ensureFullThreadMessages("all", { payloads: false })
+      expect(loadMessage).not.toHaveBeenCalled()
+
+      await useChatStore.getState().ensureFullThreadMessages("all")
+      expect(loadMessage).toHaveBeenCalledTimes(1)
+      expect(storedMessage("all", "m1")?.diffs).toEqual([FULL_DIFF])
+    })
+
+    it("saves the full payloads instead of light placeholders", async () => {
+      const light = {
+        ...lightMessage("m1"),
+        questions: [{ id: "q1", text: "Which?", options: [] }],
+      } as ChatMessage
+      loadedThread("persist", [light])
+      vi.mocked(loadMessage).mockResolvedValue(fullMessage("m1"))
+
+      useChatStore.getState().dismissPendingQuestions("persist")
+      for (let index = 0; index < 20; index += 1) await Promise.resolve()
+
+      expect(loadMessage).toHaveBeenCalledWith("persist", "m1")
+      expect(_saveThreadMessageDb).toHaveBeenCalledTimes(1)
+      const saved = vi.mocked(_saveThreadMessageDb).mock
+        .calls[0]?.[1] as ChatMessage
+      expect(saved.diffs).toEqual([FULL_DIFF])
+      expect(saved.attachments).toEqual([
+        { type: "image", filename: "a.png", url: IMAGE_URL },
+      ])
+      expect(saved.questions).toBeUndefined()
+    })
+  })
+
+  describe("LRU residency", () => {
+    it("evicts prefetched threads and their activities, keeping the active one", () => {
+      const threads = Array.from({ length: 12 }, (_, index) => ({
+        id: `r${index}`,
+        title: `r${index}`,
+        projectName: "p",
+        projectPath: "",
+        messages: [makeMessage({ id: `r${index}-m` })],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }))
+      useChatStore.setState({
+        threads,
+        lruOrder: [],
+        messagesLoadedByThread: Object.fromEntries(
+          threads.map((thread) => [thread.id, true])
+        ),
+        activitiesByThread: Object.fromEntries(
+          threads.map((thread) => [
+            thread.id,
+            [makeActivity({ threadId: thread.id, kind: "tool.completed" })],
+          ])
+        ),
+        activitiesLoadedByThread: Object.fromEntries(
+          threads.map((thread) => [thread.id, true])
+        ),
+      })
+
+      // r1 is r0's sidebar neighbour and stays; r10 and r11 are the cold end.
+      useChatStore.getState().setActiveThread("r0")
+
+      const state = useChatStore.getState()
+      expect(state.lruOrder).toHaveLength(10)
+      expect(state.lruOrder[0]).toBe("r0")
+      const evicted = threads
+        .map((thread) => thread.id)
+        .filter((id) => !state.lruOrder.includes(id))
+      expect(evicted).toEqual(["r10", "r11"])
+      for (const id of evicted) {
+        expect(state.messagesLoadedByThread[id]).toBe(false)
+        expect(state.activitiesByThread[id]).toBeUndefined()
+        expect(state.activitiesLoadedByThread[id]).toBeUndefined()
+      }
+      expect(state.activitiesByThread.r0).toHaveLength(1)
+      expect(state.activitiesByThread.r1).toHaveLength(1)
     })
   })
 })

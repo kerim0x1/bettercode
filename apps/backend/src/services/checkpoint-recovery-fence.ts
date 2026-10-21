@@ -1,9 +1,16 @@
-import type { AppState } from "../appState"
 import { HttpError } from "../errors"
-import { acquireExclusiveWorkspaceMaintenance } from "./workspace-exclusive-maintenance"
+import type { WorktreeRegistryQuery } from "../persistence/projections"
+import type { ProviderSessionBindingStore } from "../provider/runtime/ProviderSessionBindingStore"
+import type { CheckpointRevertOperationStore } from "./checkpoint-revert-operations"
+import type { ThreadService } from "./threads"
+import type { WorktreeManager } from "./worktree"
 import {
-  workspaceRecoveryGate,
-  type WorkspaceRecoveryLease,
+  acquireExclusiveWorkspaceMaintenance,
+  type ExclusiveWorkspaceMaintenanceState,
+} from "./workspace-exclusive-maintenance"
+import type {
+  WorkspaceRecoveryGate,
+  WorkspaceRecoveryLease,
 } from "./workspace-recovery-gate"
 
 export interface CheckpointRecoveryMutationScope {
@@ -11,12 +18,35 @@ export interface CheckpointRecoveryMutationScope {
   readonly workspaces?: readonly string[]
 }
 
+/**
+ * The durable revert journal the fences consult, and the instance's recovery
+ * gate a mutation's shared lease is taken on. Required: a fence that cannot
+ * see the journal must not let a mutation through.
+ */
+export interface CheckpointRecoveryFenceState {
+  readonly checkpointReverts: Pick<
+    CheckpointRevertOperationStore,
+    "hasBlockingRecovery" | "blockingThreadForCwd"
+  >
+  readonly workspaceRecoveryGate: Pick<WorkspaceRecoveryGate, "acquireShared">
+}
+
+/** Where a thread's work happens: its binding, project and worktree. */
+export interface ThreadWorkspaceLookup {
+  readonly providerSessionBindings: Pick<
+    ProviderSessionBindingStore,
+    "getLatestForThread"
+  >
+  readonly threads: Pick<ThreadService, "getThreadProjectPath">
+  readonly worktrees: Pick<WorktreeManager, "findForThread">
+  readonly worktreeRegistry: Pick<WorktreeRegistryQuery, "findByThread">
+}
+
 export function assertThreadRecoveryComplete(
-  state: Pick<AppState, "checkpointReverts">,
+  state: CheckpointRecoveryFenceState,
   threadId: string
 ): void {
   const store = state.checkpointReverts
-  if (!store) return
   try {
     if (!store.hasBlockingRecovery(threadId)) return
   } catch {
@@ -34,11 +64,10 @@ export function assertThreadRecoveryComplete(
 }
 
 export function assertWorkspaceRecoveryComplete(
-  state: Pick<AppState, "checkpointReverts">,
+  state: CheckpointRecoveryFenceState,
   cwd: string
 ): void {
   const store = state.checkpointReverts
-  if (!store) return
   let threadId: string | null
   try {
     threadId = store.blockingThreadForCwd(cwd)
@@ -64,13 +93,13 @@ export function assertWorkspaceRecoveryComplete(
  * until that work has actually settled.
  */
 export async function acquireCheckpointRecoveryMutationLease(
-  state: Pick<AppState, "checkpointReverts">,
+  state: CheckpointRecoveryFenceState,
   scope: CheckpointRecoveryMutationScope
 ): Promise<WorkspaceRecoveryLease | null> {
   const workspaces = normalizedWorkspaces(scope.workspaces)
   const lease =
     workspaces.length > 0
-      ? await workspaceRecoveryGate.acquireShared(workspaces)
+      ? await state.workspaceRecoveryGate.acquireShared(workspaces)
       : null
   try {
     for (const threadId of new Set(scope.threadIds ?? [])) {
@@ -89,7 +118,7 @@ export async function acquireCheckpointRecoveryMutationLease(
 }
 
 export async function withCheckpointRecoveryMutation<T>(
-  state: Pick<AppState, "checkpointReverts">,
+  state: CheckpointRecoveryFenceState,
   scope: CheckpointRecoveryMutationScope,
   operation: () => Promise<T> | T
 ): Promise<T> {
@@ -107,14 +136,16 @@ export async function withCheckpointRecoveryMutation<T>(
  * re-checks durable recovery state before mutating anything.
  */
 export async function withCheckpointRecoveryExclusiveMutation<T>(
-  state: Pick<AppState, "checkpointReverts">,
+  /** The process owners are drained for the workspaces before the
+   * destructive operation runs. */
+  state: CheckpointRecoveryFenceState & ExclusiveWorkspaceMaintenanceState,
   scope: CheckpointRecoveryMutationScope,
   operation: () => Promise<T> | T
 ): Promise<T> {
   const workspaces = normalizedWorkspaces(scope.workspaces)
   const lease =
     workspaces.length > 0
-      ? await acquireExclusiveWorkspaceMaintenance(workspaces)
+      ? await acquireExclusiveWorkspaceMaintenance(state, workspaces)
       : null
   try {
     for (const threadId of new Set(scope.threadIds ?? [])) {
@@ -132,23 +163,20 @@ export async function withCheckpointRecoveryExclusiveMutation<T>(
 }
 
 export function recoveryWorkspacesForThread(
-  state: Pick<
-    AppState,
-    "providerSessionBindings" | "threads" | "worktrees" | "worktreeRegistry"
-  >,
+  state: ThreadWorkspaceLookup,
   threadId: string,
   knownProviderWorkspace?: string | null
 ): string[] {
   const worktree =
-    state.worktrees?.findForThread?.(threadId) ??
-    state.worktreeRegistry?.findByThread?.(threadId) ??
+    state.worktrees.findForThread(threadId) ??
+    state.worktreeRegistry.findByThread(threadId) ??
     null
   return normalizedWorkspaces([
     knownProviderWorkspace === undefined
-      ? (state.providerSessionBindings?.getLatestForThread?.(threadId)?.cwd ??
+      ? (state.providerSessionBindings.getLatestForThread(threadId)?.cwd ??
         null)
       : knownProviderWorkspace,
-    state.threads?.getThreadProjectPath?.(threadId) ?? null,
+    state.threads.getThreadProjectPath(threadId) ?? null,
     worktree?.base_repo_path ?? null,
     worktree?.worktree_path ?? null,
   ])

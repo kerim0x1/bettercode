@@ -89,7 +89,11 @@ against sample chats and files (see [Demo mode](#demo-mode)).
   are the desktop's, from `@betterc0de/schema/chat-controls`.
   `composer-settings-store.ts` keeps each chat's choice on the phone; every
   message carries it, and a change during a reply goes to the running turn
-  through `/chat/permission-mode`.
+  through `/chat/permission-mode`. Bypass follows the desktop's terminal
+  grant (`capabilities.terminalGranted`, `src/lib/bypass.ts`): without it the
+  row is shown as unavailable with the reason, a chat set to Bypass falls back
+  to Ask first with a notice, and the desktop refuses a switch to Bypass with
+  `remote_bypass_disabled`.
 - Requests (approvals, questions, plan reviews) are tracked for every chat from
   the desktop's live `thread.activity` frames, so one answered on the desktop
   disappears on the phone too. Those frames are not replayed after a
@@ -99,12 +103,18 @@ against sample chats and files (see [Demo mode](#demo-mode)).
 - "Always allow", tool steps from activities, the provider-handoff notice and
   provider names come from `@betterc0de/schema` (`always-allow`,
   `activity-tools`, `provider-handoff`, `provider-label`), the desktop's own
-  code, so both apps store the same rules and show the same steps.
+  code, so both apps describe the same rules and show the same steps. The
+  desktop keeps only session rules from a paired device, so the phone offers
+  "Allow for this session" (scope `session`) and says that lasting rules are
+  set in the desktop's Settings → Permissions.
 - Every message and `/goal` command goes with `prepareTurn`: the desktop
   prepares it as it prepares its own messages, running the user's "on
   message send" hooks and building the turn's system instruction (see
   "Native mobile app" in `docs/remote-access.md`). A hook that fails
   refuses the message (`message_hook_failed`), and the chat shows which one.
+  The desktop also refuses it while `hooks.json` is unreadable or a hook's
+  command is not approved there, with the same code and a message that says
+  how to fix it on the desktop.
 - A chat's menu renames it through `POST /threads/:id/title`, which changes
   only the title and tells every client, so the desktop's next write of its
   own copy keeps the new name. Desktops without the `threads.rename` feature
@@ -230,9 +240,12 @@ against sample chats and files (see [Demo mode](#demo-mode)).
   back on the app explains that the desktop signed the phone out and asks to
   pair again. The pairing is only dropped when the desktop reports the session
   as ended, or when its address now belongs to a different desktop.
-- A read-only session (paired over plain HTTP from a public address, which the
-  desktop allows only with `BETTERC0DE_ALLOW_INSECURE_REMOTE_ACCESS`) shows
-  chats, files and changes, but no composer and no approval buttons.
+- A read-only session (paired over plain HTTP: a private-network address, or a
+  public one the desktop allows only with
+  `BETTERC0DE_ALLOW_INSECURE_REMOTE_ACCESS`) lasts one hour and shows chats,
+  files and changes, but no composer and no approval buttons. The banner asks
+  to pair again over Tailscale or HTTPS.
+- The desktop signs out a session that has not been used for 7 days.
 - **Sign out this phone** revokes the session on the desktop first. When the
   desktop cannot be reached, the app keeps the pairing and offers
   **Forget on this phone**, which leaves the session listed on the desktop
@@ -263,10 +276,12 @@ fail.
 
 ## Network and security
 
-Use direct HTTP only on a trusted LAN/VPN. For access outside that network,
-configure the desktop's advertised custom endpoint behind HTTPS/WSS. Pairing
-codes are one-use and short-lived; mobile sessions are individually visible
-and revocable from the desktop. Losing a device should be followed by revoking
+Pair over Tailscale or the desktop's advertised custom endpoint behind
+HTTPS/WSS for a full session. Direct HTTP on a LAN or VPN gives a read-only
+session for one hour, because the code and session token travel unencrypted.
+Pairing codes are one-use and expire after 10 minutes by default (one hour at
+most); mobile sessions are individually visible and revocable from the
+desktop. Losing a device should be followed by revoking
 that device in **Paired devices**.
 
 ## EAS project

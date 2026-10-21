@@ -9,10 +9,7 @@ import type {
 import { assertCheckpointRevertTurnRange } from "./checkpoint-revert-operations"
 import { recoveryWorkspacesForThread } from "./checkpoint-recovery-fence"
 import * as git from "./git"
-import { closeShellSessionsForWorkspace } from "./shell"
-import { shutdownTerminalPtySessionsForWorkspace } from "./terminalPty"
 import { parseThreadCheckpointRevertRequest } from "./threads"
-import { workspaceRecoveryGate } from "./workspace-recovery-gate"
 
 /**
  * Checkpoint revert saga.
@@ -26,7 +23,7 @@ import { workspaceRecoveryGate } from "./workspace-recovery-gate"
  */
 
 export function recordCheckpointRevertFailed(
-  state: AppState,
+  state: Pick<AppState, "threadActivities">,
   input: {
     readonly threadId: string
     readonly turnCount?: number | null
@@ -37,7 +34,7 @@ export function recordCheckpointRevertFailed(
   }
 ): void {
   const createdAt = new Date().toISOString()
-  state.threadActivities?.upsert?.({
+  state.threadActivities.upsert({
     activity_id: `${input.threadId}::checkpoint.revert.failed::${createdAt}`,
     thread_id: input.threadId,
     turn_id: null,
@@ -63,14 +60,16 @@ export function recordCheckpointRevertFailed(
   })
 }
 
+/**
+ * Runs `operation` while the thread's turn coordinator and the provider hub
+ * (and the direct-API provider stack, while it exists) hold the thread in
+ * maintenance, so no turn can start or run under a revert.
+ */
 export async function withCheckpointMaintenance<T>(
   state: AppState,
   threadId: string,
   operation: () => Promise<T> | T
 ): Promise<T> {
-  const withHubMaintenance = state.providerHub?.withThreadMaintenance?.bind(
-    state.providerHub
-  )
   const withLegacyMaintenance = state.providers?.withThreadMaintenance?.bind(
     state.providers
   )
@@ -79,10 +78,8 @@ export async function withCheckpointMaintenance<T>(
       ? withLegacyMaintenance(threadId, operation)
       : operation()
   const runProviders = () =>
-    withHubMaintenance ? withHubMaintenance(threadId, runLegacy) : runLegacy()
-  return state.threadTurnCoordinator
-    ? state.threadTurnCoordinator.withMaintenance(threadId, runProviders)
-    : runProviders()
+    state.providerHub.withThreadMaintenance(threadId, runLegacy)
+  return state.threadTurnCoordinator.withMaintenance(threadId, runProviders)
 }
 
 export async function revertThreadCheckpoint(input: {
@@ -126,7 +123,7 @@ export async function revertThreadCheckpoint(input: {
     ...recoveryWorkspacesForThread(state, threadId),
   ]
   const exclusiveLease =
-    await workspaceRecoveryGate.acquireExclusiveAfterQuiesce(
+    await state.workspaceRecoveryGate.acquireExclusiveAfterQuiesce(
       recoveryWorkspaces,
       async () => {
         // The exclusive waiter is queued before these long-lived shared
@@ -134,8 +131,8 @@ export async function revertThreadCheckpoint(input: {
         // from slipping into the workspace between drain and restore.
         for (const workspace of new Set(recoveryWorkspaces)) {
           await Promise.all([
-            closeShellSessionsForWorkspace(workspace),
-            shutdownTerminalPtySessionsForWorkspace(workspace),
+            state.shellSessions.closeSessionsForWorkspace(workspace),
+            state.terminalPtys.shutdownForWorkspace(workspace),
           ])
         }
       }
@@ -201,10 +198,7 @@ export async function revertThreadCheckpoint(input: {
       // for wire compatibility, but rollback now always retires the future.
       preserveFuture: false,
     }
-    const operation = state.checkpointReverts?.begin(operationInput) ?? {
-      ...operationInput,
-      phase: "prepared" as const,
-    }
+    const operation = state.checkpointReverts.begin(operationInput)
     return executeCheckpointRevertOperation(
       state,
       operation,
@@ -219,10 +213,9 @@ export async function recoverPendingCheckpointReverts(
   state: AppState
 ): Promise<void> {
   const store = state.checkpointReverts
-  if (!store) return
   for (const operation of store.list()) {
     try {
-      await workspaceRecoveryGate.withExclusive(operation.cwd, () =>
+      await state.workspaceRecoveryGate.withExclusive(operation.cwd, () =>
         withCheckpointMaintenance(state, operation.threadId, async () => {
           await executeCheckpointRevertOperation(state, operation, store)
         })
@@ -243,7 +236,7 @@ export async function recoverPendingCheckpointReverts(
 async function executeCheckpointRevertOperation(
   state: AppState,
   initialOperation: CheckpointRevertOperation,
-  store?: CheckpointRevertOperationStore
+  store: CheckpointRevertOperationStore
 ): Promise<{
   reverted: boolean
   rolledBackTurns: number
@@ -271,11 +264,11 @@ async function executeCheckpointRevertOperation(
     truncated: boolean
   } | null = null
   await Promise.all([
-    closeShellSessionsForWorkspace(operation.cwd),
-    shutdownTerminalPtySessionsForWorkspace(operation.cwd),
+    state.shellSessions.closeSessionsForWorkspace(operation.cwd),
+    state.terminalPtys.shutdownForWorkspace(operation.cwd),
   ])
   const setPhase = (phase: CheckpointRevertOperation["phase"]) => {
-    operation = store?.setPhase(operation, phase) ?? { ...operation, phase }
+    operation = store.setPhase(operation, phase)
   }
 
   if (operation.phase === "prepared") {
@@ -291,7 +284,7 @@ async function executeCheckpointRevertOperation(
     safetyRef = restoreResult.safetyRef
     restorePreview = restoreResult.preview
     if (!restored) {
-      store?.delete(operation.threadId)
+      store.delete(operation.threadId)
       return failRevert(state, {
         threadId: operation.threadId,
         turnCount: operation.turnCount,
@@ -380,7 +373,7 @@ async function executeCheckpointRevertOperation(
         staleCheckpointRefs
       )
     )
-    state.checkpointTurnSlots?.reconcileThread(operation.threadId)
+    state.checkpointTurnSlots.reconcileThread(operation.threadId)
     setPhase("database_truncated")
   }
 
@@ -395,15 +388,6 @@ async function executeCheckpointRevertOperation(
       })
     } catch (error) {
       const cleanupStore = state.checkpointRefCleanupStore
-      if (!cleanupStore) {
-        throw Object.assign(
-          new Error(
-            "Checkpoint revert committed, but stale Git refs could not be durably queued for cleanup.",
-            { cause: error }
-          ),
-          { statusCode: 503, code: "CHECKPOINT_REF_CLEANUP_UNAVAILABLE" }
-        )
-      }
       try {
         const intents = cleanupStore.enqueue({
           threadId: operation.threadId,
@@ -436,7 +420,7 @@ async function executeCheckpointRevertOperation(
       )
     }
   }
-  store?.delete(operation.threadId)
+  store.delete(operation.threadId)
   return {
     reverted: true,
     rolledBackTurns,
@@ -488,7 +472,8 @@ function currentCheckpointTurnCount(
   return max
 }
 
-function resolveTargetCheckpointRef(
+/** The Git ref a revert to `turnCount` restores; `null` when none is recorded. */
+export function resolveTargetCheckpointRef(
   threadId: string,
   turnCount: number,
   checkpointRefs: readonly string[]
@@ -562,4 +547,26 @@ function checkpointTurnCountFromRef(
   if (!Number.isSafeInteger(slot) || slot < 0) return null
   if (slot === 0) return 0
   return slot % 2 === 1 ? (slot + 1) / 2 : slot
+}
+
+/**
+ * Highest checkpoint turn a thread can be restored from: the larger of the
+ * newest recorded turn diff and the newest checkpoint ref. Reads only refs and
+ * the turn index, never diff bodies, and never throws (0 when there is none).
+ */
+export function latestCheckpointTurnCount(
+  state: Pick<AppState, "checkpointDiffs">,
+  threadId: string
+): number {
+  if (!threadId.trim()) return 0
+  let max = state.checkpointDiffs.latestTurnIndex(threadId)
+  for (const checkpointRef of state.checkpointDiffs.listCheckpointRefsByThread(
+    threadId
+  )) {
+    max = Math.max(
+      max,
+      checkpointTurnCountFromRef(threadId, checkpointRef) ?? 0
+    )
+  }
+  return max
 }

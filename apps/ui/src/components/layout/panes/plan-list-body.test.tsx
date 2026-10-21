@@ -9,7 +9,7 @@ vi.mock("@/lib/chat-store", () => ({
   useThreadMessages: () => [],
 }))
 vi.mock("@/hooks/use-chat-streaming-state", () => ({
-  useChatStreamingState: () => ({
+  usePlanStreamingState: () => ({
     allPlans: [{ id: "legacy-plan", content: "# Existing plan" }],
     isPlanStreaming: false,
   }),

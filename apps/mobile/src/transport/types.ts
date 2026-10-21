@@ -5,6 +5,7 @@ import type {
   HttpContractRequest,
   HttpContractResponse,
   ThreadMetadataUpdate,
+  WorkspaceFileContent,
 } from "@betterc0de/schema/http-contracts"
 import type { RemoteProtocol } from "@betterc0de/schema/remote-protocol"
 import type {
@@ -33,14 +34,12 @@ export interface MessagePageOptions {
   beforeSequence?: number
 }
 
-export interface FileContent {
-  content: string
-  path: string
-  /** Only from desktops that list the `workspace.write.ifMatch` feature. */
-  sha256?: string
-  size?: number
-  isUtf8?: boolean
-}
+/**
+ * A file read as text (the desktop's `/workspace/read`). `sha256`, `size`
+ * and `isUtf8` come only from desktops that list the
+ * `workspace.write.ifMatch` feature.
+ */
+export type FileContent = WorkspaceFileContent
 
 /** Chat request bodies are validated by the shared contracts on the way out. */
 export type ChatRequestBody = Record<string, unknown>

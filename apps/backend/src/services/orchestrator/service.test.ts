@@ -229,6 +229,89 @@ describe("experimental orchestrator", () => {
     }
   )
 
+  it("never runs a Claude worker in Ultracode and treats a saved Ultracode as Auto", async () => {
+    const f = await fixture()
+    const member = {
+      id: "worker",
+      name: "Claude worker",
+      role: "Implement",
+      providerKind: "claude" as const,
+      providerInstanceId: "worker-account",
+      modelId: "worker-model",
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "effort",
+            type: "select" as const,
+            label: "Effort",
+            options: [
+              { id: "high", label: "High" },
+              { id: "ultracode", label: "Ultracode" },
+            ],
+            promptInjectedValues: ["ultracode"],
+          },
+        ],
+      },
+    }
+    f.deps.modelCatalog = async () => [member]
+    const selected = {
+      providerKind: "claude" as const,
+      providerInstanceId: member.providerInstanceId,
+      modelId: member.modelId,
+    }
+    const body = chatSendSchema.parse({
+      ...f.message(),
+      thread_id: "ultracode-chat",
+      provider_kind: "codex",
+      orchestration: {
+        enabled: true,
+        providers: ["claude"],
+        models: [{ ...selected, reasoningEffort: "Ultra Code" }],
+      },
+    })
+    await f.service.prepareForTurn(body)
+    expect(f.service.status(body.thread_id)?.selectedModels).toEqual([
+      { ...selected, reasoningEffort: null },
+    ])
+    expect(
+      f.service.availableModels(body.thread_id).models[0]?.reasoningEffort
+    ).toBeNull()
+    const job = f.service.spawn(body.thread_id, member.id, "Build it", "manual")
+    await flush()
+    expect(f.dispatch).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        reasoning_effort: null,
+        model_selection: {
+          instanceId: "worker-account",
+          model: "worker-model",
+          options: [],
+        },
+      })
+    )
+    f.complete(job.threadId)
+    // The rest of the same ladder still reaches the worker.
+    await f.service.prepareForTurn({
+      ...body,
+      orchestration: {
+        enabled: true,
+        providers: ["claude"],
+        models: [{ ...selected, reasoningEffort: "high" }],
+      },
+    })
+    f.service.spawn(body.thread_id, member.id, "Check it", "manual")
+    await flush()
+    expect(f.dispatch).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        reasoning_effort: "high",
+        model_selection: {
+          instanceId: "worker-account",
+          model: "worker-model",
+          options: [{ id: "effort", value: "high" }],
+        },
+      })
+    )
+  })
+
   it("rejects guessed thinking levels when the account's catalog provides no capabilities", async () => {
     const f = await fixture()
     await expect(

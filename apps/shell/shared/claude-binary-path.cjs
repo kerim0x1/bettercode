@@ -13,7 +13,6 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { spawnSync } = require("child_process");
 
 // On macOS the OAuth token in Keychain is access-listed by the EXACT
 // signing identity of the binary that wrote it — usually the user's
@@ -49,59 +48,99 @@ function tryEnvOverride() {
   return null;
 }
 
-function trySystemClaude() {
-  const ext = process.platform === "win32" ? ".exe" : "";
-  // 1. PATH lookup — works in dev where Electron inherits the user's
-  //    shell PATH. In a Finder-launched packaged app the PATH is the
-  //    minimal `/usr/bin:/bin:/usr/sbin:/sbin`, so this normally only
-  //    catches users who installed `claude` into a system-wide dir.
-  try {
-    const cmd = process.platform === "win32" ? "where" : "which";
-    const r = spawnSync(cmd, [`claude${ext}`], { encoding: "utf8", timeout: 2000 });
-    if (r.status === 0) {
-      const candidate = r.stdout.trim().split(/\r?\n/)[0];
-      if (candidate && fs.statSync(candidate).isFile()) return candidate;
-    }
-  } catch { /* `which`/`where` missing or timed out */ }
+// No `where`/`which` process: resolution runs on the Electron main thread
+// right before the backend starts, and a synchronous spawn there froze every
+// window for up to its 2 s timeout. A PATH walk is a few `stat` calls.
+// Relative and empty PATH entries are skipped: `where` also searched the
+// current directory, which let a `claude.exe` dropped into it win.
+//
+// The locations and their order match the backend's own lookup
+// (apps/backend/src/provider/runtime/claude/claudeLaunch.ts,
+// `knownClaudeInstallPaths`), so the binary handed over in
+// BETTERC0DE_CLAUDE_CODE_PATH is the one the backend would find itself.
+// On Windows a real `claude.exe` (native installer, npm's bundled binary)
+// beats any `claude.cmd` shim; a shim is still accepted last, and the
+// backend resolves it to the cli.js or .exe it starts.
+function systemClaudeCandidates() {
+  const separator = process.platform === "win32" ? ";" : ":";
+  const pathDirs = String(process.env.PATH || "")
+    .split(separator)
+    .map((entry) => entry.trim().replace(/^"(.*)"$/, "$1"))
+    .filter((entry) => entry && path.isAbsolute(entry))
+    .slice(0, 256);
 
-  // 2. Known macOS / Linux install locations the user's shell rc files
-  //    would have on PATH — covers the Finder-launched case.
+  // Known macOS / Linux / Windows install locations the user's shell rc
+  // files would have on PATH — covers a Finder-launched packaged app, whose
+  // PATH is the minimal `/usr/bin:/bin:/usr/sbin:/sbin`.
   const home = os.homedir();
-  const candidates = [];
-  if (process.platform === "darwin") {
-    candidates.push(
-      path.join(home, ".local", "bin", "claude"),
-      path.join(home, ".claude", "local", "claude"),
-      "/opt/homebrew/bin/claude",
-      "/usr/local/bin/claude",
-      path.join(home, ".bun", "bin", "claude"),
-      path.join(home, ".npm-global", "bin", "claude"),
-    );
-  } else if (process.platform === "linux") {
-    candidates.push(
-      "/usr/local/bin/claude",
-      "/usr/bin/claude",
-      path.join(home, ".local", "bin", "claude"),
-      path.join(home, ".claude", "local", "claude"),
-      path.join(home, ".bun", "bin", "claude"),
-      path.join(home, ".npm-global", "bin", "claude"),
-    );
-  } else if (process.platform === "win32") {
+  if (process.platform === "win32") {
     const userProfile = process.env.USERPROFILE || home;
     const localAppData = process.env.LOCALAPPDATA || path.join(userProfile, "AppData", "Local");
     const appData = process.env.APPDATA || path.join(userProfile, "AppData", "Roaming");
-    candidates.push(
+    return [
+      ...pathDirs.map((dir) => path.join(dir, "claude.exe")),
+      // Native installer.
+      path.join(userProfile, ".local", "bin", "claude.exe"),
       path.join(localAppData, "Programs", "Anthropic", "claude", "claude.exe"),
-      path.join(appData, "npm", "claude.cmd"),
       path.join(appData, "npm", "claude.exe"),
       path.join(userProfile, ".bun", "bin", "claude.exe"),
-    );
+      // npm / pnpm command shims, only when no binary was found.
+      ...pathDirs.map((dir) => path.join(dir, "claude.cmd")),
+      path.join(appData, "npm", "claude.cmd"),
+    ];
   }
-  for (const candidate of candidates) {
-    try {
-      if (fs.statSync(candidate).isFile()) return candidate;
-    } catch { /* not present, try next */ }
+  const candidates = pathDirs.map((dir) => path.join(dir, "claude"));
+  candidates.push(
+    path.join(home, ".local", "bin", "claude"),
+    path.join(home, ".claude", "local", "claude"),
+  );
+  if (process.platform === "darwin") candidates.push("/opt/homebrew/bin/claude");
+  candidates.push("/usr/local/bin/claude");
+  if (process.platform === "linux") candidates.push("/usr/bin/claude");
+  candidates.push(
+    path.join(home, ".bun", "bin", "claude"),
+    path.join(home, ".npm-global", "bin", "claude"),
+  );
+  return candidates;
+}
+
+function isRunnableFileSync(candidate) {
+  try {
+    if (!fs.statSync(candidate).isFile()) return false;
+    if (process.platform !== "win32") fs.accessSync(candidate, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
   }
+}
+
+async function isRunnableFile(candidate) {
+  try {
+    if (!(await fs.promises.stat(candidate)).isFile()) return false;
+    if (process.platform !== "win32") await fs.promises.access(candidate, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function trySystemClaude() {
+  return systemClaudeCandidates().find(isRunnableFileSync) ?? null;
+}
+
+async function trySystemClaudeAsync() {
+  for (const candidate of systemClaudeCandidates()) {
+    if (await isRunnableFile(candidate)) return candidate;
+  }
+  return null;
+}
+
+async function tryEnvOverrideAsync() {
+  const override = process.env.BETTERC0DE_CLAUDE_CODE_PATH;
+  if (!override) return null;
+  try {
+    if ((await fs.promises.stat(override)).isFile()) return override;
+  } catch { /* override path doesn't exist, ignore */ }
   return null;
 }
 
@@ -140,17 +179,32 @@ function tryBundledSdk() {
   return null;
 }
 
-// Resolution costs a synchronous `where`/`which` spawn (up to a 2s timeout on
-// Windows) and runs on the main thread just before the backend is forked.
-// It is called again on every backend restart, so the answer is memoized —
-// the binary does not move while the app is running.
+// Called again on every backend restart, so the answer is memoized — the
+// binary does not move while the app is running. `resolveClaudeCodeBinaryPathAsync`
+// fills the same cache off the main thread's critical path (main.cjs starts it
+// before the window), so the synchronous call usually just reads the cache.
 let cachedBinaryPath;
+let pendingResolution = null;
 
 function resolveClaudeCodeBinaryPath() {
   if (cachedBinaryPath === undefined) {
     cachedBinaryPath = tryEnvOverride() ?? trySystemClaude() ?? tryBundledSdk();
   }
   return cachedBinaryPath;
+}
+
+function resolveClaudeCodeBinaryPathAsync() {
+  if (cachedBinaryPath !== undefined) return Promise.resolve(cachedBinaryPath);
+  pendingResolution ??= (async () => {
+    const resolved =
+      (await tryEnvOverrideAsync()) ?? (await trySystemClaudeAsync()) ?? tryBundledSdk();
+    // A synchronous call may have resolved meanwhile; keep its answer.
+    if (cachedBinaryPath === undefined) cachedBinaryPath = resolved;
+    return cachedBinaryPath;
+  })().finally(() => {
+    pendingResolution = null;
+  });
+  return pendingResolution;
 }
 
 /** Lets a reinstall be picked up without restarting the app. */
@@ -160,5 +214,6 @@ function clearClaudeCodeBinaryPathCache() {
 
 module.exports = {
   resolveClaudeCodeBinaryPath,
+  resolveClaudeCodeBinaryPathAsync,
   clearClaudeCodeBinaryPathCache,
 };

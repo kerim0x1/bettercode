@@ -224,15 +224,25 @@ function buildWindowsCmdArgs(command, args) {
 const BINARY_CACHE_TTL_MS = 5 * 60_000
 const binaryCache = new Map()
 
-/** Well-known npm global shim locations checked when `where`/`which` fails. */
+/**
+ * What `runCli` can launch on Windows: an `.exe` directly, a `.cmd`/`.bat`
+ * through the quoting cmd builder above. A `.ps1` or extension-less npm shim
+ * is not runnable that way (cmd hands a .ps1 to its file association, usually
+ * Notepad, and reports the extension-less POSIX shim as "not recognized"), and
+ * other PATHEXT entries (.js, .vbs, .wsf, …) would run through Windows Script
+ * Host. Node scripts are run by an installed `node.exe`, never by association.
+ */
+const WINDOWS_RUNNABLE_EXTENSIONS = [".exe", ".cmd", ".bat"]
+const NODE_SCRIPT_EXTENSIONS = new Set([".js", ".cjs", ".mjs"])
+
+/** Well-known npm global shim locations checked when the PATH walk fails. */
 function knownBinaryCandidates(bin) {
   const home = os.homedir()
   if (process.platform === "win32") {
     const appData = process.env.APPDATA || path.join(home, "AppData", "Roaming")
     return [
       path.join(appData, "npm", `${bin}.cmd`),
-      path.join(appData, "npm", `${bin}.ps1`),
-      path.join(appData, "npm", bin),
+      path.join(appData, "npm", `${bin}.exe`),
     ]
   }
   return [
@@ -267,17 +277,30 @@ function resolveCliBinary(bin) {
   let resolved = null
   const isWindows = process.platform === "win32"
   const separator = isWindows ? ";" : ":"
-  const rawExtensions = isWindows
-    ? (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD")
-        .split(";")
-        .filter(Boolean)
-    : [""]
-  const extensions =
-    isWindows && path.extname(bin) ? [""] : rawExtensions
+  const explicitExtension = path.extname(bin).toLowerCase()
+  if (isWindows && explicitExtension && !WINDOWS_RUNNABLE_EXTENSIONS.includes(explicitExtension)) {
+    binaryCache.set(bin, { path: null, at: Date.now() })
+    return null
+  }
+  // PATHEXT order decides between foo.cmd and foo.exe in one directory, but
+  // only runnable extensions are considered.
+  const pathExtensions = (process.env.PATHEXT || ".EXE;.CMD;.BAT")
+    .split(";")
+    .map((extension) => extension.trim().toLowerCase())
+    .filter((extension) => WINDOWS_RUNNABLE_EXTENSIONS.includes(extension))
+  const extensions = !isWindows
+    ? [""]
+    : explicitExtension
+      ? [""]
+      : pathExtensions.length > 0
+        ? [...new Set(pathExtensions)]
+        : WINDOWS_RUNNABLE_EXTENSIONS
+  // Only absolute entries: an empty or relative PATH entry means "the current
+  // directory", which would let a binary planted in a project win.
   const pathDirs = (process.env.PATH || "")
     .split(separator)
     .map((entry) => entry.trim().replace(/^"(.*)"$/, "$1"))
-    .filter(Boolean)
+    .filter((entry) => entry && path.isAbsolute(entry))
     .slice(0, 256)
   outer: for (const dir of pathDirs) {
     for (const extension of extensions) {
@@ -296,12 +319,13 @@ function resolveCliBinary(bin) {
   if (!resolved) {
     for (const candidate of knownBinaryCandidates(bin)) {
       try {
-        if (fs.existsSync(candidate)) {
-          resolved = candidate
-          break
-        }
+        const stat = fs.statSync(candidate)
+        if (!stat.isFile()) continue
+        if (!isWindows) fs.accessSync(candidate, fs.constants.X_OK)
+        resolved = candidate
+        break
       } catch {
-        // ignore
+        // Not installed there; try the next location.
       }
     }
   }
@@ -584,19 +608,44 @@ function runCli(binaryPath, args, options = {}) {
   }
 
   const isWindows = process.platform === "win32"
+  let launchPath = binaryPath
+  let launchArgs = args
+  if (isWindows && path.isAbsolute(binaryPath)) {
+    const extension = path.extname(binaryPath).toLowerCase()
+    if (NODE_SCRIPT_EXTENSIONS.has(extension)) {
+      // Never hand a script to cmd: its file association may be Windows
+      // Script Host or an editor. Run it with the installed Node instead.
+      const node = resolveCliBinary("node")
+      if (!node || !/\.exe$/i.test(node)) {
+        return Promise.reject(
+          new Error(
+            `Node.js is required to run ${path.basename(binaryPath)}, but node.exe was not found on PATH.`,
+          ),
+        )
+      }
+      launchPath = node
+      launchArgs = [binaryPath, ...args]
+    } else if (!WINDOWS_RUNNABLE_EXTENSIONS.includes(extension)) {
+      return Promise.reject(
+        new Error(
+          `Cannot run ${path.basename(binaryPath)} on Windows: only .exe, .cmd and .bat programs (or Node scripts) are supported.`,
+        ),
+      )
+    }
+  }
   const directExe =
-    isWindows && path.isAbsolute(binaryPath) && /\.exe$/i.test(binaryPath)
+    isWindows && path.isAbsolute(launchPath) && /\.exe$/i.test(launchPath)
   const viaCmd = isWindows && !directExe
   const spawnCommand = viaCmd
     ? process.env.ComSpec && process.env.ComSpec.length > 0
       ? process.env.ComSpec
       : "cmd.exe"
-    : binaryPath
+    : launchPath
   // Mirror Node's own `shell: true` contract: the whole command line is a
   // single outer-quoted `/c` argument passed VERBATIM. Without verbatim,
   // Node re-escapes the inner quotes around paths containing spaces
   // (C:\Program Files\...) as \" — which cmd.exe does not understand.
-  const spawnArgs = viaCmd ? buildWindowsCmdArgs(binaryPath, args) : args
+  const spawnArgs = viaCmd ? buildWindowsCmdArgs(launchPath, launchArgs) : launchArgs
 
   return (async () => {
     if (!acceptingCliProcesses) {
@@ -710,9 +759,15 @@ function runCli(binaryPath, args, options = {}) {
   })()
 }
 
+/** Drop cached lookups (tests; a CLI installed while the app runs). */
+function clearCliBinaryCache() {
+  binaryCache.clear()
+}
+
 module.exports = {
   runCli,
   resolveCliBinary,
+  clearCliBinaryCache,
   buildWindowsCmdArgs,
   quoteWindowsCmdArg,
   quoteWindowsCmdPath,

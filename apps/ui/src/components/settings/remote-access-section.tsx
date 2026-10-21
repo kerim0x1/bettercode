@@ -8,9 +8,7 @@ import {
   useState,
 } from "react"
 import {
-  Check,
   Copy,
-  ExternalLink,
   Link2,
   LoaderCircle,
   LogOut,
@@ -21,6 +19,7 @@ import {
   SquareTerminal,
   Trash2,
   TriangleAlert,
+  Wifi,
 } from "lucide-react"
 import { SettingsRow, SettingsSection } from "@/components/settings/atoms"
 import { Button } from "@/components/ui/button"
@@ -28,9 +27,16 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { useSettingsStore } from "@/lib/settings-store"
 import { toast } from "@/lib/toast"
-import { getSettings } from "@/services/backend"
+import { getSettings } from "@/services/backend/coreApi"
 import { TailscaleServeCard } from "@/components/remote/tailscale-serve-card"
 import {
+  PendingPairingLinks,
+  pairingLinkBusyKey,
+  REVOKE_ALL_PAIRING_LINKS_BUSY_KEY,
+  type PendingPairingLinksStatus,
+} from "@/components/settings/remote-pairing-links"
+import {
+  activePairingLinks,
   createRemotePairingLink,
   describeRemoteClient,
   describeRemoteTerminals,
@@ -38,23 +44,40 @@ import {
   getRemoteBootstrap,
   getRemoteStatus,
   getTailscaleStatus,
+  listRemotePairingLinks,
   listRemoteSessions,
   logoutRemoteSession,
+  remotePairingAccess,
+  revokeAllRemotePairingLinks,
   revokeOtherRemoteSessions,
+  revokeRemotePairingLink,
   revokeRemoteSession,
   setTailscaleServe,
+  type PendingRemotePairingLink,
   type RemotePairingGrant,
   type RemoteSession,
   type RemoteStatus,
   type TailscaleRemoteStatus,
 } from "@/services/backend/remoteApi"
 import { isRemoteRuntime } from "@/services/backend/runtime"
+import { getElectronApi } from "@/services/ipc-facade"
 
-/** The one setting on this page the local settings store does not mirror. */
-async function readRemoteTerminalGrant(): Promise<boolean> {
+/** The settings on this page the local settings store does not mirror. */
+async function readRemoteHostSettings(): Promise<{
+  allowTerminal: boolean
+  lan: boolean
+}> {
   const settings = (await getSettings()) as Record<string, unknown>
-  return settings.remote_access_allow_terminal === true
+  return {
+    allowTerminal: settings.remote_access_allow_terminal === true,
+    // Missing means on: how Remote Access listened before the switch.
+    lan: settings.remote_access_lan !== false,
+  }
 }
+
+/** While Tailscale issues the certificate, how often and how long to look. */
+const TAILSCALE_CERTIFICATE_POLL_MS = 4_000
+const TAILSCALE_CERTIFICATE_POLLS = 20
 
 const PairingQrCode = lazy(() =>
   import("@/components/remote/pairing-qr-code").then((module) => ({
@@ -96,7 +119,7 @@ async function copyText(value: string, label: string): Promise<void> {
   toast.success(`${label} copied`)
 }
 
-function endpointHint(
+function endpointReach(
   endpoint: Pick<RemoteStatus["endpoints"][number], "id" | "reachability">
 ): string {
   if (endpoint.id === "tailscale" || endpoint.id === "tailscale-ip") {
@@ -114,6 +137,20 @@ function endpointHint(
   }
 }
 
+/** Where an address reaches, and whether pairing through it is read-only. */
+function endpointHint(
+  endpoint: Pick<
+    RemoteStatus["endpoints"][number],
+    "id" | "reachability" | "httpBaseUrl"
+  >
+): string {
+  const reach = endpointReach(endpoint)
+  return remotePairingAccess({ id: endpoint.id, url: endpoint.httpBaseUrl }) ===
+    "read-only"
+    ? `${reach} · read-only, 1 hour`
+    : reach
+}
+
 export function SettingsRemoteAccessSection() {
   const settings = useSettingsStore()
   const remoteRuntime = isRemoteRuntime()
@@ -121,16 +158,37 @@ export function SettingsRemoteAccessSection() {
   const [sessions, setSessions] = useState<RemoteSession[]>([])
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   const [grant, setGrant] = useState<RemotePairingGrant | null>(null)
+  const [pairingLinks, setPairingLinks] = useState<PendingRemotePairingLink[]>(
+    []
+  )
+  const [pairingLinksStatus, setPairingLinksStatus] =
+    useState<PendingPairingLinksStatus>("loading")
   const [customUrl, setCustomUrl] = useState(settings.remoteAccessCustomUrl)
   const [allowTerminal, setAllowTerminal] = useState(false)
+  const [lan, setLan] = useState(true)
   const [tailscale, setTailscale] = useState<TailscaleRemoteStatus | null>(null)
+  const [tailscaleRefreshing, setTailscaleRefreshing] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // Desktop host only: a paired device can neither see nor withdraw links.
+  // Never rejects, so a failure here does not hide the rest of the page.
+  const refreshPairingLinks = useCallback(async () => {
+    if (remoteRuntime) return
+    try {
+      setPairingLinks(activePairingLinks(await listRemotePairingLinks()))
+      setPairingLinksStatus("ready")
+    } catch {
+      setPairingLinksStatus("error")
+    }
+  }, [remoteRuntime])
 
   const refresh = useCallback(async () => {
     try {
       setError(null)
-      setAllowTerminal(await readRemoteTerminalGrant())
+      const hostSettings = await readRemoteHostSettings()
+      setAllowTerminal(hostSettings.allowTerminal)
+      setLan(hostSettings.lan)
       if (remoteRuntime) {
         const [nextStatus, bootstrap] = await Promise.all([
           getRemoteStatus(),
@@ -147,6 +205,7 @@ export function SettingsRemoteAccessSection() {
         // Owner-only and best effort: a backend without the integration
         // must not turn the whole page into an error.
         getTailscaleStatus().catch(() => null),
+        refreshPairingLinks(),
       ])
       setStatus(nextStatus)
       setSessions(sessionResult.sessions)
@@ -157,11 +216,73 @@ export function SettingsRemoteAccessSection() {
         cause instanceof Error ? cause.message : "Could not load remote access"
       )
     }
-  }, [remoteRuntime])
+  }, [refreshPairingLinks, remoteRuntime])
 
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  const refreshTailscale = useCallback(async () => {
+    if (remoteRuntime) return
+    setTailscaleRefreshing(true)
+    try {
+      const [nextTailscale, nextStatus] = await Promise.all([
+        getTailscaleStatus(),
+        getRemoteStatus(),
+      ])
+      setTailscale(nextTailscale)
+      setStatus(nextStatus)
+    } catch {
+      // The card keeps showing the last answer.
+    } finally {
+      setTailscaleRefreshing(false)
+    }
+  }, [remoteRuntime])
+
+  // Tailscale issues the HTTPS certificate on the first request to a new
+  // mapping; until the name answers, look again every few seconds.
+  const certificatePending =
+    tailscale?.serveEnabled === true &&
+    tailscale.serveActive &&
+    tailscale.serveReachable === false &&
+    !tailscale.serveError
+  useEffect(() => {
+    if (!certificatePending) return
+    let polls = 0
+    const timer = window.setInterval(() => {
+      polls += 1
+      if (polls > TAILSCALE_CERTIFICATE_POLLS) {
+        window.clearInterval(timer)
+        return
+      }
+      void getTailscaleStatus()
+        .then(setTailscale)
+        .catch(() => undefined)
+    }, TAILSCALE_CERTIFICATE_POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [certificatePending])
+
+  // Links expire on their own (an hour at most). Drop them from the list,
+  // and the code and QR code from the screen, once they no longer work.
+  useEffect(() => {
+    const expiries = [
+      ...pairingLinks.map((link) => Date.parse(link.expiresAt)),
+      grant ? Date.parse(grant.expiresAt) : Number.NaN,
+    ].filter(Number.isFinite)
+    if (expiries.length === 0) return
+    const delay = Math.min(
+      Math.max(0, Math.min(...expiries) - Date.now()) + 250,
+      2 ** 31 - 1
+    )
+    const timer = window.setTimeout(() => {
+      const now = Date.now()
+      setPairingLinks((current) => activePairingLinks(current, now))
+      setGrant((current) =>
+        current && !(Date.parse(current.expiresAt) > now) ? null : current
+      )
+    }, delay)
+    return () => window.clearTimeout(timer)
+  }, [grant, pairingLinks])
 
   useEffect(() => {
     setCustomUrl(settings.remoteAccessCustomUrl)
@@ -174,7 +295,8 @@ export function SettingsRemoteAccessSection() {
   )
 
   const setEnabled = async (enabled: boolean) => {
-    if (!window.electronAPI?.restartBackend) {
+    const desktopBridge = getElectronApi()
+    if (!desktopBridge?.restartBackend) {
       toast.warning("Change remote hosting from the BetterC0de desktop app")
       return
     }
@@ -183,10 +305,40 @@ export function SettingsRemoteAccessSection() {
     setGrant(null)
     try {
       await settings.update({ remote_access_enabled: enabled })
-      await window.electronAPI.restartBackend()
+      await desktopBridge.restartBackend()
       await refresh()
       toast.success(
         enabled ? "Remote access enabled" : "Remote access disabled"
+      )
+    } catch (cause) {
+      const message =
+        cause instanceof Error ? cause.message : "Could not restart the host"
+      setError(message)
+      toast.error(message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const setLanListening = async (value: boolean) => {
+    const desktopBridge = getElectronApi()
+    if (!desktopBridge?.restartBackend) {
+      toast.warning("Change remote hosting from the BetterC0de desktop app")
+      return
+    }
+    setBusy("lan")
+    setError(null)
+    setGrant(null)
+    try {
+      await settings.update({ remote_access_lan: value })
+      setLan(value)
+      // Where the backend listens is decided when it starts.
+      await desktopBridge.restartBackend()
+      await refresh()
+      toast.success(
+        value
+          ? "Listening on the local network"
+          : "No longer listening on the local network"
       )
     } catch (cause) {
       const message =
@@ -228,20 +380,23 @@ export function SettingsRemoteAccessSection() {
     setError(null)
     setGrant(null)
     try {
-      setTailscale(await setTailscaleServe(value))
+      const next = await setTailscaleServe(value)
+      setTailscale(next)
       await refresh()
-      toast.success(
-        value
-          ? "Serving through Tailscale HTTPS"
-          : "Tailscale Serve mapping removed"
-      )
+      if (!value) toast.success("Tailscale HTTPS turned off")
+      else if (next.serveReachable === true)
+        toast.success("Tailscale HTTPS is ready", {
+          description: next.httpsBaseUrl ?? undefined,
+        })
+      else toast.info("Tailscale HTTPS is on; the certificate is on its way")
     } catch (cause) {
       const message =
         cause instanceof Error
           ? cause.message
-          : "Could not change Tailscale Serve"
-      setError(message)
+          : "Could not change Tailscale HTTPS"
       toast.error(message)
+      // The card explains what is missing, with the page that fixes it.
+      await refreshTailscale()
     } finally {
       setBusy(null)
     }
@@ -282,6 +437,7 @@ export function SettingsRemoteAccessSection() {
     try {
       const nextGrant = await createRemotePairingLink("Trusted device", 10)
       setGrant(nextGrant)
+      await refreshPairingLinks()
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -333,6 +489,51 @@ export function SettingsRemoteAccessSection() {
     }
   }
 
+  const revokePairingLink = async (link: PendingRemotePairingLink) => {
+    setBusy(pairingLinkBusyKey(link.id))
+    setError(null)
+    try {
+      const { revoked } = await revokeRemotePairingLink(link.id)
+      setGrant((current) => (current?.id === link.id ? null : current))
+      await refreshPairingLinks()
+      if (revoked) {
+        toast.success("Pairing link revoked")
+      } else {
+        toast.info("That link was already used or has expired")
+      }
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not revoke the pairing link"
+      )
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const revokeAllPairingLinks = async () => {
+    setBusy(REVOKE_ALL_PAIRING_LINKS_BUSY_KEY)
+    setError(null)
+    try {
+      const { revoked } = await revokeAllRemotePairingLinks()
+      // Whatever code is on screen no longer works (or was already used).
+      setGrant(null)
+      await refreshPairingLinks()
+      toast.success(
+        `Revoked ${revoked} pairing link${revoked === 1 ? "" : "s"}`
+      )
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not revoke the pairing links"
+      )
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const endTerminals = async (session: RemoteSession) => {
     setBusy(`terminals:${session.id}`)
     try {
@@ -372,7 +573,11 @@ export function SettingsRemoteAccessSection() {
   }
 
   const enabled = status?.enabled ?? settings.remoteAccessEnabled
-  const listening = status?.listeningOnNetwork === true
+  // Some address other devices reach: Tailscale HTTPS, the network, a URL.
+  const reachable =
+    status?.endpoints.some(
+      (endpoint) => endpoint.reachability !== "loopback"
+    ) === true
 
   return (
     <>
@@ -384,8 +589,8 @@ export function SettingsRemoteAccessSection() {
           label="Remote Access"
           description={
             remoteRuntime
-              ? "Only the desktop app can change the network listener"
-              : "Listen on this computer's network interfaces after a controlled backend restart"
+              ? "Only the desktop app can change remote hosting"
+              : "Let your phone and other computers pair with this desktop. Turning it off signs out every paired device and revokes unused pairing links."
           }
         >
           <div className="flex items-center gap-2">
@@ -393,6 +598,7 @@ export function SettingsRemoteAccessSection() {
               <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
             ) : null}
             <Switch
+              aria-label="Remote Access"
               checked={enabled}
               disabled={remoteRuntime || busy !== null}
               onCheckedChange={(value) => void setEnabled(value)}
@@ -400,21 +606,25 @@ export function SettingsRemoteAccessSection() {
           </div>
         </SettingsRow>
         <SettingsRow
-          label="Listener status"
+          icon={<Wifi />}
+          label="Local network"
           description={
-            listening
-              ? `Available on port ${status?.port ?? ""}`
-              : enabled
-                ? "Restarting or limited to this computer"
-                : "Network access is closed"
+            remoteRuntime
+              ? "Only the desktop app can change where it listens"
+              : `Also listen on Wi-Fi and LAN${status?.port ? ` (port ${status.port})` : ""}, over plain HTTP: devices there pair read-only for one hour, and the system firewall may ask first. Not needed for Tailscale HTTPS. Changing it restarts the backend.`
           }
         >
-          <span
-            className={`inline-flex items-center gap-1.5 text-xs font-medium ${listening ? "text-emerald-500" : "text-muted-foreground"}`}
-          >
-            {listening ? <Check className="size-3.5" /> : null}
-            {listening ? "Listening" : "Not listening"}
-          </span>
+          <div className="flex items-center gap-2">
+            {busy === "lan" ? (
+              <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
+            ) : null}
+            <Switch
+              aria-label="Local network"
+              checked={lan}
+              disabled={remoteRuntime || !enabled || busy !== null}
+              onCheckedChange={(value) => void setLanListening(value)}
+            />
+          </div>
         </SettingsRow>
         <SettingsRow
           label="Allow terminal from remote devices"
@@ -438,9 +648,27 @@ export function SettingsRemoteAccessSection() {
         </SettingsRow>
       </SettingsSection>
 
+      {remoteRuntime ? null : (
+        <SettingsSection
+          title="Tailscale"
+          description="Reach this computer from anywhere: put it and your phone on the same tailnet, and Tailscale encrypts everything between them. Nothing is opened to the internet."
+        >
+          <TailscaleServeCard
+            busy={busy === "tailscale"}
+            disabled={busy !== null}
+            hostingEnabled={enabled}
+            onCopy={(url) => void copyText(url, "Address")}
+            onRefresh={() => void refreshTailscale()}
+            onToggle={(value) => void toggleTailscaleServe(value)}
+            refreshing={tailscaleRefreshing}
+            status={tailscale}
+          />
+        </SettingsSection>
+      )}
+
       <SettingsSection
         title="Reachability"
-        description="A device on your private network (home or office Wi-Fi, VPN, tailnet) pairs with a full 30-day session over the address shown below — nothing to install on the phone. Plaintext from a public address is refused unless BETTERC0DE_ALLOW_INSECURE_REMOTE_ACCESS is set, and then read-only for one hour. For access away from home use Tailscale below or a trusted https:// URL."
+        description="For full access use Tailscale or an https:// address. Pairing over plain Wi-Fi is read-only for one hour."
       >
         <div className="space-y-3 px-4 py-3">
           <label className="text-sm font-medium" htmlFor="remote-custom-url">
@@ -498,26 +726,13 @@ export function SettingsRemoteAccessSection() {
       </SettingsSection>
 
       <SettingsSection
-        title="Tailscale"
-        description="Optional, for access away from home: with Tailscale on this computer and on the phone, the tailnet address is advertised automatically and devices on your tailnet pair with a full session from anywhere — the tunnel is the encryption, nothing is exposed to the public internet. HTTPS via Tailscale Serve is a further option for browsers."
-      >
-        <TailscaleServeCard
-          busy={busy === "tailscale"}
-          disabled={remoteRuntime || busy !== null}
-          hostingEnabled={enabled}
-          onToggle={(value) => void toggleTailscaleServe(value)}
-          status={tailscale}
-        />
-      </SettingsSection>
-
-      <SettingsSection
         title="Pair a device"
-        description="Each credential expires after 10 minutes and can be used once. Opening it creates a separate, revocable browser session."
+        description="Each link works once and expires after 10 minutes; no link lasts longer than an hour. Opening it creates a separate, revocable session. Revoke unused links if a screenshot or QR code went somewhere it shouldn't."
       >
         <div className="space-y-3 px-4 py-3">
           <Button
             className="gap-2"
-            disabled={remoteRuntime || !enabled || !listening || busy !== null}
+            disabled={remoteRuntime || !enabled || !reachable || busy !== null}
             onClick={() => void createLink()}
             size="sm"
           >
@@ -531,6 +746,11 @@ export function SettingsRemoteAccessSection() {
           {!enabled ? (
             <p className="text-xs text-muted-foreground">
               Enable remote access before pairing another device.
+            </p>
+          ) : !reachable && !remoteRuntime ? (
+            <p className="text-xs text-muted-foreground">
+              Turn on Tailscale HTTPS or Local network, so a device can reach
+              this computer.
             </p>
           ) : remoteRuntime ? (
             <p className="text-xs text-muted-foreground">
@@ -590,6 +810,12 @@ export function SettingsRemoteAccessSection() {
                       <span className="block truncate text-xs font-medium">
                         {link.label}
                         {link.isDefault ? " · Recommended" : ""}
+                        {remotePairingAccess({
+                          id: link.endpointId,
+                          url: link.url,
+                        }) === "read-only"
+                          ? " · Read-only, 1 hour"
+                          : ""}
                       </span>
                       <span className="block truncate text-[10px] text-muted-foreground">
                         {link.url}
@@ -602,11 +828,23 @@ export function SettingsRemoteAccessSection() {
             </div>
           ) : null}
         </div>
+        {!remoteRuntime && enabled ? (
+          <PendingPairingLinks
+            busy={busy}
+            disabled={busy !== null}
+            links={pairingLinks}
+            onRetry={() => void refreshPairingLinks()}
+            onRevoke={(link) => void revokePairingLink(link)}
+            onRevokeAll={() => void revokeAllPairingLinks()}
+            shownLinkId={grant?.id ?? null}
+            status={pairingLinksStatus}
+          />
+        ) : null}
       </SettingsSection>
 
       <SettingsSection
         title="Paired devices"
-        description="Sessions survive app restarts. Revoke any browser you no longer trust."
+        description="Sessions survive app restarts and end after 30 days, or after 7 days without use. Revoke any device you no longer trust."
       >
         {sessions.length === 0 ? (
           <div className="flex items-center gap-2 px-4 py-4 text-xs text-muted-foreground">
@@ -619,7 +857,7 @@ export function SettingsRemoteAccessSection() {
             const terminals = describeRemoteTerminals(session.terminals)
             return (
               <SettingsRow
-                description={`${current ? "This browser · " : ""}${client ? `${client} · ` : ""}Last active ${formatDate(session.lastSeenAt)}${terminals ? ` · ${terminals}` : ""}`}
+                description={`${current ? "This browser · " : ""}${session.accessLevel === "read_only" ? "Read-only · " : ""}${client ? `${client} · ` : ""}Last active ${formatDate(session.lastSeenAt)}${terminals ? ` · ${terminals}` : ""}`}
                 key={session.id}
                 label={session.label}
               >
@@ -694,22 +932,13 @@ export function SettingsRemoteAccessSection() {
           operate this host
         </p>
         <p className="mt-1">
-          A full session — HTTPS, this computer, your private network or your
-          tailnet — can read and operate chats and workspaces on this computer.
-          Pair only devices you control and revoke lost ones. Public plaintext
-          pairing, when explicitly enabled, is read-only and expires in one
-          hour. Never forward this port from a router without TLS.
+          A full session — paired over HTTPS, on this computer or through your
+          tailnet — can read and operate chats and workspaces on this computer
+          for 30 days, or until it goes unused for 7 days. Pair only devices you
+          control and revoke lost ones. Pairing over plain HTTP, on your private
+          network or a public address, is read-only and ends after one hour.
+          Never forward this port from a router without TLS.
         </p>
-        {defaultLink ? (
-          <a
-            className="mt-2 inline-flex items-center gap-1 text-primary hover:underline"
-            href={defaultLink.url}
-            rel="noreferrer"
-            target="_blank"
-          >
-            Test the recommended link <ExternalLink className="size-3" />
-          </a>
-        ) : null}
       </div>
 
       {error ? <p className="text-xs text-destructive">{error}</p> : null}

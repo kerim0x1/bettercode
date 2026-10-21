@@ -22,6 +22,7 @@ vi.mock("@/components/layout/agent-terminal-diff", () => ({
 }))
 vi.mock("@/hooks/use-chat-streaming-state", () => ({
   useChatStreamingState: () => ({ allPlans: [], isStreaming: false }),
+  useThreadPersistedPlans: () => [],
 }))
 vi.mock("@/components/chat/chat-input-area", () => ({
   ChatInputArea: (props: ComponentProps<typeof ChatInputArea>) => {
@@ -120,7 +121,8 @@ describe("chat pane composer", () => {
     })
     const otherSettings = useChatStore.getState().settingsByThread.a
     const handleSubmit = vi.fn()
-    const props: ComponentProps<typeof ChatColumn> = {
+    type Props = ComponentProps<typeof ChatColumn>
+    const props: Props = {
       threadId: "b",
       tabId: "pane-b",
       isActive: false,
@@ -138,24 +140,8 @@ describe("chat pane composer", () => {
       thinkingMode: "low",
       specialMode: null,
       permissionLevel: "bypass",
-      mentionQuery: "",
-      mentionActive: false,
-      slashActive: false,
-      slashQuery: "",
-      slashTrigger: "/",
-      closeMention: vi.fn(),
-      closeSlash: vi.fn(),
-      handleSlashSelect: vi.fn(),
-      autonomousMode: false,
-      autonomousStatus: "idle",
-      autonomousIterations: 0,
-      autonomousMaxIterations: 1,
-      autonomousTask: null,
-      autonomousTaskList: [],
-      autonomousTimeBudgetMin: 0,
-      autonomousStartedAt: null,
-      autonomousStopReason: null,
-      deepgram: null,
+      // The composer is mocked; it never reads these.
+      deepgram: null as unknown as Props["deepgram"],
       terminalOpen: false,
       setTerminalOpen: vi.fn(),
       diffOpen: false,
@@ -168,7 +154,7 @@ describe("chat pane composer", () => {
         currentModelName: "GPT-5.6 Sol",
         thinkingMode: "low",
         permissionLevel: "bypass",
-      },
+      } as unknown as Props["composerProps"],
     }
     const html = renderToStaticMarkup(createElement(ChatColumn, props))
     expect(html).toContain('aria-label="GPT-6 Astra"')

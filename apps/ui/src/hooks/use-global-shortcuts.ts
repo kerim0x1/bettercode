@@ -8,15 +8,18 @@ import { useEditorStore } from "@/lib/editor-store"
 import { useAppearanceStore } from "@/lib/appearance-store"
 import { filterThreadsForSessionDirectory } from "@/lib/session-directory-filter"
 import { useSettingsStore } from "@/lib/settings-store"
+import { queuedMessageForEditKey } from "@/lib/queued-message-editor"
 import {
   dispatchTerminalCloseActiveSession,
   dispatchTerminalNewSession,
+  dispatchTerminalSplit,
 } from "@/lib/terminal-events"
 import {
   dispatchBrowserPreviewCommand,
   dispatchEditorPreviewToggle,
 } from "@/lib/preview-events"
 import { resolveShortcutParityAction } from "@/lib/shortcut-parity"
+import { requestChatFind, resolveChatFindScope } from "@/lib/chat-find-events"
 import { togglePlanMode } from "@/lib/plan-mode-toggle"
 import { normalizeChatMode } from "@/lib/chat-mode-labels"
 
@@ -67,6 +70,15 @@ export function useGlobalShortcuts(callbacks: ShortcutCallbacks) {
       const alt = e.altKey
       const code = e.code
       const cb = ref.current
+      // The interactive terminal owns its unmodified and Alt chords: shells
+      // and full-screen programs use Shift+Tab and Alt+arrows themselves.
+      // On macOS the app's chords use Cmd, so Ctrl chords there (Ctrl+C,
+      // Ctrl+R, Ctrl+W…) belong to the shell too, except Ctrl+` (toggle).
+      if (isInsideTerminal(e.target)) {
+        const appChord =
+          e.metaKey || (e.ctrlKey && (!APPLE_PLATFORM || code === "Backquote"))
+        if (!appChord) return
+      }
 
       // Shift+Tab → toggle Plan mode for the ACTIVE thread. Reads and
       // writes both go through `useChatStore.getState()` directly with
@@ -119,6 +131,9 @@ export function useGlobalShortcuts(callbacks: ShortcutCallbacks) {
       }
 
       if (e.altKey && !ctrl && !shift && (isArrowUp || isArrowDown)) {
+        // Alt+Up in an empty composer edits its last queued message
+        // (components/chat/queued-messages.tsx) instead of switching chats.
+        if (isArrowUp && queuedMessageForEditKey(e)) return
         const chatState = useChatStore.getState()
         const archivedIds = new Set(
           useSettingsStore.getState().archivedThreadIds
@@ -241,6 +256,16 @@ export function useGlobalShortcuts(callbacks: ShortcutCallbacks) {
               })
             }
             break
+          case "terminal-split-right":
+          case "terminal-split-down":
+            if (terminalPanelId) {
+              dispatchTerminalSplit({
+                targetPanelId: terminalPanelId,
+                direction:
+                  parityAction === "terminal-split-right" ? "right" : "down",
+              })
+            }
+            break
           case "preview-toggle":
             dispatchEditorPreviewToggle()
             break
@@ -273,6 +298,22 @@ export function useGlobalShortcuts(callbacks: ShortcutCallbacks) {
             }
             break
         }
+        return
+      }
+
+      // Ctrl+F / Cmd+F → Find in Chat, while the chat (its transcript or its
+      // composer) is where the user is. Monaco, terminals and the browser
+      // preview keep their own find; anywhere else the key is left alone.
+      // Ctrl+Shift+F stays the cross-chat search below.
+      if (!shift && !alt && code === "KeyF") {
+        if (isInsideMonaco || terminalRoot) return
+        const scope = resolveChatFindScope(e.target, {
+          fallbackToActiveChat: appMode === "agent",
+        })
+        if (!scope) return
+        e.preventDefault()
+        e.stopPropagation()
+        requestChatFind(scope.id)
         return
       }
 
@@ -485,6 +526,16 @@ export function useGlobalShortcuts(callbacks: ShortcutCallbacks) {
     window.addEventListener("keydown", handleKeyDown, true)
     return () => window.removeEventListener("keydown", handleKeyDown, true)
   }, [])
+}
+
+/** macOS, where the app's chords use Cmd and Ctrl stays with the shell. */
+const APPLE_PLATFORM =
+  typeof navigator !== "undefined" && /^mac/i.test(navigator.platform)
+
+function isInsideTerminal(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element && Boolean(target.closest(".betterc0de-terminal"))
+  )
 }
 
 function isEditableShortcutTarget(target: Element | null): boolean {

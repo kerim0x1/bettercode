@@ -6,8 +6,8 @@ import {
 import {
   currentAgentPermissionRuntimeContext,
   evaluateConfiguredAgentToolPermission,
+  publishAgentPermissionEvent,
 } from "./agent-permission-runtime"
-import { providerEventBus } from "./events"
 
 export interface ProjectToolFlag {
   readonly tool: string
@@ -85,7 +85,7 @@ export function evaluateBetterC0deProjectToolPermission(
   if (selected === durableEvaluation && durable.decision === "deny") {
     const context = currentAgentPermissionRuntimeContext()
     if (context) {
-      providerEventBus.emitEvent({
+      publishAgentPermissionEvent({
         event_type: "tool.denied",
         thread_id: context.threadId,
         payload: {

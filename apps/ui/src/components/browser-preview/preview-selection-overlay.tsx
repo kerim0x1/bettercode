@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { parseSelectedElement } from "./preview-messages"
 import type { SelectedElement } from "./types"
 
 export function PreviewSelectionOverlay({
@@ -21,24 +22,9 @@ export function PreviewSelectionOverlay({
     const result = await execute(
       `window.__BC_PREVIEW__?.inspectPoint(${x}, ${y})`
     )
-    if (!result || typeof result !== "object") return null
-    const element = result as SelectedElement
-    return typeof element.selector === "string" &&
-      typeof element.tagName === "string" &&
-      element.rect &&
-      element.viewport &&
-      [
-        element.rect.x,
-        element.rect.y,
-        element.rect.w,
-        element.rect.h,
-        element.viewport.width,
-        element.viewport.height,
-      ].every(Number.isFinite) &&
-      element.viewport.width > 0 &&
-      element.viewport.height > 0
-      ? element
-      : null
+    // The overlay draws against the page viewport, so it needs one.
+    const element = parseSelectedElement(result)
+    return element?.viewport ? element : null
   }
 
   useEffect(() => {

@@ -1,6 +1,6 @@
 import type { PendingPlanApproval } from "@/lib/pending-approvals"
 import { usePreferencesStore } from "@/lib/preferences-store"
-import { respondToPlanApproval } from "@/services/backend"
+import { respondToPlanApproval } from "@/services/backend/chatApi"
 import { recordRequestResponseFailure } from "@/components/chat/approval-request-context"
 
 export interface PlanApprovalDecisionOptions {

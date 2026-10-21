@@ -5,17 +5,14 @@ import {
   isValidEnvironmentDraft,
   changedProviderConfigFields,
 } from "@/lib/provider-instance-settings"
-import { useState, useCallback, useEffect, useRef } from "react"
+import { useState, useCallback, useEffect, useRef, type ReactNode } from "react"
 import { cn } from "@/lib/utils"
-import { SettingsSection, SettingsRow } from "@/components/settings/atoms"
-import { useSettingsStore } from "@/lib/settings-store"
+import { SettingsRow } from "@/components/settings/atoms"
+import { getSettings, updateSettings } from "@/services/backend/coreApi"
 import {
-  getSettings,
-  updateSettings,
   validateProviderKey,
-} from "@/services/backend"
-import {
   getCliStatus,
+  listLmStudioModels,
   listProviderCatalog,
   listProviderSettingsModels,
   refreshModels,
@@ -32,14 +29,18 @@ import {
   XIcon,
   ExternalLinkIcon,
   CheckCircle2Icon,
-  KeyRoundIcon,
   AlertTriangleIcon,
-  TerminalIcon,
   PlusIcon,
   Trash2Icon,
   RefreshCwIcon,
   ArrowUpCircleIcon,
+  ChevronDownIcon,
+  LockIcon,
+  LockOpenIcon,
+  RotateCcwIcon,
+  ServerIcon,
 } from "lucide-react"
+import { toast } from "sonner"
 import { createLogger } from "@/lib/logger"
 import type {
   ProviderCatalogEntry,
@@ -65,11 +66,53 @@ import {
   type ProviderUpdateCandidate,
   type ProviderUpdateView,
 } from "@/lib/provider-update-notification"
+import { getElectronApi } from "@/services/ipc-facade"
+import { useProviderStatus } from "@/hooks/use-provider-status"
+import { providerBrand, type ProviderAccess } from "@/lib/provider-brand"
+import { useConfirm } from "@/components/dialogs/confirm-provider"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  MENU_ITEM,
+  MENU_ITEM_HINT,
+  MENU_PANEL,
+} from "@/components/ui/menu-chrome"
+import {
+  InlineCode,
+  ProviderCard,
+  type ProviderStatusTone,
+} from "./provider-card"
 
 const log = createLogger("settings-providers")
 
 type ProviderInstancesMap = Record<string, ProviderInstanceConfig>
 type ProviderInstanceDriver = "codex" | "claude" | "cursor" | "betterc0de"
+type KeyStatus = "idle" | "checking" | "valid" | "invalid" | "unverified"
+
+/** What a CLI card knows about its CLI: install, sign-in and version. */
+type CliState =
+  | { kind: "checking" }
+  | { kind: "error" }
+  | { kind: "missing" }
+  | { kind: "signed-out"; version: string | null }
+  | {
+      kind: "ready"
+      version: string | null
+      /** Signed-in account and plan, when the CLI reports them. */
+      account: string | null
+      plan: string | null
+      /** False when the CLI runs but could not confirm the sign-in. */
+      verified: boolean
+    }
+
+type LmStudioState =
+  | { kind: "checking" }
+  | { kind: "running"; models: number }
+  | { kind: "stopped" }
 
 function notifySettingsUpdated() {
   if (typeof window !== "undefined") {
@@ -77,36 +120,144 @@ function notifySettingsUpdated() {
   }
 }
 
+/** The system browser in the desktop app, a new tab in a paired browser. */
+function openExternalUrl(url: string) {
+  const api = getElectronApi()
+  if (api?.openExternal) void api.openExternal(url)
+  else window.open(url, "_blank", "noopener,noreferrer")
+}
+
+/**
+ * How a catalog provider is reached, or null when the backend cannot use it
+ * yet: DeepSeek has a catalog entry but no adapter, so its key and models
+ * would be saved and never used. DeepSeek models stay available through
+ * OpenRouter.
+ */
+function providerAccess(provider: ProviderCatalogEntry): ProviderAccess | null {
+  if (provider.id === "deepseek") return null
+  if (provider.authMethods.some((method) => method.type === "cli")) return "cli"
+  if (provider.authMethods.some((method) => method.type === "local-server"))
+    return "local"
+  return "api"
+}
+
+const PROVIDER_GROUPS: ReadonlyArray<{
+  access: ProviderAccess
+  title: string
+  description: string
+}> = [
+  {
+    access: "cli",
+    title: "CLI accounts",
+    description:
+      "Uses the login of a CLI installed on this computer. No API key: usage runs through that account.",
+  },
+  {
+    access: "api",
+    title: "API keys",
+    description: "Direct API access with your own key, billed by the provider.",
+  },
+  {
+    access: "local",
+    title: "Local models",
+    description: "Models served by an app on this computer.",
+  },
+]
+
+/**
+ * A CLI card's state. The provider instance snapshot comes first: it has the
+ * adapter's own sign-in probe (the only one that knows about Cursor). The
+ * `/cli/status` reading covers a disabled or missing instance.
+ */
+function resolveCliState(
+  snapshot: ProviderInstanceSnapshot | undefined,
+  status: CliStatus | undefined,
+  failed: boolean
+): CliState {
+  if (snapshot && snapshot.enabled !== false) {
+    if (!snapshot.installed) return { kind: "missing" }
+    const auth = snapshot.auth?.status
+    if (
+      auth === "unauthenticated" ||
+      (!snapshot.configured && auth !== "authenticated")
+    ) {
+      return { kind: "signed-out", version: snapshot.version ?? null }
+    }
+    return {
+      kind: "ready",
+      version: snapshot.version ?? null,
+      account: snapshot.auth?.email ?? null,
+      plan: snapshot.auth?.label ?? null,
+      verified: auth === "authenticated",
+    }
+  }
+  if (status) {
+    if (!status.installed) return { kind: "missing" }
+    if (!status.authenticated)
+      return { kind: "signed-out", version: status.version ?? null }
+    return {
+      kind: "ready",
+      version: status.version ?? null,
+      account: null,
+      plan: null,
+      verified: true,
+    }
+  }
+  return failed ? { kind: "error" } : { kind: "checking" }
+}
+
+function cliStatusPill(state: CliState): {
+  label: string
+  tone: ProviderStatusTone
+} {
+  switch (state.kind) {
+    case "checking":
+      return { label: "Checking…", tone: "checking" }
+    case "error":
+      return { label: "Couldn't check", tone: "warning" }
+    case "missing":
+      return { label: "Not installed", tone: "muted" }
+    case "signed-out":
+      return { label: "Not signed in", tone: "warning" }
+    case "ready":
+      return { label: state.verified ? "Signed in" : "Ready", tone: "ready" }
+  }
+}
+
 /**
  * Settings UI for provider configuration.
  *
  * The catalog lives in `apps/backend/src/provider/catalog/` and is served
- * through `/providers/catalog`. API key management and CLI accounts have
- * separate sections so their credentials and billing are clear.
- * Providers whose `authMethods` include an
- * `oauth` entry get a "Sign in with X" button that delegates to the local
- * OAuth callback server in apps/shell/oauth/.
+ * through `/providers/catalog`. Providers are grouped by how they are
+ * reached: CLI accounts (a signed-in local CLI), API keys (billed by the
+ * provider) and local model servers, each card with its brand mark and
+ * live status. CLI instances follow as the advanced section.
  */
 
 export function SettingsProvidersSection() {
-  const _settings = useSettingsStore()
   const [providerSettings, setProviderSettings] = useState<
     Record<string, Record<string, unknown>>
   >({})
-  const [, setSaving] = useState(false)
-  const [keyStatus, setKeyStatus] = useState<
-    Record<string, "idle" | "checking" | "valid" | "invalid">
-  >({})
+  const [keyStatus, setKeyStatus] = useState<Record<string, KeyStatus>>({})
   const [catalog, setCatalog] = useState<ProviderCatalogEntry[]>([])
+  const [catalogState, setCatalogState] = useState<
+    "loading" | "ready" | "error"
+  >("loading")
   const [models, setModels] = useState<
     Array<{ provider: string; slug: string }>
   >([])
+  const [refreshingModels, setRefreshingModels] = useState(false)
+  const { status: providerStatus } = useProviderStatus()
   const refreshProviderModels = useCallback(async (force = false) => {
+    if (force) setRefreshingModels(true)
     try {
       if (force) await refreshModels()
       setModels(await listProviderSettingsModels())
     } catch (error) {
       log.warn("Failed to load provider models", error)
+      if (force) handleError(error, { source: "provider-models-refresh" })
+    } finally {
+      if (force) setRefreshingModels(false)
     }
   }, [])
   const refreshSavedSettings = useCallback(async () => {
@@ -122,11 +273,10 @@ export function SettingsProvidersSection() {
       log.warn("Failed to refresh provider settings", error)
     }
   }, [refreshProviderModels])
-  const [authStatus, setAuthStatus] = useState<
-    Record<string, "oauth" | "api" | "wellknown">
-  >({})
-  const [oauthBusy, setOauthBusy] = useState<Record<string, boolean>>({})
   const [cliStatus, setCliStatus] = useState<Record<string, CliStatus>>({})
+  const [cliFailed, setCliFailed] = useState(false)
+  const [recheckingCli, setRecheckingCli] = useState<string | null>(null)
+  const [lmStudio, setLmStudio] = useState<LmStudioState>({ kind: "checking" })
   const [providerInstances, setProviderInstances] =
     useState<ProviderInstancesMap>({})
   const [instanceSnapshots, setInstanceSnapshots] = useState<
@@ -153,6 +303,9 @@ export function SettingsProvidersSection() {
         notifySettingsUpdated()
       } catch (e) {
         log.warn("Failed to update provider instance", e)
+        toast.error(`Couldn't update ${instanceId}`, {
+          description: e instanceof Error ? e.message : undefined,
+        })
         await refreshProviderInstances()
       } finally {
         setUpdatingInstanceId(null)
@@ -161,26 +314,62 @@ export function SettingsProvidersSection() {
     [refreshProviderInstances]
   )
 
-  const refreshCliStatus = useCallback(async () => {
+  const refreshCliStatus = useCallback(async (refresh = false) => {
     try {
-      const res = await getCliStatus()
+      const res = await getCliStatus({ refresh })
       if (res?.cli && typeof res.cli === "object") setCliStatus(res.cli)
+      setCliFailed(false)
     } catch (e) {
       log.warn("Failed to load CLI status", e)
+      setCliFailed(true)
     }
   }, [])
 
-  const refreshAuthStatus = useCallback(async () => {
+  // Recheck asks both sources again: the CLI probe without its cache, and
+  // the instance's own sign-in probe.
+  const recheckCli = useCallback(
+    async (providerId: string) => {
+      setRecheckingCli(providerId)
+      try {
+        await Promise.allSettled([
+          refreshCliStatus(true),
+          refreshProviderInstance(providerId),
+        ])
+        await refreshProviderInstances()
+      } finally {
+        setRecheckingCli(null)
+      }
+    },
+    [refreshCliStatus, refreshProviderInstances]
+  )
+
+  const checkLmStudio = useCallback(async () => {
+    setLmStudio({ kind: "checking" })
     try {
-      const status = await window.electronAPI?.providerAuthStatus?.()
-      if (status && typeof status === "object")
-        setAuthStatus(status as Record<string, "oauth" | "api" | "wellknown">)
-    } catch (e) {
-      log.warn("Failed to load provider auth status", e)
+      const result = await listLmStudioModels()
+      setLmStudio(
+        result.error || !Array.isArray(result.data)
+          ? { kind: "stopped" }
+          : { kind: "running", models: result.data.length }
+      )
+    } catch {
+      setLmStudio({ kind: "stopped" })
     }
   }, [])
 
-  // Load provider settings + catalog + auth status on mount
+  const loadCatalog = useCallback(async () => {
+    setCatalogState("loading")
+    try {
+      const list = await listProviderCatalog()
+      setCatalog(Array.isArray(list) ? list : [])
+      setCatalogState("ready")
+    } catch (e) {
+      log.warn("Failed to load provider catalog", e)
+      setCatalogState("error")
+    }
+  }, [])
+
+  // Load provider settings + catalog on mount
   useEffect(() => {
     getSettings()
       .then(
@@ -206,23 +395,21 @@ export function SettingsProvidersSection() {
         log.warn("Failed to load provider settings", e)
       })
 
-    void listProviderCatalog()
-      .then((list) => {
-        if (Array.isArray(list)) setCatalog(list)
-      })
-      .catch((e) => log.warn("Failed to load provider catalog", e))
-
-    void refreshAuthStatus()
+    void loadCatalog()
     void refreshCliStatus()
     void refreshProviderInstances()
     void refreshProviderModels()
+    void checkLmStudio()
   }, [
-    refreshAuthStatus,
+    checkLmStudio,
+    loadCatalog,
     refreshCliStatus,
     refreshProviderInstances,
     refreshProviderModels,
   ])
 
+  // Only an explicit rejection means a bad key; a rate limit, an outage or
+  // no network leaves the key unverified rather than "invalid".
   const validateKey = useCallback(
     async (providerId: string, apiKey: string) => {
       if (!apiKey) {
@@ -234,10 +421,14 @@ export function SettingsProvidersSection() {
         const res = await validateProviderKey(providerId, apiKey)
         setKeyStatus((prev) => ({
           ...prev,
-          [providerId]: res.valid ? "valid" : "invalid",
+          [providerId]: res.valid
+            ? "valid"
+            : res.status === 401 || res.status === 403
+              ? "invalid"
+              : "unverified",
         }))
       } catch {
-        setKeyStatus((prev) => ({ ...prev, [providerId]: "invalid" }))
+        setKeyStatus((prev) => ({ ...prev, [providerId]: "unverified" }))
       }
     },
     []
@@ -245,7 +436,6 @@ export function SettingsProvidersSection() {
 
   const saveKey = useCallback(
     async (providerId: string, key: string, value: unknown) => {
-      setSaving(true)
       const nextProviders = {
         ...providerSettings,
         [providerId]: {
@@ -263,13 +453,14 @@ export function SettingsProvidersSection() {
             : nextProviders
         )
         notifySettingsUpdated()
-        if (key === "api_key" && isSecretSetPatch(value))
-          validateKey(providerId, value.set)
+        if (key === "api_key") {
+          if (isSecretSetPatch(value)) void validateKey(providerId, value.set)
+          else setKeyStatus((prev) => ({ ...prev, [providerId]: "idle" }))
+        }
       } catch (e) {
         log.warn("Failed to save provider setting:", providerId, key, e)
         handleError(e, { source: "provider-settings-save" })
       }
-      setSaving(false)
     },
     [providerSettings, validateKey]
   )
@@ -279,7 +470,6 @@ export function SettingsProvidersSection() {
       const previous = providerInstances
       const normalized = normalizeProviderInstancesMap(next)
       setProviderInstances(normalized)
-      setSaving(true)
       try {
         const removedProviderInstanceIds = Object.keys(previous).filter(
           (instanceId) => !(instanceId in normalized)
@@ -300,108 +490,113 @@ export function SettingsProvidersSection() {
         setProviderInstances(previous)
         log.warn("Failed to save provider instances", e)
         handleError(e, { source: "provider-instance-settings-save" })
-      } finally {
-        setSaving(false)
       }
     },
     [providerInstances, refreshProviderInstances]
   )
 
-  const startOauth = useCallback(
-    async (providerId: string, handler: string) => {
-      setOauthBusy((p) => ({ ...p, [providerId]: true }))
-      try {
-        await window.electronAPI?.providerOauthStart?.(providerId, handler)
-        await refreshAuthStatus()
-      } catch (e) {
-        log.warn("OAuth flow failed:", providerId, e)
-      } finally {
-        setOauthBusy((p) => ({ ...p, [providerId]: false }))
-      }
-    },
-    [refreshAuthStatus]
-  )
+  if (catalogState !== "ready") {
+    return catalogState === "error" ? (
+      <div className="flex items-center gap-3 rounded-xl border border-border/50 px-4 py-3 text-xs text-muted-foreground">
+        <span className="flex-1">Couldn't load the provider list.</span>
+        <Button variant="outline" size="xs" onClick={() => void loadCatalog()}>
+          <RefreshCwIcon />
+          Retry
+        </Button>
+      </div>
+    ) : (
+      <p className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2Icon className="size-3.5 animate-spin" />
+        Loading providers…
+      </p>
+    )
+  }
 
-  const clearAuth = useCallback(
-    async (providerId: string) => {
-      try {
-        await window.electronAPI?.providerAuthClear?.(providerId)
-        await refreshAuthStatus()
-      } catch (e) {
-        log.warn("Failed to clear credential:", providerId, e)
-      }
-    },
-    [refreshAuthStatus]
-  )
-
-  if (catalog.length === 0) {
-    return <p className="text-xs text-muted-foreground">Loading providers…</p>
+  const apiStatus = (
+    provider: ProviderCatalogEntry,
+    access: ProviderAccess
+  ): { label: string; tone: ProviderStatusTone } | null => {
+    if (access === "local") {
+      return lmStudio.kind === "checking"
+        ? { label: "Checking…", tone: "checking" }
+        : lmStudio.kind === "running"
+          ? { label: "Running", tone: "ready" }
+          : { label: "Not running", tone: "muted" }
+    }
+    const config = providerSettings[provider.id] ?? {}
+    if (config.enabled === false) return { label: "Off", tone: "muted" }
+    const status = providerStatus.get(provider.id)
+    if (!status) return null
+    return status.configured
+      ? { label: "Ready", tone: "ready" }
+      : { label: "No key", tone: "warning" }
   }
 
   return (
-    <>
-      <p className="mb-2 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-        Providers
-      </p>
-      <p className="mb-4 text-xs text-muted-foreground">
-        Use API keys for direct access, your signed-in CLI accounts, or a local
-        model server.
-      </p>
-      {[
-        {
-          title: "API providers",
-          items: catalog.filter(
-            (provider) => apiKeyProviderSchema.safeParse(provider.id).success
-          ),
-        },
-        {
-          title: "CLI accounts",
-          items: catalog.filter((provider) =>
-            provider.authMethods.some((method) => method.type === "cli")
-          ),
-        },
-        {
-          title: "Other providers & local models",
-          items: catalog.filter(
-            (provider) =>
-              !apiKeyProviderSchema.safeParse(provider.id).success &&
-              !provider.authMethods.some((method) => method.type === "cli")
-          ),
-        },
-      ]
-        .filter((group) => group.items.length > 0)
-        .map((group) => (
-          <div key={group.title} className="space-y-4">
-            <h3 className="mt-5 text-xs font-medium text-foreground">
-              {group.title}
-            </h3>
-            {group.items.map((provider) => (
-              <ProviderRow
-                key={provider.id}
-                provider={provider}
-                config={providerSettings[provider.id] ?? {}}
-                authType={authStatus[provider.id]}
-                oauthBusy={!!oauthBusy[provider.id]}
-                keyStatus={keyStatus[provider.id] ?? "idle"}
-                cliStatus={cliStatus[provider.id]}
-                models={[
-                  ...new Set([
-                    ...provider.defaultModels,
-                    ...models
-                      .filter((model) => model.provider === provider.id)
-                      .map((model) => model.slug),
-                  ]),
-                ]}
-                onKeysChanged={() => void refreshSavedSettings()}
-                onRefreshModels={() => void refreshProviderModels(true)}
-                onSaveKey={saveKey}
-                onStartOauth={startOauth}
-                onClearAuth={clearAuth}
-                onRefreshCli={refreshCliStatus}
-              />
-            ))}
-          </div>
-        ))}
+    <div className="space-y-8">
+      {PROVIDER_GROUPS.map((group) => {
+        const items = catalog.filter(
+          (provider) => providerAccess(provider) === group.access
+        )
+        if (items.length === 0) return null
+        return (
+          <section key={group.access} aria-label={group.title}>
+            <div className="mb-3">
+              <h3 className="text-[13px] font-semibold text-foreground">
+                {group.title}
+              </h3>
+              <p className="mt-0.5 text-[11.5px] text-muted-foreground">
+                {group.description}
+              </p>
+            </div>
+            <div className="space-y-2">
+              {items.map((provider) => {
+                const cli =
+                  group.access === "cli"
+                    ? resolveCliState(
+                        instanceSnapshots.find(
+                          (snapshot) => snapshot.instanceId === provider.id
+                        ),
+                        cliStatus[provider.id],
+                        cliFailed
+                      )
+                    : null
+                return (
+                  <ProviderRow
+                    key={provider.id}
+                    provider={provider}
+                    access={group.access}
+                    status={
+                      cli
+                        ? cliStatusPill(cli)
+                        : apiStatus(provider, group.access)
+                    }
+                    config={providerSettings[provider.id] ?? {}}
+                    keyStatus={keyStatus[provider.id] ?? "idle"}
+                    cli={cli}
+                    rechecking={recheckingCli === provider.id}
+                    lmStudio={lmStudio}
+                    models={[
+                      ...new Set([
+                        ...provider.defaultModels,
+                        ...models
+                          .filter((model) => model.provider === provider.id)
+                          .map((model) => model.slug),
+                      ]),
+                    ]}
+                    refreshingModels={refreshingModels}
+                    onKeysChanged={() => void refreshSavedSettings()}
+                    onRefreshModels={() => void refreshProviderModels(true)}
+                    onSaveKey={saveKey}
+                    onRecheckCli={() => void recheckCli(provider.id)}
+                    onCheckLmStudio={() => void checkLmStudio()}
+                  />
+                )
+              })}
+            </div>
+          </section>
+        )
+      })}
       <ProviderInstancesSection
         instances={providerInstances}
         snapshots={instanceSnapshots}
@@ -410,48 +605,59 @@ export function SettingsProvidersSection() {
         onRefresh={refreshProviderInstances}
         onUpdate={runProviderInstanceUpdate}
       />
-    </>
+    </div>
   )
 }
 
 interface ProviderRowProps {
   provider: ProviderCatalogEntry
+  access: ProviderAccess
+  status: { label: string; tone: ProviderStatusTone } | null
   config: Record<string, unknown>
-  authType: "oauth" | "api" | "wellknown" | undefined
-  oauthBusy: boolean
-  keyStatus: "idle" | "checking" | "valid" | "invalid"
-  cliStatus: CliStatus | undefined
+  keyStatus: KeyStatus
+  cli: CliState | null
+  rechecking: boolean
+  lmStudio: LmStudioState
   models: string[]
+  refreshingModels: boolean
   onKeysChanged: () => void
   onRefreshModels: () => void
   onSaveKey: (providerId: string, key: string, value: unknown) => Promise<void>
-  onStartOauth: (providerId: string, handler: string) => Promise<void>
-  onClearAuth: (providerId: string) => Promise<void>
-  onRefreshCli: () => Promise<void>
+  onRecheckCli: () => void
+  onCheckLmStudio: () => void
+}
+
+const KEY_STATUS_LOOK: Record<KeyStatus, { dot: string; title: string }> = {
+  idle: { dot: "bg-muted-foreground/30", title: "No key" },
+  checking: { dot: "", title: "Checking key…" },
+  valid: { dot: "bg-success", title: "Key verified" },
+  invalid: { dot: "bg-destructive", title: "Key rejected by the provider" },
+  unverified: {
+    dot: "bg-warning",
+    title: "Couldn't verify the key (rate limit or network); it is saved",
+  },
 }
 
 function ProviderRow({
   provider,
+  access,
+  status,
   config,
-  authType,
-  oauthBusy,
   keyStatus,
-  cliStatus,
+  cli,
+  rechecking,
+  lmStudio,
   models,
+  refreshingModels,
   onKeysChanged,
   onRefreshModels,
   onSaveKey,
-  onStartOauth,
-  onClearAuth,
-  onRefreshCli,
+  onRecheckCli,
+  onCheckLmStudio,
 }: ProviderRowProps) {
   const apiKeyMethod = provider.authMethods.find(
     (m): m is Extract<ProviderAuthMethod, { type: "api-key" }> =>
       m.type === "api-key"
-  )
-  const oauthMethod = provider.authMethods.find(
-    (m): m is Extract<ProviderAuthMethod, { type: "oauth" }> =>
-      m.type === "oauth"
   )
   const localServerMethod = provider.authMethods.find(
     (m): m is Extract<ProviderAuthMethod, { type: "local-server" }> =>
@@ -467,23 +673,49 @@ function ProviderRow({
   const customModels = (config.custom_models as string[] | undefined) ?? []
   const hiddenModels = (config.hidden_models as string[] | undefined) ?? []
   const managedProvider = apiKeyProviderSchema.safeParse(provider.id)
+  const keyLook =
+    keyStatus !== "idle"
+      ? KEY_STATUS_LOOK[keyStatus]
+      : hasKey
+        ? { dot: "bg-warning", title: "Key saved, not checked yet" }
+        : KEY_STATUS_LOOK.idle
+
+  // Closed, the card still says what matters: the CLI's sign-in, LM Studio's
+  // server, or the catalog line.
+  const summary =
+    cliMethod && cli ? (
+      <CliDescription state={cli} method={cliMethod} />
+    ) : localServerMethod ? (
+      lmStudio.kind === "running" ? (
+        `Running · ${lmStudio.models} model${lmStudio.models === 1 ? "" : "s"} loaded`
+      ) : lmStudio.kind === "stopped" ? (
+        "Local server not reachable"
+      ) : (
+        "Looking for LM Studio…"
+      )
+    ) : undefined
 
   return (
-    <SettingsSection title={provider.name} description={provider.description}>
-      {managedProvider.success && (
-        <SettingsRow
-          label="Enable provider"
-          description="Make this provider available in the model picker when its keys are usable."
-        >
+    <ProviderCard
+      id={provider.id}
+      name={provider.name}
+      description={provider.description}
+      summary={summary}
+      access={access}
+      status={status}
+      actions={
+        managedProvider.success ? (
           <Switch
             aria-label={`Enable ${provider.name}`}
+            title="Offer this provider in the model picker when its keys are usable"
             checked={config.enabled !== false}
             onCheckedChange={(enabled) =>
               void onSaveKey(provider.id, "enabled", enabled)
             }
           />
-        </SettingsRow>
-      )}
+        ) : null
+      }
+    >
       {managedProvider.success && (
         <ProviderApiKeys
           provider={managedProvider.data}
@@ -499,121 +731,32 @@ function ProviderRow({
             type="button"
             variant="outline"
             size="xs"
-            onClick={() =>
-              void window.electronAPI?.openExternal?.(provider.docsUrl!)
-            }
+            onClick={() => openExternalUrl(provider.docsUrl!)}
           >
             <ExternalLinkIcon />
             Open provider console
           </Button>
         </SettingsRow>
       )}
-      {/* CLI-backed method (claude / codex) */}
-      {cliMethod && (
+      {/* CLI account: install, sign-in and version. */}
+      {cliMethod && cli && (
         <SettingsRow
-          label={cliMethod.label}
-          description={
-            !cliStatus ? (
-              "Detecting…"
-            ) : !cliStatus.installed ? (
-              <>
-                Not installed
-                {cliMethod.installHint && (
-                  <>
-                    :{" "}
-                    <code className="text-[10px]">{cliMethod.installHint}</code>
-                  </>
-                )}
-              </>
-            ) : !cliStatus.authenticated ? (
-              <>
-                Installed v{cliStatus.version} but not signed in
-                {cliMethod.loginCommand && (
-                  <>
-                    : run{" "}
-                    <code className="text-[10px]">
-                      {cliMethod.loginCommand}
-                    </code>
-                  </>
-                )}
-              </>
-            ) : (
-              <>
-                Installed v{cliStatus.version} · Signed in (
-                {cliStatus.authType ?? "unknown"})
-              </>
-            )
-          }
+          label="Account"
+          description={<CliDescription state={cli} method={cliMethod} />}
         >
-          <div className="flex items-center gap-2">
-            {!cliStatus ? (
-              <Loader2Icon className="size-3.5 animate-spin text-muted-foreground" />
-            ) : cliStatus.installed && cliStatus.authenticated ? (
-              <CheckCircle2Icon className="size-3.5 text-emerald-500" />
-            ) : cliStatus.installed ? (
-              <AlertTriangleIcon className="size-3.5 text-amber-500" />
-            ) : (
-              <TerminalIcon className="size-3.5 text-muted-foreground/50" />
-            )}
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 text-[10px]"
-              onClick={() => void onRefreshCli()}
-              title="Re-detect CLI install + auth"
-            >
-              Recheck
-            </Button>
-          </div>
-        </SettingsRow>
-      )}
-
-      {/* OAuth method (if available) */}
-      {oauthMethod && (
-        <SettingsRow
-          label={oauthMethod.label}
-          description={
-            authType === "oauth"
-              ? "Currently signed in."
-              : "Browser-based sign-in. No API key required."
-          }
-        >
-          <div className="flex items-center gap-2">
-            {authType === "oauth" ? (
-              <>
-                <CheckCircle2Icon className="size-3.5 text-emerald-500" />
-                <span className="text-[10px] text-muted-foreground">
-                  Signed in
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2 text-[10px]"
-                  onClick={() => void onClearAuth(provider.id)}
-                >
-                  Sign out
-                </Button>
-              </>
-            ) : (
-              <Button
-                size="sm"
-                className="h-7 px-2 text-[10px]"
-                disabled={oauthBusy}
-                onClick={() =>
-                  void onStartOauth(provider.id, oauthMethod.handler)
-                }
-              >
-                {oauthBusy ? (
-                  <Loader2Icon className="size-3 animate-spin" />
-                ) : (
-                  <KeyRoundIcon className="size-3" />
-                )}
-                <span className="ml-1">
-                  {oauthBusy ? "Waiting for browser…" : "Sign in"}
-                </span>
-              </Button>
-            )}
-          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 px-2 text-[10px]"
+            disabled={rechecking}
+            onClick={onRecheckCli}
+            title="Detect the CLI and its sign-in again"
+          >
+            <RefreshCwIcon
+              className={cn("size-3", rechecking && "animate-spin")}
+            />
+            Recheck
+          </Button>
         </SettingsRow>
       )}
 
@@ -638,7 +781,7 @@ function ProviderRow({
                     href={provider.docsUrl}
                     onClick={(e) => {
                       e.preventDefault()
-                      void window.electronAPI?.openExternal?.(provider.docsUrl!)
+                      openExternalUrl(provider.docsUrl!)
                     }}
                     className="inline-flex items-center gap-0.5 text-muted-foreground hover:text-foreground"
                   >
@@ -651,7 +794,10 @@ function ProviderRow({
         >
           <div className="flex w-[280px] items-center gap-2">
             <Input
+              // A new key (or a cleared one) remounts the field empty.
+              key={hasKey ? "stored" : "empty"}
               type="password"
+              aria-label={`${provider.name} API key`}
               className="h-8 flex-1 font-mono text-xs"
               placeholder={
                 hasKey ? "Stored API key" : (apiKeyMethod.placeholder ?? "")
@@ -663,37 +809,19 @@ function ProviderRow({
               }
               onBlur={(e) => {
                 const value = e.target.value.trim()
-                if (!value && hasKey) return
-                void onSaveKey(
-                  provider.id,
-                  "api_key",
-                  value ? { set: value } : { clear: true }
-                )
+                if (!value) return
+                e.target.value = ""
+                void onSaveKey(provider.id, "api_key", { set: value })
               }}
             />
             {keyStatus === "checking" ? (
               <Loader2Icon className="size-3 shrink-0 animate-spin text-muted-foreground" />
             ) : (
               <span
-                className={cn(
-                  "size-2 shrink-0 rounded-full",
-                  keyStatus === "valid"
-                    ? "bg-emerald-500"
-                    : keyStatus === "invalid"
-                      ? "bg-red-500"
-                      : hasKey
-                        ? "bg-amber-500"
-                        : "bg-muted-foreground/30"
-                )}
-                title={
-                  keyStatus === "valid"
-                    ? "Key verified"
-                    : keyStatus === "invalid"
-                      ? "Key invalid"
-                      : hasKey
-                        ? "Key saved, not verified"
-                        : "No key"
-                }
+                role="img"
+                aria-label={keyLook.title}
+                title={keyLook.title}
+                className={cn("size-2 shrink-0 rounded-full", keyLook.dot)}
               />
             )}
             {hasKey ? (
@@ -712,62 +840,78 @@ function ProviderRow({
         </SettingsRow>
       )}
 
-      {/* Local server (LM Studio etc.) */}
+      {/* Local server (LM Studio): found automatically on this computer. */}
       {localServerMethod && (
         <SettingsRow
-          label={localServerMethod.label}
-          description={localServerMethod.hint ?? "Local model server endpoint."}
+          label="Local server"
+          description={
+            lmStudio.kind === "running"
+              ? `Running · ${lmStudio.models} model${lmStudio.models === 1 ? "" : "s"} loaded. BetterC0de finds LM Studio on this computer automatically.`
+              : lmStudio.kind === "stopped"
+                ? "Not reachable. Start LM Studio's local server (Developer → Start Server) on port 1234."
+                : "Looking for LM Studio on this computer…"
+          }
         >
-          <Input
-            className="h-8 w-[280px] font-mono text-xs"
-            placeholder={localServerMethod.defaultBaseUrl}
-            defaultValue={(config.base_url as string | undefined) ?? ""}
-            onBlur={(e) =>
-              void onSaveKey(provider.id, "base_url", e.target.value || null)
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 px-2 text-[10px]"
+            disabled={lmStudio.kind === "checking"}
+            onClick={onCheckLmStudio}
+          >
+            <RefreshCwIcon
+              className={cn(
+                "size-3",
+                lmStudio.kind === "checking" && "animate-spin"
+              )}
+            />
+            Check
+          </Button>
+        </SettingsRow>
+      )}
+
+      {/* Custom models: LM Studio lists what it has loaded instead. */}
+      {access !== "local" && (
+        <SettingsRow
+          label="Custom Models"
+          description="Add model IDs not in the default list"
+          className={
+            managedProvider.success ? "flex-wrap sm:flex-nowrap" : undefined
+          }
+        >
+          <CustomModelInput
+            providerId={provider.id}
+            customModels={customModels}
+            onChange={(next) =>
+              void onSaveKey(provider.id, "custom_models", next)
             }
           />
         </SettingsRow>
       )}
 
-      {/* Custom models */}
-      <SettingsRow
-        label="Custom Models"
-        description="Add model IDs not in the default list"
-        className={
-          managedProvider.success ? "flex-wrap sm:flex-nowrap" : undefined
-        }
-      >
-        <CustomModelInput
-          providerId={provider.id}
-          customModels={customModels}
-          onChange={(next) =>
-            void onSaveKey(provider.id, "custom_models", next)
-          }
-        />
-      </SettingsRow>
-
-      {/* Hidden models */}
-      {(models.length > 0 || managedProvider.success) && (
+      {/* Visible models: the backend honours these for the managed API
+          providers; the Model Visibility section covers the rest. */}
+      {managedProvider.success && (
         <SettingsRow
           label="Visible Models"
           description="Toggle models on/off in the dropdown"
-          className={
-            managedProvider.success
-              ? "flex-wrap items-start sm:flex-nowrap"
-              : undefined
-          }
+          className="flex-wrap items-start sm:flex-nowrap"
         >
           <div className="w-[280px] max-w-full space-y-1">
-            {managedProvider.success && (
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                onClick={onRefreshModels}
-              >
-                Refresh models
-              </Button>
-            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              disabled={refreshingModels}
+              onClick={onRefreshModels}
+            >
+              {refreshingModels ? (
+                <Loader2Icon className="animate-spin" />
+              ) : (
+                <RefreshCwIcon />
+              )}
+              Refresh models
+            </Button>
             {models.length === 0 && (
               <p className="text-[11px] text-muted-foreground">
                 Add an available key to load the account's models.
@@ -793,8 +937,57 @@ function ProviderRow({
           </div>
         </SettingsRow>
       )}
-    </SettingsSection>
+    </ProviderCard>
   )
+}
+
+/** The CLI account row's text for each state, with its next step. */
+function CliDescription({
+  state,
+  method,
+}: {
+  state: CliState
+  method: Extract<ProviderAuthMethod, { type: "cli" }>
+}) {
+  const version = (value: string | null) => (value ? ` v${value}` : "")
+  switch (state.kind) {
+    case "checking":
+      return <>Checking the CLI…</>
+    case "error":
+      return <>Couldn't check this CLI. Try Recheck.</>
+    case "missing":
+      return (
+        <>
+          Not installed
+          {method.installHint ? (
+            <>
+              . Install: <InlineCode text={`\`${method.installHint}\``} />
+            </>
+          ) : null}
+        </>
+      )
+    case "signed-out":
+      return (
+        <>
+          Installed{version(state.version)}, not signed in
+          {method.loginCommand ? (
+            <>
+              . Run <InlineCode text={`\`${method.loginCommand}\``} /> in a
+              terminal
+            </>
+          ) : null}
+        </>
+      )
+    case "ready":
+      return (
+        <>
+          {state.verified ? "Signed in" : "Ready (sign-in not confirmed)"}
+          {state.account ? ` as ${state.account}` : ""}
+          {state.plan ? ` · ${state.plan}` : ""}
+          {state.version ? ` · v${state.version}` : ""}
+        </>
+      )
+  }
 }
 
 interface CustomModelInputProps {
@@ -870,6 +1063,29 @@ interface ProviderInstancesSectionProps {
   onUpdate: (instanceId: string) => Promise<void>
 }
 
+const INSTANCE_DRIVERS: ReadonlyArray<{
+  driver: ProviderInstanceDriver
+  label: string
+  hint: string
+}> = [
+  { driver: "codex", label: "Codex", hint: "Another account, home or binary" },
+  {
+    driver: "claude",
+    label: "Claude Code",
+    hint: "Another account, home or binary",
+  },
+  { driver: "cursor", label: "Cursor", hint: "Another binary or ACP endpoint" },
+  {
+    driver: "betterc0de",
+    label: "BetterC0de server",
+    hint: "A compatibility server by URL",
+  },
+]
+
+/** Inputs in the instance forms: compact, at the settings text size. */
+const FIELD_INPUT =
+  "h-8 rounded-lg border-border/50 bg-background/50 px-2.5 text-[12px] md:text-[12px] dark:bg-input/30"
+
 function ProviderInstancesSection({
   instances,
   snapshots,
@@ -878,9 +1094,12 @@ function ProviderInstancesSection({
   onRefresh,
   onUpdate,
 }: ProviderInstancesSectionProps) {
+  const confirm = useConfirm()
   const [dismissedUpdateKey, setDismissedUpdateKey] = useState<string | null>(
     null
   )
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
+  const [refreshing, setRefreshing] = useState(false)
   const rows = mergedInstanceRows(instances, snapshots)
   const updateCandidates = collectProviderUpdateCandidates(snapshots)
   const updateNotificationKey = providerUpdateNotificationKey(updateCandidates)
@@ -943,6 +1162,13 @@ function ProviderInstancesSection({
       config: { ...(current.config ?? {}), ...changes },
     })
   }
+  const toggleExpanded = (instanceId: string) =>
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (next.has(instanceId)) next.delete(instanceId)
+      else next.add(instanceId)
+      return next
+    })
   const addInstance = (driver: ProviderInstanceDriver) => {
     const baseId = `${driver}-${Object.keys(instances).length + 1}`
     let instanceId = baseId
@@ -954,295 +1180,653 @@ function ProviderInstancesSection({
       ...instances,
       [instanceId]: createProviderInstanceConfig(instanceId, driver),
     })
+    // A new instance opens on its form, ready to fill in.
+    setExpanded((current) => new Set(current).add(instanceId))
   }
-  const removeInstance = (instanceId: string) => {
+  const removeInstance = async (instanceId: string, name: string) => {
+    const isDefault = isDefaultInstance(instanceId)
+    const ok = await confirm({
+      title: isDefault ? `Reset ${name}?` : `Remove ${name}?`,
+      description: isDefault
+        ? "Its binary, home, models and environment go back to the defaults."
+        : "This setup and its settings are removed. The CLI itself and its files stay.",
+      confirmLabel: isDefault ? "Reset" : "Remove",
+      destructive: true,
+    })
+    if (!ok) return
     const next = { ...instances }
     delete next[instanceId]
     onChange(next)
   }
+  const refreshAll = async () => {
+    setRefreshing(true)
+    try {
+      await onRefresh()
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   return (
-    <>
-      <p className="mt-4 mb-2 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-        CLI Instances
-      </p>
-      <SettingsSection
-        title="Provider Instances"
-        description="Separate Codex, Claude, Cursor, and BetterC0de compatibility profiles with their own binary, config, env vars, and models."
-      >
-        {updateView && updateNotificationKey && !updateNotificationDismissed ? (
-          <ProviderUpdateNotificationBanner
-            view={updateView}
-            oneClickCandidates={oneClickUpdateCandidates}
-            busy={updateBusy}
-            onUpdate={() => void runOneClickUpdates()}
-            onDismiss={dismissUpdateNotification}
-          />
-        ) : null}
-        <SettingsRow
-          label="Add Instance"
-          description="Create another selectable Codex or Claude target."
-        >
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 text-[10px]"
-              onClick={() => addInstance("codex")}
-            >
-              <PlusIcon className="size-3" />
-              Codex
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 text-[10px]"
-              onClick={() => addInstance("claude")}
-            >
-              <PlusIcon className="size-3" />
-              Claude
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 text-[10px]"
-              onClick={() => addInstance("cursor")}
-            >
-              <PlusIcon className="size-3" />
-              Cursor
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 text-[10px]"
-              onClick={() => addInstance("betterc0de")}
-            >
-              <PlusIcon className="size-3" />
-              BetterC0de
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 text-[10px]"
-              onClick={() => void onRefresh()}
-              title="Refresh instance status"
-            >
-              <RefreshCwIcon className="size-3" />
-            </Button>
-          </div>
-        </SettingsRow>
-        {rows.map(({ config, snapshot }) => (
-          <SettingsRow
-            key={config.instanceId}
-            label={config.displayName || config.instanceId}
-            description={
-              snapshot?.unavailableReason
-                ? snapshot.unavailableReason
-                : snapshot
-                  ? `${config.driver} · ${snapshot.configured ? "ready" : "not configured"}`
-                  : config.driver
-            }
+    <section aria-label="CLI instances" className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-[13px] font-semibold text-foreground">
+            CLI instances
+          </h3>
+          <p className="mt-0.5 max-w-[62ch] text-[12.5px] leading-snug text-muted-foreground">
+            Advanced: separate setups of Codex, Claude Code and Cursor (or the
+            BetterC0de compatibility server), each with its own binary, config,
+            environment and models.
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Refresh instance status"
+            title="Refresh instance status"
+            disabled={refreshing}
+            onClick={() => void refreshAll()}
+            className="size-8 rounded-lg text-muted-foreground hover:text-foreground"
           >
-            <div className="w-[360px] space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Switch
-                    checked={config.enabled !== false}
-                    onCheckedChange={(enabled) =>
-                      patchInstance(config.instanceId, { enabled })
-                    }
-                  />
-                  <span className="text-[10px] text-muted-foreground">
-                    {snapshot?.configured ? "Configured" : "Needs setup"}
+            <RefreshCwIcon
+              className={cn(
+                "size-3.5",
+                refreshing && "motion-safe:animate-spin"
+              )}
+            />
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 rounded-lg px-3 text-[12px]"
+              >
+                <PlusIcon className="size-3.5" />
+                Add instance
+                <ChevronDownIcon className="size-3.5 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className={cn(MENU_PANEL, "w-60")}>
+              {INSTANCE_DRIVERS.map((item) => (
+                <DropdownMenuItem
+                  key={item.driver}
+                  onSelect={() => addInstance(item.driver)}
+                  className={cn(MENU_ITEM, "items-start py-1.5")}
+                >
+                  <InstanceLogo driver={item.driver} className="mt-0.5" />
+                  <span className="min-w-0">
+                    <span className="block text-[12px]">{item.label}</span>
+                    <span className={MENU_ITEM_HINT}>{item.hint}</span>
                   </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {snapshot?.versionAdvisory?.canUpdate ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 px-2 text-[10px]"
-                      disabled={
-                        updatingInstanceId === config.instanceId ||
-                        snapshot.updateState?.status === "queued" ||
-                        snapshot.updateState?.status === "running"
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+      {updateView && updateNotificationKey && !updateNotificationDismissed ? (
+        <ProviderUpdateNotificationBanner
+          view={updateView}
+          oneClickCandidates={oneClickUpdateCandidates}
+          busy={updateBusy}
+          onUpdate={() => void runOneClickUpdates()}
+          onDismiss={dismissUpdateNotification}
+        />
+      ) : null}
+
+      <div className="space-y-2">
+        {rows.map(({ config, snapshot }) => {
+          const updating =
+            updatingInstanceId === config.instanceId ||
+            snapshot?.updateState?.status === "queued" ||
+            snapshot?.updateState?.status === "running"
+          return (
+            <InstanceCard
+              key={config.instanceId}
+              config={config}
+              snapshot={snapshot}
+              expanded={expanded.has(config.instanceId)}
+              updating={updating}
+              onToggle={() => toggleExpanded(config.instanceId)}
+              onUpdate={() => void onUpdate(config.instanceId)}
+              onRefresh={() =>
+                void refreshProviderInstance(config.instanceId)
+                  .catch((error: unknown) =>
+                    toast.error(
+                      `Couldn't refresh ${config.displayName || config.instanceId}`,
+                      {
+                        description:
+                          error instanceof Error ? error.message : undefined,
                       }
-                      onClick={() => void onUpdate(config.instanceId)}
-                      title={
-                        snapshot.versionAdvisory.updateCommand ??
-                        "Update provider"
-                      }
-                    >
-                      {updatingInstanceId === config.instanceId ||
-                      snapshot.updateState?.status === "queued" ||
-                      snapshot.updateState?.status === "running" ? (
-                        <Loader2Icon className="size-3 animate-spin" />
-                      ) : (
-                        <ArrowUpCircleIcon className="size-3" />
-                      )}
-                    </Button>
-                  ) : null}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 px-2 text-[10px]"
-                    onClick={() =>
-                      void refreshProviderInstance(config.instanceId).then(() =>
-                        onRefresh()
-                      )
-                    }
-                    title="Refresh this instance"
-                  >
-                    <RefreshCwIcon className="size-3" />
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 px-2 text-[10px]"
-                    onClick={() => removeInstance(config.instanceId)}
-                    title={
-                      isDefaultInstance(config.instanceId)
-                        ? "Reset to default"
-                        : "Remove instance"
-                    }
-                  >
-                    <Trash2Icon className="size-3" />
-                  </Button>
-                </div>
-              </div>
-              {snapshot ? (
-                <ProviderMetadataSummary snapshot={snapshot} />
-              ) : null}
-              <div className="grid grid-cols-2 gap-2">
-                <Input
-                  className="h-8 font-mono text-xs"
-                  placeholder="Display name"
-                  defaultValue={config.displayName ?? ""}
-                  onBlur={(e) =>
-                    patchInstance(config.instanceId, {
-                      displayName: e.target.value || undefined,
-                    })
-                  }
+                    )
+                  )
+                  .then(() => onRefresh())
+              }
+              onRemove={() =>
+                void removeInstance(
+                  config.instanceId,
+                  config.displayName || config.instanceId
+                )
+              }
+              onPatch={(patch) => patchInstance(config.instanceId, patch)}
+              onPatchConfig={(patch) =>
+                patchInstanceConfig(config.instanceId, patch)
+              }
+            />
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function InstanceLogo({
+  driver,
+  className,
+}: {
+  driver: string
+  className?: string
+}) {
+  const brand = providerBrand(driver)
+  if (!brand) {
+    return (
+      <ServerIcon
+        aria-hidden="true"
+        className={cn("size-4 shrink-0 text-muted-foreground", className)}
+      />
+    )
+  }
+  return (
+    <img
+      src={brand.logo}
+      alt=""
+      aria-hidden="true"
+      className={cn(
+        "size-4 shrink-0 object-contain",
+        brand.invertDark && "dark:invert",
+        className
+      )}
+    />
+  )
+}
+
+function instanceStatus(
+  config: ProviderInstanceConfig,
+  snapshot: ProviderInstanceSnapshot | null | undefined
+): { label: string; tone: ProviderStatusTone } {
+  if (config.enabled === false) return { label: "Off", tone: "muted" }
+  if (!snapshot) return { label: "Checking…", tone: "checking" }
+  if (snapshot.unavailableReason)
+    return { label: "Unavailable", tone: "warning" }
+  if (snapshot.configured) return { label: "Ready", tone: "ready" }
+  return { label: "Needs setup", tone: "warning" }
+}
+
+const STATUS_DOT: Record<ProviderStatusTone, string> = {
+  ready: "bg-success",
+  warning: "bg-warning",
+  muted: "bg-muted-foreground/50",
+  checking: "bg-muted-foreground/50 motion-safe:animate-pulse",
+}
+
+/**
+ * One CLI instance: a summary row (logo, name, status, version, what it
+ * discovered, and its switch, refresh and update) that opens a labelled
+ * form for its name, color, paths, models and environment.
+ */
+function InstanceCard({
+  config,
+  snapshot,
+  expanded,
+  updating,
+  onToggle,
+  onUpdate,
+  onRefresh,
+  onRemove,
+  onPatch,
+  onPatchConfig,
+}: {
+  config: ProviderInstanceConfig
+  snapshot: ProviderInstanceSnapshot | null | undefined
+  expanded: boolean
+  updating: boolean
+  onToggle: () => void
+  onUpdate: () => void
+  onRefresh: () => void
+  onRemove: () => void
+  onPatch: (patch: Partial<ProviderInstanceConfig>) => void
+  onPatchConfig: (patch: Record<string, unknown>) => void
+}) {
+  const name = config.displayName || config.instanceId
+  const isDefault = isDefaultInstance(config.instanceId)
+  const status = instanceStatus(config, snapshot)
+  const advisory = snapshot?.versionAdvisory
+  const canUpdate = advisory?.canUpdate === true
+  const skills = snapshot?.skills?.length ?? 0
+  const commands = snapshot?.slashCommands?.length ?? 0
+  const metadataErrors = [
+    snapshot?.metadata?.skillsError,
+    snapshot?.metadata?.slashCommandsError,
+  ].filter((entry): entry is string => Boolean(entry))
+  const formId = `instance-${config.instanceId}`
+  const summary = [
+    providerDriverLabel(config.driver),
+    snapshot ? formatVersionAdvisory(snapshot) : null,
+    snapshot ? `${skills} skills` : null,
+    snapshot ? `${commands} commands` : null,
+    snapshot?.metadata?.checkedAt
+      ? `checked ${formatMetadataCheckedAt(snapshot.metadata.checkedAt)}`
+      : null,
+  ].filter(Boolean)
+
+  return (
+    <article
+      aria-label={name}
+      className={cn(
+        "overflow-hidden rounded-xl border bg-card/30 transition-colors duration-150",
+        expanded ? "border-border/70" : "border-border/50"
+      )}
+    >
+      <div className="flex items-center gap-3 px-4 py-3">
+        <span
+          className="relative grid size-9 shrink-0 place-items-center rounded-lg bg-foreground/[0.05]"
+          style={
+            config.accentColor
+              ? { boxShadow: `inset 0 0 0 1.5px ${config.accentColor}` }
+              : undefined
+          }
+        >
+          <InstanceLogo driver={config.driver} className="size-[18px]" />
+        </span>
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={formId}
+          onClick={onToggle}
+          className="min-w-0 flex-1 rounded-md text-left focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-[13px] font-medium">{name}</span>
+            {isDefault && (
+              <span className="shrink-0 rounded-md bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                Default
+              </span>
+            )}
+            <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span
+                aria-hidden="true"
+                className={cn("size-1.5 rounded-full", STATUS_DOT[status.tone])}
+              />
+              {status.label}
+            </span>
+          </span>
+          <span className="mt-0.5 block truncate text-[11px] text-muted-foreground tabular-nums">
+            {summary.join(" · ")}
+          </span>
+        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {canUpdate && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={updating}
+              onClick={onUpdate}
+              title={advisory?.updateCommand ?? "Update provider"}
+              className="mr-1 h-7 gap-1.5 rounded-lg px-2.5 text-[11px]"
+            >
+              {updating ? (
+                <Loader2Icon className="size-3.5 motion-safe:animate-spin" />
+              ) : (
+                <ArrowUpCircleIcon className="size-3.5" />
+              )}
+              {advisory?.latestVersion
+                ? `Update to ${advisory.latestVersion}`
+                : "Update"}
+            </Button>
+          )}
+          <Switch
+            aria-label={`Use ${name}`}
+            checked={config.enabled !== false}
+            onCheckedChange={(enabled) => onPatch({ enabled })}
+          />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Refresh ${name}`}
+            title="Refresh this instance"
+            onClick={onRefresh}
+            className="ml-1 size-7 rounded-lg text-muted-foreground hover:text-foreground"
+          >
+            <RefreshCwIcon className="size-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={expanded ? `Close ${name}` : `Edit ${name}`}
+            aria-expanded={expanded}
+            aria-controls={formId}
+            onClick={onToggle}
+            className="size-7 rounded-lg text-muted-foreground hover:text-foreground"
+          >
+            <ChevronDownIcon
+              className={cn(
+                "size-4 transition-transform duration-150",
+                expanded && "rotate-180"
+              )}
+            />
+          </Button>
+        </div>
+      </div>
+
+      {snapshot?.unavailableReason || metadataErrors.length > 0 ? (
+        <p className="flex items-start gap-2 border-t border-border/40 bg-warning/[0.04] px-4 py-2 text-[11px] text-warning">
+          <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+          <span className="line-clamp-2">
+            {snapshot?.unavailableReason ?? metadataErrors.join(" · ")}
+          </span>
+        </p>
+      ) : null}
+      {snapshot?.updateState ? (
+        <p
+          className={cn(
+            "flex items-start gap-2 border-t border-border/40 px-4 py-2 text-[11px]",
+            snapshot.updateState.status === "failed"
+              ? "text-destructive"
+              : snapshot.updateState.status === "succeeded"
+                ? "text-success"
+                : "text-muted-foreground"
+          )}
+        >
+          {snapshot.updateState.status === "failed" ? (
+            <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+          ) : snapshot.updateState.status === "succeeded" ? (
+            <CheckCircle2Icon className="mt-0.5 size-3.5 shrink-0" />
+          ) : (
+            <Loader2Icon className="mt-0.5 size-3.5 shrink-0 motion-safe:animate-spin" />
+          )}
+          <span className="line-clamp-2">
+            Update {snapshot.updateState.status}
+            {snapshot.updateState.message
+              ? `: ${snapshot.updateState.message}`
+              : ""}
+          </span>
+        </p>
+      ) : null}
+
+      {expanded && (
+        <div
+          id={formId}
+          className="space-y-5 border-t border-border/40 bg-foreground/[0.015] px-4 py-4"
+        >
+          <div className="grid gap-x-4 gap-y-3.5 @[620px]/settings:grid-cols-2">
+            <InstanceField label="Name">
+              <Input
+                className={FIELD_INPUT}
+                placeholder={providerDriverLabel(config.driver)}
+                defaultValue={config.displayName ?? ""}
+                onBlur={(e) =>
+                  onPatch({ displayName: e.target.value.trim() || undefined })
+                }
+              />
+            </InstanceField>
+            <InstanceField
+              label="Accent color"
+              hint="Marks this instance in model pickers."
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  aria-hidden="true"
+                  className="size-8 shrink-0 rounded-lg border border-border/50"
+                  style={{
+                    background: config.accentColor || "transparent",
+                  }}
                 />
                 <Input
-                  className="h-8 font-mono text-xs"
+                  className={cn(FIELD_INPUT, "font-mono")}
                   placeholder="#7c3aed"
                   defaultValue={config.accentColor ?? ""}
                   onBlur={(e) =>
-                    patchInstance(config.instanceId, {
-                      accentColor: e.target.value || undefined,
-                    })
+                    onPatch({ accentColor: e.target.value.trim() || undefined })
                   }
                 />
               </div>
+            </InstanceField>
+            <InstanceField
+              label="Binary"
+              hint="Empty uses the one found on your PATH."
+              className="@[620px]/settings:col-span-2"
+            >
               <Input
-                className="h-8 font-mono text-xs"
-                placeholder={`${providerDriverLabel(config.driver)} binary path`}
+                className={cn(FIELD_INPUT, "font-mono")}
+                placeholder={defaultBinaryPath(config.driver)}
                 defaultValue={readInstanceConfigString(config, "binaryPath")}
-                onBlur={(e) =>
-                  patchInstanceConfig(config.instanceId, {
-                    binaryPath: e.target.value,
-                  })
-                }
+                onBlur={(e) => onPatchConfig({ binaryPath: e.target.value })}
               />
-              {config.driver === "codex" || config.driver === "claude" ? (
-                <Input
-                  className="h-8 font-mono text-xs"
-                  placeholder={
-                    config.driver === "claude"
-                      ? "HOME or .claude path"
-                      : "CODEX_HOME path"
-                  }
-                  defaultValue={readInstanceConfigString(config, "homePath")}
-                  onBlur={(e) =>
-                    patchInstanceConfig(config.instanceId, {
-                      homePath: e.target.value,
-                    })
-                  }
-                />
-              ) : null}
-              {config.driver === "codex" ? (
-                <Input
-                  className="h-8 font-mono text-xs"
-                  placeholder="Shadow CODEX_HOME path"
-                  defaultValue={readInstanceConfigString(
-                    config,
-                    "shadowHomePath"
-                  )}
-                  onBlur={(e) =>
-                    patchInstanceConfig(config.instanceId, {
-                      shadowHomePath: e.target.value,
-                    })
-                  }
-                />
-              ) : null}
-              {config.driver === "cursor" ? (
-                <Input
-                  className="h-8 font-mono text-xs"
-                  placeholder="Cursor ACP endpoint"
-                  defaultValue={readInstanceConfigString(config, "apiEndpoint")}
-                  onBlur={(e) =>
-                    patchInstanceConfig(config.instanceId, {
-                      apiEndpoint: e.target.value,
-                    })
-                  }
-                />
-              ) : null}
-              {config.driver === "betterc0de" ? (
-                <>
+            </InstanceField>
+            {config.driver === "codex" ? (
+              <>
+                <InstanceField
+                  label="CODEX_HOME"
+                  hint="Config, sessions and sign-in of this setup."
+                >
                   <Input
-                    className="h-8 font-mono text-xs"
-                    placeholder="Compatibility server URL"
-                    defaultValue={readInstanceConfigString(config, "serverUrl")}
+                    className={cn(FIELD_INPUT, "font-mono")}
+                    placeholder="~/.codex"
+                    defaultValue={readInstanceConfigString(config, "homePath")}
+                    onBlur={(e) => onPatchConfig({ homePath: e.target.value })}
+                  />
+                </InstanceField>
+                <InstanceField
+                  label="Shadow CODEX_HOME"
+                  hint="A copy BetterC0de may change instead of yours."
+                >
+                  <Input
+                    className={cn(FIELD_INPUT, "font-mono")}
+                    placeholder="Optional"
+                    defaultValue={readInstanceConfigString(
+                      config,
+                      "shadowHomePath"
+                    )}
                     onBlur={(e) =>
-                      patchInstanceConfig(config.instanceId, {
-                        serverUrl: e.target.value,
-                      })
+                      onPatchConfig({ shadowHomePath: e.target.value })
                     }
                   />
+                </InstanceField>
+              </>
+            ) : null}
+            {config.driver === "claude" ? (
+              <InstanceField
+                label="Claude home"
+                hint="HOME or a .claude folder for a second account."
+                className="@[620px]/settings:col-span-2"
+              >
+                <Input
+                  className={cn(FIELD_INPUT, "font-mono")}
+                  placeholder="~/.claude"
+                  defaultValue={readInstanceConfigString(config, "homePath")}
+                  onBlur={(e) => onPatchConfig({ homePath: e.target.value })}
+                />
+              </InstanceField>
+            ) : null}
+            {config.driver === "cursor" ? (
+              <InstanceField
+                label="ACP endpoint"
+                className="@[620px]/settings:col-span-2"
+              >
+                <Input
+                  className={cn(FIELD_INPUT, "font-mono")}
+                  placeholder="Optional"
+                  defaultValue={readInstanceConfigString(config, "apiEndpoint")}
+                  onBlur={(e) => onPatchConfig({ apiEndpoint: e.target.value })}
+                />
+              </InstanceField>
+            ) : null}
+            {config.driver === "betterc0de" ? (
+              <>
+                <InstanceField
+                  label="Server URL"
+                  className="@[620px]/settings:col-span-2"
+                >
                   <Input
-                    className="h-8 font-mono text-xs"
-                    placeholder="Compatibility server username"
+                    className={cn(FIELD_INPUT, "font-mono")}
+                    placeholder="https://"
+                    defaultValue={readInstanceConfigString(config, "serverUrl")}
+                    onBlur={(e) => onPatchConfig({ serverUrl: e.target.value })}
+                  />
+                </InstanceField>
+                <InstanceField label="Username">
+                  <Input
+                    className={FIELD_INPUT}
+                    placeholder="Optional"
                     defaultValue={readInstanceConfigString(
                       config,
                       "serverUsername"
                     )}
                     onBlur={(e) =>
-                      patchInstanceConfig(config.instanceId, {
-                        serverUsername: e.target.value,
-                      })
+                      onPatchConfig({ serverUsername: e.target.value })
                     }
                   />
+                </InstanceField>
+                <InstanceField label="Password">
                   <SecretValueInput
                     value={readRecordValue(config.config, "serverPassword")}
-                    placeholder="Compatibility server password"
+                    placeholder="Optional"
                     onPatch={(serverPassword) =>
-                      patchInstanceConfig(config.instanceId, { serverPassword })
+                      onPatchConfig({ serverPassword })
                     }
                   />
-                </>
-              ) : null}
-              <CustomModelInput
-                providerId={`instance-${config.instanceId}`}
-                customModels={readInstanceConfigStringArray(
-                  config,
-                  "customModels"
-                )}
-                onChange={(customModels) =>
-                  patchInstanceConfig(config.instanceId, { customModels })
-                }
-              />
-              <EnvironmentEditor
-                environment={config.environment ?? []}
-                onChange={(environment) =>
-                  patchInstance(config.instanceId, { environment })
-                }
-              />
-            </div>
-          </SettingsRow>
+                </InstanceField>
+              </>
+            ) : null}
+          </div>
+
+          <InstanceModelsField
+            models={readInstanceConfigStringArray(config, "customModels")}
+            onChange={(customModels) => onPatchConfig({ customModels })}
+          />
+
+          <EnvironmentEditor
+            environment={config.environment ?? []}
+            onChange={(environment) => onPatch({ environment })}
+          />
+
+          <div className="flex justify-end border-t border-border/30 pt-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onRemove}
+              className="h-7 gap-1.5 rounded-lg px-2.5 text-[11px] text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            >
+              {isDefault ? (
+                <RotateCcwIcon className="size-3.5" />
+              ) : (
+                <Trash2Icon className="size-3.5" />
+              )}
+              {isDefault ? "Reset to default" : "Remove instance"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </article>
+  )
+}
+
+function InstanceField({
+  label,
+  hint,
+  className,
+  children,
+}: {
+  label: string
+  hint?: string
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <label className={cn("flex min-w-0 flex-col gap-1.5", className)}>
+      <span className="text-[11px] font-medium text-muted-foreground">
+        {label}
+      </span>
+      {children}
+      {hint ? (
+        <span className="text-[10.5px] leading-snug text-muted-foreground/75">
+          {hint}
+        </span>
+      ) : null}
+    </label>
+  )
+}
+
+/** Extra model ids as removable chips, typed into one field (Enter adds). */
+function InstanceModelsField({
+  models,
+  onChange,
+}: {
+  models: string[]
+  onChange: (next: string[]) => void
+}) {
+  const [draft, setDraft] = useState("")
+  const add = () => {
+    const value = draft.trim()
+    if (!value) return
+    if (!models.includes(value)) onChange([...models, value])
+    setDraft("")
+  }
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[11px] font-medium text-muted-foreground">
+          Extra models
+        </span>
+        <span className="text-[10.5px] text-muted-foreground/75">
+          Model ids it offers besides the ones it reports
+        </span>
+      </div>
+      <div className="flex min-h-8 flex-wrap items-center gap-1.5 rounded-lg border border-border/50 bg-background/50 p-1 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/30 dark:bg-input/30">
+        {models.map((model) => (
+          <span
+            key={model}
+            className="flex items-center gap-1 rounded-md bg-foreground/[0.07] py-0.5 pr-1 pl-2 font-mono text-[11px]"
+          >
+            {model}
+            <button
+              type="button"
+              aria-label={`Remove ${model}`}
+              onClick={() => onChange(models.filter((item) => item !== model))}
+              className="rounded-sm text-muted-foreground hover:text-destructive"
+            >
+              <XIcon className="size-3" />
+            </button>
+          </span>
         ))}
-      </SettingsSection>
-    </>
+        <input
+          aria-label="Add a model id"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === ",") {
+              event.preventDefault()
+              add()
+            } else if (
+              event.key === "Backspace" &&
+              !draft &&
+              models.length > 0
+            ) {
+              onChange(models.slice(0, -1))
+            }
+          }}
+          onBlur={add}
+          placeholder={
+            models.length ? "Add another" : "e.g. gpt-6-sol, then Enter"
+          }
+          className="h-6 min-w-[140px] flex-1 bg-transparent px-1.5 font-mono text-[12px] outline-none placeholder:font-sans placeholder:text-muted-foreground/60"
+        />
+      </div>
+    </div>
   )
 }
 
@@ -1263,8 +1847,8 @@ function ProviderUpdateNotificationBanner({
   return (
     <div
       className={cn(
-        "flex items-start justify-between gap-3 px-4 py-3",
-        view.tone === "warning" && "bg-amber-500/5",
+        "flex items-start justify-between gap-3 rounded-xl border border-border/50 px-4 py-3",
+        view.tone === "warning" && "border-warning/30 bg-warning/5",
         view.tone === "error" && "bg-destructive/5",
         view.tone === "success" && "bg-emerald-500/5",
         view.tone === "loading" && "bg-sky-500/5"
@@ -1338,79 +1922,12 @@ function ProviderUpdateStatusIcon({
   )
 }
 
-function ProviderMetadataSummary({
-  snapshot,
-}: {
-  snapshot: ProviderInstanceSnapshot
-}) {
-  const skills = snapshot.skills ?? []
-  const slashCommands = snapshot.slashCommands ?? []
-  const metadata = snapshot.metadata
-  const errors = [metadata?.skillsError, metadata?.slashCommandsError].filter(
-    (entry): entry is string => Boolean(entry)
-  )
-  return (
-    <div className="rounded-md border border-border/60 bg-muted/20 px-2.5 py-2">
-      <div className="grid grid-cols-3 gap-2 text-[10px] text-muted-foreground">
-        <div>
-          <div className="font-medium text-foreground">{skills.length}</div>
-          <div>Skills</div>
-        </div>
-        <div>
-          <div className="font-medium text-foreground">
-            {slashCommands.length}
-          </div>
-          <div>Commands</div>
-        </div>
-        <div>
-          <div className="truncate font-medium text-foreground">
-            {formatMetadataCheckedAt(metadata?.checkedAt)}
-          </div>
-          <div>Metadata</div>
-        </div>
-      </div>
-      {snapshot.versionAdvisory || snapshot.updateState ? (
-        <div className="mt-2 rounded border border-border/50 bg-background/40 px-2 py-1.5 text-[10px] text-muted-foreground">
-          <div className="flex items-center justify-between gap-2">
-            <span className="truncate">{formatVersionAdvisory(snapshot)}</span>
-            {snapshot.updateState ? (
-              <span
-                className={cn(
-                  "shrink-0 font-medium",
-                  snapshot.updateState.status === "failed"
-                    ? "text-destructive"
-                    : snapshot.updateState.status === "succeeded"
-                      ? "text-emerald-500"
-                      : "text-muted-foreground"
-                )}
-              >
-                {snapshot.updateState.status}
-              </span>
-            ) : null}
-          </div>
-          {snapshot.updateState?.message ? (
-            <div className="mt-1 line-clamp-2">
-              {snapshot.updateState.message}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-      {errors.length > 0 ? (
-        <div className="mt-2 flex items-start gap-1.5 text-[10px] text-amber-600 dark:text-amber-400">
-          <AlertTriangleIcon className="mt-0.5 size-3 shrink-0" />
-          <span className="line-clamp-2">{errors.join(" · ")}</span>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
 function formatVersionAdvisory(snapshot: ProviderInstanceSnapshot): string {
   const advisory = snapshot.versionAdvisory
   if (!advisory)
     return snapshot.version ? `v${snapshot.version}` : "Version unknown"
   if (advisory.status === "behind_latest" && advisory.latestVersion) {
-    return `${advisory.currentVersion ?? "Unknown"} -> ${advisory.latestVersion}`
+    return `${advisory.currentVersion ?? "Unknown"} → ${advisory.latestVersion}`
   }
   if (advisory.currentVersion) return `v${advisory.currentVersion}`
   return "Version unknown"
@@ -1454,15 +1971,15 @@ function EnvironmentEditor({
     )
   }
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] font-medium text-muted-foreground">
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium text-muted-foreground">
           Environment
         </span>
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="h-6 px-2 text-[10px]"
+          className="h-6 gap-1 rounded-md px-2 text-[11px] text-muted-foreground hover:text-foreground"
           onClick={() =>
             onChange([
               ...environment,
@@ -1471,50 +1988,84 @@ function EnvironmentEditor({
           }
         >
           <PlusIcon className="size-3" />
-          Env
+          Add variable
         </Button>
       </div>
-      {environment.map((item, index) => (
-        <div
-          key={`${item.name}-${index}`}
-          className="grid grid-cols-[1fr_1fr_auto_auto] items-center gap-1"
-        >
-          <Input
-            className="h-7 font-mono text-[10px]"
-            placeholder="NAME"
-            defaultValue={item.name}
-            aria-invalid={!isValidEnvironmentDraft([item])}
-            onBlur={(e) => update(index, { name: e.target.value.trim() })}
-          />
-          <Input
-            className="h-7 font-mono text-[10px]"
-            placeholder={item.valueRedacted ? "stored secret" : "value"}
-            type={item.sensitive ? "password" : "text"}
-            defaultValue={item.valueRedacted ? "" : item.value}
-            onBlur={(e) => {
-              const value = e.target.value
-              if (item.valueRedacted && value.length === 0) return
-              update(index, {
-                value,
-                ...(item.valueRedacted
-                  ? { valueRedacted: false, secretState: undefined }
-                  : {}),
-              })
-            }}
-          />
-          <Switch
-            checked={item.sensitive ?? false}
-            onCheckedChange={(sensitive) => update(index, { sensitive })}
-          />
-          <button
-            type="button"
-            className="text-muted-foreground/50 hover:text-destructive"
-            onClick={() => onChange(environment.filter((_, i) => i !== index))}
-          >
-            <XIcon className="size-3" />
-          </button>
+      {environment.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-border/50 px-3 py-2 text-[11px] text-muted-foreground">
+          No extra variables. The CLI gets your normal environment.
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          {environment.map((item, index) => (
+            <div
+              key={`${item.name}-${index}`}
+              className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto_auto] items-center gap-1.5"
+            >
+              <Input
+                aria-label="Variable name"
+                className={cn(FIELD_INPUT, "font-mono uppercase")}
+                placeholder="NAME"
+                defaultValue={item.name}
+                aria-invalid={!isValidEnvironmentDraft([item])}
+                onBlur={(e) => update(index, { name: e.target.value.trim() })}
+              />
+              <Input
+                aria-label={`Value of ${item.name || "variable"}`}
+                className={cn(FIELD_INPUT, "font-mono")}
+                placeholder={item.valueRedacted ? "Stored secret" : "value"}
+                type={item.sensitive ? "password" : "text"}
+                defaultValue={item.valueRedacted ? "" : item.value}
+                onBlur={(e) => {
+                  const value = e.target.value
+                  if (item.valueRedacted && value.length === 0) return
+                  update(index, {
+                    value,
+                    ...(item.valueRedacted
+                      ? { valueRedacted: false, secretState: undefined }
+                      : {}),
+                  })
+                }}
+              />
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-pressed={item.sensitive ?? false}
+                aria-label={
+                  item.sensitive ? "Secret: stored hidden" : "Mark as secret"
+                }
+                title={
+                  item.sensitive ? "Secret: stored hidden" : "Mark as secret"
+                }
+                onClick={() => update(index, { sensitive: !item.sensitive })}
+                className={cn(
+                  "size-8 rounded-lg",
+                  item.sensitive
+                    ? "bg-foreground/[0.06] text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {item.sensitive ? (
+                  <LockIcon className="size-3.5" />
+                ) : (
+                  <LockOpenIcon className="size-3.5" />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Remove ${item.name || "variable"}`}
+                onClick={() =>
+                  onChange(environment.filter((_, i) => i !== index))
+                }
+                className="size-8 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              >
+                <XIcon className="size-3.5" />
+              </Button>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
     </div>
   )
 }
@@ -1533,9 +2084,9 @@ function SecretValueInput({
     state?.configured === true ||
     (typeof value === "string" && value.length > 0)
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-1.5">
       <Input
-        className="h-8 flex-1 font-mono text-xs"
+        className={cn(FIELD_INPUT, "flex-1 font-mono")}
         placeholder={configured ? "Stored secret" : placeholder}
         type="password"
         defaultValue={state ? "" : typeof value === "string" ? value : ""}
@@ -1549,7 +2100,7 @@ function SecretValueInput({
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 px-2 text-[10px]"
+          className="h-8 rounded-lg px-2.5 text-[11px]"
           onClick={() => onPatch({ clear: true })}
         >
           Clear

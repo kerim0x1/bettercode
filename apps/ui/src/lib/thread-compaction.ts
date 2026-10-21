@@ -7,7 +7,7 @@ import type { UiProvider } from "@/lib/provider-types"
 import {
   generateThreadContextSummary,
   rotateProviderSession,
-} from "@/services/backend"
+} from "@/services/backend/chatApi"
 
 export async function buildThreadCompactionOutput(input: {
   threadId: string | null
@@ -33,7 +33,7 @@ export async function buildThreadCompactionOutput(input: {
   }
 
   const store = useChatStore.getState()
-  await store.hydrateThreadMessages(threadId)
+  await store.ensureFullThreadMessages(threadId)
   const thread = useChatStore
     .getState()
     .threads.find((candidate) => candidate.id === threadId)

@@ -1,4 +1,4 @@
-import { getSettings } from "@/services/backend"
+import { getSettings } from "@/services/backend/coreApi"
 import type { OpenAiTransport } from "@/lib/provider-types"
 
 /**

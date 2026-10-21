@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { MoleculesIcon } from "@hugeicons/core-free-icons"
 import { Switch } from "@/components/ui/switch"
 import { useSettingsStore } from "@/lib/settings-store"
+import { BrandMarks } from "./brand-mark"
 import { SettingsRow, SettingsSection } from "./atoms"
+
+/**
+ * The CLIs an orchestrating chat can hand tasks to. The row icon is
+ * Orchestration's own hub mark (Hugeicons MoleculesIcon), as in the composer.
+ */
+const WORKER_BRANDS = ["claude", "codex", "grok-cli"] as const
 
 export function SettingsOrchestratorSection() {
   const enabled = useSettingsStore((state) => state.orchestratorEnabled)
@@ -24,7 +33,7 @@ export function SettingsOrchestratorSection() {
     try {
       await useSettingsStore.getState().update({ orchestrator_enabled: value })
     } catch {
-      if (mounted.current) setError("Could not save orchestration settings.")
+      if (mounted.current) setError("Couldn't save. Try again.")
     } finally {
       mutation.current = false
       if (mounted.current) setBusy(false)
@@ -37,21 +46,30 @@ export function SettingsOrchestratorSection() {
     >
       <SettingsRow
         label="Experimental orchestration"
-        description="The model selected in chat leads. Under + → Orchestration, enable other providers for its agents: Claude, OpenAI or Grok. It chooses their models and tasks."
+        icon={<HugeiconsIcon icon={MoleculesIcon} strokeWidth={2} />}
+        description={
+          <>
+            The model you chat with leads and can hand tasks to Claude Code,
+            Codex or Grok CLI. Choose them under + → Orchestration.
+            <span className="mt-1.5 flex">
+              <BrandMarks ids={WORKER_BRANDS} />
+            </span>
+          </>
+        }
       >
         <Switch
-          aria-label="Enable orchestrator mode"
+          aria-label="Experimental orchestration"
           checked={enabled}
           disabled={!loaded || busy}
           onCheckedChange={(value) => void toggle(value)}
         />
       </SettingsRow>
-      <p className="px-4 pb-3 text-xs text-muted-foreground">
+      <p className="px-4 py-3 text-xs text-muted-foreground">
         Workers share the project and keep your normal approval requirements.
         Disabling this experiment stops workers and revokes their tools.
       </p>
       {error && (
-        <p role="alert" className="px-4 pb-3 text-xs text-destructive">
+        <p role="alert" className="px-4 py-3 text-xs text-destructive">
           {error}
         </p>
       )}

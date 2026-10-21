@@ -2,42 +2,27 @@ import { createServerConfig } from "../config"
 import { generateToken } from "../security/token"
 import { logger } from "../observability/logger"
 import { getMasterKey } from "../settings/crypto"
+import { hardenBackendProcessEnvironment } from "../security/processHardening"
+import { configureChildProcessRegistry } from "../services/child-process-registry"
 import { AdmissionGate } from "../lifecycle/AdmissionGate"
+import { ProviderEventBus } from "../provider/events"
+import { AgentPermissionRuntime } from "../provider/agent-permission-runtime"
 import type { ShutdownStep } from "../shutdown"
+import { ShellSessionService } from "../services/shell"
+import { TerminalPtyService } from "../services/terminalPty"
 import {
-  activeShellSessionCount,
-  beginShellShutdown,
-  resumeShellAdmissions,
-} from "../services/shell"
-import {
-  activeTerminalPtySessionCount,
-  beginTerminalPtyShutdown,
-  resumeTerminalPtyAdmissions,
-} from "../services/terminalPty"
-import {
-  activeGitProcessCount,
-  beginGitProcessShutdown,
-  resumeGitProcessAdmissions,
-  shutdownAllGitProcesses,
+  defaultGitProcessService,
+  GitProcessService,
+  setDefaultGitProcessService,
 } from "../services/git"
+import { ImageGenerationService } from "../services/image-generation"
+import { NativeTextGenerationService } from "../services/native-text-generation"
 import {
-  activeImageGenerationCount,
-  beginImageGenerationShutdown,
-  resumeImageGenerationAdmissions,
-  shutdownAllImageGenerations,
-} from "../services/image-generation"
-import {
-  activeNativeTextGenerationResourceCount,
-  beginNativeTextGenerationShutdown,
-  resumeNativeTextGenerationAdmissions,
-  shutdownAllNativeTextGenerationResources,
-} from "../services/native-text-generation"
-import {
-  activeWorkspaceProcessCount,
-  beginWorkspaceProcessShutdown,
-  resumeWorkspaceProcessAdmissions,
-  shutdownAllWorkspaceProcesses,
+  defaultWorkspaceProcessService,
+  setDefaultWorkspaceProcessService,
+  WorkspaceProcessService,
 } from "../services/workspace"
+import { WorkspaceRecoveryGate } from "../services/workspace-recovery-gate"
 import type { BootRoot, StartOptions } from "./context"
 
 /**
@@ -51,13 +36,30 @@ export function createBootRoot(options: StartOptions): BootRoot {
   // Cache the safeStorage-provisioned key, then remove it from process.env so
   // no provider, terminal, shell, or project subprocess can inherit it.
   getMasterKey()
+  hardenBackendProcessEnvironment()
   const config = createServerConfig({
     dataDir: options.dataDir,
+    runtimeHome: options.runtimeHome,
     port: options.preferredPort,
   })
+  // Reap process trees a crashed predecessor left running; background only.
+  void configureChildProcessRegistry({ dataDir: config.dataDir })
   config.authToken = generateToken()
   const startupCleanup: ShutdownStep[] = []
   const requestAdmission = new AdmissionGate()
+  const terminalPtys = new TerminalPtyService()
+  const shellSessions = new ShellSessionService()
+  const gitProcesses = new GitProcessService()
+  const imageGenerations = new ImageGenerationService()
+  const nativeTextGenerations = new NativeTextGenerationService()
+  const workspaceProcesses = new WorkspaceProcessService()
+  // This backend's own bus; every bootstrap phase reads it from here.
+  const eventBus = new ProviderEventBus()
+  // Its policy is attached (and the runtime installed) by `openPersistence`.
+  const agentPermissionRuntime = new AgentPermissionRuntime({
+    events: eventBus,
+  })
+  const workspaceRecoveryGate = new WorkspaceRecoveryGate()
   let backendTainted = false
   const fatalLifecycle: { stop?: () => Promise<void> } = {}
   const isBackendTainted = () => backendTainted
@@ -87,19 +89,28 @@ export function createBootRoot(options: StartOptions): BootRoot {
       })
     }
   }
-  const requestGitProcessShutdown = singleFlight(shutdownAllGitProcesses)
-  const requestImageGenerationShutdown = singleFlight(
-    shutdownAllImageGenerations
+  const requestGitProcessShutdown = singleFlight(() =>
+    gitProcesses.shutdownAll()
   )
-  const requestNativeTextGenerationShutdown = singleFlight(
-    shutdownAllNativeTextGenerationResources
+  const requestImageGenerationShutdown = singleFlight(() =>
+    imageGenerations.shutdownAll()
   )
-  const requestWorkspaceProcessShutdown = singleFlight(
-    shutdownAllWorkspaceProcesses
+  const requestNativeTextGenerationShutdown = singleFlight(() =>
+    nativeTextGenerations.shutdownAll()
+  )
+  const requestWorkspaceProcessShutdown = singleFlight(() =>
+    workspaceProcesses.shutdownAll()
   )
   const onStartupAbort = () => {
     requestAdmission.beginDrain()
-    beginResourceManagerShutdowns()
+    beginResourceManagerShutdowns({
+      terminalPtys,
+      shellSessions,
+      gitProcesses,
+      imageGenerations,
+      nativeTextGenerations,
+      workspaceProcesses,
+    })
     void requestGitProcessShutdown().catch((error) => {
       logger.error(
         { err: error },
@@ -130,6 +141,15 @@ export function createBootRoot(options: StartOptions): BootRoot {
     config,
     startupCleanup,
     requestAdmission,
+    eventBus,
+    terminalPtys,
+    shellSessions,
+    gitProcesses,
+    imageGenerations,
+    nativeTextGenerations,
+    workspaceProcesses,
+    workspaceRecoveryGate,
+    agentPermissionRuntime,
     taint: { taintBackend, isBackendTainted, fatalLifecycle },
     resourceShutdowns: {
       git: requestGitProcessShutdown,
@@ -148,18 +168,40 @@ export function createBootRoot(options: StartOptions): BootRoot {
  * in this process left retained resources behind.
  */
 export function reopenResourceAdmissions(root: BootRoot): void {
-  const { options, startupCleanup, onStartupAbort } = root
+  const {
+    options,
+    startupCleanup,
+    onStartupAbort,
+    terminalPtys,
+    shellSessions,
+    gitProcesses,
+    imageGenerations,
+    nativeTextGenerations,
+    workspaceProcesses,
+  } = root
   try {
+    // The terminals, shell sessions and image and native text generations
+    // belong to this instance and start empty. Git and the workspace helper
+    // processes run through the service installed as the default
+    // (`setDefaultGitProcessService`, `setDefaultWorkspaceProcessService`):
+    // the one installed until now (a previous backend's, or one created for
+    // work outside a backend) must have let go of its processes before this
+    // backend's replaces it.
+    const installedGitProcesses = defaultGitProcessService()
+    const installedWorkspaceProcesses = defaultWorkspaceProcessService()
     const retainedStartupResources = [
-      ["shell session", activeShellSessionCount()],
-      ["terminal PTY session", activeTerminalPtySessionCount()],
-      ["Git process", activeGitProcessCount()],
-      ["image generation", activeImageGenerationCount()],
       [
-        "native text-generation resource",
-        activeNativeTextGenerationResourceCount(),
+        "Git process",
+        installedGitProcesses === gitProcesses
+          ? 0
+          : installedGitProcesses.activeProcessCount(),
       ],
-      ["workspace process", activeWorkspaceProcessCount()],
+      [
+        "workspace process",
+        installedWorkspaceProcesses === workspaceProcesses
+          ? 0
+          : installedWorkspaceProcesses.activeProcessCount(),
+      ],
     ] as const
     const startupSurvivors = retainedStartupResources.filter(
       ([, count]) => count > 0
@@ -179,17 +221,19 @@ export function reopenResourceAdmissions(root: BootRoot): void {
         }
       )
     }
-    resumeShellAdmissions()
-    resumeTerminalPtyAdmissions()
-    resumeGitProcessAdmissions()
-    resumeImageGenerationAdmissions()
-    resumeNativeTextGenerationAdmissions()
-    resumeWorkspaceProcessAdmissions()
+    shellSessions.resumeAdmissions()
+    terminalPtys.resumeAdmissions()
+    setDefaultGitProcessService(gitProcesses)
+    gitProcesses.resumeAdmissions()
+    imageGenerations.resumeAdmissions()
+    nativeTextGenerations.resumeAdmissions()
+    setDefaultWorkspaceProcessService(workspaceProcesses)
+    workspaceProcesses.resumeAdmissions()
   } catch (error) {
     // Admission reopening is a startup transaction: if a later resource
     // manager still has survivors, do not leave managers resumed earlier in
     // the sequence accepting work while backend startup has already failed.
-    beginResourceManagerShutdowns()
+    beginResourceManagerShutdowns(root)
     throw error
   }
   options.signal?.addEventListener("abort", onStartupAbort, { once: true })
@@ -207,13 +251,23 @@ export function reopenResourceAdmissions(root: BootRoot): void {
  * `stop()` keeps its own ordered sequence because it interleaves provider and
  * hub shutdown between these calls.
  */
-export function beginResourceManagerShutdowns(): void {
-  beginShellShutdown()
-  beginTerminalPtyShutdown()
-  beginGitProcessShutdown()
-  beginImageGenerationShutdown()
-  beginNativeTextGenerationShutdown()
-  beginWorkspaceProcessShutdown()
+export function beginResourceManagerShutdowns(
+  root: Pick<
+    BootRoot,
+    | "terminalPtys"
+    | "shellSessions"
+    | "gitProcesses"
+    | "imageGenerations"
+    | "nativeTextGenerations"
+    | "workspaceProcesses"
+  >
+): void {
+  root.shellSessions.beginShutdown()
+  root.terminalPtys.beginShutdown()
+  root.gitProcesses.beginShutdown()
+  root.imageGenerations.beginShutdown()
+  root.nativeTextGenerations.beginShutdown()
+  root.workspaceProcesses.beginShutdown()
 }
 
 /**

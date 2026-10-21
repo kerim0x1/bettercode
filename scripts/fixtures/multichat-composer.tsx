@@ -5,15 +5,10 @@ import { FileMentionMenu } from "@/components/file-mentions"
 import { ConfirmProvider } from "@/components/dialogs/confirm-provider"
 import { PromptProvider } from "@/components/dialogs/prompt-provider"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import {
-  emptyStreamState,
-  getThreadStream,
-  useChatStore,
-} from "@/lib/chat-store"
+import { useChatStore } from "@/lib/chat-store"
 import { usePreferencesStore } from "@/lib/preferences-store"
 import { useVoiceStore } from "@/lib/voice-store"
 import { useVoiceInput } from "@/hooks/use-voice-input"
-import { useAutonomousLoop } from "@/hooks/use-autonomous-loop"
 import { findComposerTextarea, setComposerInput } from "@/lib/composer-input"
 import { dispatchComposerDraftRestoreAfterSubmit } from "@/lib/composer-draft-events"
 
@@ -33,29 +28,6 @@ let composerSubmit: (
   text: string
 ) => void | boolean | Promise<void | boolean> = noop
 let lastActivatedComposer: string | null = null
-const autonomousProviders = [
-  {
-    ...provider,
-    models: [
-      ...provider.models,
-      { id: "gpt-5.6-sol", name: "Sol", context: "runtime", tier: "Runtime" },
-    ],
-  },
-]
-function AutonomousProbe() {
-  useAutonomousLoop({ providers: autonomousProviders })
-  const ownerStreaming = useChatStore(
-    (state) => getThreadStream(state, "right").isStreaming
-  )
-  const focus = useChatStore((state) => state.activeThreadId)
-  return (
-    <span
-      id="autonomous-probe"
-      data-streaming={ownerStreaming}
-      data-focus={focus}
-    />
-  )
-}
 function assert(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message)
 }
@@ -176,13 +148,8 @@ function ComposerFixture({
                   setThinkingMode={noop}
                   autonomousMode={false}
                   autonomousStatus="idle"
-                  autonomousTask={null}
-                  autonomousIterations={0}
-                  autonomousMaxIterations={1}
                   chatMode="agent"
                   setChatMode={noop}
-                  specialMode={null}
-                  setSpecialMode={noop}
                   permissionLevel="read-only"
                   setPermissionLevel={(value: string) =>
                     useChatStore
@@ -667,76 +634,12 @@ export async function runComposerSmoke() {
       "A closed composer must not create a project in another pane"
     )
     window.electronAPI = originalElectron
-    console.log("[smoke] Checking autonomous continuation ownership")
-    useChatStore.setState({
-      activeThreadId: "right",
-      autonomousMode: true,
-      autonomousThreadId: "right",
-      autonomousStatus: "working",
-      autonomousIterations: 0,
-      autonomousMaxIterations: 3,
-      autonomousTaskList: null,
-      autonomousTimeBudgetMin: 0,
-      settingsByThread: {
-        right: {
-          selectedProviderId: "codex",
-          selectedModel: "gpt-6-astra",
-          permissionLevel: "read-only",
-        },
-        left: {
-          selectedProviderId: "codex",
-          selectedModel: "gpt-5.6-sol",
-          permissionLevel: "bypass",
-        },
-      },
-      streamingByThread: { right: { ...emptyStreamState, isStreaming: true } },
-    })
-    root.render(<AutonomousProbe />)
-    await until(
-      () =>
-        document.getElementById("autonomous-probe")?.dataset.streaming ===
-        "true",
-      "Autonomous loop must observe its owner's turn"
-    )
-    useChatStore.setState({ activeThreadId: "left" })
-    await until(
-      () =>
-        document.getElementById("autonomous-probe")?.dataset.focus === "left",
-      "Another pane must gain focus during the run"
-    )
-    const beforeContinuation = requests.length
-    useChatStore.setState({
-      streamingByThread: { right: { ...emptyStreamState, isStreaming: false } },
-    })
-    await until(
-      () =>
-        requests
-          .slice(beforeContinuation)
-          .some((request) => request.url.includes("/chat/send")),
-      "Autonomous continuation must dispatch after its owner's turn"
-    )
-    const continuation = requests
-      .slice(beforeContinuation)
-      .find((request) => request.url.includes("/chat/send"))!.body
-    assert(
-      continuation.threadId === "right" &&
-        continuation.modelId === "gpt-6-astra",
-      "Autonomous continuation must retain its owner's thread and model"
-    )
-    assert(
-      continuation.projectPath === "C:/right-worktree" &&
-        continuation.permissionLevel === "read-only",
-      "Autonomous continuation must retain its owner's worktree and permissions"
-    )
-    assert(
-      useChatStore.getState().threads.find((thread) => thread.id === "left")
-        ?.messages.length === 0,
-      "Autonomous work must not add a message to the focused chat"
-    )
-    useChatStore.getState().resetAutonomous()
+    // Autonomous Work continuations are the backend's now: their owner
+    // thread, model and permissions are covered by the backend's tests
+    // (apps/backend services/chat/autonomy*.test.ts).
   } catch (error) {
     console.error(
-      `Composer fixture state: ${useChatStore.getState().autonomousStatus}; requests: ${JSON.stringify(requests.slice(-16))}`
+      `Composer fixture requests: ${JSON.stringify(requests.slice(-16))}`
     )
     throw error
   } finally {

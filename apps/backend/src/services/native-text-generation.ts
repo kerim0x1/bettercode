@@ -35,9 +35,9 @@ import {
   type CursorAcpRuntimeOptions,
 } from "../provider/runtime/cursor/CursorAcpRuntime"
 import {
-  resolveCursorAcpAdvertisedModelId,
-  resolveCursorAcpConfigUpdates,
-} from "../provider/runtime/cursor/CursorAcpSupport"
+  resolveAcpAdvertisedModelId,
+  resolveAcpConfigUpdates,
+} from "../provider/runtime/acp/AcpSessionConfig"
 import { createBetterC0deCompatHttpClient } from "../provider/runtime/BetterC0deCompatHttpClient"
 import { parseBetterC0deModelSlug } from "../provider/runtime/betterc0deCompat/BetterC0deCompatRuntimeSupport"
 import { extractJsonObject } from "./text-generation"
@@ -48,7 +48,10 @@ import {
 } from "./process-termination"
 import { sanitizedChildEnvironment } from "../security/childEnvironment"
 
-import { buildWindowsCmdArgs } from "../security/windowsCommandLine"
+import {
+  buildWindowsCmdArgs,
+  resolveComSpec,
+} from "../security/windowsCommandLine"
 export type NativeTextGenerationSchemaName =
   | "commitMessage"
   | "commitMessageWithBranch"
@@ -193,385 +196,1589 @@ interface PendingBetterC0deSessionCleanup {
   lastFailure: unknown
 }
 
-const sharedBetterC0deTextServers = new Map<
-  string,
-  SharedBetterC0deTextServer
->()
-const activeNativeTextGenerations = new Map<
-  string,
-  ActiveNativeTextGeneration
->()
-const activeNativeTextChildren = new Set<ChildProcess>()
-const nativeTextChildStops = new Map<ChildProcess, Promise<void>>()
-const unconfirmedNativeTextChildren = new WeakSet<ChildProcess>()
-const nativeTextCleanupQuarantines = new Map<
-  string,
-  {
-    readonly stop: () => Promise<void>
-    pending: Promise<void> | null
-  }
->()
-const nativeTextGenerationQueue: QueuedNativeTextGeneration[] = []
-const pendingBetterC0deSessionCleanups = new Map<
-  string,
-  PendingBetterC0deSessionCleanup
->()
-let sharedBetterC0deAcquireTail: Promise<void> = Promise.resolve()
-let nativeTextGenerationAdmissionsOpen = true
-let activeNativeTextGenerationSlots = 0
-let pendingBetterC0deSessionCleanupReservations = 0
+/**
+ * The native text generations of one backend instance (commit messages, PR
+ * text, branch names, thread titles and summaries through the user's CLI
+ * providers): the operations in flight and their slots and queue, the child
+ * processes and shared BetterC0de servers they hold, cleanups still owed,
+ * and whether it admits new work.
+ *
+ * Bootstrap creates one (`BootRoot.nativeTextGenerations`) and hands it to
+ * the chat helpers that generate text; admission, the startup unwind and the
+ * graceful drain use the same instance. A test builds its own instead of
+ * resetting module state.
+ */
+export class NativeTextGenerationService {
+  private readonly sharedServers = new Map<string, SharedBetterC0deTextServer>()
+  private readonly operations = new Map<string, ActiveNativeTextGeneration>()
+  private readonly children = new Set<ChildProcess>()
+  private readonly childStops = new Map<ChildProcess, Promise<void>>()
+  private readonly unconfirmedChildren = new WeakSet<ChildProcess>()
+  private readonly cleanupQuarantines = new Map<
+    string,
+    {
+      readonly stop: () => Promise<void>
+      pending: Promise<void> | null
+    }
+  >()
+  private readonly queue: QueuedNativeTextGeneration[] = []
+  private readonly pendingSessionCleanups = new Map<
+    string,
+    PendingBetterC0deSessionCleanup
+  >()
+  private sharedAcquireTail: Promise<void> = Promise.resolve()
+  private admissionsOpen = true
+  private activeSlots = 0
+  private pendingSessionCleanupReservations = 0
 
-export function resumeNativeTextGenerationAdmissions(): void {
-  if (
-    activeNativeTextGenerations.size > 0 ||
-    activeNativeTextChildren.size > 0 ||
-    nativeTextCleanupQuarantines.size > 0 ||
-    sharedBetterC0deTextServers.size > 0 ||
-    pendingBetterC0deSessionCleanups.size > 0 ||
-    pendingBetterC0deSessionCleanupReservations > 0 ||
-    nativeTextGenerationQueue.length > 0 ||
-    activeNativeTextGenerationSlots > 0
-  ) {
-    throw new Error(
-      "Cannot reopen native text generation while previous resources remain active."
+  resumeAdmissions(): void {
+    if (
+      this.operations.size > 0 ||
+      this.children.size > 0 ||
+      this.cleanupQuarantines.size > 0 ||
+      this.sharedServers.size > 0 ||
+      this.pendingSessionCleanups.size > 0 ||
+      this.pendingSessionCleanupReservations > 0 ||
+      this.queue.length > 0 ||
+      this.activeSlots > 0
+    ) {
+      throw new Error(
+        "Cannot reopen native text generation while previous resources remain active."
+      )
+    }
+    this.admissionsOpen = true
+  }
+
+  beginShutdown(): void {
+    this.admissionsOpen = false
+    const shutdownError = nativeTextGenerationShutdownError()
+    for (const operation of this.operations.values()) {
+      operation.controller.abort(shutdownError)
+    }
+    while (this.queue.length > 0) {
+      const queued = this.queue.shift()!
+      settleQueuedNativeTextGeneration(queued, shutdownError)
+    }
+    for (const entry of this.sharedServers.values()) {
+      cancelSharedBetterC0deIdleClose(entry)
+    }
+  }
+
+  activeResourceCount(): number {
+    return (
+      this.operations.size +
+      this.children.size +
+      this.cleanupQuarantines.size +
+      this.sharedServers.size +
+      this.pendingSessionCleanups.size
     )
   }
-  nativeTextGenerationAdmissionsOpen = true
-}
 
-export function beginNativeTextGenerationShutdown(): void {
-  nativeTextGenerationAdmissionsOpen = false
-  const shutdownError = nativeTextGenerationShutdownError()
-  for (const operation of activeNativeTextGenerations.values()) {
-    operation.controller.abort(shutdownError)
-  }
-  while (nativeTextGenerationQueue.length > 0) {
-    const queued = nativeTextGenerationQueue.shift()!
-    settleQueuedNativeTextGeneration(queued, shutdownError)
-  }
-  for (const entry of sharedBetterC0deTextServers.values()) {
-    cancelSharedBetterC0deIdleClose(entry)
-  }
-}
+  async shutdownAll(
+    timeoutMs = NATIVE_TEXT_GENERATION_SHUTDOWN_TIMEOUT_MS
+  ): Promise<number> {
+    const initialResourceCount = this.activeResourceCount()
+    const operations = [...this.operations.values()]
+    this.beginShutdown()
+    const attemptedServers = new Set<SharedBetterC0deTextServer>()
+    const attemptedSessionCleanups = new Set<PendingBetterC0deSessionCleanup>()
+    const failures: unknown[] = []
 
-export function activeNativeTextGenerationResourceCount(): number {
-  return (
-    activeNativeTextGenerations.size +
-    activeNativeTextChildren.size +
-    nativeTextCleanupQuarantines.size +
-    sharedBetterC0deTextServers.size +
-    pendingBetterC0deSessionCleanups.size
-  )
-}
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(
+        () =>
+          reject(
+            Object.assign(
+              new Error(
+                `${this.activeResourceCount()} native text-generation resource(s) did not settle during shutdown.`
+              ),
+              {
+                code: "NATIVE_TEXT_GENERATION_SHUTDOWN_INCOMPLETE",
+                activeOperations: this.operations.size,
+                activeChildren: this.children.size,
+                activeSharedServers: this.sharedServers.size,
+                pendingSessionCleanups: this.pendingSessionCleanups.size,
+              }
+            )
+          ),
+        Math.max(1, timeoutMs)
+      )
+      timeoutHandle.unref?.()
+    })
 
-export async function shutdownAllNativeTextGenerationResources(
-  timeoutMs = NATIVE_TEXT_GENERATION_SHUTDOWN_TIMEOUT_MS
-): Promise<number> {
-  const initialResourceCount = activeNativeTextGenerationResourceCount()
-  const operations = [...activeNativeTextGenerations.values()]
-  beginNativeTextGenerationShutdown()
-  const attemptedServers = new Set<SharedBetterC0deTextServer>()
-  const attemptedSessionCleanups = new Set<PendingBetterC0deSessionCleanup>()
-  const failures: unknown[] = []
-
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = null
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(
-      () =>
-        reject(
-          Object.assign(
-            new Error(
-              `${activeNativeTextGenerationResourceCount()} native text-generation resource(s) did not settle during shutdown.`
-            ),
-            {
-              code: "NATIVE_TEXT_GENERATION_SHUTDOWN_INCOMPLETE",
-              activeOperations: activeNativeTextGenerations.size,
-              activeChildren: activeNativeTextChildren.size,
-              activeSharedServers: sharedBetterC0deTextServers.size,
-              pendingSessionCleanups: pendingBetterC0deSessionCleanups.size,
-            }
+    const shutdown = (async () => {
+      const resourceDrain = (async () => {
+        const serverDrain = this.withSharedBetterC0deAcquireLock(async () => {
+          const entries = [...this.sharedServers.values()]
+          for (const entry of entries) attemptedServers.add(entry)
+          return await Promise.allSettled(
+            entries.map((entry) => this.closeSharedBetterC0deTextServer(entry))
           )
-        ),
-      Math.max(1, timeoutMs)
-    )
-    timeoutHandle.unref?.()
-  })
+        })
+        const childDrain = Promise.allSettled(
+          [...this.children].map((child) =>
+            this.stopTrackedNativeTextChild(child)
+          )
+        )
+        const sessionCleanupEntries = [...this.pendingSessionCleanups.values()]
+        for (const entry of sessionCleanupEntries) {
+          attemptedSessionCleanups.add(entry)
+        }
+        const sessionCleanupDrain = Promise.allSettled(
+          sessionCleanupEntries.map((entry) =>
+            this.cleanupPendingBetterC0deSession(entry)
+          )
+        )
+        const [serverResults, childResults, sessionCleanupResults] =
+          await Promise.all([serverDrain, childDrain, sessionCleanupDrain])
+        for (const result of serverResults) {
+          if (result.status === "rejected") failures.push(result.reason)
+        }
+        for (const result of childResults) {
+          if (result.status === "rejected") failures.push(result.reason)
+        }
+        for (const result of sessionCleanupResults) {
+          if (result.status === "rejected") failures.push(result.reason)
+        }
+      })()
 
-  const shutdown = (async () => {
-    const resourceDrain = (async () => {
-      const serverDrain = withSharedBetterC0deAcquireLock(async () => {
-        const entries = [...sharedBetterC0deTextServers.values()]
-        for (const entry of entries) attemptedServers.add(entry)
-        return await Promise.allSettled(
-          entries.map((entry) => closeSharedBetterC0deTextServer(entry))
+      await Promise.all([
+        resourceDrain,
+        Promise.all(operations.map((operation) => operation.settled)),
+      ])
+
+      await this.withSharedBetterC0deAcquireLock(async () => {
+        const lateEntries = [...this.sharedServers.values()].filter(
+          (entry) => !attemptedServers.has(entry)
         )
+        const results = await Promise.allSettled(
+          lateEntries.map((entry) =>
+            this.closeSharedBetterC0deTextServer(entry)
+          )
+        )
+        for (const result of results) {
+          if (result.status === "rejected") failures.push(result.reason)
+        }
+        for (const entry of this.sharedServers.values()) {
+          cancelSharedBetterC0deIdleClose(entry)
+        }
       })
-      const childDrain = Promise.allSettled(
-        [...activeNativeTextChildren].map((child) =>
-          stopTrackedNativeTextChild(child)
+
+      const lateChildResults = await Promise.allSettled(
+        [...this.children].map((child) =>
+          this.stopTrackedNativeTextChild(child)
         )
       )
-      const sessionCleanupEntries = [
-        ...pendingBetterC0deSessionCleanups.values(),
-      ]
-      for (const entry of sessionCleanupEntries) {
-        attemptedSessionCleanups.add(entry)
+      for (const result of lateChildResults) {
+        if (result.status === "rejected") failures.push(result.reason)
       }
-      const sessionCleanupDrain = Promise.allSettled(
-        sessionCleanupEntries.map((entry) =>
-          cleanupPendingBetterC0deSession(entry)
+
+      const lateSessionCleanupEntries = [
+        ...this.pendingSessionCleanups.values(),
+      ].filter((entry) => !attemptedSessionCleanups.has(entry))
+      const lateSessionCleanupResults = await Promise.allSettled(
+        lateSessionCleanupEntries.map((entry) =>
+          this.cleanupPendingBetterC0deSession(entry)
         )
       )
-      const [serverResults, childResults, sessionCleanupResults] =
-        await Promise.all([serverDrain, childDrain, sessionCleanupDrain])
-      for (const result of serverResults) {
+      for (const result of lateSessionCleanupResults) {
         if (result.status === "rejected") failures.push(result.reason)
       }
-      for (const result of childResults) {
-        if (result.status === "rejected") failures.push(result.reason)
-      }
-      for (const result of sessionCleanupResults) {
+      const quarantineResults = await Promise.allSettled(
+        [...this.cleanupQuarantines.keys()].map((directory) =>
+          this.cleanupNativeTextQuarantine(directory)
+        )
+      )
+      for (const result of quarantineResults) {
         if (result.status === "rejected") failures.push(result.reason)
       }
     })()
 
-    await Promise.all([
-      resourceDrain,
-      Promise.all(operations.map((operation) => operation.settled)),
-    ])
-
-    await withSharedBetterC0deAcquireLock(async () => {
-      const lateEntries = [...sharedBetterC0deTextServers.values()].filter(
-        (entry) => !attemptedServers.has(entry)
-      )
-      const results = await Promise.allSettled(
-        lateEntries.map((entry) => closeSharedBetterC0deTextServer(entry))
-      )
-      for (const result of results) {
-        if (result.status === "rejected") failures.push(result.reason)
-      }
-      for (const entry of sharedBetterC0deTextServers.values()) {
-        cancelSharedBetterC0deIdleClose(entry)
-      }
-    })
-
-    const lateChildResults = await Promise.allSettled(
-      [...activeNativeTextChildren].map((child) =>
-        stopTrackedNativeTextChild(child)
-      )
-    )
-    for (const result of lateChildResults) {
-      if (result.status === "rejected") failures.push(result.reason)
+    try {
+      await Promise.race([shutdown, timeout])
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle)
     }
 
-    const lateSessionCleanupEntries = [
-      ...pendingBetterC0deSessionCleanups.values(),
-    ].filter((entry) => !attemptedSessionCleanups.has(entry))
-    const lateSessionCleanupResults = await Promise.allSettled(
-      lateSessionCleanupEntries.map((entry) =>
-        cleanupPendingBetterC0deSession(entry)
+    const remaining = this.activeResourceCount()
+    if (remaining > 0) {
+      failures.push(
+        Object.assign(
+          new Error(
+            `${remaining} native text-generation resource(s) remain after shutdown.`
+          ),
+          {
+            code: "NATIVE_TEXT_GENERATION_RESOURCES_REMAIN",
+            activeOperations: this.operations.size,
+            activeChildren: this.children.size,
+            activeSharedServers: this.sharedServers.size,
+            pendingSessionCleanups: this.pendingSessionCleanups.size,
+          }
+        )
       )
-    )
-    for (const result of lateSessionCleanupResults) {
-      if (result.status === "rejected") failures.push(result.reason)
     }
-    const quarantineResults = await Promise.allSettled(
-      [...nativeTextCleanupQuarantines.keys()].map(cleanupNativeTextQuarantine)
-    )
-    for (const result of quarantineResults) {
-      if (result.status === "rejected") failures.push(result.reason)
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        "Native text-generation resource shutdown failed"
+      )
     }
-  })()
-
-  try {
-    await Promise.race([shutdown, timeout])
-  } finally {
-    if (timeoutHandle) clearTimeout(timeoutHandle)
+    return initialResourceCount
   }
 
-  const remaining = activeNativeTextGenerationResourceCount()
-  if (remaining > 0) {
-    failures.push(
-      Object.assign(
+  async run(
+    input: NativeTextGenerationInput,
+    runner: NativeTextGenerationRunner = {
+      run: (command, args, options) => this.runProcess(command, args, options),
+    }
+  ): Promise<string | null> {
+    if (!this.admissionsOpen) {
+      throw Object.assign(
+        new Error("Native text generation is not accepting new work."),
+        { code: "NATIVE_TEXT_GENERATION_ADMISSION_CLOSED" }
+      )
+    }
+    let resolveSettled!: () => void
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve
+    })
+    const operation: ActiveNativeTextGeneration = {
+      id: randomUUID(),
+      controller: new AbortController(),
+      settled,
+      resolveSettled,
+      slotAcquired: false,
+    }
+    this.operations.set(operation.id, operation)
+
+    try {
+      await this.acquireNativeTextGenerationSlot(operation)
+      this.throwIfNativeTextGenerationUnavailable(operation.controller.signal)
+      const modelSelection = input.modelSelection
+      if (!modelSelection) return null
+
+      const providerConfig = resolveProviderConfig(
+        input.settings,
+        modelSelection
+      )
+      if (!providerConfig || providerConfig.enabled === false) return null
+
+      const driver = normalizeNativeDriver(providerConfig.driver)
+      if (driver === "codex") {
+        return await this.runCodexTextGeneration(
+          input,
+          providerConfig,
+          modelSelection,
+          runner,
+          operation.controller.signal
+        )
+      }
+      if (driver === "claude") {
+        return await this.runClaudeTextGeneration(
+          input,
+          providerConfig,
+          modelSelection,
+          runner,
+          operation.controller.signal
+        )
+      }
+      if (driver === "betterc0de") {
+        return await this.runBetterC0deTextGeneration(
+          input,
+          providerConfig,
+          modelSelection,
+          runner,
+          operation.controller.signal
+        )
+      }
+      if (driver === "cursor" || driver === "grok") {
+        return await this.runAcpTextGeneration(
+          input,
+          providerConfig,
+          modelSelection,
+          runner,
+          operation.controller.signal,
+          driver
+        )
+      }
+      return null
+    } finally {
+      this.releaseNativeTextGenerationSlot(operation)
+      if (this.operations.get(operation.id) === operation) {
+        this.operations.delete(operation.id)
+      }
+      operation.resolveSettled()
+    }
+  }
+
+  private async acquireNativeTextGenerationSlot(
+    operation: ActiveNativeTextGeneration
+  ): Promise<void> {
+    this.throwIfNativeTextGenerationUnavailable(operation.controller.signal)
+    this.drainNativeTextGenerationQueue()
+    if (
+      this.queue.length === 0 &&
+      this.activeSlots < nativeTextGenerationMaxConcurrent()
+    ) {
+      this.activeSlots += 1
+      operation.slotAcquired = true
+      return
+    }
+    if (this.queue.length >= nativeTextGenerationMaxQueued()) {
+      throw Object.assign(new Error("Native text-generation queue is full."), {
+        code: "NATIVE_TEXT_GENERATION_QUEUE_FULL",
+        statusCode: 503,
+      })
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const queued: QueuedNativeTextGeneration = {
+        operation,
+        resolve,
+        reject,
+        settled: false,
+      }
+      this.queue.push(queued)
+      if (operation.controller.signal.aborted) {
+        const index = this.queue.indexOf(queued)
+        if (index >= 0) this.queue.splice(index, 1)
+        settleQueuedNativeTextGeneration(
+          queued,
+          operation.controller.signal.reason ??
+            nativeTextGenerationShutdownError()
+        )
+      }
+    })
+  }
+
+  private releaseNativeTextGenerationSlot(
+    operation: ActiveNativeTextGeneration
+  ): void {
+    if (!operation.slotAcquired) return
+    operation.slotAcquired = false
+    this.activeSlots = Math.max(0, this.activeSlots - 1)
+    this.drainNativeTextGenerationQueue()
+  }
+
+  private drainNativeTextGenerationQueue(): void {
+    if (!this.admissionsOpen) return
+    const maxConcurrent = nativeTextGenerationMaxConcurrent()
+    while (this.activeSlots < maxConcurrent && this.queue.length > 0) {
+      const queued = this.queue.shift()!
+      const operation = queued.operation
+      if (
+        this.operations.get(operation.id) !== operation ||
+        operation.controller.signal.aborted
+      ) {
+        settleQueuedNativeTextGeneration(
+          queued,
+          operation.controller.signal.reason ??
+            nativeTextGenerationShutdownError()
+        )
+        continue
+      }
+      this.activeSlots += 1
+      operation.slotAcquired = true
+      settleQueuedNativeTextGeneration(queued)
+    }
+  }
+
+  private reserveBetterC0deSessionCleanupCapacity(): void {
+    if (
+      this.pendingSessionCleanups.size +
+        this.pendingSessionCleanupReservations >=
+      nativeTextGenerationMaxPendingSessionCleanups()
+    ) {
+      throw Object.assign(
         new Error(
-          `${remaining} native text-generation resource(s) remain after shutdown.`
+          "Native text generation is refusing BetterC0de work because unresolved session cleanup reached its configured limit."
         ),
         {
-          code: "NATIVE_TEXT_GENERATION_RESOURCES_REMAIN",
-          activeOperations: activeNativeTextGenerations.size,
-          activeChildren: activeNativeTextChildren.size,
-          activeSharedServers: sharedBetterC0deTextServers.size,
-          pendingSessionCleanups: pendingBetterC0deSessionCleanups.size,
+          code: "NATIVE_TEXT_GENERATION_CLEANUP_BACKLOG_FULL",
+          statusCode: 503,
         }
       )
+    }
+    this.pendingSessionCleanupReservations += 1
+  }
+
+  private releaseBetterC0deSessionCleanupCapacity(): void {
+    this.pendingSessionCleanupReservations = Math.max(
+      0,
+      this.pendingSessionCleanupReservations - 1
     )
   }
-  if (failures.length > 0) {
-    throw new AggregateError(
-      failures,
-      "Native text-generation resource shutdown failed"
+
+  private quarantineNativeTextCleanup(
+    directory: string,
+    stop: () => Promise<void>
+  ): void {
+    this.cleanupQuarantines.set(directory, { stop, pending: null })
+    this.beginShutdown()
+  }
+
+  private async cleanupNativeTextQuarantine(directory: string): Promise<void> {
+    const entry = this.cleanupQuarantines.get(directory)
+    if (!entry) return
+    if (entry.pending) return await entry.pending
+    entry.pending = (async () => {
+      await entry.stop()
+      await fs.rm(directory, { recursive: true, force: true })
+      this.cleanupQuarantines.delete(directory)
+    })()
+    try {
+      await entry.pending
+    } finally {
+      entry.pending = null
+    }
+  }
+
+  private retainFailedNativeTextProcess(
+    directory: string,
+    error: unknown
+  ): boolean {
+    if (!(error instanceof NativeTextProcessCleanupError)) return false
+    this.unconfirmedChildren.add(error.child)
+    this.quarantineNativeTextCleanup(directory, async () => {
+      if (!this.children.has(error.child)) return
+      await this.stopTrackedNativeTextChild(error.child)
+    })
+    return true
+  }
+
+  private async runCodexTextGeneration(
+    input: NativeTextGenerationInput,
+    config: ProviderInstanceConfig,
+    modelSelection: ModelSelection,
+    runner: NativeTextGenerationRunner,
+    lifecycleSignal: AbortSignal
+  ): Promise<string> {
+    this.throwIfNativeTextGenerationUnavailable(lifecycleSignal)
+    const tempDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "betterc0de-codex-text-generation-")
     )
-  }
-  return initialResourceCount
-}
+    const schemaPath = path.join(tempDir, "schema.json")
+    const outputPath = path.join(tempDir, "output.json")
+    let cleanupSafe = true
+    try {
+      this.throwIfNativeTextGenerationUnavailable(lifecycleSignal)
+      await fs.writeFile(
+        schemaPath,
+        JSON.stringify(jsonSchemaFor(input.schemaName)),
+        "utf8"
+      )
+      this.throwIfNativeTextGenerationUnavailable(lifecycleSignal)
+      await fs.writeFile(outputPath, "", "utf8")
+      this.throwIfNativeTextGenerationUnavailable(lifecycleSignal)
 
-export async function runNativeTextGeneration(
-  input: NativeTextGenerationInput,
-  runner: NativeTextGenerationRunner = { run: runProcess }
-): Promise<string | null> {
-  if (!nativeTextGenerationAdmissionsOpen) {
-    throw Object.assign(
-      new Error("Native text generation is not accepting new work."),
-      { code: "NATIVE_TEXT_GENERATION_ADMISSION_CLOSED" }
+      const binaryPath = codexBinaryPath(
+        configString(config.config, "binaryPath")
+      )
+      const effort = assertCodexReasoningEffort(
+        getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
+          getModelSelectionStringOptionValue(modelSelection, "effort") ??
+          CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT
+      )
+      const fastMode =
+        getModelSelectionBooleanOptionValue(modelSelection, "fastMode") === true
+
+      const args = [
+        "exec",
+        "--ephemeral",
+        "--skip-git-repo-check",
+        "-s",
+        "read-only",
+        "--model",
+        modelSelection.model,
+        "--config",
+        `model_reasoning_effort='${effort}'`,
+        ...(fastMode ? ["--config", "service_tier='fast'"] : []),
+        "--output-schema",
+        schemaPath,
+        "--output-last-message",
+        outputPath,
+        "-",
+      ]
+
+      const result = await runner.run(binaryPath, args, {
+        // Without a workspace, run inside the private temp dir rather than
+        // `process.cwd()` — that is the app's own install directory.
+        cwd: resolveCwd(input.cwd, tempDir),
+        env: codexProcessEnvironment(binaryPath, codexEnvironment(config)),
+        stdin: input.prompt,
+        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        signal: lifecycleSignal,
+      })
+      if (result.exitCode !== 0) {
+        throw new Error(
+          commandFailureMessage(
+            "Codex CLI",
+            result.exitCode,
+            result.stderr,
+            result.stdout
+          )
+        )
+      }
+      const output = (
+        await readUtf8FileBounded(
+          outputPath,
+          NATIVE_PROCESS_MAX_OUTPUT_BYTES,
+          "Codex CLI output"
+        )
+      ).trim()
+      return output || result.stdout.trim()
+    } catch (error) {
+      cleanupSafe = !this.retainFailedNativeTextProcess(tempDir, error)
+      throw error
+    } finally {
+      if (cleanupSafe)
+        await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+
+  private async runClaudeTextGeneration(
+    input: NativeTextGenerationInput,
+    config: ProviderInstanceConfig,
+    modelSelection: ModelSelection,
+    runner: NativeTextGenerationRunner,
+    lifecycleSignal: AbortSignal
+  ): Promise<string> {
+    // Text-generation prompts can contain repository and conversation content.
+    // Run Claude without tools in an isolated directory so prompt injection
+    // cannot inherit write/execute access to the user's workspace.
+    this.throwIfNativeTextGenerationUnavailable(lifecycleSignal)
+    const tempDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "betterc0de-claude-text-generation-")
     )
+    let cleanupSafe = true
+    try {
+      this.throwIfNativeTextGenerationUnavailable(lifecycleSignal)
+      // The Finder-launched macOS app does not inherit the user's shell PATH.
+      // The shell process already resolved the installed Claude binary for SDK
+      // turns; handoff and compaction must use that same executable.
+      const binaryPath =
+        configString(config.config, "binaryPath") ??
+        (process.env.BETTERC0DE_CLAUDE_CODE_PATH?.trim() || "claude")
+      const effort = normalizeClaudeCliEffort(
+        getModelSelectionStringOptionValue(modelSelection, "effort") ??
+          getModelSelectionStringOptionValue(modelSelection, "reasoningEffort")
+      )
+      const args = [
+        "-p",
+        "--output-format",
+        "json",
+        "--json-schema",
+        JSON.stringify(jsonSchemaFor(input.schemaName)),
+        "--model",
+        modelSelection.model,
+        ...(effort ? ["--effort", effort] : []),
+        "--tools",
+        "",
+        "--disallowedTools",
+        "Bash,Edit,Write,NotebookEdit,Agent,Task,WebFetch,WebSearch",
+      ]
+
+      const result = await runner.run(binaryPath, args, {
+        cwd: tempDir,
+        env: claudeEnvironment(config),
+        stdin: input.prompt,
+        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        signal: lifecycleSignal,
+      })
+      if (result.exitCode !== 0) {
+        throw new Error(
+          commandFailureMessage(
+            "Claude CLI",
+            result.exitCode,
+            result.stderr,
+            result.stdout
+          )
+        )
+      }
+
+      return extractClaudeStructuredOutput(result.stdout)
+    } catch (error) {
+      cleanupSafe = !this.retainFailedNativeTextProcess(tempDir, error)
+      throw error
+    } finally {
+      if (cleanupSafe)
+        await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    }
   }
-  let resolveSettled!: () => void
-  const settled = new Promise<void>((resolve) => {
-    resolveSettled = resolve
-  })
-  const operation: ActiveNativeTextGeneration = {
-    id: randomUUID(),
-    controller: new AbortController(),
-    settled,
-    resolveSettled,
-    slotAcquired: false,
-  }
-  activeNativeTextGenerations.set(operation.id, operation)
 
-  try {
-    await acquireNativeTextGenerationSlot(operation)
-    throwIfNativeTextGenerationUnavailable(operation.controller.signal)
-    const modelSelection = input.modelSelection
-    if (!modelSelection) return null
-
-    const providerConfig = resolveProviderConfig(input.settings, modelSelection)
-    if (!providerConfig || providerConfig.enabled === false) return null
-
-    const driver = normalizeNativeDriver(providerConfig.driver)
-    if (driver === "codex") {
-      return await runCodexTextGeneration(
-        input,
-        providerConfig,
-        modelSelection,
-        runner,
-        operation.controller.signal
+  private async runBetterC0deTextGeneration(
+    input: NativeTextGenerationInput,
+    config: ProviderInstanceConfig,
+    modelSelection: ModelSelection,
+    runner: NativeTextGenerationRunner,
+    lifecycleSignal: AbortSignal
+  ): Promise<string> {
+    const parsedModel = parseBetterC0deModelSlug(modelSelection.model)
+    if (!parsedModel) {
+      throw new Error(
+        "BetterC0de model selection must use the 'provider/model' format."
       )
     }
-    if (driver === "claude") {
-      return await runClaudeTextGeneration(
-        input,
-        providerConfig,
-        modelSelection,
-        runner,
-        operation.controller.signal
-      )
-    }
-    if (driver === "betterc0de") {
-      return await runBetterC0deTextGeneration(
-        input,
-        providerConfig,
-        modelSelection,
-        runner,
-        operation.controller.signal
-      )
-    }
-    if (driver === "cursor" || driver === "grok") {
-      return await runAcpTextGeneration(
-        input,
-        providerConfig,
-        modelSelection,
-        runner,
-        operation.controller.signal,
-        driver
-      )
-    }
-    return null
-  } finally {
-    releaseNativeTextGenerationSlot(operation)
-    if (activeNativeTextGenerations.get(operation.id) === operation) {
-      activeNativeTextGenerations.delete(operation.id)
-    }
-    operation.resolveSettled()
-  }
-}
 
-async function acquireNativeTextGenerationSlot(
-  operation: ActiveNativeTextGeneration
-): Promise<void> {
-  throwIfNativeTextGenerationUnavailable(operation.controller.signal)
-  drainNativeTextGenerationQueue()
-  if (
-    nativeTextGenerationQueue.length === 0 &&
-    activeNativeTextGenerationSlots < nativeTextGenerationMaxConcurrent()
-  ) {
-    activeNativeTextGenerationSlots += 1
-    operation.slotAcquired = true
-    return
+    const binaryPath = configString(config.config, "binaryPath") ?? "betterc0de"
+    const serverUrl = configString(config.config, "serverUrl")
+    const serverUsername =
+      configString(config.config, "serverUsername") ??
+      process.env.BETTERC0DE_SERVER_USERNAME ??
+      process.env.BetterC0de_SERVER_USERNAME
+    const serverPassword = configString(config.config, "serverPassword")
+    const serverConnector =
+      runner.connectBetterC0deServer ??
+      ((connectorInput) => this.connectBetterC0deServer(connectorInput))
+    const createClient =
+      runner.createBetterC0deClient ?? defaultBetterC0deClientFactory
+    this.reserveBetterC0deSessionCleanupCapacity()
+    let cleanupReservationHeld = true
+    let serverLease: BetterC0deTextServerLease
+    try {
+      serverLease = await this.acquireBetterC0deTextServer({
+        binaryPath,
+        serverUrl,
+        env: providerEnvironment(config),
+        serverConnector,
+        signal: lifecycleSignal,
+      })
+    } catch (error) {
+      this.releaseBetterC0deSessionCleanupCapacity()
+      throw error
+    }
+    const requestAbort = new AbortController()
+    const onLifecycleAbort = () => {
+      requestAbort.abort(
+        lifecycleSignal.reason ??
+          new Error("Native text generation is shutting down.")
+      )
+    }
+    if (lifecycleSignal.aborted) onLifecycleAbort()
+    else {
+      lifecycleSignal.addEventListener("abort", onLifecycleAbort, {
+        once: true,
+      })
+    }
+    const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    const timeout = setTimeout(() => {
+      requestAbort.abort(
+        new Error(`BetterC0de request timed out after ${timeoutMs}ms`)
+      )
+    }, timeoutMs)
+    timeout.unref?.()
+    let client: BetterC0deTextClient | null = null
+    let sessionId: string | null = null
+    let output: string | undefined
+    let failure: unknown
+    let scratchDirectory: string | null = null
+    try {
+      const server = serverLease.server
+      // Same rule as the CLI paths: no workspace means a private temp dir,
+      // never the app directory. Created after the request timeout is armed so
+      // the deadline also covers this I/O.
+      if (!input.cwd?.trim()) {
+        scratchDirectory = await fs.mkdtemp(
+          path.join(os.tmpdir(), "betterc0de-compat-text-generation-")
+        )
+      }
+      client = await createClient({
+        baseUrl: server.url,
+        directory: resolveCwd(input.cwd, scratchDirectory ?? ""),
+        ...(server.external && serverPassword
+          ? { serverUsername, serverPassword }
+          : {}),
+      })
+      if (server.external && !client.session.delete) {
+        throw Object.assign(
+          new Error(
+            "External BetterC0de compatibility server does not support required session cleanup."
+          ),
+          { code: "BETTERC0DE_SESSION_CLEANUP_UNSUPPORTED" }
+        )
+      }
+      const created = await waitForAbort(
+        client.session.create(
+          {
+            title: `BetterC0de ${input.schemaName}`,
+            permission: [{ permission: "*", pattern: "*", action: "deny" }],
+          },
+          { signal: requestAbort.signal }
+        ),
+        requestAbort.signal,
+        "BetterC0de session creation timed out."
+      )
+      sessionId = created.data?.id ?? null
+      if (!sessionId)
+        throw new Error(
+          "BetterC0de session.create returned no session payload."
+        )
+
+      const selectedAgent = getModelSelectionStringOptionValue(
+        modelSelection,
+        "agent"
+      )
+      const selectedVariant = getModelSelectionStringOptionValue(
+        modelSelection,
+        "variant"
+      )
+      const result = await waitForAbort(
+        client.session.prompt(
+          {
+            sessionID: sessionId,
+            model: parsedModel,
+            ...(selectedAgent ? { agent: selectedAgent } : {}),
+            ...(selectedVariant ? { variant: selectedVariant } : {}),
+            parts: [{ type: "text", text: input.prompt }],
+          },
+          { signal: requestAbort.signal }
+        ),
+        requestAbort.signal,
+        "BetterC0de prompt timed out."
+      )
+      const errorMessage = betterC0dePromptErrorMessage(
+        result.data?.info?.error
+      )
+      if (errorMessage) throw new Error(errorMessage)
+
+      const rawText = betterC0deTextResponse(result.data?.parts)
+      if (!rawText)
+        throw new Error("BetterC0de compatibility returned empty output.")
+      output = extractJsonObject(rawText)
+    } catch (error) {
+      failure = error
+    } finally {
+      clearTimeout(timeout)
+      lifecycleSignal.removeEventListener("abort", onLifecycleAbort)
+      requestAbort.abort()
+      if (client?.session.delete && sessionId) {
+        const sessionClient = client.session
+        const cleanup = this.registerPendingBetterC0deSessionCleanup({
+          sessionId,
+          deleteSession: (signal) =>
+            sessionClient.delete!({ sessionID: sessionId }, { signal }),
+        })
+        this.releaseBetterC0deSessionCleanupCapacity()
+        cleanupReservationHeld = false
+        try {
+          await this.cleanupPendingBetterC0deSession(cleanup)
+        } catch (error) {
+          failure = failure
+            ? new AggregateError(
+                [failure, error],
+                "BetterC0de request and session cleanup both failed."
+              )
+            : error
+        }
+      }
+      if (scratchDirectory) {
+        await fs
+          .rm(scratchDirectory, { recursive: true, force: true })
+          .catch(() => {})
+      }
+      try {
+        await serverLease.release()
+      } catch (error) {
+        failure = failure
+          ? new AggregateError(
+              [failure, error],
+              "BetterC0de request and server cleanup both failed."
+            )
+          : error
+      }
+      if (cleanupReservationHeld) {
+        this.releaseBetterC0deSessionCleanupCapacity()
+        cleanupReservationHeld = false
+      }
+    }
+    if (failure) throw failure
+    return output!
   }
-  if (nativeTextGenerationQueue.length >= nativeTextGenerationMaxQueued()) {
-    throw Object.assign(new Error("Native text-generation queue is full."), {
-      code: "NATIVE_TEXT_GENERATION_QUEUE_FULL",
-      statusCode: 503,
+
+  private registerPendingBetterC0deSessionCleanup(input: {
+    readonly sessionId: string
+    readonly deleteSession: (signal: AbortSignal) => Promise<unknown>
+  }): PendingBetterC0deSessionCleanup {
+    const entry: PendingBetterC0deSessionCleanup = {
+      id: randomUUID(),
+      sessionId: input.sessionId,
+      deleteSession: input.deleteSession,
+      cleanupPromise: null,
+      lastFailure: null,
+    }
+    this.pendingSessionCleanups.set(entry.id, entry)
+    return entry
+  }
+
+  private async cleanupPendingBetterC0deSession(
+    entry: PendingBetterC0deSessionCleanup
+  ): Promise<void> {
+    if (entry.cleanupPromise) return await entry.cleanupPromise
+    const cleanupPromise = (async () => {
+      const cleanupAbort = new AbortController()
+      const cleanupTimer = setTimeout(() => {
+        cleanupAbort.abort(
+          Object.assign(
+            new Error(
+              `Timed out deleting BetterC0de compatibility session ${entry.sessionId}.`
+            ),
+            { code: "BETTERC0DE_SESSION_CLEANUP_TIMEOUT" }
+          )
+        )
+      }, DEFAULT_BETTERC0DE_SERVER_TIMEOUT_MS)
+      cleanupTimer.unref?.()
+      try {
+        await waitForAbort(
+          entry.deleteSession(cleanupAbort.signal),
+          cleanupAbort.signal,
+          `Timed out deleting BetterC0de compatibility session ${entry.sessionId}.`
+        )
+        entry.lastFailure = null
+        if (this.pendingSessionCleanups.get(entry.id) === entry) {
+          this.pendingSessionCleanups.delete(entry.id)
+        }
+      } finally {
+        clearTimeout(cleanupTimer)
+      }
+    })()
+    entry.cleanupPromise = cleanupPromise
+    try {
+      await cleanupPromise
+    } catch (error) {
+      entry.lastFailure = error
+      throw error
+    } finally {
+      if (entry.cleanupPromise === cleanupPromise) {
+        entry.cleanupPromise = null
+      }
+    }
+  }
+
+  private async runAcpTextGeneration(
+    input: NativeTextGenerationInput,
+    config: ProviderInstanceConfig,
+    modelSelection: ModelSelection,
+    runner: NativeTextGenerationRunner,
+    lifecycleSignal: AbortSignal,
+    driver: "cursor" | "grok"
+  ): Promise<string> {
+    // Native text-generation prompts already contain the required repository
+    // context. Do not give the external ACP agent the repository as its cwd:
+    // prompt injection must not turn a metadata helper into a workspace editor.
+    const tempDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), `betterc0de-${driver}-text-generation-`)
+    )
+    const createRuntime =
+      driver === "grok"
+        ? (runner.createGrokRuntime ?? createGrokAcpRuntime)
+        : (runner.createCursorRuntime ?? createCursorAcpRuntime)
+    const label = driver === "grok" ? "Grok" : "Cursor Agent"
+    let runtime: CursorAcpRuntime | null = null
+    let unsubscribe = () => {}
+    const output = new BoundedOutputBuffer(NATIVE_PROCESS_MAX_OUTPUT_BYTES)
+    let outputExceeded = false
+    let cancellationRequested = false
+    let onLifecycleAbort: (() => void) | null = null
+    let result: string | undefined
+    let failure: unknown
+    let cleanupSafe = true
+    try {
+      let binaryPath =
+        configString(config.config, "binaryPath") ??
+        (driver === "grok" ? "grok" : CURSOR_BINARY_NAME)
+      if (driver === "grok" && !runner.createGrokRuntime) {
+        const resolved = await resolveGrokBinaryAsync(binaryPath)
+        if (!resolved)
+          throw new Error(
+            "xAI Grok CLI is unavailable for the provider handoff."
+          )
+        binaryPath = resolved.binaryPath
+      }
+      if (driver === "cursor" && !runner.createCursorRuntime) {
+        const resolved = await resolveCursorBinaryAsync(binaryPath)
+        if (!resolved)
+          throw new Error(
+            "Cursor Agent CLI is unavailable for the provider handoff."
+          )
+        binaryPath = resolved.binaryPath
+      }
+      this.throwIfNativeTextGenerationUnavailable(lifecycleSignal)
+      runtime = createRuntime({
+        settings: {
+          binaryPath,
+          apiEndpoint: configString(config.config, "apiEndpoint") ?? undefined,
+        },
+        cwd: tempDir,
+        env: providerEnvironment(config),
+        clientInfo: {
+          name: "betterc0de-text-generation",
+          title: "BetterC0de",
+          version: "0.0.0",
+        },
+      })
+      onLifecycleAbort = () => {
+        if (cancellationRequested) return
+        cancellationRequested = true
+        void runtime?.cancel().catch(() => {
+          // close() in the finalizer remains the authoritative lifecycle check.
+        })
+      }
+      if (lifecycleSignal.aborted) onLifecycleAbort()
+      else {
+        lifecycleSignal.addEventListener("abort", onLifecycleAbort, {
+          once: true,
+        })
+      }
+      runtime.onPermissionRequest(async () => ({
+        outcome: { outcome: "cancelled" },
+      }))
+      unsubscribe = runtime.onEvent((event) => {
+        if (event.type !== "content.delta" || outputExceeded) return
+        if (!output.append(event.text)) return
+        outputExceeded = true
+        if (!cancellationRequested) {
+          cancellationRequested = true
+          void runtime?.cancel().catch(() => {
+            // The size violation remains the primary error. close() below is the
+            // authoritative process-lifecycle check and is never swallowed.
+          })
+        }
+      })
+
+      result = await waitForAbort(
+        withTimeout(
+          (async () => {
+            await runtime!.start()
+            const modeState = runtime!.getModeState()
+            // Grok has no session modes. Its permission requests are all denied
+            // by the handler above; it also gets no filesystem/terminal APIs.
+            if (driver === "cursor") {
+              if (
+                !modeState ||
+                !modeState.availableModes.some((mode) => mode.id === "ask")
+              ) {
+                throw new Error(
+                  "Cursor Agent did not advertise the required ask permission mode."
+                )
+              }
+              await runtime!.setMode("ask")
+              if (runtime!.getModeState()?.currentModeId !== "ask") {
+                throw new Error(
+                  "Cursor Agent did not confirm the required ask permission mode."
+                )
+              }
+            }
+            await runtime!.setModel(
+              resolveAcpAdvertisedModelId(
+                modelSelection.model,
+                runtime!.getConfigOptions()
+              )
+            )
+            const updates = resolveAcpConfigUpdates(
+              runtime!.getConfigOptions(),
+              modelSelection.options
+            )
+            for (const update of updates) {
+              await runtime!.setConfigOption(update.configId, update.value)
+            }
+            let promptResult: Record<string, unknown>
+            try {
+              promptResult = await runtime!.prompt({
+                prompt: [{ type: "text", text: input.prompt }],
+              })
+            } catch (error) {
+              if (outputExceeded) {
+                throw new Error(
+                  `${label} output exceeded ${NATIVE_PROCESS_MAX_OUTPUT_BYTES} bytes.`,
+                  { cause: error }
+                )
+              }
+              throw error
+            }
+            if (outputExceeded) {
+              throw new Error(
+                `${label} output exceeded ${NATIVE_PROCESS_MAX_OUTPUT_BYTES} bytes.`
+              )
+            }
+            const rawText = output.text.trim()
+            if (!rawText) {
+              const stopReason =
+                typeof promptResult.stopReason === "string"
+                  ? promptResult.stopReason
+                  : null
+              throw new Error(
+                stopReason === "cancelled"
+                  ? `${label} request was cancelled.`
+                  : `${label} returned empty output.`
+              )
+            }
+            return extractJsonObject(rawText)
+          })(),
+          input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          `${label} request timed out.`
+        ),
+        lifecycleSignal,
+        `${label} request was cancelled during shutdown.`
+      )
+    } catch (error) {
+      failure = error
+    } finally {
+      if (onLifecycleAbort) {
+        lifecycleSignal.removeEventListener("abort", onLifecycleAbort)
+      }
+      unsubscribe()
+      if (runtime) {
+        try {
+          await runtime.close()
+        } catch (error) {
+          cleanupSafe = false
+          const retainedRuntime = runtime
+          this.quarantineNativeTextCleanup(tempDir, () =>
+            retainedRuntime.close()
+          )
+          failure = failure
+            ? new AggregateError(
+                [failure, error],
+                `${label} request and process cleanup both failed.`
+              )
+            : error
+        }
+      }
+      if (cleanupSafe)
+        await fs
+          .rm(tempDir, { recursive: true, force: true })
+          .catch((error) => {
+            failure = failure
+              ? new AggregateError(
+                  [failure, error],
+                  `${label} request and temporary-directory cleanup both failed.`
+                )
+              : error
+          })
+    }
+    if (failure) throw failure
+    return result!
+  }
+
+  private async connectBetterC0deServer(
+    input: BetterC0deServerConnectorInput
+  ): Promise<BetterC0deServerConnection> {
+    const serverUrl = input.serverUrl?.trim()
+    if (serverUrl) {
+      return {
+        url: serverUrl,
+        external: true,
+        close: async () => {},
+      }
+    }
+    return this.startBetterC0deServerProcess(input)
+  }
+
+  private async acquireBetterC0deTextServer(input: {
+    readonly binaryPath: string
+    readonly serverUrl?: string | null
+    readonly env: NodeJS.ProcessEnv
+    readonly signal: AbortSignal
+    readonly serverConnector: (
+      input: BetterC0deServerConnectorInput
+    ) => Promise<BetterC0deServerConnection>
+  }): Promise<BetterC0deTextServerLease> {
+    const serverUrl = input.serverUrl?.trim()
+    if (serverUrl) {
+      this.throwIfNativeTextGenerationUnavailable(input.signal)
+      const server = await input.serverConnector({
+        binaryPath: input.binaryPath,
+        serverUrl,
+        env: input.env,
+      })
+      if (!this.admissionsOpen || input.signal.aborted) {
+        const admissionFailure =
+          input.signal.reason ??
+          Object.assign(
+            new Error(
+              "Native text generation stopped during server acquisition."
+            ),
+            { code: "NATIVE_TEXT_GENERATION_SHUTDOWN" }
+          )
+        try {
+          await server.close()
+        } catch (closeFailure) {
+          throw new AggregateError(
+            [admissionFailure, closeFailure],
+            "Native text-generation server acquisition and cleanup both failed"
+          )
+        }
+        throw admissionFailure
+      }
+      return { server, release: server.close }
+    }
+
+    const entry = await this.acquireSharedBetterC0deTextServer({
+      binaryPath: input.binaryPath,
+      env: input.env,
+      serverConnector: input.serverConnector,
+      signal: input.signal,
+    })
+    return {
+      server: entry.server,
+      release: async () => {
+        this.releaseSharedBetterC0deTextServer(entry)
+      },
+    }
+  }
+
+  private async acquireSharedBetterC0deTextServer(input: {
+    readonly binaryPath: string
+    readonly env: NodeJS.ProcessEnv
+    readonly signal: AbortSignal
+    readonly serverConnector: (
+      input: BetterC0deServerConnectorInput
+    ) => Promise<BetterC0deServerConnection>
+  }): Promise<SharedBetterC0deTextServer> {
+    const fingerprint = betterC0deTextServerFingerprint(
+      input.binaryPath,
+      input.env
+    )
+    return await this.withSharedBetterC0deAcquireLock(async () => {
+      this.throwIfNativeTextGenerationUnavailable(input.signal)
+
+      const existing = this.sharedServers.get(fingerprint)
+      if (existing) {
+        cancelSharedBetterC0deIdleClose(existing)
+        if (existing.closeFailure) {
+          await this.closeSharedBetterC0deTextServer(existing)
+        } else {
+          existing.activeRequests += 1
+          return existing
+        }
+      }
+
+      const server = await input.serverConnector({
+        binaryPath: input.binaryPath,
+        env: input.env,
+      })
+      const entry: SharedBetterC0deTextServer = {
+        fingerprint,
+        server,
+        activeRequests: 1,
+        idleCloseTimer: null,
+        closePromise: null,
+        closeFailure: null,
+      }
+      this.sharedServers.set(fingerprint, entry)
+      if (!this.admissionsOpen || input.signal.aborted) {
+        const admissionFailure =
+          input.signal.reason ??
+          Object.assign(
+            new Error(
+              "Native text generation stopped during server acquisition."
+            ),
+            { code: "NATIVE_TEXT_GENERATION_SHUTDOWN" }
+          )
+        try {
+          await this.closeSharedBetterC0deTextServer(entry)
+        } catch (closeFailure) {
+          throw new AggregateError(
+            [admissionFailure, closeFailure],
+            "Shared native text-generation server acquisition and cleanup both failed"
+          )
+        }
+        throw admissionFailure
+      }
+      return entry
     })
   }
 
-  await new Promise<void>((resolve, reject) => {
-    const queued: QueuedNativeTextGeneration = {
-      operation,
-      resolve,
-      reject,
-      settled: false,
+  private async withSharedBetterC0deAcquireLock<T>(
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const previous = this.sharedAcquireTail
+    let releaseLock!: () => void
+    this.sharedAcquireTail = new Promise<void>((resolve) => {
+      releaseLock = resolve
+    })
+    await previous.catch(() => {})
+    try {
+      return await operation()
+    } finally {
+      releaseLock()
     }
-    nativeTextGenerationQueue.push(queued)
-    if (operation.controller.signal.aborted) {
-      const index = nativeTextGenerationQueue.indexOf(queued)
-      if (index >= 0) nativeTextGenerationQueue.splice(index, 1)
-      settleQueuedNativeTextGeneration(
-        queued,
-        operation.controller.signal.reason ??
-          nativeTextGenerationShutdownError()
+  }
+
+  private releaseSharedBetterC0deTextServer(
+    entry: SharedBetterC0deTextServer
+  ): void {
+    if (this.sharedServers.get(entry.fingerprint) !== entry) return
+    entry.activeRequests = Math.max(0, entry.activeRequests - 1)
+    if (entry.activeRequests > 0) return
+    cancelSharedBetterC0deIdleClose(entry)
+    entry.idleCloseTimer = setTimeout(() => {
+      void this.withSharedBetterC0deAcquireLock(async () => {
+        if (
+          this.sharedServers.get(entry.fingerprint) === entry &&
+          entry.activeRequests === 0
+        ) {
+          await this.closeSharedBetterC0deTextServer(entry)
+        }
+      }).catch((error) => {
+        entry.closeFailure = error
+      })
+    }, BETTERC0DE_TEXT_GENERATION_IDLE_TTL_MS)
+    entry.idleCloseTimer.unref?.()
+  }
+
+  private async closeSharedBetterC0deTextServer(
+    entry: SharedBetterC0deTextServer
+  ): Promise<void> {
+    cancelSharedBetterC0deIdleClose(entry)
+    if (entry.closePromise) return await entry.closePromise
+    const closePromise = (async () => {
+      await entry.server.close()
+      entry.closeFailure = null
+      if (this.sharedServers.get(entry.fingerprint) === entry) {
+        this.sharedServers.delete(entry.fingerprint)
+      }
+    })()
+    entry.closePromise = closePromise
+    try {
+      await closePromise
+    } catch (error) {
+      entry.closeFailure = error
+      throw error
+    } finally {
+      entry.closePromise = null
+    }
+  }
+
+  private throwIfNativeTextGenerationUnavailable(signal: AbortSignal): void {
+    if (signal.aborted) {
+      throw (
+        signal.reason ??
+        Object.assign(new Error("Native text generation was cancelled."), {
+          code: "NATIVE_TEXT_GENERATION_SHUTDOWN",
+        })
       )
     }
-  })
-}
-
-function releaseNativeTextGenerationSlot(
-  operation: ActiveNativeTextGeneration
-): void {
-  if (!operation.slotAcquired) return
-  operation.slotAcquired = false
-  activeNativeTextGenerationSlots = Math.max(
-    0,
-    activeNativeTextGenerationSlots - 1
-  )
-  drainNativeTextGenerationQueue()
-}
-
-function drainNativeTextGenerationQueue(): void {
-  if (!nativeTextGenerationAdmissionsOpen) return
-  const maxConcurrent = nativeTextGenerationMaxConcurrent()
-  while (
-    activeNativeTextGenerationSlots < maxConcurrent &&
-    nativeTextGenerationQueue.length > 0
-  ) {
-    const queued = nativeTextGenerationQueue.shift()!
-    const operation = queued.operation
-    if (
-      activeNativeTextGenerations.get(operation.id) !== operation ||
-      operation.controller.signal.aborted
-    ) {
-      settleQueuedNativeTextGeneration(
-        queued,
-        operation.controller.signal.reason ??
-          nativeTextGenerationShutdownError()
+    if (!this.admissionsOpen) {
+      throw Object.assign(
+        new Error("Native text generation is not accepting new work."),
+        { code: "NATIVE_TEXT_GENERATION_ADMISSION_CLOSED" }
       )
-      continue
     }
-    activeNativeTextGenerationSlots += 1
-    operation.slotAcquired = true
-    settleQueuedNativeTextGeneration(queued)
+  }
+
+  private async startBetterC0deServerProcess(input: {
+    readonly binaryPath: string
+    readonly env: NodeJS.ProcessEnv
+  }): Promise<BetterC0deServerConnection> {
+    const port = await findAvailablePort()
+    const spawnInput = nativeProcessSpawnInput(input.binaryPath, [
+      "serve",
+      `--hostname=${DEFAULT_BETTERC0DE_HOSTNAME}`,
+      `--port=${port}`,
+    ])
+    const child = spawn(spawnInput.command, [...spawnInput.args], {
+      detached: process.platform !== "win32",
+      shell: false,
+      windowsHide: true,
+      windowsVerbatimArguments: spawnInput.windowsVerbatimArguments,
+      env: {
+        ...input.env,
+        BETTERC0DE_CONFIG_CONTENT: BETTERC0DE_EMPTY_CONFIG_CONTENT,
+        BetterC0de_CONFIG_CONTENT: BETTERC0DE_EMPTY_CONFIG_CONTENT,
+      },
+    })
+    this.children.add(child)
+    keepChildErrorObserved(child, "compatibility server")
+    return new Promise((resolve, reject) => {
+      const stdout = new BoundedOutputBuffer(NATIVE_PROCESS_MAX_OUTPUT_BYTES)
+      const stderr = new BoundedOutputBuffer(NATIVE_PROCESS_MAX_OUTPUT_BYTES)
+      let settled = false
+      const timer = setTimeout(() => {
+        failStartup(
+          new Error("Timed out waiting for compatibility server to start.")
+        )
+      }, DEFAULT_BETTERC0DE_SERVER_TIMEOUT_MS)
+      timer.unref?.()
+
+      const cleanup = () => {
+        clearTimeout(timer)
+        child.stdout?.off("data", onStdout)
+        child.stderr?.off("data", onStderr)
+        child.off("error", onError)
+        child.off("exit", onExit)
+      }
+      const failStartup = (error: Error) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        void (async () => {
+          try {
+            await this.stopTrackedNativeTextChild(child)
+            reject(error)
+          } catch (cleanupError) {
+            reject(
+              new AggregateError(
+                [error, cleanupError],
+                "Compatibility server startup and process cleanup both failed"
+              )
+            )
+          }
+        })()
+      }
+      const close = () => this.stopTrackedNativeTextChild(child)
+      const onStdout = (chunk: Buffer | string) => {
+        if (stdout.append(chunk) && !settled) {
+          failStartup(
+            new Error("Compatibility server startup output exceeded limit.")
+          )
+          return
+        }
+        if (
+          settled ||
+          !BETTERC0DE_SERVER_READY_PREFIXES.some((prefix) =>
+            stdout.text.toLowerCase().includes(prefix)
+          )
+        )
+          return
+        settled = true
+        cleanup()
+        child.once("close", () => {
+          void this.confirmTrackedNativeTextChildExit(child).catch(() => {
+            // Keep the child registered so global shutdown can retry cleanup.
+          })
+        })
+        resolve({
+          url: `http://${DEFAULT_BETTERC0DE_HOSTNAME}:${port}`,
+          external: false,
+          close,
+        })
+      }
+      const onStderr = (chunk: Buffer | string) => {
+        if (stderr.append(chunk) && !settled) {
+          failStartup(
+            new Error("Compatibility server startup output exceeded limit.")
+          )
+        }
+      }
+      const onError = (error: Error) => {
+        failStartup(error)
+      }
+      const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+        failStartup(
+          new Error(
+            `compatibility server exited before ready (code ${code ?? "unknown"}, signal ${signal ?? "none"}): ${
+              stderr.text.trim() || stdout.text.trim() || "no output"
+            }`
+          )
+        )
+      }
+
+      child.stdout?.setEncoding("utf8")
+      child.stderr?.setEncoding("utf8")
+      child.stdout?.on("data", onStdout)
+      child.stderr?.on("data", onStderr)
+      child.once("error", onError)
+      child.once("exit", onExit)
+    })
+  }
+
+  private runProcess(
+    command: string,
+    args: ReadonlyArray<string>,
+    options: {
+      readonly cwd: string
+      readonly env: NodeJS.ProcessEnv
+      readonly stdin: string
+      readonly timeoutMs: number
+      readonly signal?: AbortSignal
+    }
+  ): Promise<CommandResult> {
+    return new Promise((resolve, reject) => {
+      if (options.signal?.aborted) {
+        reject(
+          options.signal.reason instanceof Error
+            ? options.signal.reason
+            : nativeTextGenerationShutdownError()
+        )
+        return
+      }
+      const spawnInput = nativeProcessSpawnInput(command, args)
+      const child = spawn(spawnInput.command, [...spawnInput.args], {
+        cwd: options.cwd,
+        env: options.env,
+        shell: false,
+        detached: process.platform !== "win32",
+        windowsHide: true,
+        windowsVerbatimArguments: spawnInput.windowsVerbatimArguments,
+        stdio: ["pipe", "pipe", "pipe"],
+      })
+      this.children.add(child)
+      keepChildErrorObserved(child, path.basename(command))
+      const stdout = new BoundedOutputBuffer(NATIVE_PROCESS_MAX_OUTPUT_BYTES)
+      const stderr = new BoundedOutputBuffer(NATIVE_PROCESS_MAX_OUTPUT_BYTES)
+      let settled = false
+      let terminalError: Error | null = null
+      const cleanup = () => {
+        clearTimeout(timer)
+        child.stdout?.removeAllListeners("data")
+        child.stderr?.removeAllListeners("data")
+        child.removeListener("error", onError)
+        child.removeListener("close", onClose)
+        child.stdin?.removeListener("error", onStdinError)
+        if (options.signal) {
+          options.signal.removeEventListener("abort", onAbort)
+        }
+      }
+      const settleRejected = (error: Error) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(error)
+      }
+      const terminate = (error: Error) => {
+        if (settled || terminalError) return
+        terminalError = error
+        child.stdin?.destroy()
+        void this.stopTrackedNativeTextChild(child).then(
+          () => settleRejected(error),
+          (cleanupError) =>
+            settleRejected(
+              new NativeTextProcessCleanupError(
+                child,
+                new AggregateError(
+                  [error, cleanupError],
+                  `${error.message}; process-tree cleanup also failed`
+                )
+              )
+            )
+        )
+      }
+      const timer = setTimeout(() => {
+        terminate(
+          new Error(
+            `${path.basename(command)} timed out after ${options.timeoutMs}ms`
+          )
+        )
+      }, options.timeoutMs)
+      timer.unref?.()
+
+      child.stdout?.setEncoding("utf8")
+      child.stderr?.setEncoding("utf8")
+      child.stdout?.on("data", (chunk) => {
+        if (stdout.append(chunk)) {
+          terminate(
+            new Error(
+              `${path.basename(command)} stdout exceeded ${NATIVE_PROCESS_MAX_OUTPUT_BYTES} bytes`
+            )
+          )
+        }
+      })
+      child.stderr?.on("data", (chunk) => {
+        if (stderr.append(chunk)) {
+          terminate(
+            new Error(
+              `${path.basename(command)} stderr exceeded ${NATIVE_PROCESS_MAX_OUTPUT_BYTES} bytes`
+            )
+          )
+        }
+      })
+      const onError = (error: Error) => {
+        if (terminalError) return
+        terminate(error)
+      }
+      const onClose = async (
+        exitCode: number | null,
+        signal: NodeJS.Signals | null
+      ) => {
+        if (settled) return
+        if (terminalError) return
+        settled = true
+        clearTimeout(timer)
+        if (process.platform !== "win32" && child.pid != null) {
+          try {
+            await this.confirmTrackedNativeTextChildExit(child)
+          } catch (error) {
+            cleanup()
+            reject(new NativeTextProcessCleanupError(child, error))
+            return
+          }
+        } else {
+          this.children.delete(child)
+        }
+        cleanup()
+        resolve({ stdout: stdout.text, stderr: stderr.text, exitCode, signal })
+      }
+      const onStdinError = (error: Error) => {
+        terminate(
+          new Error(
+            `${path.basename(command)} stdin failed: ${redactSensitiveText(error.message)}`
+          )
+        )
+      }
+      const onAbort = () => {
+        terminate(
+          options.signal?.reason instanceof Error
+            ? options.signal.reason
+            : nativeTextGenerationShutdownError()
+        )
+      }
+      child.once("error", onError)
+      child.once("close", onClose)
+      child.stdin?.once("error", onStdinError)
+      options.signal?.addEventListener("abort", onAbort, { once: true })
+      if (options.signal?.aborted) {
+        onAbort()
+        return
+      }
+      child.stdin?.end(options.stdin)
+    })
+  }
+
+  private async stopTrackedNativeTextChild(child: ChildProcess): Promise<void> {
+    const existing = this.childStops.get(child)
+    if (existing) return await existing
+    const stop = (async () => {
+      if (
+        this.unconfirmedChildren.has(child) &&
+        process.platform === "win32" &&
+        child.pid != null &&
+        hasChildExited(child)
+      ) {
+        // Once an unconfirmed root exits, its descendants cannot safely be found
+        // using a potentially reused PID. Preserve ownership until restart.
+        throw new NativeTextProcessCleanupError(
+          child,
+          new Error("Unconfirmed Windows process root has exited.")
+        )
+      }
+      await stopChildProcess(child)
+      this.unconfirmedChildren.delete(child)
+      this.children.delete(child)
+    })()
+    this.childStops.set(child, stop)
+    try {
+      await stop
+    } finally {
+      if (this.childStops.get(child) === stop) {
+        this.childStops.delete(child)
+      }
+    }
+  }
+
+  private async confirmTrackedNativeTextChildExit(
+    child: ChildProcess
+  ): Promise<void> {
+    if (process.platform !== "win32" && child.pid != null) {
+      await ensureNativePosixProcessGroupTerminated(child.pid)
+    }
+    this.children.delete(child)
   }
 }
+
+/** What a text-generation caller needs from {@link NativeTextGenerationService}. */
+export type NativeTextGenerator = Pick<NativeTextGenerationService, "run">
 
 function settleQueuedNativeTextGeneration(
   queued: QueuedNativeTextGeneration,
@@ -610,32 +1817,6 @@ function nativeTextGenerationMaxPendingSessionCleanups(): number {
   )
 }
 
-function reserveBetterC0deSessionCleanupCapacity(): void {
-  if (
-    pendingBetterC0deSessionCleanups.size +
-      pendingBetterC0deSessionCleanupReservations >=
-    nativeTextGenerationMaxPendingSessionCleanups()
-  ) {
-    throw Object.assign(
-      new Error(
-        "Native text generation is refusing BetterC0de work because unresolved session cleanup reached its configured limit."
-      ),
-      {
-        code: "NATIVE_TEXT_GENERATION_CLEANUP_BACKLOG_FULL",
-        statusCode: 503,
-      }
-    )
-  }
-  pendingBetterC0deSessionCleanupReservations += 1
-}
-
-function releaseBetterC0deSessionCleanupCapacity(): void {
-  pendingBetterC0deSessionCleanupReservations = Math.max(
-    0,
-    pendingBetterC0deSessionCleanupReservations - 1
-  )
-}
-
 function configuredNativeTextGenerationLimit(
   name: string,
   fallback: number,
@@ -667,43 +1848,6 @@ class NativeTextProcessCleanupError extends Error {
   }
 }
 
-function quarantineNativeTextCleanup(
-  directory: string,
-  stop: () => Promise<void>
-): void {
-  nativeTextCleanupQuarantines.set(directory, { stop, pending: null })
-  beginNativeTextGenerationShutdown()
-}
-
-async function cleanupNativeTextQuarantine(directory: string): Promise<void> {
-  const entry = nativeTextCleanupQuarantines.get(directory)
-  if (!entry) return
-  if (entry.pending) return await entry.pending
-  entry.pending = (async () => {
-    await entry.stop()
-    await fs.rm(directory, { recursive: true, force: true })
-    nativeTextCleanupQuarantines.delete(directory)
-  })()
-  try {
-    await entry.pending
-  } finally {
-    entry.pending = null
-  }
-}
-
-function retainFailedNativeTextProcess(
-  directory: string,
-  error: unknown
-): boolean {
-  if (!(error instanceof NativeTextProcessCleanupError)) return false
-  unconfirmedNativeTextChildren.add(error.child)
-  quarantineNativeTextCleanup(directory, async () => {
-    if (!activeNativeTextChildren.has(error.child)) return
-    await stopTrackedNativeTextChild(error.child)
-  })
-  return true
-}
-
 function resolveProviderConfig(
   settings: Settings,
   modelSelection: ModelSelection
@@ -713,607 +1857,6 @@ function resolveProviderConfig(
       (config) => config.instanceId === modelSelection.instanceId
     ) ?? null
   )
-}
-
-async function runCodexTextGeneration(
-  input: NativeTextGenerationInput,
-  config: ProviderInstanceConfig,
-  modelSelection: ModelSelection,
-  runner: NativeTextGenerationRunner,
-  lifecycleSignal: AbortSignal
-): Promise<string> {
-  throwIfNativeTextGenerationUnavailable(lifecycleSignal)
-  const tempDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), "betterc0de-codex-text-generation-")
-  )
-  const schemaPath = path.join(tempDir, "schema.json")
-  const outputPath = path.join(tempDir, "output.json")
-  let cleanupSafe = true
-  try {
-    throwIfNativeTextGenerationUnavailable(lifecycleSignal)
-    await fs.writeFile(
-      schemaPath,
-      JSON.stringify(jsonSchemaFor(input.schemaName)),
-      "utf8"
-    )
-    throwIfNativeTextGenerationUnavailable(lifecycleSignal)
-    await fs.writeFile(outputPath, "", "utf8")
-    throwIfNativeTextGenerationUnavailable(lifecycleSignal)
-
-    const binaryPath = codexBinaryPath(
-      configString(config.config, "binaryPath")
-    )
-    const effort = assertCodexReasoningEffort(
-      getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
-        getModelSelectionStringOptionValue(modelSelection, "effort") ??
-        CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT
-    )
-    const fastMode =
-      getModelSelectionBooleanOptionValue(modelSelection, "fastMode") === true
-
-    const args = [
-      "exec",
-      "--ephemeral",
-      "--skip-git-repo-check",
-      "-s",
-      "read-only",
-      "--model",
-      modelSelection.model,
-      "--config",
-      `model_reasoning_effort='${effort}'`,
-      ...(fastMode ? ["--config", "service_tier='fast'"] : []),
-      "--output-schema",
-      schemaPath,
-      "--output-last-message",
-      outputPath,
-      "-",
-    ]
-
-    const result = await runner.run(binaryPath, args, {
-      // Without a workspace, run inside the private temp dir rather than
-      // `process.cwd()` — that is the app's own install directory.
-      cwd: resolveCwd(input.cwd, tempDir),
-      env: codexProcessEnvironment(binaryPath, codexEnvironment(config)),
-      stdin: input.prompt,
-      timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      signal: lifecycleSignal,
-    })
-    if (result.exitCode !== 0) {
-      throw new Error(
-        commandFailureMessage(
-          "Codex CLI",
-          result.exitCode,
-          result.stderr,
-          result.stdout
-        )
-      )
-    }
-    const output = (
-      await readUtf8FileBounded(
-        outputPath,
-        NATIVE_PROCESS_MAX_OUTPUT_BYTES,
-        "Codex CLI output"
-      )
-    ).trim()
-    return output || result.stdout.trim()
-  } catch (error) {
-    cleanupSafe = !retainFailedNativeTextProcess(tempDir, error)
-    throw error
-  } finally {
-    if (cleanupSafe)
-      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
-  }
-}
-
-async function runClaudeTextGeneration(
-  input: NativeTextGenerationInput,
-  config: ProviderInstanceConfig,
-  modelSelection: ModelSelection,
-  runner: NativeTextGenerationRunner,
-  lifecycleSignal: AbortSignal
-): Promise<string> {
-  // Text-generation prompts can contain repository and conversation content.
-  // Run Claude without tools in an isolated directory so prompt injection
-  // cannot inherit write/execute access to the user's workspace.
-  throwIfNativeTextGenerationUnavailable(lifecycleSignal)
-  const tempDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), "betterc0de-claude-text-generation-")
-  )
-  let cleanupSafe = true
-  try {
-    throwIfNativeTextGenerationUnavailable(lifecycleSignal)
-    // The Finder-launched macOS app does not inherit the user's shell PATH.
-    // The shell process already resolved the installed Claude binary for SDK
-    // turns; handoff and compaction must use that same executable.
-    const binaryPath =
-      configString(config.config, "binaryPath") ??
-      (process.env.BETTERC0DE_CLAUDE_CODE_PATH?.trim() || "claude")
-    const effort = normalizeClaudeCliEffort(
-      getModelSelectionStringOptionValue(modelSelection, "effort") ??
-        getModelSelectionStringOptionValue(modelSelection, "reasoningEffort")
-    )
-    const args = [
-      "-p",
-      "--output-format",
-      "json",
-      "--json-schema",
-      JSON.stringify(jsonSchemaFor(input.schemaName)),
-      "--model",
-      modelSelection.model,
-      ...(effort ? ["--effort", effort] : []),
-      "--tools",
-      "",
-      "--disallowedTools",
-      "Bash,Edit,Write,NotebookEdit,Agent,Task,WebFetch,WebSearch",
-    ]
-
-    const result = await runner.run(binaryPath, args, {
-      cwd: tempDir,
-      env: claudeEnvironment(config),
-      stdin: input.prompt,
-      timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      signal: lifecycleSignal,
-    })
-    if (result.exitCode !== 0) {
-      throw new Error(
-        commandFailureMessage(
-          "Claude CLI",
-          result.exitCode,
-          result.stderr,
-          result.stdout
-        )
-      )
-    }
-
-    return extractClaudeStructuredOutput(result.stdout)
-  } catch (error) {
-    cleanupSafe = !retainFailedNativeTextProcess(tempDir, error)
-    throw error
-  } finally {
-    if (cleanupSafe)
-      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
-  }
-}
-
-async function runBetterC0deTextGeneration(
-  input: NativeTextGenerationInput,
-  config: ProviderInstanceConfig,
-  modelSelection: ModelSelection,
-  runner: NativeTextGenerationRunner,
-  lifecycleSignal: AbortSignal
-): Promise<string> {
-  const parsedModel = parseBetterC0deModelSlug(modelSelection.model)
-  if (!parsedModel) {
-    throw new Error(
-      "BetterC0de model selection must use the 'provider/model' format."
-    )
-  }
-
-  const binaryPath = configString(config.config, "binaryPath") ?? "betterc0de"
-  const serverUrl = configString(config.config, "serverUrl")
-  const serverUsername =
-    configString(config.config, "serverUsername") ??
-    process.env.BETTERC0DE_SERVER_USERNAME ??
-    process.env.BetterC0de_SERVER_USERNAME
-  const serverPassword = configString(config.config, "serverPassword")
-  const serverConnector =
-    runner.connectBetterC0deServer ?? connectBetterC0deServer
-  const createClient =
-    runner.createBetterC0deClient ?? defaultBetterC0deClientFactory
-  reserveBetterC0deSessionCleanupCapacity()
-  let cleanupReservationHeld = true
-  let serverLease: BetterC0deTextServerLease
-  try {
-    serverLease = await acquireBetterC0deTextServer({
-      binaryPath,
-      serverUrl,
-      env: providerEnvironment(config),
-      serverConnector,
-      signal: lifecycleSignal,
-    })
-  } catch (error) {
-    releaseBetterC0deSessionCleanupCapacity()
-    throw error
-  }
-  const requestAbort = new AbortController()
-  const onLifecycleAbort = () => {
-    requestAbort.abort(
-      lifecycleSignal.reason ??
-        new Error("Native text generation is shutting down.")
-    )
-  }
-  if (lifecycleSignal.aborted) onLifecycleAbort()
-  else {
-    lifecycleSignal.addEventListener("abort", onLifecycleAbort, { once: true })
-  }
-  const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS
-  const timeout = setTimeout(() => {
-    requestAbort.abort(
-      new Error(`BetterC0de request timed out after ${timeoutMs}ms`)
-    )
-  }, timeoutMs)
-  timeout.unref?.()
-  let client: BetterC0deTextClient | null = null
-  let sessionId: string | null = null
-  let output: string | undefined
-  let failure: unknown
-  let scratchDirectory: string | null = null
-  try {
-    const server = serverLease.server
-    // Same rule as the CLI paths: no workspace means a private temp dir,
-    // never the app directory. Created after the request timeout is armed so
-    // the deadline also covers this I/O.
-    if (!input.cwd?.trim()) {
-      scratchDirectory = await fs.mkdtemp(
-        path.join(os.tmpdir(), "betterc0de-compat-text-generation-")
-      )
-    }
-    client = await createClient({
-      baseUrl: server.url,
-      directory: resolveCwd(input.cwd, scratchDirectory ?? ""),
-      ...(server.external && serverPassword
-        ? { serverUsername, serverPassword }
-        : {}),
-    })
-    if (server.external && !client.session.delete) {
-      throw Object.assign(
-        new Error(
-          "External BetterC0de compatibility server does not support required session cleanup."
-        ),
-        { code: "BETTERC0DE_SESSION_CLEANUP_UNSUPPORTED" }
-      )
-    }
-    const created = await waitForAbort(
-      client.session.create(
-        {
-          title: `BetterC0de ${input.schemaName}`,
-          permission: [{ permission: "*", pattern: "*", action: "deny" }],
-        },
-        { signal: requestAbort.signal }
-      ),
-      requestAbort.signal,
-      "BetterC0de session creation timed out."
-    )
-    sessionId = created.data?.id ?? null
-    if (!sessionId)
-      throw new Error("BetterC0de session.create returned no session payload.")
-
-    const selectedAgent = getModelSelectionStringOptionValue(
-      modelSelection,
-      "agent"
-    )
-    const selectedVariant = getModelSelectionStringOptionValue(
-      modelSelection,
-      "variant"
-    )
-    const result = await waitForAbort(
-      client.session.prompt(
-        {
-          sessionID: sessionId,
-          model: parsedModel,
-          ...(selectedAgent ? { agent: selectedAgent } : {}),
-          ...(selectedVariant ? { variant: selectedVariant } : {}),
-          parts: [{ type: "text", text: input.prompt }],
-        },
-        { signal: requestAbort.signal }
-      ),
-      requestAbort.signal,
-      "BetterC0de prompt timed out."
-    )
-    const errorMessage = betterC0dePromptErrorMessage(result.data?.info?.error)
-    if (errorMessage) throw new Error(errorMessage)
-
-    const rawText = betterC0deTextResponse(result.data?.parts)
-    if (!rawText)
-      throw new Error("BetterC0de compatibility returned empty output.")
-    output = extractJsonObject(rawText)
-  } catch (error) {
-    failure = error
-  } finally {
-    clearTimeout(timeout)
-    lifecycleSignal.removeEventListener("abort", onLifecycleAbort)
-    requestAbort.abort()
-    if (client?.session.delete && sessionId) {
-      const sessionClient = client.session
-      const cleanup = registerPendingBetterC0deSessionCleanup({
-        sessionId,
-        deleteSession: (signal) =>
-          sessionClient.delete!({ sessionID: sessionId }, { signal }),
-      })
-      releaseBetterC0deSessionCleanupCapacity()
-      cleanupReservationHeld = false
-      try {
-        await cleanupPendingBetterC0deSession(cleanup)
-      } catch (error) {
-        failure = failure
-          ? new AggregateError(
-              [failure, error],
-              "BetterC0de request and session cleanup both failed."
-            )
-          : error
-      }
-    }
-    if (scratchDirectory) {
-      await fs
-        .rm(scratchDirectory, { recursive: true, force: true })
-        .catch(() => {})
-    }
-    try {
-      await serverLease.release()
-    } catch (error) {
-      failure = failure
-        ? new AggregateError(
-            [failure, error],
-            "BetterC0de request and server cleanup both failed."
-          )
-        : error
-    }
-    if (cleanupReservationHeld) {
-      releaseBetterC0deSessionCleanupCapacity()
-      cleanupReservationHeld = false
-    }
-  }
-  if (failure) throw failure
-  return output!
-}
-
-function registerPendingBetterC0deSessionCleanup(input: {
-  readonly sessionId: string
-  readonly deleteSession: (signal: AbortSignal) => Promise<unknown>
-}): PendingBetterC0deSessionCleanup {
-  const entry: PendingBetterC0deSessionCleanup = {
-    id: randomUUID(),
-    sessionId: input.sessionId,
-    deleteSession: input.deleteSession,
-    cleanupPromise: null,
-    lastFailure: null,
-  }
-  pendingBetterC0deSessionCleanups.set(entry.id, entry)
-  return entry
-}
-
-async function cleanupPendingBetterC0deSession(
-  entry: PendingBetterC0deSessionCleanup
-): Promise<void> {
-  if (entry.cleanupPromise) return await entry.cleanupPromise
-  const cleanupPromise = (async () => {
-    const cleanupAbort = new AbortController()
-    const cleanupTimer = setTimeout(() => {
-      cleanupAbort.abort(
-        Object.assign(
-          new Error(
-            `Timed out deleting BetterC0de compatibility session ${entry.sessionId}.`
-          ),
-          { code: "BETTERC0DE_SESSION_CLEANUP_TIMEOUT" }
-        )
-      )
-    }, DEFAULT_BETTERC0DE_SERVER_TIMEOUT_MS)
-    cleanupTimer.unref?.()
-    try {
-      await waitForAbort(
-        entry.deleteSession(cleanupAbort.signal),
-        cleanupAbort.signal,
-        `Timed out deleting BetterC0de compatibility session ${entry.sessionId}.`
-      )
-      entry.lastFailure = null
-      if (pendingBetterC0deSessionCleanups.get(entry.id) === entry) {
-        pendingBetterC0deSessionCleanups.delete(entry.id)
-      }
-    } finally {
-      clearTimeout(cleanupTimer)
-    }
-  })()
-  entry.cleanupPromise = cleanupPromise
-  try {
-    await cleanupPromise
-  } catch (error) {
-    entry.lastFailure = error
-    throw error
-  } finally {
-    if (entry.cleanupPromise === cleanupPromise) {
-      entry.cleanupPromise = null
-    }
-  }
-}
-
-async function runAcpTextGeneration(
-  input: NativeTextGenerationInput,
-  config: ProviderInstanceConfig,
-  modelSelection: ModelSelection,
-  runner: NativeTextGenerationRunner,
-  lifecycleSignal: AbortSignal,
-  driver: "cursor" | "grok"
-): Promise<string> {
-  // Native text-generation prompts already contain the required repository
-  // context. Do not give the external ACP agent the repository as its cwd:
-  // prompt injection must not turn a metadata helper into a workspace editor.
-  const tempDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), `betterc0de-${driver}-text-generation-`)
-  )
-  const createRuntime =
-    driver === "grok"
-      ? (runner.createGrokRuntime ?? createGrokAcpRuntime)
-      : (runner.createCursorRuntime ?? createCursorAcpRuntime)
-  const label = driver === "grok" ? "Grok" : "Cursor Agent"
-  let runtime: CursorAcpRuntime | null = null
-  let unsubscribe = () => {}
-  const output = new BoundedOutputBuffer(NATIVE_PROCESS_MAX_OUTPUT_BYTES)
-  let outputExceeded = false
-  let cancellationRequested = false
-  let onLifecycleAbort: (() => void) | null = null
-  let result: string | undefined
-  let failure: unknown
-  let cleanupSafe = true
-  try {
-    let binaryPath =
-      configString(config.config, "binaryPath") ??
-      (driver === "grok" ? "grok" : CURSOR_BINARY_NAME)
-    if (driver === "grok" && !runner.createGrokRuntime) {
-      const resolved = await resolveGrokBinaryAsync(binaryPath)
-      if (!resolved)
-        throw new Error("xAI Grok CLI is unavailable for the provider handoff.")
-      binaryPath = resolved.binaryPath
-    }
-    if (driver === "cursor" && !runner.createCursorRuntime) {
-      const resolved = await resolveCursorBinaryAsync(binaryPath)
-      if (!resolved)
-        throw new Error(
-          "Cursor Agent CLI is unavailable for the provider handoff."
-        )
-      binaryPath = resolved.binaryPath
-    }
-    throwIfNativeTextGenerationUnavailable(lifecycleSignal)
-    runtime = createRuntime({
-      settings: {
-        binaryPath,
-        apiEndpoint: configString(config.config, "apiEndpoint") ?? undefined,
-      },
-      cwd: tempDir,
-      env: providerEnvironment(config),
-      clientInfo: {
-        name: "betterc0de-text-generation",
-        title: "BetterC0de",
-        version: "0.0.0",
-      },
-    })
-    onLifecycleAbort = () => {
-      if (cancellationRequested) return
-      cancellationRequested = true
-      void runtime?.cancel().catch(() => {
-        // close() in the finalizer remains the authoritative lifecycle check.
-      })
-    }
-    if (lifecycleSignal.aborted) onLifecycleAbort()
-    else {
-      lifecycleSignal.addEventListener("abort", onLifecycleAbort, {
-        once: true,
-      })
-    }
-    runtime.onPermissionRequest(async () => ({
-      outcome: { outcome: "cancelled" },
-    }))
-    unsubscribe = runtime.onEvent((event) => {
-      if (event.type !== "content.delta" || outputExceeded) return
-      if (!output.append(event.text)) return
-      outputExceeded = true
-      if (!cancellationRequested) {
-        cancellationRequested = true
-        void runtime?.cancel().catch(() => {
-          // The size violation remains the primary error. close() below is the
-          // authoritative process-lifecycle check and is never swallowed.
-        })
-      }
-    })
-
-    result = await waitForAbort(
-      withTimeout(
-        (async () => {
-          await runtime!.start()
-          const modeState = runtime!.getModeState()
-          // Grok has no session modes. Its permission requests are all denied
-          // by the handler above; it also gets no filesystem/terminal APIs.
-          if (driver === "cursor") {
-            if (
-              !modeState ||
-              !modeState.availableModes.some((mode) => mode.id === "ask")
-            ) {
-              throw new Error(
-                "Cursor Agent did not advertise the required ask permission mode."
-              )
-            }
-            await runtime!.setMode("ask")
-            if (runtime!.getModeState()?.currentModeId !== "ask") {
-              throw new Error(
-                "Cursor Agent did not confirm the required ask permission mode."
-              )
-            }
-          }
-          await runtime!.setModel(
-            resolveCursorAcpAdvertisedModelId(
-              modelSelection.model,
-              runtime!.getConfigOptions()
-            )
-          )
-          const updates = resolveCursorAcpConfigUpdates(
-            runtime!.getConfigOptions(),
-            modelSelection.options
-          )
-          for (const update of updates) {
-            await runtime!.setConfigOption(update.configId, update.value)
-          }
-          let promptResult: Record<string, unknown>
-          try {
-            promptResult = await runtime!.prompt({
-              prompt: [{ type: "text", text: input.prompt }],
-            })
-          } catch (error) {
-            if (outputExceeded) {
-              throw new Error(
-                `${label} output exceeded ${NATIVE_PROCESS_MAX_OUTPUT_BYTES} bytes.`,
-                { cause: error }
-              )
-            }
-            throw error
-          }
-          if (outputExceeded) {
-            throw new Error(
-              `${label} output exceeded ${NATIVE_PROCESS_MAX_OUTPUT_BYTES} bytes.`
-            )
-          }
-          const rawText = output.text.trim()
-          if (!rawText) {
-            const stopReason =
-              typeof promptResult.stopReason === "string"
-                ? promptResult.stopReason
-                : null
-            throw new Error(
-              stopReason === "cancelled"
-                ? `${label} request was cancelled.`
-                : `${label} returned empty output.`
-            )
-          }
-          return extractJsonObject(rawText)
-        })(),
-        input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        `${label} request timed out.`
-      ),
-      lifecycleSignal,
-      `${label} request was cancelled during shutdown.`
-    )
-  } catch (error) {
-    failure = error
-  } finally {
-    if (onLifecycleAbort) {
-      lifecycleSignal.removeEventListener("abort", onLifecycleAbort)
-    }
-    unsubscribe()
-    if (runtime) {
-      try {
-        await runtime.close()
-      } catch (error) {
-        cleanupSafe = false
-        const retainedRuntime = runtime
-        quarantineNativeTextCleanup(tempDir, () => retainedRuntime.close())
-        failure = failure
-          ? new AggregateError(
-              [failure, error],
-              `${label} request and process cleanup both failed.`
-            )
-          : error
-      }
-    }
-    if (cleanupSafe)
-      await fs.rm(tempDir, { recursive: true, force: true }).catch((error) => {
-        failure = failure
-          ? new AggregateError(
-              [failure, error],
-              `${label} request and temporary-directory cleanup both failed.`
-            )
-          : error
-      })
-  }
-  if (failure) throw failure
-  return result!
 }
 
 function jsonSchemaFor(schemaName: NativeTextGenerationSchemaName): unknown {
@@ -1498,202 +2041,12 @@ async function defaultBetterC0deClientFactory(
   })
 }
 
-async function connectBetterC0deServer(
-  input: BetterC0deServerConnectorInput
-): Promise<BetterC0deServerConnection> {
-  const serverUrl = input.serverUrl?.trim()
-  if (serverUrl) {
-    return {
-      url: serverUrl,
-      external: true,
-      close: async () => {},
-    }
-  }
-  return startBetterC0deServerProcess(input)
-}
-
-async function acquireBetterC0deTextServer(input: {
-  readonly binaryPath: string
-  readonly serverUrl?: string | null
-  readonly env: NodeJS.ProcessEnv
-  readonly signal: AbortSignal
-  readonly serverConnector: (
-    input: BetterC0deServerConnectorInput
-  ) => Promise<BetterC0deServerConnection>
-}): Promise<BetterC0deTextServerLease> {
-  const serverUrl = input.serverUrl?.trim()
-  if (serverUrl) {
-    throwIfNativeTextGenerationUnavailable(input.signal)
-    const server = await input.serverConnector({
-      binaryPath: input.binaryPath,
-      serverUrl,
-      env: input.env,
-    })
-    if (!nativeTextGenerationAdmissionsOpen || input.signal.aborted) {
-      const admissionFailure =
-        input.signal.reason ??
-        Object.assign(
-          new Error(
-            "Native text generation stopped during server acquisition."
-          ),
-          { code: "NATIVE_TEXT_GENERATION_SHUTDOWN" }
-        )
-      try {
-        await server.close()
-      } catch (closeFailure) {
-        throw new AggregateError(
-          [admissionFailure, closeFailure],
-          "Native text-generation server acquisition and cleanup both failed"
-        )
-      }
-      throw admissionFailure
-    }
-    return { server, release: server.close }
-  }
-
-  const entry = await acquireSharedBetterC0deTextServer({
-    binaryPath: input.binaryPath,
-    env: input.env,
-    serverConnector: input.serverConnector,
-    signal: input.signal,
-  })
-  return {
-    server: entry.server,
-    release: async () => {
-      releaseSharedBetterC0deTextServer(entry)
-    },
-  }
-}
-
-async function acquireSharedBetterC0deTextServer(input: {
-  readonly binaryPath: string
-  readonly env: NodeJS.ProcessEnv
-  readonly signal: AbortSignal
-  readonly serverConnector: (
-    input: BetterC0deServerConnectorInput
-  ) => Promise<BetterC0deServerConnection>
-}): Promise<SharedBetterC0deTextServer> {
-  const fingerprint = betterC0deTextServerFingerprint(
-    input.binaryPath,
-    input.env
-  )
-  return await withSharedBetterC0deAcquireLock(async () => {
-    throwIfNativeTextGenerationUnavailable(input.signal)
-
-    const existing = sharedBetterC0deTextServers.get(fingerprint)
-    if (existing) {
-      cancelSharedBetterC0deIdleClose(existing)
-      if (existing.closeFailure) {
-        await closeSharedBetterC0deTextServer(existing)
-      } else {
-        existing.activeRequests += 1
-        return existing
-      }
-    }
-
-    const server = await input.serverConnector({
-      binaryPath: input.binaryPath,
-      env: input.env,
-    })
-    const entry: SharedBetterC0deTextServer = {
-      fingerprint,
-      server,
-      activeRequests: 1,
-      idleCloseTimer: null,
-      closePromise: null,
-      closeFailure: null,
-    }
-    sharedBetterC0deTextServers.set(fingerprint, entry)
-    if (!nativeTextGenerationAdmissionsOpen || input.signal.aborted) {
-      const admissionFailure =
-        input.signal.reason ??
-        Object.assign(
-          new Error(
-            "Native text generation stopped during server acquisition."
-          ),
-          { code: "NATIVE_TEXT_GENERATION_SHUTDOWN" }
-        )
-      try {
-        await closeSharedBetterC0deTextServer(entry)
-      } catch (closeFailure) {
-        throw new AggregateError(
-          [admissionFailure, closeFailure],
-          "Shared native text-generation server acquisition and cleanup both failed"
-        )
-      }
-      throw admissionFailure
-    }
-    return entry
-  })
-}
-
-async function withSharedBetterC0deAcquireLock<T>(
-  operation: () => Promise<T>
-): Promise<T> {
-  const previous = sharedBetterC0deAcquireTail
-  let releaseLock!: () => void
-  sharedBetterC0deAcquireTail = new Promise<void>((resolve) => {
-    releaseLock = resolve
-  })
-  await previous.catch(() => {})
-  try {
-    return await operation()
-  } finally {
-    releaseLock()
-  }
-}
-
-function releaseSharedBetterC0deTextServer(
-  entry: SharedBetterC0deTextServer
-): void {
-  if (sharedBetterC0deTextServers.get(entry.fingerprint) !== entry) return
-  entry.activeRequests = Math.max(0, entry.activeRequests - 1)
-  if (entry.activeRequests > 0) return
-  cancelSharedBetterC0deIdleClose(entry)
-  entry.idleCloseTimer = setTimeout(() => {
-    void withSharedBetterC0deAcquireLock(async () => {
-      if (
-        sharedBetterC0deTextServers.get(entry.fingerprint) === entry &&
-        entry.activeRequests === 0
-      ) {
-        await closeSharedBetterC0deTextServer(entry)
-      }
-    }).catch((error) => {
-      entry.closeFailure = error
-    })
-  }, BETTERC0DE_TEXT_GENERATION_IDLE_TTL_MS)
-  entry.idleCloseTimer.unref?.()
-}
-
 function cancelSharedBetterC0deIdleClose(
   entry: SharedBetterC0deTextServer
 ): void {
   if (!entry.idleCloseTimer) return
   clearTimeout(entry.idleCloseTimer)
   entry.idleCloseTimer = null
-}
-
-async function closeSharedBetterC0deTextServer(
-  entry: SharedBetterC0deTextServer
-): Promise<void> {
-  cancelSharedBetterC0deIdleClose(entry)
-  if (entry.closePromise) return await entry.closePromise
-  const closePromise = (async () => {
-    await entry.server.close()
-    entry.closeFailure = null
-    if (sharedBetterC0deTextServers.get(entry.fingerprint) === entry) {
-      sharedBetterC0deTextServers.delete(entry.fingerprint)
-    }
-  })()
-  entry.closePromise = closePromise
-  try {
-    await closePromise
-  } catch (error) {
-    entry.closeFailure = error
-    throw error
-  } finally {
-    entry.closePromise = null
-  }
 }
 
 function betterC0deTextServerFingerprint(
@@ -1714,139 +2067,6 @@ function betterC0deTextServerFingerprint(
     updateField(value === undefined ? "undefined:" : `string:${value}`)
   }
   return hash.digest("hex")
-}
-
-function throwIfNativeTextGenerationUnavailable(signal: AbortSignal): void {
-  if (signal.aborted) {
-    throw (
-      signal.reason ??
-      Object.assign(new Error("Native text generation was cancelled."), {
-        code: "NATIVE_TEXT_GENERATION_SHUTDOWN",
-      })
-    )
-  }
-  if (!nativeTextGenerationAdmissionsOpen) {
-    throw Object.assign(
-      new Error("Native text generation is not accepting new work."),
-      { code: "NATIVE_TEXT_GENERATION_ADMISSION_CLOSED" }
-    )
-  }
-}
-
-async function startBetterC0deServerProcess(input: {
-  readonly binaryPath: string
-  readonly env: NodeJS.ProcessEnv
-}): Promise<BetterC0deServerConnection> {
-  const port = await findAvailablePort()
-  const spawnInput = nativeProcessSpawnInput(input.binaryPath, [
-    "serve",
-    `--hostname=${DEFAULT_BETTERC0DE_HOSTNAME}`,
-    `--port=${port}`,
-  ])
-  const child = spawn(spawnInput.command, [...spawnInput.args], {
-    detached: process.platform !== "win32",
-    shell: false,
-    windowsHide: true,
-    windowsVerbatimArguments: spawnInput.windowsVerbatimArguments,
-    env: {
-      ...input.env,
-      BETTERC0DE_CONFIG_CONTENT: BETTERC0DE_EMPTY_CONFIG_CONTENT,
-      BetterC0de_CONFIG_CONTENT: BETTERC0DE_EMPTY_CONFIG_CONTENT,
-    },
-  })
-  activeNativeTextChildren.add(child)
-  keepChildErrorObserved(child, "compatibility server")
-  return new Promise((resolve, reject) => {
-    const stdout = new BoundedOutputBuffer(NATIVE_PROCESS_MAX_OUTPUT_BYTES)
-    const stderr = new BoundedOutputBuffer(NATIVE_PROCESS_MAX_OUTPUT_BYTES)
-    let settled = false
-    const timer = setTimeout(() => {
-      failStartup(
-        new Error("Timed out waiting for compatibility server to start.")
-      )
-    }, DEFAULT_BETTERC0DE_SERVER_TIMEOUT_MS)
-    timer.unref?.()
-
-    const cleanup = () => {
-      clearTimeout(timer)
-      child.stdout?.off("data", onStdout)
-      child.stderr?.off("data", onStderr)
-      child.off("error", onError)
-      child.off("exit", onExit)
-    }
-    const failStartup = (error: Error) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      void (async () => {
-        try {
-          await stopTrackedNativeTextChild(child)
-          reject(error)
-        } catch (cleanupError) {
-          reject(
-            new AggregateError(
-              [error, cleanupError],
-              "Compatibility server startup and process cleanup both failed"
-            )
-          )
-        }
-      })()
-    }
-    const close = () => stopTrackedNativeTextChild(child)
-    const onStdout = (chunk: Buffer | string) => {
-      if (stdout.append(chunk) && !settled) {
-        failStartup(
-          new Error("Compatibility server startup output exceeded limit.")
-        )
-        return
-      }
-      if (
-        settled ||
-        !BETTERC0DE_SERVER_READY_PREFIXES.some((prefix) =>
-          stdout.text.toLowerCase().includes(prefix)
-        )
-      )
-        return
-      settled = true
-      cleanup()
-      child.once("close", () => {
-        void confirmTrackedNativeTextChildExit(child).catch(() => {
-          // Keep the child registered so global shutdown can retry cleanup.
-        })
-      })
-      resolve({
-        url: `http://${DEFAULT_BETTERC0DE_HOSTNAME}:${port}`,
-        external: false,
-        close,
-      })
-    }
-    const onStderr = (chunk: Buffer | string) => {
-      if (stderr.append(chunk) && !settled) {
-        failStartup(
-          new Error("Compatibility server startup output exceeded limit.")
-        )
-      }
-    }
-    const onError = (error: Error) => {
-      failStartup(error)
-    }
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      failStartup(
-        new Error(
-          `compatibility server exited before ready (code ${code ?? "unknown"}, signal ${signal ?? "none"}): ${
-            stderr.text.trim() || stdout.text.trim() || "no output"
-          }`
-        )
-      )
-    }
-
-    child.stdout?.setEncoding("utf8")
-    child.stderr?.setEncoding("utf8")
-    child.stdout?.on("data", onStdout)
-    child.stderr?.on("data", onStderr)
-    child.once("error", onError)
-    child.once("exit", onExit)
-  })
 }
 
 function findAvailablePort(): Promise<number> {
@@ -1986,158 +2206,6 @@ function commandFailureMessage(
     : `${label} command failed with code ${exitCode ?? "unknown"}.`
 }
 
-function runProcess(
-  command: string,
-  args: ReadonlyArray<string>,
-  options: {
-    readonly cwd: string
-    readonly env: NodeJS.ProcessEnv
-    readonly stdin: string
-    readonly timeoutMs: number
-    readonly signal?: AbortSignal
-  }
-): Promise<CommandResult> {
-  return new Promise((resolve, reject) => {
-    if (options.signal?.aborted) {
-      reject(
-        options.signal.reason instanceof Error
-          ? options.signal.reason
-          : nativeTextGenerationShutdownError()
-      )
-      return
-    }
-    const spawnInput = nativeProcessSpawnInput(command, args)
-    const child = spawn(spawnInput.command, [...spawnInput.args], {
-      cwd: options.cwd,
-      env: options.env,
-      shell: false,
-      detached: process.platform !== "win32",
-      windowsHide: true,
-      windowsVerbatimArguments: spawnInput.windowsVerbatimArguments,
-      stdio: ["pipe", "pipe", "pipe"],
-    })
-    activeNativeTextChildren.add(child)
-    keepChildErrorObserved(child, path.basename(command))
-    const stdout = new BoundedOutputBuffer(NATIVE_PROCESS_MAX_OUTPUT_BYTES)
-    const stderr = new BoundedOutputBuffer(NATIVE_PROCESS_MAX_OUTPUT_BYTES)
-    let settled = false
-    let terminalError: Error | null = null
-    const cleanup = () => {
-      clearTimeout(timer)
-      child.stdout?.removeAllListeners("data")
-      child.stderr?.removeAllListeners("data")
-      child.removeListener("error", onError)
-      child.removeListener("close", onClose)
-      child.stdin?.removeListener("error", onStdinError)
-      if (options.signal) {
-        options.signal.removeEventListener("abort", onAbort)
-      }
-    }
-    const settleRejected = (error: Error) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      reject(error)
-    }
-    const terminate = (error: Error) => {
-      if (settled || terminalError) return
-      terminalError = error
-      child.stdin?.destroy()
-      void stopTrackedNativeTextChild(child).then(
-        () => settleRejected(error),
-        (cleanupError) =>
-          settleRejected(
-            new NativeTextProcessCleanupError(
-              child,
-              new AggregateError(
-                [error, cleanupError],
-                `${error.message}; process-tree cleanup also failed`
-              )
-            )
-          )
-      )
-    }
-    const timer = setTimeout(() => {
-      terminate(
-        new Error(
-          `${path.basename(command)} timed out after ${options.timeoutMs}ms`
-        )
-      )
-    }, options.timeoutMs)
-    timer.unref?.()
-
-    child.stdout?.setEncoding("utf8")
-    child.stderr?.setEncoding("utf8")
-    child.stdout?.on("data", (chunk) => {
-      if (stdout.append(chunk)) {
-        terminate(
-          new Error(
-            `${path.basename(command)} stdout exceeded ${NATIVE_PROCESS_MAX_OUTPUT_BYTES} bytes`
-          )
-        )
-      }
-    })
-    child.stderr?.on("data", (chunk) => {
-      if (stderr.append(chunk)) {
-        terminate(
-          new Error(
-            `${path.basename(command)} stderr exceeded ${NATIVE_PROCESS_MAX_OUTPUT_BYTES} bytes`
-          )
-        )
-      }
-    })
-    const onError = (error: Error) => {
-      if (terminalError) return
-      terminate(error)
-    }
-    const onClose = async (
-      exitCode: number | null,
-      signal: NodeJS.Signals | null
-    ) => {
-      if (settled) return
-      if (terminalError) return
-      settled = true
-      clearTimeout(timer)
-      if (process.platform !== "win32" && child.pid != null) {
-        try {
-          await confirmTrackedNativeTextChildExit(child)
-        } catch (error) {
-          cleanup()
-          reject(new NativeTextProcessCleanupError(child, error))
-          return
-        }
-      } else {
-        activeNativeTextChildren.delete(child)
-      }
-      cleanup()
-      resolve({ stdout: stdout.text, stderr: stderr.text, exitCode, signal })
-    }
-    const onStdinError = (error: Error) => {
-      terminate(
-        new Error(
-          `${path.basename(command)} stdin failed: ${redactSensitiveText(error.message)}`
-        )
-      )
-    }
-    const onAbort = () => {
-      terminate(
-        options.signal?.reason instanceof Error
-          ? options.signal.reason
-          : nativeTextGenerationShutdownError()
-      )
-    }
-    child.once("error", onError)
-    child.once("close", onClose)
-    child.stdin?.once("error", onStdinError)
-    options.signal?.addEventListener("abort", onAbort, { once: true })
-    if (options.signal?.aborted) {
-      onAbort()
-      return
-    }
-    child.stdin?.end(options.stdin)
-  })
-}
-
 function nativeProcessSpawnInput(
   command: string,
   args: ReadonlyArray<string>
@@ -2151,9 +2219,8 @@ function nativeProcessSpawnInput(
   }
   const directExe = path.isAbsolute(command) && /\.exe$/i.test(command)
   if (directExe) return { command, args, windowsVerbatimArguments: false }
-  const shell = process.env.ComSpec?.trim() || "cmd.exe"
   return {
-    command: shell,
+    command: resolveComSpec(),
     args: buildWindowsCmdArgs(command, args),
     windowsVerbatimArguments: true,
   }
@@ -2293,46 +2360,6 @@ async function stopChildProcess(child: ChildProcess): Promise<void> {
   if (!exited) {
     throw new Error("Child process tree did not exit after forced termination.")
   }
-}
-
-async function stopTrackedNativeTextChild(child: ChildProcess): Promise<void> {
-  const existing = nativeTextChildStops.get(child)
-  if (existing) return await existing
-  const stop = (async () => {
-    if (
-      unconfirmedNativeTextChildren.has(child) &&
-      process.platform === "win32" &&
-      child.pid != null &&
-      hasChildExited(child)
-    ) {
-      // Once an unconfirmed root exits, its descendants cannot safely be found
-      // using a potentially reused PID. Preserve ownership until restart.
-      throw new NativeTextProcessCleanupError(
-        child,
-        new Error("Unconfirmed Windows process root has exited.")
-      )
-    }
-    await stopChildProcess(child)
-    unconfirmedNativeTextChildren.delete(child)
-    activeNativeTextChildren.delete(child)
-  })()
-  nativeTextChildStops.set(child, stop)
-  try {
-    await stop
-  } finally {
-    if (nativeTextChildStops.get(child) === stop) {
-      nativeTextChildStops.delete(child)
-    }
-  }
-}
-
-async function confirmTrackedNativeTextChildExit(
-  child: ChildProcess
-): Promise<void> {
-  if (process.platform !== "win32" && child.pid != null) {
-    await ensureNativePosixProcessGroupTerminated(child.pid)
-  }
-  activeNativeTextChildren.delete(child)
 }
 
 async function runWindowsTaskkill(

@@ -9,7 +9,7 @@ import {
   resolveAppEffectiveRules,
   resolveEffectiveRules,
   resolveTurnSystemInstruction,
-  runtimeRulesFileForDataDir,
+  runtimeRulesFile,
 } from "./effective-rules"
 
 const tempRoots: string[] = []
@@ -384,15 +384,23 @@ describe("turn context integration", () => {
     expect(systemInstruction).toContain("workspace rule")
   })
 
-  it("derives the legacy runtime rules path only from the known data layout", async () => {
+  it("reads the user's rules from the runtime home the config names", async () => {
     const root = await makeTempRoot()
-    vi.stubEnv("BETTERC0DE_HOME", "")
+    // The environment never moves it; ServerConfig resolved it once.
+    vi.stubEnv("BETTERC0DE_HOME", path.join(root, "elsewhere"))
     expect(
-      runtimeRulesFileForDataDir(path.join(root, "runtime", "userdata"))
+      runtimeRulesFile({
+        dataDir: path.join(root, "custom-data"),
+        runtimeHome: path.join(root, "runtime"),
+      })
     ).toBe(path.join(root, "runtime", "rules.md"))
-    expect(runtimeRulesFileForDataDir(path.join(root, "runtime", "data"))).toBe(
-      null
-    )
+    // A hand-built config without one keeps the standard layout rule.
+    expect(
+      runtimeRulesFile({ dataDir: path.join(root, "runtime", "userdata") })
+    ).toBe(path.join(root, "runtime", "rules.md"))
+    expect(
+      runtimeRulesFile({ dataDir: path.join(root, "runtime", "data") })
+    ).toBe(null)
   })
 })
 

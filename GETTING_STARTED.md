@@ -43,6 +43,8 @@ Open the folder containing your project. Check that the file tree shows the file
 
 Choose **Editor** for a familiar files-and-chat layout, **Agent** to focus on conversations, or **Canvas** to organize projects and previews visually. You can change modes as you work.
 
+Opening a folder does not trust it. Before the agent works in **Agent** mode, choose **Settings → Permissions → Trust project** for that folder. Trust also lets the project's own MCP servers, formatters and Claude hooks run, so only trust projects whose configuration you are willing to run.
+
 ## 4. Give your agent a clear first task
 
 Select an available provider and model, then describe your goal. Include the result you want and any constraints that matter.

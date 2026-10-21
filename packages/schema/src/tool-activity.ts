@@ -1,4 +1,5 @@
 import { displayCommand } from "./command-display"
+import { recordOrUndefined } from "./json-read"
 
 export type ToolLifecycleItemType =
   | "command_execution"
@@ -6,12 +7,6 @@ export type ToolLifecycleItemType =
   | "file_change"
   | "web_search"
   | (string & {})
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
 
 function asTrimmedString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -51,12 +46,12 @@ function extractToolCommand(
   data: Record<string, unknown> | undefined,
   title: string | undefined
 ) {
-  const item = asRecord(data?.item)
-  const raw = asRecord(data?.rawInput)
+  const item = recordOrUndefined(data?.item)
+  const raw = recordOrUndefined(data?.rawInput)
   for (const source of [
     item,
-    asRecord(item?.input),
-    asRecord(item?.result),
+    recordOrUndefined(item?.input),
+    recordOrUndefined(item?.result),
     data,
     raw,
   ]) {
@@ -107,7 +102,7 @@ const pathContainers = [
 function* nestedPathValues(value: unknown): Generator<unknown> {
   if (Array.isArray(value)) yield* value
   else {
-    const record = asRecord(value)
+    const record = recordOrUndefined(value)
     if (record) for (const key of pathContainers) yield record[key]
   }
 }
@@ -125,7 +120,7 @@ function extractPrimaryPath(
       stack.pop()
       continue
     }
-    const record = asRecord(next.value)
+    const record = recordOrUndefined(next.value)
     if (record) {
       for (const field of pathFields) {
         const path = maybePathLike(asTrimmedString(record[field]))
@@ -183,7 +178,7 @@ function summarizeToolTextOutput(value: string): string | undefined {
 function summarizeToolRawOutput(
   data: Record<string, unknown> | undefined
 ): string | undefined {
-  const output = asRecord(data?.rawOutput)
+  const output = recordOrUndefined(data?.rawOutput)
   const count = output?.totalFiles
   if (typeof count === "number" && Number.isFinite(count)) {
     return [
@@ -559,8 +554,8 @@ function describeToolActivity(
 ): ToolActivityDescription {
   const title = asTrimmedString(input.title)
   const fallback = asTrimmedString(input.fallbackSummary) ?? "Tool"
-  const data = asRecord(input.data)
-  const raw = asRecord(data?.rawInput)
+  const data = recordOrUndefined(input.data)
+  const raw = recordOrUndefined(data?.rawInput)
   const output = summarizeToolRawOutput(data)
   const detail = stripTrailingExitCode(asTrimmedString(input.detail))
   const action = classifyToolAction({ itemType: input.itemType, title, data })
@@ -640,7 +635,7 @@ export function describeProviderToolActivity(
   const name = asTrimmedString(input.toolName)
   const title = asTrimmedString(input.title) ?? name
   const rawInputValue = input.rawInput ?? input.input
-  const rawInput = asRecord(rawInputValue)
+  const rawInput = recordOrUndefined(rawInputValue)
   // A provider's own classification wins, unless it only says "other".
   const kind =
     explicitToolKind(input.kind) ??
@@ -649,7 +644,7 @@ export function describeProviderToolActivity(
   const itemType = inferToolItemType({ itemType: input.itemType, kind })
   const command = extractToolCommand({ rawInput: rawInputValue }, title)
   const data: Record<string, unknown> = {
-    ...(asRecord(input.data) ?? {}),
+    ...(recordOrUndefined(input.data) ?? {}),
   }
 
   if (kind) {
@@ -667,7 +662,7 @@ export function describeProviderToolActivity(
     data.rawOutput = input.output
   }
   data.item = {
-    ...(asRecord(data.item) ?? {}),
+    ...(recordOrUndefined(data.item) ?? {}),
     ...(rawInputValue !== undefined ? { input: rawInputValue } : {}),
     ...(input.output !== undefined ? { result: input.output } : {}),
     ...(command ? { command } : {}),
@@ -721,7 +716,7 @@ function outputTextOf(value: unknown, depth: number): string | undefined {
       .filter((part): part is string => Boolean(part))
     return parts.length > 0 ? parts.join("\n") : undefined
   }
-  const record = asRecord(value)
+  const record = recordOrUndefined(value)
   if (!record) return undefined
   if (typeof record.stdout === "string") {
     const stderr = asTrimmedString(record.stderr)

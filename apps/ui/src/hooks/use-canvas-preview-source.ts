@@ -6,6 +6,7 @@ import {
   type CanvasPreviewSource,
 } from "@/lib/canvas-preview-source"
 import type { useDevServer } from "./use-dev-server"
+import { getElectronApi } from "@/services/ipc-facade"
 
 type HtmlState = { key: string; url: string | null; error: string | null }
 
@@ -38,7 +39,7 @@ export function useCanvasPreviewSource(
     operation.current++
     setPicker({ busy: false, error: null })
     if (relativePath) {
-      const api = window.electronAPI
+      const api = getElectronApi()
       if (!api?.openHtmlPreview || !projectPath) {
         setHtml({
           key: htmlKey,
@@ -85,11 +86,12 @@ export function useCanvasPreviewSource(
   )
 
   const chooseHtml = useCallback(async () => {
-    if (!projectPath || !window.electronAPI?.openHtmlPreview) return
+    const desktopBridge = getElectronApi()
+    if (!projectPath || !desktopBridge?.openHtmlPreview) return
     const version = ++operation.current
     setPicker({ busy: true, error: null })
     try {
-      const result = await window.electronAPI.openHtmlPreview({ projectPath })
+      const result = await desktopBridge.openHtmlPreview({ projectPath })
       if (operation.current !== version) return
       if (result.status === "ready") {
         setHtml({
@@ -140,6 +142,6 @@ export function useCanvasPreviewSource(
       picker.error ??
       (source.kind === "html" ? (currentHtml?.error ?? null) : null),
     resolving: source.kind === "html" && !currentHtml,
-    canChooseHtml: Boolean(projectPath && window.electronAPI?.openHtmlPreview),
+    canChooseHtml: Boolean(projectPath && getElectronApi()?.openHtmlPreview),
   }
 }

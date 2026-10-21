@@ -11,6 +11,7 @@ import {
   requiresWindowsCmdWrapper,
   resolveComSpec,
 } from "../../security/windowsCommandLine"
+import { compareCliVersions } from "../../cli/versions"
 import { terminateProviderChildProcessTree } from "./ChildProcessTermination"
 
 const LATEST_VERSION_CACHE_TTL_MS = 60 * 60 * 1000
@@ -434,7 +435,11 @@ function makeProviderMaintenanceCapabilities(input: {
   }
 }
 
-/** Update commands must not inherit provider credentials or the parent environment. */
+/**
+ * Update commands start from the non-secret user environment (the child
+ * environment denylist already withholds credentials) and may add only the
+ * instance's non-secret overrides, so provider credentials never reach them.
+ */
 export function isProviderMaintenanceEnvironmentKey(
   name: string,
   sensitive = false
@@ -500,25 +505,9 @@ function advisoryStatus(
   currentVersion: string | null,
   latestVersion: string | null
 ): ProviderVersionAdvisory["status"] {
-  if (!currentVersion || !latestVersion) return "unknown"
-  return compareSemverVersions(currentVersion, latestVersion) < 0
-    ? "behind_latest"
-    : "current"
-}
-
-function compareSemverVersions(a: string, b: string): number {
-  const left = parseVersion(a)
-  const right = parseVersion(b)
-  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
-    const diff = (left[index] ?? 0) - (right[index] ?? 0)
-    if (diff !== 0) return diff
-  }
-  return 0
-}
-
-function parseVersion(value: string): number[] {
-  const numeric = value.match(/\d+(?:\.\d+)*/)?.[0] ?? ""
-  return numeric.split(".").map((part) => Number.parseInt(part, 10) || 0)
+  const order = compareCliVersions(currentVersion, latestVersion)
+  if (order === null) return "unknown"
+  return order < 0 ? "behind_latest" : "current"
 }
 
 async function fetchNpmLatestVersion(

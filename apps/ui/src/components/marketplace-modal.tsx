@@ -46,10 +46,10 @@ import {
   TerminalIcon,
 } from "lucide-react"
 
-const api = () => window.electronAPI
+const api = () => getElectronApi()
 
 function openInstallPath(p: string) {
-  const e = window.electronAPI
+  const e = getElectronApi()
   if (e?.openPath) {
     e.openPath(p)
   } else if (e?.openExternal) {
@@ -1707,3 +1707,4 @@ export function MarketplaceModal({
 
 // Need PackageIcon — import from lucide
 import { PackageIcon } from "lucide-react"
+import { getElectronApi } from "@/services/ipc-facade"

@@ -3,8 +3,11 @@ import type {
   ThreadMessageUpsertRequest,
   ThreadSaveMessage,
 } from "../../services/threads/types"
-import { projectProviderEventToThreadActivity } from "../activity-projection"
-import type { ProviderRuntimeEvent } from "../types"
+import {
+  boundProviderRuntimeEventForBroadcast,
+  projectProviderEventToThreadActivity,
+} from "../activity-projection"
+import type { LegacyProviderEvent } from "../types"
 import type { ProviderRuntimeEvent as CanonicalProviderRuntimeEvent } from "./contracts"
 import { getBackendLoggingSettings } from "../../observability/logger"
 import { ProviderRuntimeJournalSerializationError } from "./ProviderRuntimeEventJournal"
@@ -23,7 +26,10 @@ import {
   type LegacyViewBridge,
   type ProviderRuntimeJournalEntry,
 } from "./journalEntry"
-import { canonicalProviderKindAlias } from "./providerKindAliases"
+import {
+  canonicalProviderKindAlias,
+  compactProviderAlias,
+} from "./providerKindAliases"
 import { isGenericToolName, asRecord, readString } from "@betterc0de/schema"
 import {
   backendMetrics,
@@ -35,14 +41,14 @@ import {
 /**
  * Two intake lanes: `"event"` carries the legacy shape (the frozen in-process
  * provider stack and the checkpoint reactor's own emissions), `"canonical"`
- * carries the runtime hub's `ProviderRuntimeEvent`. Both are journaled
+ * carries the runtime hub's canonical `ProviderRuntimeEvent`. Both are journaled
  * before anything else; only the canonical lane runs the legacy bridge, and
  * it runs it behind the journal.
  */
 export interface ProviderRuntimeEventBusLike {
   on(
     eventName: "event",
-    listener: (event: ProviderRuntimeEvent) => void
+    listener: (event: LegacyProviderEvent) => void
   ): unknown
   on(
     eventName: "canonical",
@@ -50,7 +56,7 @@ export interface ProviderRuntimeEventBusLike {
   ): unknown
   off(
     eventName: "event",
-    listener: (event: ProviderRuntimeEvent) => void
+    listener: (event: LegacyProviderEvent) => void
   ): unknown
   off(
     eventName: "canonical",
@@ -71,6 +77,8 @@ export interface ProviderRuntimeThreadMetadataStore {
     providerKind?: string,
     updatedAt?: string
   ): void
+  /** The backend's own Autonomous Work run state (`null`: no run). */
+  updateThreadAutonomy?(threadId: string, autonomy: unknown): void
 }
 
 type ProviderRuntimeLifecycleKind =
@@ -123,7 +131,7 @@ export interface ProviderRuntimeSessionLifecycleStore {
 }
 
 export interface ProviderRuntimeCheckpointDiffStore {
-  recordRuntimeEvent(event: ProviderRuntimeEvent): void
+  recordRuntimeEvent(event: LegacyProviderEvent): void
 }
 
 export interface ProviderRuntimeEventJournal {
@@ -356,7 +364,7 @@ export interface ProviderRuntimeIngestionOptions {
    * sees an event before the journal did, never one the bridge declined or
    * failed on, and never a journaled one whose projection was blocked.
    */
-  readonly projectedSink?: (event: ProviderRuntimeEvent) => void
+  readonly projectedSink?: (event: LegacyProviderEvent) => void
 }
 
 const MAX_BUFFERED_PROPOSED_PLANS = 10_000
@@ -625,7 +633,7 @@ export class ProviderRuntimeIngestion {
     if (this.unsubscribe) return this.unsubscribe
     this.stopped = false
     if (this.journalQueue.length > 0) this.scheduleJournalQueueRetry()
-    const listener = (event: ProviderRuntimeEvent) => this.ingest(event)
+    const listener = (event: LegacyProviderEvent) => this.ingest(event)
     const canonicalListener = (event: CanonicalProviderRuntimeEvent) =>
       this.ingestCanonical(event)
     this.options.eventBus.on("event", listener)
@@ -700,7 +708,7 @@ export class ProviderRuntimeIngestion {
   }
 
   /** Legacy-shaped intake: the frozen in-process stack and the reactor. */
-  ingest(event: ProviderRuntimeEvent): void {
+  ingest(event: LegacyProviderEvent): void {
     this.ingestEntry(legacyJournalEntry(event))
   }
 
@@ -783,7 +791,7 @@ export class ProviderRuntimeIngestion {
    * a failed view (`error`) so the caller can decide what that costs.
    */
   private legacyViewOfEntry(entry: ProviderRuntimeJournalEntry): {
-    readonly view: ProviderRuntimeEvent | null
+    readonly view: LegacyProviderEvent | null
     readonly error: unknown
   } {
     try {
@@ -1091,9 +1099,12 @@ export class ProviderRuntimeIngestion {
           )
         }
         this.logProviderRuntimeEvent(event, wireMeta, clients)
+        // The wire copy of a tool or approval frame is bounded like the
+        // activity it projects to; the journal and every listener above
+        // keep the event whole.
         this.options.broadcaster.broadcast({
           channel: "provider.runtimeEvent",
-          data: event,
+          data: boundProviderRuntimeEventForBroadcast(event),
         })
       } catch (err) {
         this.options.logger.error(
@@ -1106,7 +1117,7 @@ export class ProviderRuntimeIngestion {
   }
 
   private ingestChatDispatchLifecycle(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     strictProjection: boolean
   ): boolean {
     const store = this.options.chatDispatchLifecycleStore
@@ -1311,7 +1322,7 @@ export class ProviderRuntimeIngestion {
     this.projectionDegradedThreads.add(source.threadId)
     const sequence = this.sequence + 1
     this.sequence = sequence
-    const notice: ProviderRuntimeEvent = {
+    const notice: LegacyProviderEvent = {
       event_type: "runtime.warning",
       thread_id: source.threadId,
       payload: {
@@ -1476,7 +1487,7 @@ export class ProviderRuntimeIngestion {
   }
 
   private ingestAssistantTranscript(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     flushImmediately = false,
     projectionSequence = this.sequence,
     recoverySnapshot = false
@@ -1672,7 +1683,7 @@ export class ProviderRuntimeIngestion {
   }
 
   private assistantTranscript(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     payload: Record<string, unknown>,
     turnId: string,
     recoverySnapshot = false
@@ -2334,7 +2345,7 @@ export class ProviderRuntimeIngestion {
   }
 
   private logProviderRuntimeEvent(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     eventMeta: ReturnType<typeof providerEventMeta>,
     clients: number
   ): void {
@@ -2344,7 +2355,7 @@ export class ProviderRuntimeIngestion {
   }
 
   private providerRuntimeLogRecord(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     eventMeta: ReturnType<typeof providerEventMeta>,
     clients: number
   ): ProviderRuntimeLogRecord | null {
@@ -2418,7 +2429,7 @@ export class ProviderRuntimeIngestion {
   }
 
   private reasoningStartedLogRecord(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     payload: Record<string, unknown>,
     bindings: Record<string, unknown>
   ): ProviderRuntimeLogRecord | null {
@@ -2433,7 +2444,7 @@ export class ProviderRuntimeIngestion {
   }
 
   private clearReasoningStartForEvent(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     payload: Record<string, unknown>
   ): void {
     this.loggedReasoningStarts.delete(reasoningStartKey(event, payload))
@@ -2447,7 +2458,7 @@ export class ProviderRuntimeIngestion {
   }
 
   private ingestThreadMetadata(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     strict = false
   ): boolean {
     if (event.event_type !== "thread.metadata.updated") return true
@@ -2456,8 +2467,21 @@ export class ProviderRuntimeIngestion {
     const metadata =
       payload.metadata === undefined ? payload : asRecord(payload.metadata)
     const hasGoal = Object.prototype.hasOwnProperty.call(metadata, "goal")
-    if (!title && !hasGoal) return true
+    // Only the backend's Autonomous Work runtime reports a run: its updates
+    // carry a mutation id and no provider (a provider's own metadata is
+    // never taken for one).
+    const hasAutonomy =
+      Object.prototype.hasOwnProperty.call(metadata, "autonomy") &&
+      typeof metadata.autonomyMutationId === "string" &&
+      providerSessionLifecycleTarget(event) === null
+    if (!title && !hasGoal && !hasAutonomy) return true
     try {
+      if (hasAutonomy) {
+        this.options.threadMetadataStore?.updateThreadAutonomy?.(
+          event.thread_id,
+          metadata.autonomy
+        )
+      }
       if (title) {
         this.options.threadMetadataStore?.updateThreadTitle(
           event.thread_id,
@@ -2485,7 +2509,7 @@ export class ProviderRuntimeIngestion {
   }
 
   private ingestSourceProposedPlanImplementation(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     strict = false,
     broadcast = true
   ): boolean {
@@ -2599,7 +2623,7 @@ export class ProviderRuntimeIngestion {
   }
 
   private ingestSessionLifecycle(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     strict = false
   ): boolean {
     const target = providerSessionLifecycleTarget(event)
@@ -2636,7 +2660,7 @@ export class ProviderRuntimeIngestion {
   }
 
   private ingestProposedPlanBuffer(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     sequence: number,
     broadcast: boolean
   ): void {
@@ -2733,7 +2757,7 @@ export class ProviderRuntimeIngestion {
   }
 
   private consumeBufferedProposedPlanCompletion(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     sequence: number
   ): BufferedProposedPlanCompletion {
     const eventType = event.event_type
@@ -2779,7 +2803,7 @@ export class ProviderRuntimeIngestion {
   }
 
   private restoreBufferedProposedPlan(
-    event: ProviderRuntimeEvent,
+    event: LegacyProviderEvent,
     payload: Record<string, unknown>,
     beforeSequence: number
   ): BufferedProposedPlan | null {
@@ -2868,7 +2892,7 @@ export class ProviderRuntimeIngestion {
   }
 
   private clearBufferedProposedPlansForSessionExit(
-    event: ProviderRuntimeEvent
+    event: LegacyProviderEvent
   ): void {
     if (
       event.event_type !== "session.exited" &&
@@ -3237,7 +3261,7 @@ function terminalTurnStatus(eventType: string): string {
   }
 }
 
-function providerEventMeta(event: ProviderRuntimeEvent): {
+function providerEventMeta(event: LegacyProviderEvent): {
   readonly event_type: string
   readonly thread: string
 } {
@@ -3258,7 +3282,7 @@ function journalEntryMeta(entry: ProviderRuntimeJournalEntry): {
 }
 
 function failureSourceOfLegacy(
-  event: ProviderRuntimeEvent
+  event: LegacyProviderEvent
 ): ProviderRuntimeFailureSource {
   const payload = asRecord(event.payload)
   return {
@@ -3289,7 +3313,7 @@ function failureSourceOfEntry(
 }
 
 function providerRuntimeLogBindings(
-  event: ProviderRuntimeEvent,
+  event: LegacyProviderEvent,
   eventMeta: ReturnType<typeof providerEventMeta>,
   payload: Record<string, unknown>,
   clients: number
@@ -3313,7 +3337,7 @@ function providerRuntimeLogBindings(
 }
 
 function reasoningStartKey(
-  event: ProviderRuntimeEvent,
+  event: LegacyProviderEvent,
   payload: Record<string, unknown>
 ): string {
   return assistantTranscriptKey(
@@ -3366,7 +3390,7 @@ function providerMetadataUpdatedAt(payload: unknown): string | undefined {
 }
 
 function proposedPlanBufferKey(
-  event: ProviderRuntimeEvent,
+  event: LegacyProviderEvent,
   payload: Record<string, unknown>
 ): string | null {
   const planKey =
@@ -3377,10 +3401,6 @@ function proposedPlanBufferKey(
   return planKey.length > 0
     ? assistantTranscriptKey(event.thread_id, planKey)
     : null
-}
-
-function compactProvider(value: string | undefined): string {
-  return (value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "")
 }
 
 function providerKindFromPayload(
@@ -3433,19 +3453,9 @@ function sourcePlanImplementationMatches(
   return true
 }
 
+/** Pending and incoming kinds compare through the shared alias table. */
 function pendingProviderKindKey(value: string): string {
-  const key = compactProvider(value)
-  switch (key) {
-    case "codexcli":
-      return "codex_cli"
-    case "claudeagent":
-    case "claudecli":
-      return "claude"
-    case "anthropiccli":
-      return "anthropic_cli"
-    default:
-      return key
-  }
+  return canonicalProviderKindAlias(value) ?? compactProviderAlias(value)
 }
 
 interface ProviderSessionLifecycleTarget {
@@ -3458,7 +3468,7 @@ interface ProviderSessionLifecycleTarget {
 }
 
 function providerSessionLifecycleTarget(
-  event: ProviderRuntimeEvent
+  event: LegacyProviderEvent
 ): ProviderSessionLifecycleTarget | null {
   const payload = asRecord(event.payload)
   const providerKind = providerKindFromPayload(payload)
@@ -3478,7 +3488,7 @@ function providerSessionLifecycleTarget(
 }
 
 function providerSessionLifecycle(
-  event: ProviderRuntimeEvent,
+  event: LegacyProviderEvent,
   target: ProviderSessionLifecycleTarget,
   current: ProviderRuntimeSessionLifecycleSnapshot | null
 ):
@@ -3591,7 +3601,7 @@ interface ProviderDispatchTerminalProjection {
 }
 
 function providerDispatchTerminalProjection(
-  event: ProviderRuntimeEvent
+  event: LegacyProviderEvent
 ): ProviderDispatchTerminalProjection | null {
   const eventType = event.event_type.trim().toLowerCase()
   // A failed tool or status update does not settle its enclosing turn.

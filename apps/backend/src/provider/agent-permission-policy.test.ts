@@ -431,9 +431,9 @@ describe("AgentPermissionPolicy", () => {
     db.close()
   })
 
-  // Opening a folder in your own IDE is the trust decision, so the shipping
-  // default records it on first use instead of dead-ending the turn. The
-  // explicit untrusted kill switch must survive that convenience.
+  // Automatic trust is an opt-in convenience (off by default): when on, the
+  // first Agent turn records trust instead of dead-ending. The explicit
+  // untrusted kill switch must survive that convenience.
   it("auto-trusts unknown workspaces only when the setting is on", () => {
     const { workspace, dbPath } = tempWorkspace("auto-trust")
     const db = openDatabase(dbPath)
@@ -469,6 +469,53 @@ describe("AgentPermissionPolicy", () => {
       relaxed.evaluateTurnTrust({ workspacePath: workspace, appMode: "agent" })
     ).toMatchObject({ decision: "deny", source: "workspace_trust" })
     db.close()
+  })
+
+  it("allows Agent turns in app-owned scratch workspaces without recording trust", () => {
+    const { directory, workspace, dbPath } = tempWorkspace("app-owned")
+    const scratch = path.join(directory, "scratch", "thread-1")
+    fs.mkdirSync(scratch, { recursive: true })
+    const db = openDatabase(dbPath)
+    try {
+      runMigrations(db)
+      const policy = new AgentPermissionPolicy(db)
+      expect(
+        policy.evaluateTurnTrust({ workspacePath: scratch, appMode: "agent" })
+      ).toMatchObject({ decision: "deny", source: "workspace_trust" })
+
+      policy.configureAppOwnedWorkspaces(
+        (candidate) =>
+          path
+            .relative(path.join(directory, "scratch"), candidate)
+            .split(path.sep)[0] !== ".."
+      )
+      expect(
+        policy.evaluateTurnTrust({ workspacePath: scratch, appMode: "agent" })
+      ).toEqual({ decision: "allow", source: "default" })
+      // Allowing the turn is not consent for repo-declared commands.
+      expect(policy.getWorkspaceTrust(scratch).explicit).toBe(false)
+      // Ordinary workspaces still need a decision.
+      expect(
+        policy.evaluateTurnTrust({ workspacePath: workspace, appMode: "agent" })
+      ).toMatchObject({ decision: "deny", source: "workspace_trust" })
+      // An explicit untrusted record still wins.
+      policy.setWorkspaceTrust({ workspacePath: scratch, state: "untrusted" })
+      expect(
+        policy.evaluateTurnTrust({ workspacePath: scratch, appMode: "agent" })
+      ).toMatchObject({ decision: "deny", source: "workspace_trust" })
+
+      // A throwing matcher fails closed.
+      policy.configureAppOwnedWorkspaces(() => {
+        throw new Error("boom")
+      })
+      const other = path.join(directory, "scratch", "thread-2")
+      fs.mkdirSync(other, { recursive: true })
+      expect(
+        policy.evaluateTurnTrust({ workspacePath: other, appMode: "agent" })
+      ).toMatchObject({ decision: "deny", source: "workspace_trust" })
+    } finally {
+      db.close()
+    }
   })
 
   it("ensureWorkspaceTrusted never overrides an explicit decision", () => {

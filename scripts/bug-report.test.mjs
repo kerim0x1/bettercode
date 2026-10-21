@@ -149,3 +149,32 @@ test("aborts a stalled upload and returns a recoverable timeout", async () => {
   assert.match(result.error, /timed out/)
   assert.ok(result.retryAfterMs > 0)
 })
+
+test("the message, stack and every log source are redacted right before upload", async () => {
+  let payload
+  const send = createBugReportSender({
+    appVersion: "1.2.3", os: "win32",
+    redact: (text) => text.replaceAll("secret-value", "[REDACTED]"),
+    getLogs: () => "main log with secret-value",
+    fetchImpl: async (_url, options) => { payload = JSON.parse(options.body); return new Response(null, { status: 204 }) },
+  })
+  assert.equal((await send({ message: "failed with secret-value", stack: "at secret-value", logs: "renderer secret-value" })).ok, true)
+  assert.equal(JSON.stringify(payload).includes("secret-value"), false)
+  assert.match(payload.logs, /renderer \[REDACTED\]\nmain log with \[REDACTED\]/)
+})
+
+test("the installation ID is asked for per report and omitted without one", async () => {
+  const bodies = []
+  let installId = null
+  let time = 0
+  const send = createBugReportSender({
+    appVersion: "1.2.3", os: "win32", now: () => time, getInstallId: () => installId,
+    fetchImpl: async (_url, options) => { bodies.push(JSON.parse(options.body)); return new Response(null, { status: 204 }) },
+  })
+  await send(report)
+  installId = "opted-in"
+  time += 10_000
+  await send(report)
+  assert.equal(bodies[0].installId, null)
+  assert.equal(bodies[1].installId, "opted-in")
+})

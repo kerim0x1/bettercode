@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const mocks = vi.hoisted(() => ({
   state: {
     hydrateThreadMessages: vi.fn(async () => undefined),
+    ensureFullThreadMessages: vi.fn(async () => undefined),
     threads: [] as Array<Record<string, unknown>>,
   },
   buildTranscript: vi.fn(() => "active transcript"),
@@ -26,7 +27,7 @@ vi.mock("@/lib/native-compacter-selection", () => ({
 vi.mock("@/lib/thread-context", () => ({
   resolveThreadRuntimePath: vi.fn(() => "C:/repo"),
 }))
-vi.mock("@/services/backend", () => ({
+vi.mock("@/services/backend/chatApi", () => ({
   generateThreadContextSummary: mocks.generateSummary,
   rotateProviderSession: mocks.rotateSession,
 }))

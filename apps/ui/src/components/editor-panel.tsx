@@ -11,7 +11,7 @@ import {
 } from "react"
 import { createPortal } from "react-dom"
 import { useChatStore, getThreadStream } from "@/lib/chat-store"
-import { readFile } from "@/services/backend"
+import { readFile } from "@/services/backend/workspaceApi"
 import { HttpError } from "@/lib/errors/types"
 import { createLogger } from "@/lib/logger"
 import { relativeEditorPath, resolveWorkspaceFilePath } from "@/lib/editor-path"

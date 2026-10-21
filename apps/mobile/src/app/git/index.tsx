@@ -169,7 +169,7 @@ export default function GitReviewScreen() {
         <Header name={name} onBack={() => router.back()} />
         <StateView
           title="This phone can only watch"
-          message="It paired over plain HTTP from outside your network. Pair it again over your Wi-Fi, Tailscale or HTTPS to review and commit changes."
+          message="It is connected over plain HTTP. Pair it again over Tailscale or HTTPS to review and commit changes."
         />
       </Screen>
     )

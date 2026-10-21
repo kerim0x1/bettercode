@@ -4,19 +4,23 @@ import {
   evaluatePermission,
   normalizeLevel,
   describeBlock,
-  sessionPermissions,
+  forgetSessionPermission,
   setSessionPermission,
   getSessionPermission,
   generateApprovalRequestId,
   awaitApproval,
   resolveApproval,
   cancelPendingApprovals,
+  onApprovalSettled,
+  pendingApprovalCount,
   type PermissionLevel,
   type ToolClass,
 } from "./permissions"
 
 beforeEach(() => {
-  sessionPermissions.clear()
+  for (const threadId of ["thread-abc", "thread-xyz"]) {
+    forgetSessionPermission(threadId)
+  }
 })
 
 describe("classifyTool", () => {
@@ -211,6 +215,12 @@ describe("sessionPermissions", () => {
     setSessionPermission("thread-xyz", null)
     expect(getSessionPermission("thread-xyz")).toBe("ask-on-edit")
   })
+
+  it("forgets a deleted thread's level", () => {
+    setSessionPermission("thread-abc", "bypass")
+    forgetSessionPermission("thread-abc")
+    expect(getSessionPermission("thread-abc")).toBe("ask-on-edit")
+  })
 })
 
 describe("pending approvals", () => {
@@ -242,6 +252,48 @@ describe("pending approvals", () => {
       expect(resolveApproval("t-timeout", "r-timeout", "approve")).toBe(false)
     } finally {
       vi.useRealTimers()
+    }
+  })
+
+  it("waits for the user without a default deadline", async () => {
+    vi.useFakeTimers()
+    try {
+      let settled = false
+      const pending = awaitApproval("t-patient", "r-patient")
+      void pending.then(() => {
+        settled = true
+      })
+      await vi.advanceTimersByTimeAsync(6 * 60 * 60_000)
+      expect(settled).toBe(false)
+      expect(pendingApprovalCount("t-patient")).toBe(1)
+      expect(resolveApproval("t-patient", "r-patient", "approve")).toBe(true)
+      await expect(pending).resolves.toBe("approve")
+      expect(pendingApprovalCount("t-patient")).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("counts pending approvals per thread and reports every settlement", async () => {
+    const settledThreads: string[] = []
+    const unsubscribe = onApprovalSettled((threadId) => {
+      settledThreads.push(threadId)
+    })
+    try {
+      const first = awaitApproval("t-count::a", "r1")
+      const second = awaitApproval("t-count::a", "r2")
+      const other = awaitApproval("t-count", "r1")
+      expect(pendingApprovalCount("t-count::a")).toBe(2)
+      expect(pendingApprovalCount("t-count")).toBe(1)
+
+      resolveApproval("t-count::a", "r1", "approve")
+      expect(cancelPendingApprovals("t-count::a")).toBe(1)
+      resolveApproval("t-count", "r1", "deny")
+      await Promise.all([first, second, other])
+      expect(settledThreads).toEqual(["t-count::a", "t-count::a", "t-count"])
+      expect(pendingApprovalCount("t-count::a")).toBe(0)
+    } finally {
+      unsubscribe()
     }
   })
 

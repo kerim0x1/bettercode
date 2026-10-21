@@ -4,7 +4,7 @@ import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { useChatStore } from "@/lib/chat-store"
 import { pickFolder } from "@/services/backend/runtime"
-import { adoptScratchWorkspace } from "@/services/backend"
+import { adoptScratchWorkspace } from "@/services/backend/workspaceApi"
 import { handleError } from "@/lib/errors"
 
 /** What `/workspace/scratch/adopt` reports back about the file migration. */

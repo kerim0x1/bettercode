@@ -6,6 +6,7 @@
  */
 
 import type { ThreadActivity } from "@/lib/chat-store"
+import { boundLiveToolActivity } from "@/lib/tool-output-bounds"
 import {
   providerInstanceIdFromPayload,
   providerKindFromPayload,
@@ -43,7 +44,10 @@ export function activityFromProviderEvent(
   }
   for (const project of PROJECTORS) {
     const activity = project(ctx)
-    if (activity) return activity
+    // Tool activities get the same head/tail bound the backend applies to
+    // the ones it stores, so one large plugin tool output cannot bloat the
+    // store; other kinds pass through untouched.
+    if (activity) return boundLiveToolActivity(activity)
   }
   return null
 }

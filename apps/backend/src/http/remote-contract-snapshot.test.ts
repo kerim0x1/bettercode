@@ -21,8 +21,13 @@ describe("response contracts the phone app compiles in", () => {
   it("change only together with a decision about REMOTE_API_VERSION", async () => {
     const contracts = Object.fromEntries(
       Object.entries(httpContracts)
-        // Orchestration is desktop-only; paired devices get a 403.
-        .filter(([name]) => !name.startsWith("orchestrator"))
+        // Orchestration and the desktop configuration are desktop-only;
+        // paired devices get a 403.
+        .filter(
+          ([name]) =>
+            !name.startsWith("orchestrator") &&
+            !name.startsWith("desktopConfig")
+        )
         .map(([name, contract]) => [
           name,
           {

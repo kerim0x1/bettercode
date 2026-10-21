@@ -13,6 +13,7 @@ import {
   isRuntimeModelAllowedByProjectPolicy,
   type ProjectProviderPolicy,
 } from "../../provider/runtime/projectProviderPolicy"
+import { canonicalProviderKindAlias } from "../../provider/runtime/providerKindAliases"
 import { listProjectProviders } from "../workspace"
 import { HttpError } from "../../errors"
 
@@ -47,7 +48,9 @@ export function selectOrchestrationModels(
 ): OrchestratorMember[] {
   const members: OrchestratorMember[] = []
   for (const instance of instances) {
-    const kind = instance.driver
+    // Runtime drivers keep their settings spelling (`grok-cli`); workers are
+    // addressed by provider kind (`grok_cli`).
+    const kind = canonicalProviderKindAlias(instance.driver)
     if (
       (kind !== "claude" && kind !== "codex" && kind !== "grok_cli") ||
       !allowed.includes(kind) ||

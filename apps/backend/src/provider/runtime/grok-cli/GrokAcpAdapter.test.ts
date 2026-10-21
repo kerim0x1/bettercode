@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
-  GROK_ACP_PENDING_REQUEST_TIMEOUT_MS,
   GrokAcpAdapter,
   grokReadOnlyDeniesAcpKind,
   isGrokReadOnlyIntent,
@@ -16,8 +15,8 @@ import type {
 } from "./GrokAcpRuntime"
 import type { ApprovalRequestId, ThreadId } from "../contracts"
 import {
-  bindAgentPermissionRuntimeContext,
-  configureAgentPermissionRuntime,
+  AgentPermissionRuntime,
+  setDefaultAgentPermissionRuntime,
 } from "../../agent-permission-runtime"
 
 const configOptions = [
@@ -95,7 +94,7 @@ describe("GrokAcpAdapter", () => {
     }
   })
   afterEach(() => {
-    configureAgentPermissionRuntime(null)
+    setDefaultAgentPermissionRuntime(null)
   })
 
   it("scopes orchestrator tools to the main thread and excludes repository impostors", async () => {
@@ -612,17 +611,20 @@ describe("GrokAcpAdapter", () => {
     })
     const events: Array<{ type: string; payload?: unknown }> = []
     adapter.subscribe((event) => events.push(event))
-    configureAgentPermissionRuntime({
-      evaluateTool: () => ({
-        decision: "deny",
-        source: "grant",
-        reason: "Matched workspace deny grant.",
-        normalizedPath: "src/blocked.ts",
-        grant: null,
-      }),
-      listGrants: () => [],
+    const permissionRuntime = new AgentPermissionRuntime({
+      policy: {
+        evaluateTool: () => ({
+          decision: "deny",
+          source: "grant",
+          reason: "Matched workspace deny grant.",
+          normalizedPath: "src/blocked.ts",
+          grant: null,
+        }),
+        listGrants: () => [],
+      },
     })
-    bindAgentPermissionRuntimeContext({
+    setDefaultAgentPermissionRuntime(permissionRuntime)
+    permissionRuntime.bindContext({
       threadId: "thread-durable-deny",
       workspacePath: "/tmp/project",
       appMode: "agent",
@@ -770,7 +772,7 @@ describe("GrokAcpAdapter", () => {
     expect(await adapter.availableModels()).toEqual([])
   })
 
-  it("defaults an unanswered approval to deny after five minutes", async () => {
+  it("keeps an unanswered approval open until the user answers or the turn stops", async () => {
     vi.useFakeTimers()
     try {
       const runtime = new FakeGrokRuntime()
@@ -778,7 +780,8 @@ describe("GrokAcpAdapter", () => {
         binaryPath: "node",
         runtimeFactory: () => runtime,
       })
-      await adapter.startSession({ threadId: "thread-timeout" as ThreadId })
+      const threadId = "thread-timeout" as ThreadId
+      await adapter.startSession({ threadId })
 
       const approval = runtime.triggerPermission({
         kind: "execute",
@@ -789,8 +792,12 @@ describe("GrokAcpAdapter", () => {
           ],
         },
       })
-      await vi.advanceTimersByTimeAsync(GROK_ACP_PENDING_REQUEST_TIMEOUT_MS)
+      let settled = false
+      void approval.then(() => (settled = true))
+      await vi.advanceTimersByTimeAsync(60 * 60_000)
+      expect(settled).toBe(false)
 
+      await adapter.interruptTurn(threadId)
       await expect(approval).resolves.toMatchObject({
         outcome: { outcome: "selected", optionId: "reject-once" },
       })

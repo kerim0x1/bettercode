@@ -5,11 +5,16 @@ import { defaultSettings } from "@betterc0de/schema"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { AppState } from "../../appState"
 import type { ServerConfig } from "../../config"
-import { buildApp } from "../router"
+import { buildApp as buildAppUnfilled } from "../router"
 import { openDatabase } from "../../persistence/db"
 import { runMigrations } from "../../persistence/migrations"
 import { RemoteAccessService } from "../../remote/service"
 import { stopAllToolOutputArchiveStores } from "../../services/tool-output-archive-store"
+import { routerLifecycleServices } from "../../testUtils/routing-services"
+import { withInertStateArgument } from "../../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const buildApp = withInertStateArgument(buildAppUnfilled, 1)
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -47,6 +52,7 @@ function fixture() {
   }
   const remoteAccess = new RemoteAccessService(db, { isEnabled: () => true })
   const state = {
+    ...routerLifecycleServices(),
     config,
     db,
     settings,

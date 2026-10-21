@@ -11,13 +11,19 @@ environment.
 1. Keep the BetterC0de desktop app running.
 2. Open **Settings → Remote Access** and turn on **Remote Access**, or run
    `/remote` in a chat.
-3. Allow the operating-system firewall prompt for private networks if one
-   appears.
-4. Create a one-time link. Scan its QR code or share/copy the recommended LAN
-   URL to the trusted device.
+3. With Tailscale on this computer and the phone, turn on **Tailscale HTTPS**
+   (see [Tailscale](#tailscale)). Otherwise allow the operating-system
+   firewall prompt for private networks if one appears.
+4. Create a one-time link. Scan its QR code or share/copy the recommended URL
+   to the trusted device.
 5. Before its 10-minute expiry, either open the link in a browser or scan it
    from **BetterC0de Remote**. The paired browser or phone becomes a separately
    revocable session.
+
+For a full session, pair over an encrypted connection: Tailscale HTTPS (see
+[Tailscale](#tailscale)) or another HTTPS URL. Pairing over plain HTTP on your
+Wi-Fi works, but the device can only watch, for one hour; see
+[Choosing an endpoint](#choosing-an-endpoint).
 
 `/remote` enables the listener when necessary and creates a fresh pairing link.
 The related commands are:
@@ -27,7 +33,7 @@ The related commands are:
 /remote status          Show listener, endpoint, and paired-session status
 /remote link            Create another one-time link
 /remote off             Return the backend to loopback-only listening
-/remote tailscale on    Optional: also publish the host over Tailscale Serve HTTPS
+/remote tailscale on    Publish the host over Tailscale HTTPS (recommended)
 /remote tailscale off   Remove the Tailscale Serve mapping
 /remote settings        Open the Remote Access settings tab
 ```
@@ -36,6 +42,13 @@ Only the desktop app can enable/disable hosting, create pairing links, or
 manage other devices. A remote browser can use the IDE and sign out its own
 session, but it cannot turn itself into an access administrator.
 
+The desktop prepares a paired browser's messages as it prepares its own:
+your message hooks run first, and the turn gets your skills, MCP servers,
+subagents and rules. A chat's permission level, model selection and
+orchestration are stored with the chat on the desktop, so the browser shows
+the same settings. Settings → Rules is read-only there: global instructions
+(`rules.md`) are edited in the desktop app.
+
 ## Native mobile app
 
 `apps/mobile` is a real Expo/React Native application rather than a WebView. It
@@ -43,8 +56,10 @@ provides touch-native screens for:
 
 - searching, opening, creating, and continuing desktop-hosted chats;
 - live assistant and reasoning streams with reconnect replay;
-- model selection, the desktop's permission presets and chat modes per chat,
-  stop controls, tool/plan approvals, and provider questions;
+- model selection, the desktop's permission presets and chat modes per chat
+  (Bypass only while the desktop allows paired devices a terminal; see
+  [Managing devices](#managing-devices)), stop controls, tool/plan approvals,
+  and provider questions;
 - a queue for messages written while the agent works, and **Retry** for a
   message that did not arrive, which the desktop recognises, so a retried
   message never runs twice;
@@ -96,9 +111,12 @@ phone asks for it with `prepareTurn`, and desktops that do announce
 
 - Your **on message send** hooks run first, in order. One that fails stops
   the message, and the phone shows the hook and what it printed
-  (`message_hook_failed`). A `/goal` command runs them once, not for each
-  of the goal's turns. The hook's last run, as the desktop's hook settings
-  show it, is recorded only for messages sent on the desktop.
+  (`message_hook_failed`). The message is also refused while `hooks.json`
+  cannot be read, or while an enabled hook's command has not been approved
+  on the desktop; save it again in Settings → Hooks there to approve it. A
+  `/goal` command runs them once, not for each of the goal's turns. Each
+  run is recorded where the desktop's hook settings show it, whichever
+  device sent the message.
 - The turn gets the system instruction the desktop builds: the mode and
   permission preset, the project, your skills, MCP servers and subagents
   and the project's own, the project's permission rules, and your rules and
@@ -131,22 +149,33 @@ addresses that desktop advertised.
 
 ## Choosing an endpoint
 
-BetterC0de advertises every usable IPv4 interface plus a loopback URL. It picks
-the first non-loopback address as the recommended link **only when that URL is
-actually usable for pairing**.
+BetterC0de advertises every usable IPv4 interface plus a loopback URL. The
+recommended link is a configured `https://` URL when there is one, otherwise
+the Tailscale HTTPS name, otherwise the Tailscale address, otherwise the
+first network address.
 
-Enabling Remote Access binds `0.0.0.0` (or `BETTERC0DE_REMOTE_HOST` if set)
-and advertises every private-network IPv4 interface. **Plain
-`http://192.168.x.y:<port>` pairing from a private network is ordinary
-pairing**: the phone on your Wi-Fi scans the QR and gets a full session,
-without an additional network service. What is refused without TLS is
-a *public* peer: a port forwarded from a router returns 426 unless
-`BETTERC0DE_ALLOW_INSECURE_REMOTE_ACCESS` is set, and then only read-only.
+Remote Access has a **Local network** switch, on by default. While it is on,
+the backend binds `0.0.0.0` (or `BETTERC0DE_REMOTE_HOST` if set) and
+advertises every private-network IPv4 interface and the plain tailnet
+address. Turned off, the backend stays on `127.0.0.1`: nothing listens on the
+Wi-Fi and the firewall is never asked, while Tailscale HTTPS and a tunnel to
+loopback still reach it. Changing the switch restarts the backend. A full session needs a
+connection that encrypts the pairing code and session token: TLS, this
+computer, or the tailnet. **Plain `http://192.168.x.y:<port>` pairing from a
+private network gives a read-only session that ends after one hour**: a
+private address is not encryption, and anyone on the same office, hotel or
+café Wi-Fi can read the code and token off the wire and replay them. A full
+session used over plain LAN HTTP is downgraded to read-only for that request,
+and WebSocket connections follow the same rule. A *public* peer without TLS
+is refused: a port forwarded from a router returns 426 unless
+`BETTERC0DE_ALLOW_INSECURE_REMOTE_ACCESS` is set, and then gets the same
+read-only hour. The settings list marks each read-only address with
+"read-only, 1 hour".
 
-- **Private network (recommended at home):** RFC 1918, link-local and IPv6
-  ULA peers — your Wi-Fi, office LAN, or VPN. Full 30-day session over plain
-  HTTP. The pairing layer (one-time code, revocable session) is the
-  authentication; the private network is the transport boundary.
+- **Private network:** RFC 1918, link-local and IPv6 ULA peers — your Wi-Fi,
+  office LAN, or VPN. Over plain HTTP the session is read-only and lasts one
+  hour: chats, files and changes are visible, but the device cannot send,
+  approve or change anything. Use Tailscale or HTTPS for a full session.
 - **This computer:** The `127.0.0.1` link works for testing on the host.
 - **Trusted HTTPS endpoint:** Configure a reverse proxy or tunnel that forwards
   HTTPS/WSS to the BetterC0de port, then enter its full `https://` URL in Remote
@@ -157,11 +186,13 @@ a *public* peer: a port forwarded from a router returns 426 unless
   anything a client prepends, and `X-Real-IP`, is ignored, so a public
   peer cannot claim a LAN address to skip the TLS requirement.
 - **Other VPNs:** Prefer a stable `https://` hostname on the mesh. A bare
-  HTTP mesh IP that is not a Tailscale address is treated like LAN HTTP.
-- **Tailscale (away from home):** With Tailscale running on the desktop and
-  the phone, the tailnet address is advertised as `http://100.x.y.z:<port>`
-  and the phone pairs with a full 30-day session from anywhere — no
-  certificate, no flag. See [Tailscale](#tailscale).
+  HTTP mesh IP that is not a Tailscale address is treated like LAN HTTP:
+  read-only for one hour.
+- **Tailscale (recommended, at home or away):** With Tailscale running on the
+  desktop and the phone, **Tailscale HTTPS** publishes the desktop as
+  `https://<machine>.<tailnet>.ts.net`, and the phone pairs with a full 30-day
+  session from anywhere. With Local network on, the tailnet address
+  `http://100.x.y.z:<port>` works too. See [Tailscale](#tailscale).
 - **Opt-in public plaintext:** Set `BETTERC0DE_ALLOW_INSECURE_REMOTE_ACCESS=1`
   before starting the desktop app if you intentionally want plaintext pairing
   from a public address. Those sessions are **read-only and expire after one
@@ -177,22 +208,44 @@ client of the desktop host, not a second full host.
 
 ## Tailscale
 
-On the same Wi-Fi you do not need Tailscale at all — see *Private network*
-above. Tailscale is for using the phone away from home: it gives every device
-a private address and encrypts everything between them with WireGuard, after
-authenticating each device against your tailnet. BetterC0de treats that tunnel
-as transport security: the direct tailnet endpoint needs no separate TLS
-certificate, and the phone app talks HTTP *inside* the encrypted tunnel.
+Tailscale is the simplest way to a full session, on the same Wi-Fi or away
+from home; plain HTTP on the Wi-Fi alone gives only a read-only hour (see
+*Private network* above). Tailscale gives every device a private address and
+encrypts everything between them with WireGuard, after authenticating each
+device against your tailnet.
 
 1. Install Tailscale on the desktop and sign in. Install it on the phone and
    sign in to the same tailnet.
-2. Turn on Remote Access. The **Tailnet** row in Settings → Remote Access
-   shows *Connected · 100.x.y.z* and the reachability list gains a
-   **Tailscale** endpoint, `http://100.x.y.z:<port>`, which becomes the
-   recommended pairing link.
-3. Create a one-time link and scan the QR in **BetterC0de Remote** from
+2. Turn on Remote Access. The **Tailscale** row in Settings → Remote Access
+   shows *Connected* with this machine's name and tailnet address, or what is
+   missing (not installed, not signed in, disconnected, the service not
+   running) with **Check again** and, where it helps, the page that fixes it.
+3. Turn on **Tailscale HTTPS**. BetterC0de publishes the desktop as
+   `https://<machine>.<tailnet>.ts.net` and waits until the name answers as
+   this desktop: Tailscale issues the certificate on the first request, which
+   can take a few seconds. The address then appears under the switch, ready
+   to copy, and becomes the recommended pairing link.
+4. Create a one-time link and scan the QR in **BetterC0de Remote** from
    anywhere the phone has connectivity — the tailnet does not care whether it
-   is the same Wi-Fi. The session is full and lasts 30 days.
+   is the same Wi-Fi. The session is full and lasts 30 days, or until it goes
+   unused for 7 days.
+
+Tailscale HTTPS works with **Local network** off: tailscaled accepts the
+connection itself and passes it to the backend on `127.0.0.1`, so nothing
+listens on the network, no firewall rule is needed and the name survives a
+changed tailnet address. That is the recommended setup.
+
+**What Tailscale HTTPS needs.** MagicDNS and HTTPS certificates must be on
+for the tailnet (admin console, DNS page). The settings row says when one is
+missing and opens that page. The first time a tailnet uses Serve, Tailscale
+may ask for it to be allowed: the row then shows **Allow in Tailscale**,
+which opens Tailscale's own page for that; turn the switch on again
+afterwards.
+
+**The plain tailnet address.** With Local network on, the tailnet address is
+also advertised as `http://100.x.y.z:<port>`. BetterC0de treats the tunnel
+as transport security: that endpoint needs no TLS certificate, and the phone
+app talks HTTP *inside* the encrypted tunnel.
 
 **How the backend recognizes the tunnel.** A request counts as *tailnet
 transport* when its TCP peer is a Tailscale address (100.64/10 or
@@ -206,18 +259,19 @@ the same CGNAT range on a physical interface. Such a request is neither
 upgrades. Behind a trusted proxy the direct peer is the proxy, so the rule
 never applies to forwarded requests.
 
-**Optional: HTTPS through Tailscale Serve.** A browser on the tailnet may
-want a secure context (clipboard, camera, notifications). Turn on **Serve
-over Tailscale HTTPS** (or `/remote tailscale on`) and BetterC0de runs
-`tailscale serve --bg --https=443 http://127.0.0.1:<backend port>`; Tailscale
-issues a certificate for `https://<machine>.<tailnet>.ts.net` and that
-endpoint is advertised as well. This needs **MagicDNS** and **HTTPS
-Certificates** enabled in the Tailscale admin console (DNS page); the
-settings row says so when they are missing. Turning the switch off runs
+**How Tailscale HTTPS works.** Turning on **Tailscale HTTPS** (or
+`/remote tailscale on`) runs
+`tailscale serve --bg --https=443 http://127.0.0.1:<backend port>`, then
+probes `https://<machine>.<tailnet>.ts.net/api/v1/remote/bootstrap` (dialing
+this machine's tailnet address, so it does not depend on MagicDNS resolving
+here) until it answers with this desktop's environment id, five tries a
+second apart. A bad-gateway answer counts as not yet; another server behind
+the name is reported as such. Turning the switch off runs
 `tailscale serve --https=443 off`, which removes whatever Tailscale served on
 that port. Disabling Remote Access removes the mapping too and remembers the
-switch; the mapping is re-applied to the bound port at every start because
-the port can change between launches.
+switch. The mapping is re-applied to the bound port at every start, because
+the port can change between launches, and removed again when the app quits,
+so a paired device sees the desktop offline rather than a proxy error.
 
 Serve terminates TLS on the desktop and proxies to `127.0.0.1`, so the backend
 sees a loopback TCP peer with `X-Forwarded-Proto: https` and
@@ -236,11 +290,16 @@ The flow follows BetterC0de's owner/client model:
 2. The server stores only its SHA-256 digest and gives the owner a link whose
    URL fragment contains the secret.
 3. The new browser or native app exchanges the code once. Used or expired
-   codes cannot be replayed.
-4. The server creates a session. **HTTPS / loopback / private network /
-   tailnet pairing:** 30 days, `accessLevel: "full"`. **Opt-in public
-   plaintext:** 1 hour,
-   `accessLevel: "read_only"`. Browsers receive the secret as an `HttpOnly`,
+   codes cannot be replayed. A link expires after 10 minutes by default and
+   never lasts more than an hour. Until it is used it appears under
+   **Unused links** in Remote Access settings, where the owner can revoke it
+   or all of them.
+4. The server creates a session. **HTTPS / loopback / tailnet pairing:**
+   30 days, `accessLevel: "full"`. **Plain HTTP from a private network, or
+   opt-in public plaintext:** 1 hour, `accessLevel: "read_only"`. A session
+   nobody uses for 7 days ends before its expiry; any authenticated request,
+   connected WebSocket, running remote turn or terminal counts as use.
+   Browsers receive the secret as an `HttpOnly`,
    `SameSite=Strict` cookie; the native app receives it only in the no-store
    pairing response and moves it directly into secure device storage. SQLite
    stores only a digest in both cases.
@@ -261,27 +320,35 @@ sessions.
 The **Paired devices** list shows each browser label and last activity, and
 how many terminals a device runs, with **Close terminals** to end them while
 the device stays paired. Use the trash action to revoke one device, or
-**Revoke all** to invalidate all remote sessions. Disabling Remote Access revokes every paired device at once and
-closes network listening after the backend restart; re-enabling it later
-means pairing each device again. A terminal for paired devices is a separate
-switch, **Allow terminal from remote devices**, which is off by default. A
+**Revoke all** to invalidate all remote sessions. Disabling Remote Access
+revokes every paired device and every unused pairing link at once and closes
+network listening after the backend restart; re-enabling it later means
+pairing each device again with a new link. The same revocation runs at
+startup when Remote Access was turned off while the app was not running. A
+terminal for paired devices is a separate switch, **Allow terminal from remote
+devices**, which is off by default. A
 paired device can change neither that switch nor any setting that makes the
 desktop run something (MCP servers, hooks, skills, pipelines, rules,
 guardrails, provider credentials, workspace auto-trust, backend logging):
 those return 403 to a remote session.
 
-A **full** session (HTTPS, loopback, private network, tailnet) can operate
-the chats and workspaces the host exposes, including reading and changing
-files, and a terminal when the switch above is on. There is no separate switch
-for file access. Like the desktop, it can choose any permission preset for a
-chat, including **Bypass Permission**, under which the agent runs commands and
-edits files without asking; the phone app shows the desktop's warning before
-it switches. The preset travels with each message the device sends. It can
-also answer a tool approval with **Always allow** for this session, this
-project or all projects, as the desktop can; the app shows the exact rule
-before it is stored. Such a rule is stored on the desktop: it stays after the
-device is signed out or revoked, until it is removed on the desktop. An
-**opt-in public plaintext** session cannot do any of this; it is
+A **full** session (HTTPS, loopback, tailnet) can operate the chats and
+workspaces the host exposes, including reading and changing files, and a
+terminal when the switch above is on. There is no separate switch for file
+access. It can choose the desktop's permission presets for a chat; the preset
+travels with each message the device sends. **Bypass Permission**, under which
+the agent runs commands and edits files without asking, hands the agent an
+unattended shell, so it follows the terminal switch: only with **Allow
+terminal from remote devices** on can a full session use it, and the phone app
+shows the desktop's warning before it switches. Without the switch, a Bypass
+message runs as Ask first, switching a running chat to Bypass is refused with
+`remote_bypass_disabled`, and the phone app shows Bypass as unavailable.
+
+A paired device never stores a permanent permission rule. When it answers a
+tool approval with **Always allow**, the call is approved and a rule for this
+session is kept; rules for this project or for all projects are saved only
+from the desktop, which drops them from a paired device's answer. A
+**read-only** session (plain HTTP) cannot do any of this; it is
 monitoring-only. Pair only devices you control, revoke lost devices promptly,
 and do not post pairing links in shared channels.
 
@@ -360,6 +427,7 @@ Every refusal a paired device can receive carries a `code`:
 | 403 | `remote_read_only` | A read-only session tried to change something. |
 | 403 | `desktop_only` | Only the desktop itself may use this endpoint. |
 | 403 | `remote_terminal_disabled` | The terminal is not allowed for paired devices. |
+| 403 | `remote_bypass_disabled` | Bypass needs the terminal to be allowed for paired devices. |
 | 413 | `request_too_large` | The request is larger than `capabilities.maxRequestBytes`. |
 | 426 | `secure_transport_required` | Plain HTTP from a public address. |
 | 426 | `client_update_required` | The phone app is older than `minClientVersion`. |
@@ -387,10 +455,15 @@ on every change to a response contract the phone app compiles in.
   permits the app on private networks. Guest Wi-Fi commonly isolates clients.
 - **The link says the code is invalid or expired:** Create a new link. Pairing
   codes are deliberately one-use and expire after 10 minutes.
+- **The phone can only watch:** It paired over plain HTTP, which gives a
+  read-only session for one hour. Pair it again over Tailscale or an HTTPS
+  URL for a full session.
+- **The phone was signed out after a week away:** Sessions unused for 7 days
+  end. Pair again.
 - **The custom URL opens but cannot connect:** Confirm the proxy forwards both
   ordinary HTTP and WebSocket upgrades and preserves the request `Host`.
-- **HTTPS page to HTTP backend fails:** Browsers block mixed content. Open the
-  direct HTTP page served by the backend on a private network, or expose the
-  backend itself through HTTPS/WSS.
+- **HTTPS page to HTTP backend fails:** Browsers block mixed content. Expose
+  the backend itself through HTTPS/WSS. The direct HTTP page on a private
+  network also loads, but only for a read-only hour.
 - **Remote Access is on but no network address appears:** Retry after the
   backend restart and verify the machine has an active IPv4 network interface.

@@ -8,7 +8,12 @@ import {
   type ThreadMetadataUpdate,
 } from "@betterc0de/schema/http-contracts"
 import { isRecord } from "@betterc0de/schema/json-read"
-import type { PendingRequest, ThreadActivity } from "@/types/remote"
+import { stripProposedPlanWrapper } from "@betterc0de/schema/pending-requests"
+import type {
+  PendingRequest,
+  PendingRequestKind,
+  ThreadActivity,
+} from "@/types/remote"
 
 export interface DecodedRuntimeEvent {
   threadId: string
@@ -194,7 +199,36 @@ export function pendingRequestFromEvent(
       "approval.requested",
     ].includes(event.type) && !isPlan
   if (!isUserInput && !isPlan && !isApproval) return null
+  return requestCard(event, requestId, { isUserInput, isPlan, isApproval })
+}
 
+/**
+ * The card for a request whose kind is already known. A thread's
+ * activities name the kind of each request they leave open
+ * (`derivePendingRequests`, shared with the desktop), so it is not guessed
+ * from the payload again.
+ */
+export function pendingRequestOfKind(
+  event: DecodedRuntimeEvent,
+  requestId: string,
+  kind: PendingRequestKind
+): PendingRequest {
+  return requestCard(event, requestId, {
+    isUserInput: kind === "user-input",
+    isPlan: kind === "plan",
+    isApproval: kind === "approval",
+  })
+}
+
+function requestCard(
+  event: DecodedRuntimeEvent,
+  requestId: string,
+  {
+    isUserInput,
+    isPlan,
+    isApproval,
+  }: { isUserInput: boolean; isPlan: boolean; isApproval: boolean }
+): PendingRequest {
   const detail =
     stringValue(event.payload.description) ??
     stringValue(event.payload.detail) ??
@@ -205,6 +239,9 @@ export function pendingRequestFromEvent(
     stringValue(event.payload.planMarkdown) ??
     stringValue(event.payload.plan_markdown) ??
     undefined
+  // The plan body, as the desktop shows it: without the model's preamble
+  // and the `<proposed_plan>` wrapper.
+  const planText = planMarkdown ? stripProposedPlanWrapper(planMarkdown) : ""
   const normalizedQuestions = isUserInput
     ? normalizeQuestions(event.payload.questions)
     : undefined
@@ -235,7 +272,7 @@ export function pendingRequestFromEvent(
           stringValue(event.payload.toolName) ??
           stringValue(event.payload.detail) ??
           "Approve action"),
-    detail: isPlan ? (planMarkdown ?? detail) : detail,
+    detail: isPlan ? planText || detail : detail,
     input: isPlan ? undefined : (event.payload.input ?? event.payload.args),
     ...(isApproval
       ? {

@@ -1,4 +1,3 @@
-import type { ProviderAdapterRegistry } from "../provider/registry"
 import type { CliStatus } from "../cli/detect"
 import {
   detectCliAsync,
@@ -14,6 +13,20 @@ import {
   resolveCursorBinaryAsync,
   type ResolvedCursorBinary,
 } from "../provider/runtime/cursor/CursorBinaryResolution"
+
+/**
+ * The read-only slice of the direct-API adapter registry this probe reports
+ * under `adapters`. Structural so this service does not import the frozen
+ * legacy stack (`provider/registry`); `ProviderAdapterRegistry` satisfies it.
+ */
+export interface ProviderAdapterStatusSource {
+  all(): ReadonlyArray<{
+    providerKind(): string
+    displayName(): string
+    isConfigured(): boolean
+    authMeta?(): { authType: string; hint?: string }
+  }>
+}
 
 export const CLI_STATUS_CACHE_TTL_MS = 30_000
 export const CLI_STATUS_DEADLINE_MS = 8_000
@@ -58,7 +71,7 @@ interface CliStatusCacheEntry {
 }
 
 export function createCliStatusReader(
-  registry: ProviderAdapterRegistry,
+  registry: ProviderAdapterStatusSource,
   overrides: Partial<CliStatusReaderDependencies> = {}
 ): (input?: { readonly refresh?: boolean }) => Promise<CliStatusSnapshot> {
   const dependencies: CliStatusReaderDependencies = {
@@ -129,7 +142,7 @@ export function createCliStatusReader(
 }
 
 async function probeCliStatus(
-  registry: ProviderAdapterRegistry,
+  registry: ProviderAdapterStatusSource,
   dependencies: CliStatusReaderDependencies,
   refresh: boolean
 ): Promise<CliStatusSnapshot> {
@@ -171,7 +184,7 @@ async function probeCliStatus(
 }
 
 function snapshotAdapterConfiguration(
-  registry: ProviderAdapterRegistry,
+  registry: ProviderAdapterStatusSource,
   cliByProviderKind: Readonly<Record<string, CliStatus>>
 ): Record<string, { configured: boolean; name: string }> {
   const adapters: Record<string, { configured: boolean; name: string }> = {}

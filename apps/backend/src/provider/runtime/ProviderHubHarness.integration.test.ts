@@ -14,7 +14,7 @@ import {
   ThreadActivityProjectionQuery,
 } from "../../persistence/projections"
 import { ProviderEventBus } from "../events"
-import type { ProviderRuntimeEvent as LegacyProviderRuntimeEvent } from "../types"
+import type { LegacyProviderEvent } from "../types"
 import { hasCheckpointRef } from "../../services/git"
 import { ThreadService } from "../../services/threads"
 import type {
@@ -249,7 +249,7 @@ describe("ProviderHub harness integration", () => {
     const providerEvents = channelFrames(
       broadcaster.frames,
       "provider.runtimeEvent"
-    ).map((frame) => (frame as { data: LegacyProviderRuntimeEvent }).data)
+    ).map((frame) => (frame as { data: LegacyProviderEvent }).data)
     expect(providerEvents.map((event) => event.event_type)).toEqual([
       "session.started",
       "turn_started",
@@ -607,7 +607,7 @@ describe("ProviderHub harness integration", () => {
       const providerEvents = channelFrames(
         broadcaster.frames,
         "provider.runtimeEvent"
-      ).map((frame) => (frame as { data: LegacyProviderRuntimeEvent }).data)
+      ).map((frame) => (frame as { data: LegacyProviderEvent }).data)
 
       expect(
         await hasCheckpointRef({ cwd: workspaceDir, checkpointRef: baseRef })
@@ -884,7 +884,7 @@ describe("ProviderHub harness integration", () => {
       const providerEvents = channelFrames(
         broadcaster.frames,
         "provider.runtimeEvent"
-      ).map((frame) => (frame as { data: LegacyProviderRuntimeEvent }).data)
+      ).map((frame) => (frame as { data: LegacyProviderEvent }).data)
 
       expect(harness.getStartCount()).toBe(1)
       expect(harness.listActiveSessionIds()).toEqual([threadId])
@@ -1148,7 +1148,7 @@ describe("ProviderHub harness integration", () => {
       const providerEvents = channelFrames(
         broadcaster.frames,
         "provider.runtimeEvent"
-      ).map((frame) => (frame as { data: LegacyProviderRuntimeEvent }).data)
+      ).map((frame) => (frame as { data: LegacyProviderEvent }).data)
 
       expect(harness.getStartCount() + restartedHarness.getStartCount()).toBe(2)
       expect(restartedHarness.listActiveSessionIds()).toEqual([threadId])
@@ -1310,7 +1310,7 @@ describe("ProviderHub harness integration", () => {
     const providerEvents = channelFrames(
       broadcaster.frames,
       "provider.runtimeEvent"
-    ).map((frame) => (frame as { data: LegacyProviderRuntimeEvent }).data)
+    ).map((frame) => (frame as { data: LegacyProviderEvent }).data)
     expect(providerEvents.map((event) => event.event_type)).toEqual([
       "session.started",
       "turn_started",
@@ -1465,7 +1465,7 @@ describe("ProviderHub canonical journaling through the bus", () => {
     return { harness, hub, stopHubEvents, sendTurn }
   }
 
-  function legacyStackTurn(threadId: string): LegacyProviderRuntimeEvent[] {
+  function legacyStackTurn(threadId: string): LegacyProviderEvent[] {
     // What the frozen in-process stack (`ProviderService` + `BaseProviderAdapter`)
     // emits on the raw lane for one API-key turn.
     return [
@@ -1624,7 +1624,7 @@ describe("ProviderHub canonical journaling through the bus", () => {
       return EventStore.prototype.append.call(events, rows)
     })
     // Stand-in for the checkpoint reactor: the only lane it listens on.
-    bus.on("projected", (event: LegacyProviderRuntimeEvent) => {
+    bus.on("projected", (event: LegacyProviderEvent) => {
       trace.push(`projected:${event.event_type}`)
     })
     const ingestion = new ProviderRuntimeIngestion({

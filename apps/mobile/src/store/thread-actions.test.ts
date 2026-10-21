@@ -86,6 +86,25 @@ describe("renaming a chat", () => {
       "older",
     ])
   })
+
+  // The desktop also announces a chat's changed settings on this channel,
+  // without a title. The phone keeps its own per-chat settings, so it skips
+  // such a frame instead of reading it as a rename.
+  it("skips a settings change from the desktop", () => {
+    const before = store().threads.map((thread) => [thread.id, thread.title])
+    expect(
+      store().applyFrame({
+        channel: "thread.metadata",
+        data: {
+          threadId: "newer",
+          settings: { permissionLevel: "allow-edits" },
+        },
+      })
+    ).toBeNull()
+    expect(store().threads.map((thread) => [thread.id, thread.title])).toEqual(
+      before
+    )
+  })
 })
 
 describe("worktree chats", () => {

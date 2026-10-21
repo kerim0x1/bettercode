@@ -85,6 +85,19 @@ export type ModelSelection = z.infer<typeof modelSelectionSchema>
 export const DEFAULT_MODEL = "gpt-5.4"
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini"
 
+/**
+ * Built-in background helper models. Each one is only a default: settings
+ * (`image_generation_model`, `commit_message_codex_model`,
+ * `commit_message_claude_model`) override it, so a retired model is replaced
+ * in settings.json instead of waiting for an app update.
+ */
+export const DEFAULT_IMAGE_GENERATION_MODEL = "gpt-5.5"
+/** Small CLI models for commit messages, kept apart from the chat models. */
+export const DEFAULT_COMMIT_MESSAGE_MODELS = {
+  codex: "gpt-5.6-luna",
+  claude: "claude-sonnet-5",
+} as const
+
 /** Picker policy only; legacy backend adapters remain available for history. */
 export function isHiddenChatProvider(
   ...identifiers: (string | undefined)[]

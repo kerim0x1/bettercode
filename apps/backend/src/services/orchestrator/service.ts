@@ -11,6 +11,8 @@ import {
   orchestratorModelKey,
   orchestratorReasoningDescriptor,
   orchestrationForMain,
+  isOrchestratorExcludedEffort,
+  withoutExcludedOrchestratorEffort,
   type ChatSendBody,
   type OrchestratorJob,
   type OrchestratorSession,
@@ -173,9 +175,18 @@ export class OrchestratorService {
               : {}),
           }
         : undefined)
-    const selection = requestedSelection
+    const orchestrated = requestedSelection
       ? orchestrationForMain(requestedSelection, body.provider_kind)
       : undefined
+    // A saved Ultracode worker effort falls back to Auto instead of blocking
+    // every turn of an older chat; it is no longer offered for workers.
+    const selection =
+      orchestrated?.enabled && orchestrated.models
+        ? {
+            ...orchestrated,
+            models: orchestrated.models.map(withoutExcludedOrchestratorEffort),
+          }
+        : orchestrated
     if (!selection) return this.prepareTurn(body)
     if (!selection.enabled) {
       if (previous) {
@@ -850,17 +861,25 @@ export class OrchestratorService {
               )
               timer.unref()
               this.timers.set(job.threadId, timer)
+              // Last guard for team mode and reloaded sessions, which skip
+              // configureForTurn: a worker never runs in Ultracode, which
+              // would start its own multi-agent run.
+              const effort = isOrchestratorExcludedEffort(
+                member.reasoningEffort
+              )
+                ? null
+                : (member.reasoningEffort ?? null)
               await this.deps.dispatch(
                 chatSendSchema.parse({
                   threadId: job.threadId,
                   providerKind: member.providerKind,
                   providerInstanceId: member.providerInstanceId,
                   modelId: member.modelId,
-                  reasoningEffort: member.reasoningEffort ?? null,
+                  reasoningEffort: effort,
                   modelSelection: {
                     instanceId: member.providerInstanceId,
                     model: member.modelId,
-                    options: member.reasoningEffort
+                    options: effort
                       ? [
                           {
                             id:
@@ -870,7 +889,7 @@ export class OrchestratorService {
                               (member.providerKind === "claude"
                                 ? "effort"
                                 : "reasoningEffort"),
-                            value: member.reasoningEffort,
+                            value: effort,
                           },
                         ]
                       : [],

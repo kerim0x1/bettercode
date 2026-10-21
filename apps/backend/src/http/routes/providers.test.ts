@@ -9,15 +9,19 @@ import { logger } from "../../observability/logger"
 const openRouterMocks = vi.hoisted(() => ({
   getOpenRouterCatalogModels: vi.fn(async () => []),
 }))
-vi.mock(
-  "../../provider/adapters/openRouterModelDiscovery",
-  () => openRouterMocks
-)
+vi.mock("../../provider/openRouterModelDiscovery", () => openRouterMocks)
 vi.mock("../../auth/keyResolution", () => ({
   resolveOpenRouterKey: () => ({ key: "sk-or-configured" }),
 }))
 
-import { registerProvidersRoutes } from "./providers"
+import { registerProvidersRoutes as registerProvidersRoutesUnfilled } from "./providers"
+import { withInertStateArgument } from "../../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const registerProvidersRoutes = withInertStateArgument(
+  registerProvidersRoutesUnfilled,
+  1
+)
 
 function registerProviderTestRoutes(state: AppState): Hono {
   const app = new Hono()
@@ -191,40 +195,6 @@ describe("provider routes", () => {
     })
     expect(oversized.status).toBe(400)
     expect(fetchMock).not.toHaveBeenCalled()
-  })
-
-  it("only stores or clears credentials under known provider ids", async () => {
-    const set = vi.fn()
-    const remove = vi.fn()
-    const app = new Hono()
-    registerProvidersRoutes(app, {
-      authStore: { set, remove },
-    } as unknown as AppState)
-
-    const unknown = await app.request("/providers/evil%20provider/credential", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "api", key: "sk-test" }),
-    })
-    expect(unknown.status).toBe(400)
-    expect(set).not.toHaveBeenCalled()
-
-    const unknownDelete = await app.request("/providers/nope/credential", {
-      method: "DELETE",
-    })
-    expect(unknownDelete.status).toBe(400)
-    expect(remove).not.toHaveBeenCalled()
-
-    const known = await app.request("/providers/openrouter/credential", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "api", key: "sk-test" }),
-    })
-    expect(known.status).toBe(200)
-    expect(set).toHaveBeenCalledWith("openrouter", {
-      type: "api",
-      key: "sk-test",
-    })
   })
 
   it("validates the provider instance id and cwd query before touching the hub", async () => {

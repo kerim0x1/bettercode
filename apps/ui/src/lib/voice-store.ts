@@ -1,6 +1,6 @@
 import { create } from "zustand"
 import type { SecretPatch, Settings } from "@betterc0de/schema"
-import { getSettings, updateSettings } from "@/services/backend"
+import { getSettings, updateSettings } from "@/services/backend/coreApi"
 import { handleError } from "@/lib/errors"
 
 /** Detect system language and map to the closest Deepgram language code */

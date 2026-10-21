@@ -32,6 +32,11 @@ export interface ProjectMcpServerTemplate {
   authStorageKeys?: string[]
   authSourcePath?: string
   authServerUrl?: string | null
+  /**
+   * False when the entry comes from the user's own global or managed config;
+   * true when the opened repository declared it (see project-config.ts).
+   */
+  workspaceControlled?: boolean
 }
 
 export async function listProjectMcpServers(
@@ -40,14 +45,19 @@ export async function listProjectMcpServers(
   const root = path.resolve(cwd)
   const authData = await readBetterC0deMcpAuthData()
   const byId = new Map<string, ProjectMcpServerTemplate>()
-  for (const { config, sourcePath } of await readBetterC0deProjectConfigs(
-    root,
-    { strict: true }
-  )) {
+  for (const {
+    config,
+    sourcePath,
+    workspaceControlled,
+  } of await readBetterC0deProjectConfigs(root, { strict: true })) {
     const mcpConfig = readRecord(config, "mcp")
     for (const [id, rawServer] of Object.entries(mcpConfig)) {
       const server = projectMcpServerFromConfig(id, rawServer, sourcePath)
-      if (server) byId.set(id, attachProjectMcpAuthStatus(server, authData))
+      if (server)
+        byId.set(id, {
+          ...attachProjectMcpAuthStatus(server, authData),
+          workspaceControlled,
+        })
     }
   }
   return Array.from(byId.values()).sort((a, b) =>

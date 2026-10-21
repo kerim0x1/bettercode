@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { settingsSchema } from "@betterc0de/schema"
 import { ApiKeyPool } from "../auth/apiKeyPool"
+import { NativeTextGenerationService } from "./native-text-generation"
 
 const mocks = vi.hoisted(() => ({
   anthropicOptions: vi.fn(),
@@ -53,7 +54,11 @@ function fixture(provider: "anthropic" | "openai", enabled = true) {
     update: () => settings,
   })
   return {
-    helpers: new ChatLlmHelpers({ settings: () => settings, apiKeyPool: pool }),
+    helpers: new ChatLlmHelpers({
+      settings: () => settings,
+      apiKeyPool: pool,
+      nativeTextGeneration: new NativeTextGenerationService(),
+    }),
     pool,
   }
 }

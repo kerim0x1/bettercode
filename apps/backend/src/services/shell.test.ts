@@ -9,7 +9,7 @@ import {
   resolveDefaultShellTimeoutMs,
   resolveGitBashPath,
   resolveShellCommandLaunch,
-  runShellCommand,
+  ShellSessionService,
 } from "./shell"
 import { ShellCapabilityIssuer } from "../security/shellCapability"
 
@@ -70,11 +70,61 @@ describe("shell command launch resolution", () => {
   })
 
   it("runs zsh commands through zsh instead of falling back to bash", () => {
-    expect(resolveShellCommandLaunch("zsh", "echo ok")).toEqual({
+    const zsh = path.join(path.sep, "usr", "bin", "zsh")
+    expect(
+      resolveShellCommandLaunch("zsh", "echo ok", {
+        resolveExecutable: (name) => (name === "zsh" ? zsh : null),
+      })
+    ).toEqual({
       shell: "zsh",
-      binary: "zsh",
+      binary: zsh,
       args: ["-c", "echo ok"],
     })
+  })
+
+  it("never hands spawn a bare shell name", () => {
+    // Not on PATH: POSIX falls back to the standard absolute locations,
+    // Windows refuses rather than letting the workspace supply bash.exe.
+    const launch = (() => {
+      try {
+        return resolveShellCommandLaunch("bash", "echo ok", {
+          resolveExecutable: () => null,
+        })
+      } catch (error) {
+        expect(error).toMatchObject({ code: "ENOENT" })
+        return null
+      }
+    })()
+    if (launch) expect(path.isAbsolute(launch.binary)).toBe(true)
+    for (const shell of ["powershell", "wsl"]) {
+      if (process.platform !== "win32") continue
+      const launch = resolveShellCommandLaunch(shell, "echo ok", {
+        resolveExecutable: () => null,
+      })
+      expect(launch.binary).toMatch(/^[a-z]:\\.*\\System32\\/i)
+    }
+  })
+
+  it.runIf(process.platform === "win32")(
+    "refuses a multi-line command under cmd.exe instead of running only its first line",
+    () => {
+      expect(() =>
+        resolveShellCommandLaunch("cmd", "echo one\r\necho two")
+      ).toThrow(
+        expect.objectContaining({ code: "SHELL_MULTILINE_UNSUPPORTED" })
+      )
+    }
+  )
+
+  it("finds Git Bash beside the git executable on PATH", () => {
+    expect(
+      resolveGitBashPath({
+        platform: "win32",
+        env: {} as NodeJS.ProcessEnv,
+        gitExecutable: "D:\\Tools\\Git\\cmd\\git.exe",
+        exists: (candidate) => candidate === "D:\\Tools\\Git\\bin\\bash.exe",
+      })
+    ).toBe("D:\\Tools\\Git\\bin\\bash.exe")
   })
 
   it.runIf(process.platform === "win32")(
@@ -85,13 +135,14 @@ describe("shell command launch resolution", () => {
         'node x.cjs -m "fix: thing"'
       )
       expect(launch.shell).toBe("cmd")
+      expect(path.win32.isAbsolute(launch.binary)).toBe(true)
       expect(launch.windowsVerbatimArguments).toBe(true)
-      expect(launch.args).toEqual([
-        "/d",
-        "/s",
-        "/c",
-        '"node x.cjs -m "fix: thing""',
-      ])
+      expect(launch.args.slice(0, 3)).toEqual(["/d", "/s", "/c"])
+      // The console switches to UTF-8 first (by chcp's absolute path), then
+      // the command runs exactly as typed.
+      expect(launch.args[3]).toMatch(
+        /^"[a-z]:\\.*\\System32\\chcp\.com 65001>nul & node x\.cjs -m "fix: thing""$/i
+      )
       // Node's own quoting must stay off; it is what turned `"` into `\"`.
       expect(launch.args.join(" ")).not.toContain('\\"')
     }
@@ -195,7 +246,7 @@ describe("shell command argument delivery", () => {
     const script = writeArgvScript()
     const archivePath = path.join(path.dirname(script), "existing-output.txt")
     fs.writeFileSync(archivePath, "pre-existing output")
-    const result = await runShellCommand({
+    const result = await new ShellSessionService().runCommand({
       command: `node "${script}"`,
       cwd: path.dirname(script),
       archivePath,
@@ -209,7 +260,7 @@ describe("shell command argument delivery", () => {
   // quoting, `-m "fix: thing"` reached the child as `-m`, `"fix:`, `thing"`.
   it("delivers a quoted argument intact through the default shell", async () => {
     const script = writeArgvScript()
-    const result = await runShellCommand({
+    const result = await new ShellSessionService().runCommand({
       command: `node "${script}" -m "fix: thing" plain`,
       cwd: path.dirname(script),
       timeoutMs: 30_000,
@@ -227,7 +278,7 @@ describe("shell command argument delivery", () => {
     "delivers a quoted argument intact through PowerShell",
     async () => {
       const script = writeArgvScript()
-      const result = await runShellCommand({
+      const result = await new ShellSessionService().runCommand({
         command: `node "${script}" -m "fix: thing" plain`,
         cwd: path.dirname(script),
         shell: "powershell",
@@ -252,7 +303,7 @@ describe("shell command argument delivery", () => {
       "utf8"
     )
     const startedAt = Date.now()
-    const result = await runShellCommand({
+    const result = await new ShellSessionService().runCommand({
       command: `node "${stdinScript}"`,
       cwd: path.dirname(script),
       timeoutMs: 20_000,
@@ -262,5 +313,66 @@ describe("shell command argument delivery", () => {
     expect(result.success).toBe(true)
     expect(result.stdout).toBe("EOF")
     expect(Date.now() - startedAt).toBeLessThan(15_000)
+  }, 30_000)
+})
+
+describe("shell command output and settlement", () => {
+  const tempDirs: string[] = []
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  function writeScript(name: string, source: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-shell-out-"))
+    tempDirs.push(dir)
+    const script = path.join(dir, name)
+    fs.writeFileSync(script, source, "utf8")
+    return script
+  }
+
+  it("decodes a UTF-8 character split across two pipe chunks", async () => {
+    // "✓" is E2 9C 93; the second write arrives as a separate chunk.
+    const script = writeScript(
+      "split.cjs",
+      [
+        "process.stdout.write(Buffer.from([0xe2, 0x9c]))",
+        "setTimeout(() => process.stdout.write(Buffer.from([0x93, 0x0a])), 150)",
+      ].join("\n")
+    )
+    const result = await new ShellSessionService().runCommand({
+      command: `node "${script}"`,
+      cwd: path.dirname(script),
+      timeoutMs: 30_000,
+    })
+    expect(result.success).toBe(true)
+    expect(result.stdout.trim()).toBe("✓")
+  }, 30_000)
+
+  it("settles once the root exits even if a detached descendant keeps the output pipes", async () => {
+    const script = writeScript(
+      "detach.cjs",
+      [
+        "const { spawn } = require('node:child_process')",
+        "const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 15000)'], {",
+        "  stdio: 'inherit',",
+        "  detached: true,",
+        "})",
+        "child.unref()",
+        "process.stdout.write('started\n')",
+      ].join("\n")
+    )
+    const startedAt = Date.now()
+    const result = await new ShellSessionService().runCommand({
+      command: `node "${script}"`,
+      cwd: path.dirname(script),
+      timeoutMs: 60_000,
+    })
+    expect(result.timedOut).toBe(false)
+    expect(result.stdout).toContain("started")
+    expect(result.detachedDescendants).toBe(true)
+    // Bounded by the post-exit grace, far below the descendant's lifetime.
+    expect(Date.now() - startedAt).toBeLessThan(12_000)
   }, 30_000)
 })

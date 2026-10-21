@@ -1,12 +1,9 @@
 import { useEffect } from "react"
+import type { ConsoleLog } from "@/lib/console-log-store"
+import { useSettingsStore } from "@/lib/settings-store"
 import { ipcApi } from "@/services/ipc-facade"
 
-export type ConsoleLog = {
-  type: "log" | "warn" | "error" | "info" | "debug"
-  message: string
-  stack?: string
-  timestamp: Date
-}
+export type { ConsoleLog }
 
 const MAX_LOGS = 200
 const FLUSH_INTERVAL_MS = 150
@@ -118,6 +115,10 @@ export function useConsoleCapture(
       reason: unknown,
       fallback = "Unhandled renderer error"
     ) => {
+      // Automatic reports are opt-in (Settings → Privacy & Diagnostics). The shell
+      // enforces the same choice; checking here keeps the log buffer from
+      // crossing IPC at all without consent.
+      if (useSettingsStore.getState().crashReportsEnabled !== true) return
       const error =
         reason instanceof Error
           ? reason

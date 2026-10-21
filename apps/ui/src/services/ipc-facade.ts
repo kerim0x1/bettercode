@@ -26,11 +26,37 @@
  */
 
 import type {
+  RuntimeHookView,
+  RuntimeMcpServerRecord,
+} from "@betterc0de/schema/runtime-records"
+import type {
   BugReportPayload,
   BugReportResult,
   ElectronAPI,
 } from "@/types/electron-api"
-import { IpcError } from "@/lib/errors"
+// The class module, not the `@/lib/errors` index: that one also pulls in
+// React hooks, and every renderer module reaches the bridge through here.
+import { IpcError } from "@/lib/errors/types"
+
+/**
+ * The preload bridge (`window.electronAPI`), or `undefined` outside the
+ * desktop shell: remote backend mode, a plain browser, tests without a
+ * `window`. Renderer code outside `services/` reads the bridge only through
+ * this accessor or the typed `ipcApi` methods below (eslint
+ * `no-restricted-properties` warns on `window.electronAPI` elsewhere), so the
+ * IPC surface the UI depends on can be found from one module.
+ *
+ * Read it at call time rather than caching it: tests and the remote-mode
+ * bootstrap install or replace the bridge after modules load.
+ */
+export function getElectronApi(): ElectronAPI | undefined {
+  return typeof window === "undefined" ? undefined : window.electronAPI
+}
+
+/** Whether the desktop shell's preload bridge is present. */
+export function hasElectronApi(): boolean {
+  return getElectronApi() !== undefined
+}
 
 function requireApi(): ElectronAPI {
   const api = window.electronAPI
@@ -68,23 +94,10 @@ function unwrap<T extends Record<string, unknown>>(
 }
 
 // ─── Payload types ──────────────────────────────────────────────────
-// Mirror the on-disk manifest shapes written by `electron/mcp-ipc.cjs`,
-// `skills-ipc.cjs`, etc. Kept minimal — the UI only reads these fields.
-
-export type McpServer = {
-  id: string
-  name: string
-  command: string
-  args?: string[]
-  env?: Record<string, string>
-  headers?: Record<string, string>
-  headerEnv?: Record<string, string>
-  enabled: boolean
-  installedAt: string
-  type: string
-  url: string | null
-  authenticated: boolean
-}
+// Mirror the on-disk manifest shapes written by `apps/shell/skills-ipc.cjs`
+// and its siblings. Kept minimal — the UI only reads these fields. MCP
+// servers and hooks use the shared record types the shell checks every
+// record against (`@betterc0de/schema/runtime-records`).
 
 export type Skill = {
   id: string
@@ -101,19 +114,6 @@ export type Skill = {
   providerKinds?: string[]
   providerInstanceIds?: string[]
   content: string
-}
-
-export type Hook = {
-  id: string
-  event: string
-  command: string
-  enabled: boolean
-  createdAt: string
-  updatedAt: string
-  lastRunAt: string | null
-  lastStatus: string
-  lastExitCode: number | null
-  lastError: string | null
 }
 
 export type Subagent = {
@@ -172,12 +172,12 @@ export const ipcApi = {
     },
   },
   mcp: {
-    list: async (): Promise<McpServer[]> => {
+    list: async (): Promise<RuntimeMcpServerRecord[]> => {
       const res = await requireApi().mcpList()
-      return (res ?? []) as McpServer[]
+      return (res ?? []) as RuntimeMcpServerRecord[]
     },
     install: async (
-      config: Partial<McpServer> & Record<string, unknown>
+      config: Partial<RuntimeMcpServerRecord> & Record<string, unknown>
     ): Promise<{ id: string }> => {
       const res = await requireApi().mcpInstall(config)
       return unwrap<{ id: string }>(res, "mcp:install")
@@ -231,12 +231,12 @@ export const ipcApi = {
   },
 
   hook: {
-    list: async (): Promise<Hook[]> => {
+    list: async (): Promise<RuntimeHookView[]> => {
       const res = await requireApi().hookList()
-      return (res ?? []) as Hook[]
+      return (res ?? []) as RuntimeHookView[]
     },
     save: async (
-      hook: Partial<Hook> & Record<string, unknown>
+      hook: Partial<RuntimeHookView> & Record<string, unknown>
     ): Promise<{ id: string }> => {
       const res = await requireApi().hookSave(hook)
       return unwrap<{ id: string }>(res, "hook:save")

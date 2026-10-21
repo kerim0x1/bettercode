@@ -25,8 +25,9 @@ export function forwardedClientAddress(
 /**
  * Addresses that only exist inside a home, office or VPN network: RFC 1918,
  * link-local, and the IPv6 ULA / link-local ranges. A plaintext request from
- * such a peer qualifies for BetterC0de's private-network pairing policy and
- * gets a full session without TLS. Deliberately excludes the
+ * such a peer qualifies for BetterC0de's private-network pairing policy: it
+ * may pair without TLS, but only as short read-only monitoring, since a
+ * private address is not encryption. Deliberately excludes the
  * Tailscale CGNAT range 100.64/10: an ISP can hand that out on a physical
  * interface shared with strangers, so it only counts when the packets
  * demonstrably arrived through the tailnet (`requestPeerIsTailnet`).

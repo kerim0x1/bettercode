@@ -1,7 +1,7 @@
 /**
- * The slash command menu and its composer hook. The catalog and the pure
- * query helpers live in `lib/`; they are re-exported here so callers keep
- * one import.
+ * The slash command menu. The catalog and the pure query helpers live in
+ * `lib/`; they are re-exported here so callers keep one import. The menu's
+ * open/query state lives in `lib/composer-menu-store.ts`.
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
@@ -50,14 +50,13 @@ import {
   listProjectSkills,
   type WorkspaceProjectCommand,
   type WorkspaceProjectSkill,
-} from "@/services/backend"
+} from "@/services/backend/workspaceApi"
 import {
   BUILTIN_COMMANDS,
   filterBuiltinCommandsForBetterC0deShareMode,
   type SlashCommand,
 } from "@/lib/slash-command-catalog"
 import {
-  detectSlashCommandTrigger,
   filterComposerCommands,
   slashCommandEmptyStateText,
   slashCommandSelectionReplacement,
@@ -114,7 +113,8 @@ function slashCommandIconFor(cmd: SlashCommand) {
   if (has("undo", "checkpoint")) return UndoIcon
   if (has("redo")) return RedoIcon
   if (has("interrupt", "stop")) return PauseCircleIcon
-  if (has("fork", "parent", "child", "sibling")) return GitForkIcon
+  if (has("fork", "parent", "child", "sibling", "merge-back"))
+    return GitForkIcon
   if (has("worktree", "branch")) return GitBranchIcon
   if (has("pin")) return PinIcon
   if (has("delete")) return Delete02Icon
@@ -373,45 +373,4 @@ export function SlashCommandMenu({
       </ComposerSuggestionPanel>
     </div>
   )
-}
-
-/** Hook to detect "/" at start of input and manage slash command state */
-export function useSlashCommands() {
-  const [slashActive, setSlashActive] = useState(false)
-  const [slashQuery, setSlashQuery] = useState("")
-  const [slashTrigger, setSlashTrigger] = useState<"/" | "$">("/")
-  const [slashRange, setSlashRange] = useState<{
-    start: number
-    end: number
-  } | null>(null)
-
-  const checkInput = useCallback((text: string, cursor = text.length) => {
-    const trigger = detectSlashCommandTrigger(text, cursor)
-    if (trigger) {
-      setSlashActive(true)
-      setSlashTrigger(trigger.trigger)
-      setSlashQuery(trigger.query)
-      setSlashRange({ start: trigger.rangeStart, end: trigger.rangeEnd })
-    } else {
-      setSlashActive(false)
-      setSlashQuery("")
-      setSlashRange(null)
-    }
-  }, [])
-
-  const close = useCallback(() => {
-    setSlashActive(false)
-    setSlashQuery("")
-    setSlashTrigger("/")
-    setSlashRange(null)
-  }, [])
-
-  return {
-    slashActive,
-    slashQuery,
-    slashTrigger,
-    slashRange,
-    checkInput,
-    close,
-  }
 }

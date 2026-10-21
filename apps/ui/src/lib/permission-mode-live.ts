@@ -10,7 +10,7 @@ import {
 } from "@betterc0de/schema/chat-controls"
 import { useChatStore } from "@/lib/chat-store"
 import type { PermissionLevel } from "@/lib/preferences-store"
-import { setChatPermissionMode } from "@/services/backend"
+import { setChatPermissionMode } from "@/services/backend/chatApi"
 
 /**
  * Shared by both composer footers and /autoaccept. The backend settles pending

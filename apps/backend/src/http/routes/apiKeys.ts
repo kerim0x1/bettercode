@@ -1,16 +1,16 @@
 import type { Hono } from "hono"
-import {
-  addApiKeySchema,
-  apiKeyProviderSchema,
-  reorderApiKeysSchema,
-  updateApiKeySchema,
-} from "@betterc0de/schema"
+import { apiKeyProviderSchema } from "@betterc0de/schema"
 import type { AppState } from "../../appState"
 import { ApiKeyPool, readApiKeyResponseError } from "../../auth/apiKeyPool"
 import { requestIdentity } from "../../remote/http"
+import { contractJson, handleHttpContract } from "../contracts"
 import { HttpError } from "../errors"
-import { parseAndHandle } from "../routeHelpers"
 
+/**
+ * The desktop owner's API keys. Every route answers with the provider's key
+ * list, checked against its shared contract
+ * (`@betterc0de/schema/http-contracts`).
+ */
 export function registerApiKeyRoutes(api: Hono, state: AppState): void {
   const pool = state.apiKeyPool ?? new ApiKeyPool(state.settings)
   api.use("/providers/api-keys/*", async (c, next) => {
@@ -28,42 +28,54 @@ export function registerApiKeyRoutes(api: Hono, state: AppState): void {
     return parsed.data
   }
   api.get("/providers/api-keys/:provider", (c) =>
-    c.json(pool.view(provider(c.req.param("provider"))))
+    contractJson(c, "apiKeysList", pool.view(provider(c.req.param("provider"))))
   )
   api.delete("/providers/api-keys/:provider", (c) =>
-    c.json(pool.useExternal(provider(c.req.param("provider"))))
+    contractJson(
+      c,
+      "apiKeysUseExternal",
+      pool.useExternal(provider(c.req.param("provider")))
+    )
   )
   api.post("/providers/api-keys/:provider", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      addApiKeySchema,
+      "apiKeysAdd",
       async (body) =>
         pool.add(provider(c.req.param("provider")), body.label, body.apiKey),
       { operation: "API key add" }
     )
   )
   api.put("/providers/api-keys/:provider/order", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      reorderApiKeysSchema,
+      "apiKeysReorder",
       async (body) => pool.reorder(provider(c.req.param("provider")), body.ids),
       { operation: "API key reorder" }
     )
   )
   api.patch("/providers/api-keys/:provider/:id", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      updateApiKeySchema,
+      "apiKeysUpdate",
       async (body) =>
         pool.update(provider(c.req.param("provider")), c.req.param("id"), body),
       { operation: "API key update" }
     )
   )
   api.delete("/providers/api-keys/:provider/:id", (c) =>
-    c.json(pool.remove(provider(c.req.param("provider")), c.req.param("id")))
+    contractJson(
+      c,
+      "apiKeysRemove",
+      pool.remove(provider(c.req.param("provider")), c.req.param("id"))
+    )
   )
   api.post("/providers/api-keys/:provider/:id/retry", (c) =>
-    c.json(pool.reset(provider(c.req.param("provider")), c.req.param("id")))
+    contractJson(
+      c,
+      "apiKeysRetry",
+      pool.reset(provider(c.req.param("provider")), c.req.param("id"))
+    )
   )
   api.post("/providers/api-keys/:provider/:id/test", async (c) => {
     const kind = provider(c.req.param("provider"))
@@ -109,6 +121,6 @@ export function registerApiKeyRoutes(api: Hono, state: AppState): void {
       if (failure.kind === "request") checkError = failure.message
     }
     if (checkError) throw new HttpError(400, checkError)
-    return c.json(pool.view(kind))
+    return contractJson(c, "apiKeysTest", pool.view(kind))
   })
 }

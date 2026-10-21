@@ -1,13 +1,14 @@
 import { setTimeout as delay } from "node:timers/promises"
 import { describe, expect, it } from "vitest"
 import {
-  closeTerminalPtySession,
   boundTerminalPtyData,
-  openTerminalPtySession,
-  readTerminalPtySession,
   resolveTerminalShellLaunch,
   TERMINAL_PTY_MAX_EVENT_DATA_BYTES,
+  TerminalPtyService,
 } from "./terminalPty"
+
+/** The service under test; one per file, as the module state used to be. */
+const ptys = new TerminalPtyService()
 
 describe("terminalPty", () => {
   it("uses zsh as a login shell when selected", () => {
@@ -32,7 +33,7 @@ describe("terminalPty", () => {
 
   it("redacts injected Claude system prompts from the visible launch event", async () => {
     const secretContext = "thread summary ".repeat(80)
-    const opened = openTerminalPtySession({
+    const opened = ptys.openSession({
       cwd: process.cwd(),
       command: process.execPath,
       args: ["-e", "process.exit(0)", "--append-system-prompt", secretContext],
@@ -52,14 +53,14 @@ describe("terminalPty", () => {
     // Windows ConPTY implementation does not race a redundant process-tree
     // kill against an already disappearing console.
     for (let attempt = 0; attempt < 120; attempt += 1) {
-      if (readTerminalPtySession(opened.sessionId)?.status === "exited") break
+      if (ptys.readSession(opened.sessionId)?.status === "exited") break
       await delay(25)
     }
-    closeTerminalPtySession(opened.sessionId)
+    ptys.closeSession(opened.sessionId)
   })
 
   it("opens a native PTY session and buffers process output", async () => {
-    const opened = openTerminalPtySession({
+    const opened = ptys.openSession({
       cwd: process.cwd(),
       command: process.execPath,
       args: ["-e", "process.stdout.write('hello from pty\\n')"],
@@ -76,7 +77,7 @@ describe("terminalPty", () => {
 
     for (let attempt = 0; attempt < 20 && status === "running"; attempt += 1) {
       await delay(50)
-      const snapshot = readTerminalPtySession(opened.sessionId, cursor)
+      const snapshot = ptys.readSession(opened.sessionId, cursor)
       expect(snapshot).not.toBeNull()
       if (!snapshot) break
       output += snapshot.events
@@ -87,7 +88,7 @@ describe("terminalPty", () => {
       status = snapshot.status
     }
 
-    closeTerminalPtySession(opened.sessionId)
+    ptys.closeSession(opened.sessionId)
     expect(output).toContain("hello from pty")
   })
 
@@ -100,4 +101,30 @@ describe("terminalPty", () => {
     )
     expect(bounded).toContain("terminal output truncated")
   })
+})
+
+describe("terminal ownership by renderer instance", () => {
+  it("closes only the terminals the released renderer instance opened", async () => {
+    const open = (clientInstanceId: string) =>
+      ptys.openSession({
+        cwd: process.cwd(),
+        ownerId: "local-owner",
+        clientInstanceId,
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => {}, 30000)"],
+        cols: 80,
+        rows: 24,
+      })
+    const released = open("renderer-aaaa1111")
+    const kept = open("renderer-bbbb2222")
+    try {
+      await expect(
+        ptys.shutdownForClientInstance("local-owner", "renderer-aaaa1111")
+      ).resolves.toBe(1)
+      expect(ptys.readSession(released.sessionId)).toBeNull()
+      expect(ptys.readSession(kept.sessionId)?.status).toBe("running")
+    } finally {
+      await ptys.shutdownForClientInstance("local-owner", "renderer-bbbb2222")
+    }
+  }, 30_000)
 })

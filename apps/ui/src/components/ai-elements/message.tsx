@@ -13,6 +13,13 @@ import { cn } from "@/lib/utils"
 import { sanitizeSvg } from "@/lib/sanitize"
 import { useStreamdownPlugins } from "@/components/ai-elements/streamdown-plugins"
 import { CodeBlock } from "@/components/ai-elements/code-block"
+import {
+  PREVIEWABLE_FENCE_LANGUAGES,
+  closedFenceBodies,
+  isVisualReplyClassName,
+  normalizeFenceBody,
+} from "@/lib/visual-reply"
+import { useSettingsStore } from "@/lib/settings-store"
 import type { BundledLanguage } from "shiki"
 import type { UIMessage } from "ai"
 import {
@@ -20,7 +27,6 @@ import {
   ChevronRightIcon,
   CopyIcon,
   CheckIcon,
-  PlayIcon,
   XIcon,
   CodeIcon,
   EyeIcon,
@@ -39,7 +45,9 @@ import type {
 } from "react"
 import {
   createContext,
+  lazy,
   memo,
+  Suspense,
   useCallback,
   useContext,
   useEffect,
@@ -50,6 +58,18 @@ import {
 import { Streamdown } from "streamdown"
 import { MessageTable } from "./message-table"
 import "./message-response.css"
+
+// Visual replies load with the first page an answer shows.
+const VisualReplyBlock = lazy(() =>
+  import("@/components/ai-elements/visual-reply").then((module) => ({
+    default: module.VisualReplyBlock,
+  }))
+)
+const VisualReplyFrame = lazy(() =>
+  import("@/components/ai-elements/visual-reply").then((module) => ({
+    default: module.VisualReplyFrame,
+  }))
+)
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"]
@@ -75,7 +95,8 @@ export const MessageContent = ({
 }: MessageContentProps) => (
   <div
     className={cn(
-      "is-user:dark flex w-fit max-w-full min-w-0 flex-col gap-2 overflow-hidden text-[13px]",
+      // Settings → Chat → Message Text Size (13px by default).
+      "is-user:dark flex w-fit max-w-full min-w-0 flex-col gap-2 overflow-hidden text-[length:var(--message-font-size)]",
       // bg-card (#1F1F1F) — user bubbles follow the card tier of the
       // two-color theme instead of the old secondary grey.
       "group-[.is-user]:rounded-lg group-[.is-user]:bg-card group-[.is-user]:px-4 group-[.is-user]:py-3 group-[.is-user]:text-foreground",
@@ -345,11 +366,18 @@ export const MessageBranchPage = ({
 export type MessageResponseProps = ComponentProps<typeof Streamdown> & {
   concealCodeBlocks?: boolean
   workspaceRoot?: string | null
+  /** The answer is still arriving: pages render once their fence is closed. */
+  streaming?: boolean
 }
 
 const MessageResponseRenderContext = createContext({
   concealCodeBlocks: false,
   workspaceRoot: undefined as string | null | undefined,
+  /**
+   * While streaming, the normalized bodies of the closed html fences; null
+   * when the answer is complete.
+   */
+  closedVisualFences: null as ReadonlySet<string> | null,
 })
 
 /** Mermaid diagram renderer.
@@ -522,7 +550,11 @@ const KiboCodeBlockComponent = ({
       : String(children || "").replace(/\n$/, "")
   const [expanded, setExpanded] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
-  const { concealCodeBlocks } = useContext(MessageResponseRenderContext)
+  const [inlinePreview, setInlinePreview] = useState(false)
+  const { concealCodeBlocks, closedVisualFences } = useContext(
+    MessageResponseRenderContext
+  )
+  const visualRepliesEnabled = useSettingsStore((state) => state.visualReplies)
 
   // Inline code — no collapsing
   if (!("data-block" in props)) {
@@ -538,10 +570,29 @@ const KiboCodeBlockComponent = ({
     return <MermaidBlock code={codeStr} />
   }
 
+  const isVisualReply = isVisualReplyClassName(className)
+  const isHtml = isVisualReply || ["html", "htm"].includes(lang.toLowerCase())
+  // While the answer streams, a page renders only once its fence is closed;
+  // half a document would reload the frame on every token.
+  const fenceIncomplete =
+    isHtml &&
+    closedVisualFences !== null &&
+    !closedVisualFences.has(normalizeFenceBody(codeStr))
+
+  // ```html-render is a visual reply: a live page by default. With Visual
+  // replies off it is an ordinary html block (its class reads as `html`).
+  if (isVisualReply && visualRepliesEnabled) {
+    return (
+      <Suspense fallback={<div className="min-h-[120px]" aria-hidden="true" />}>
+        <VisualReplyBlock code={codeStr} incomplete={fenceIncomplete} />
+      </Suspense>
+    )
+  }
+
   const lineCount = codeStr.split("\n").length
   const preview = codeStr.split("\n").slice(0, 3).join("\n")
   const fakeFile = langToFilename(lang)
-  const isHtml = ["html", "htm"].includes(lang.toLowerCase())
+  const showInlinePreview = isHtml && inlinePreview && !fenceIncomplete
 
   return (
     <>
@@ -567,14 +618,18 @@ const KiboCodeBlockComponent = ({
           {isHtml && (
             <button
               type="button"
-              onClick={() => {
-                setExpanded(true)
-                setShowPreview(true)
-              }}
-              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-              title="Preview"
+              aria-pressed={showInlinePreview}
+              disabled={fenceIncomplete}
+              onClick={() => setInlinePreview((value) => !value)}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors outline-none hover:bg-muted/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50 aria-pressed:bg-muted aria-pressed:text-foreground"
+              title={
+                fenceIncomplete
+                  ? "Preview is available once the block is complete"
+                  : "Show the page here"
+              }
             >
-              <PlayIcon className="size-3.5" />
+              <EyeIcon className="size-3.5" />
+              Preview
             </button>
           )}
           <button
@@ -588,29 +643,37 @@ const KiboCodeBlockComponent = ({
             Open
           </button>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            setExpanded(true)
-            setShowPreview(false)
-          }}
-          className="w-full cursor-pointer border-t border-border/30 px-3 py-2 text-left transition-colors hover:bg-muted/20"
-        >
-          {concealCodeBlocks ? (
-            <div className="flex items-center gap-2 py-1 font-mono text-[11px] text-muted-foreground/60">
-              <CodeIcon className="size-3.5" />
-              <span>Code concealed</span>
-            </div>
-          ) : (
-            <pre
-              className="overflow-hidden font-mono text-[11px] whitespace-pre text-muted-foreground/60"
-              style={{ maxHeight: "3.6em" }}
-            >
-              {preview}
-              {lineCount > 3 ? "\n..." : ""}
-            </pre>
-          )}
-        </button>
+        {showInlinePreview ? (
+          <div className="border-t border-border/30">
+            <Suspense fallback={null}>
+              <VisualReplyFrame html={codeStr} title="HTML preview" />
+            </Suspense>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setExpanded(true)
+              setShowPreview(false)
+            }}
+            className="w-full cursor-pointer border-t border-border/30 px-3 py-2 text-left transition-colors hover:bg-muted/20"
+          >
+            {concealCodeBlocks ? (
+              <div className="flex items-center gap-2 py-1 font-mono text-[11px] text-muted-foreground/60">
+                <CodeIcon className="size-3.5" />
+                <span>Code concealed</span>
+              </div>
+            ) : (
+              <pre
+                className="overflow-hidden font-mono text-[11px] whitespace-pre text-muted-foreground/60"
+                style={{ maxHeight: "3.6em" }}
+              >
+                {preview}
+                {lineCount > 3 ? "\n..." : ""}
+              </pre>
+            )}
+          </button>
+        )}
       </div>
 
       {/* VSCode-style overlay modal */}
@@ -652,8 +715,9 @@ const KiboCodeBlockComponent = ({
                   </button>
                   <button
                     type="button"
+                    disabled={fenceIncomplete}
                     onClick={() => setShowPreview(true)}
-                    className={`flex items-center gap-1 rounded px-2 py-1 text-[10px] transition-colors ${showPreview ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                    className={`flex items-center gap-1 rounded px-2 py-1 text-[10px] transition-colors disabled:opacity-50 ${showPreview ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"}`}
                   >
                     <EyeIcon className="size-3" /> Preview
                   </button>
@@ -672,17 +736,13 @@ const KiboCodeBlockComponent = ({
 
             {/* Editor area */}
             <div className="min-h-0 flex-1 overflow-auto">
-              {showPreview && isHtml ? (
-                <iframe
-                  srcDoc={codeStr}
-                  className="h-full w-full border-0 bg-white"
-                  // SECURITY: never combine `allow-same-origin` with
-                  // `allow-scripts` here — the iframe would inherit the
-                  // renderer's origin and could reach `window.top.electronAPI`.
-                  // Opaque origin only: scripts run but cannot touch the host.
-                  sandbox="allow-scripts"
-                  title="HTML Preview"
-                />
+              {showPreview && isHtml && !fenceIncomplete ? (
+                // The visual reply frame: sandboxed, opaque origin, its own
+                // policy (lib/visual-reply.ts). A srcdoc frame would inherit
+                // the app's policy and run none of the page's scripts.
+                <Suspense fallback={null}>
+                  <VisualReplyFrame html={codeStr} title="HTML preview" fill />
+                </Suspense>
               ) : (
                 <CodeBlock
                   code={codeStr}
@@ -822,13 +882,25 @@ export const MessageResponse = memo(
     className,
     concealCodeBlocks = false,
     workspaceRoot,
+    streaming = false,
     ...props
   }: MessageResponseProps) => {
     const streamdownPlugins = useStreamdownPlugins()
+    const markdown = typeof props.children === "string" ? props.children : ""
+    // Only a streaming answer can hold an html fence that is still open.
+    const closedVisualFences = useMemo(
+      () =>
+        streaming && /html/i.test(markdown)
+          ? closedFenceBodies(markdown, PREVIEWABLE_FENCE_LANGUAGES)
+          : null,
+      [streaming, markdown]
+    )
+    const renderContext = useMemo(
+      () => ({ concealCodeBlocks, workspaceRoot, closedVisualFences }),
+      [concealCodeBlocks, workspaceRoot, closedVisualFences]
+    )
     return (
-      <MessageResponseRenderContext.Provider
-        value={{ concealCodeBlocks, workspaceRoot }}
-      >
+      <MessageResponseRenderContext.Provider value={renderContext}>
         <Streamdown
           className={cn(
             "message-response size-full min-w-0 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
@@ -845,7 +917,8 @@ export const MessageResponse = memo(
     prevProps.children === nextProps.children &&
     nextProps.isAnimating === prevProps.isAnimating &&
     nextProps.concealCodeBlocks === prevProps.concealCodeBlocks &&
-    nextProps.workspaceRoot === prevProps.workspaceRoot
+    nextProps.workspaceRoot === prevProps.workspaceRoot &&
+    nextProps.streaming === prevProps.streaming
 )
 
 MessageResponse.displayName = "MessageResponse"

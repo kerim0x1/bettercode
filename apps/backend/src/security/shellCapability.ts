@@ -1,16 +1,31 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
+
+/**
+ * What a shell or PTY launch runs with besides its command: the shell, the
+ * PTY's argument vector and the command-scoped environment. A run or PTY
+ * capability always binds all three; an absent `launch` or field means "the
+ * default", so redeeming a capability with another shell, argument vector or
+ * environment than it was minted for is refused.
+ */
+export interface ShellCapabilityLaunch {
+  readonly shell?: string
+  readonly args?: readonly string[]
+  readonly env?: Readonly<Record<string, string>>
+}
 
 export type ShellCapabilityScope =
   | {
       readonly operation: "run"
       readonly command: string
       readonly cwd: string
+      readonly launch?: ShellCapabilityLaunch
     }
   | {
       readonly operation: "pty-open"
       readonly cwd: string
       readonly sessionId?: string
       readonly command?: string
+      readonly launch?: ShellCapabilityLaunch
     }
   | {
       readonly operation: "pty-write"
@@ -35,16 +50,34 @@ interface CapabilityRecord {
   readonly expiresAt: number
 }
 
+function launchKey(launch: ShellCapabilityLaunch | undefined): unknown[] {
+  const env = Object.entries(launch?.env ?? {}).sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0
+  )
+  return [
+    launch?.shell?.trim() ?? "",
+    launch?.args ? [...launch.args] : [],
+    // A digest keeps long environment values out of the in-memory key.
+    createHash("sha256").update(JSON.stringify(env)).digest("hex"),
+  ]
+}
+
 function scopeKey(scope: ShellCapabilityScope): string {
   switch (scope.operation) {
     case "run":
-      return JSON.stringify([scope.operation, scope.cwd, scope.command])
+      return JSON.stringify([
+        scope.operation,
+        scope.cwd,
+        scope.command,
+        ...launchKey(scope.launch),
+      ])
     case "pty-open":
       return JSON.stringify([
         scope.operation,
         scope.cwd,
         scope.sessionId ?? "",
         scope.command ?? "",
+        ...launchKey(scope.launch),
       ])
     case "pty-write":
       return JSON.stringify([scope.operation, scope.sessionId, scope.data])

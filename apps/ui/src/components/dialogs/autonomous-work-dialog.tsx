@@ -9,6 +9,10 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  AUTONOMY_MAX_ITERATIONS_LIMIT,
+  AUTONOMY_MAX_TIME_BUDGET_MIN,
+} from "@betterc0de/schema"
 import { useChatStore } from "@/lib/chat-store"
 import type { ChatSubmitPayload } from "@/hooks/use-chat-submit"
 import {
@@ -21,14 +25,15 @@ import {
  * Start-dialog for an Autonomous Work run.
  *
  * The user enters a structured checklist of tasks, picks limits (max
- * iterations + wall-clock budget), and hits Start. We commit the fields to
- * the chat store and fire the initial user message via `handleSubmit` so the
- * assistant kicks off the run like any other turn — then `useAutonomousLoop`
- * takes over, watching `isStreaming` transitions and firing follow-ups until
- * a termination condition is hit.
+ * iterations + wall-clock budget), and hits Start. The initial user message
+ * goes out through `handleSubmit` like any other turn, carrying the task
+ * list and limits (`autonomy`): the backend records the run with the chat,
+ * sends that message and then sends the follow-ups itself whenever the chat
+ * is idle, until a termination condition is hit — with or without a window
+ * open (apps/backend services/chat/autonomy.ts).
  *
  * Opening the dialog mid-run (user re-opens to edit tasks) re-hydrates from
- * the current store snapshot. Start re-commits and re-triggers.
+ * the active chat's run. Start replaces that run and re-triggers.
  */
 export function AutonomousWorkDialog({
   open,
@@ -51,16 +56,19 @@ export function AutonomousWorkDialog({
   useEffect(() => {
     if (!open) return
     const s = useChatStore.getState()
-    const existing = s.autonomousTaskList
+    const run = s.activeThreadId
+      ? s.autonomyByThread[s.activeThreadId]
+      : undefined
+    const existing = run?.tasks
     setRows(
       existing && existing.length > 0
         ? existing.map((t) => ({ ...t }))
         : [{ id: crypto.randomUUID(), text: "", done: false }]
     )
-    setMaxIter(s.autonomousMaxIterations || AUTONOMOUS_MAX_ITERATIONS)
+    setMaxIter(run?.maxIterations || AUTONOMOUS_MAX_ITERATIONS)
     setTimeBudget(
-      typeof s.autonomousTimeBudgetMin === "number"
-        ? s.autonomousTimeBudgetMin
+      typeof run?.timeBudgetMin === "number"
+        ? run.timeBudgetMin
         : AUTONOMOUS_DEFAULT_TIME_BUDGET_MIN
     )
   }, [open])
@@ -93,25 +101,24 @@ export function AutonomousWorkDialog({
     const s = useChatStore.getState()
     const threadId =
       s.activeThreadId ?? s.createThread("New Chat", "BetterC0de")
-    s.setAutonomousTaskList(cleaned)
-    s.setAutonomousMaxIterations(maxIter)
-    s.setAutonomousTimeBudget(timeBudget)
-    s.setAutonomousIterations(0)
-    s.setAutonomousStopReason(null)
-    // setAutonomousMode resets status to "idle"; then setAutonomousStatus
-    // stamps startedAt on the idle→working transition.
-    s.setAutonomousMode(true)
-    s.setAutonomousTask(cleaned[0]?.text ?? null)
-    s.setAutonomousStatus("working")
+    // Whole numbers within what the backend accepts for a run.
+    const maxIterations = Math.min(
+      AUTONOMY_MAX_ITERATIONS_LIMIT,
+      Math.max(1, Math.floor(maxIter))
+    )
+    const timeBudgetMin = Math.min(
+      AUTONOMY_MAX_TIME_BUDGET_MIN,
+      Math.max(0, Math.floor(timeBudget))
+    )
 
     const taskListBlock = cleaned
       .map((t) => `- [${t.done ? "x" : " "}] ${t.id}: ${t.text}`)
       .join("\n")
 
     const budgetLine =
-      timeBudget > 0
-        ? `Wall-clock budget: ${timeBudget} minutes. Max iterations: ${maxIter}.`
-        : `No wall-clock limit. Max iterations: ${maxIter}.`
+      timeBudgetMin > 0
+        ? `Wall-clock budget: ${timeBudgetMin} minutes. Max iterations: ${maxIterations}.`
+        : `No wall-clock limit. Max iterations: ${maxIterations}.`
 
     const introPrompt = [
       "[Autonomous Work — run started]",
@@ -136,7 +143,16 @@ export function AutonomousWorkDialog({
     ].join("\n")
 
     onOpenChange(false)
-    handleSubmit({ threadId, text: introPrompt, files: [] })
+    handleSubmit({
+      threadId,
+      text: introPrompt,
+      files: [],
+      autonomy: {
+        tasks: cleaned.map((t) => ({ id: t.id, text: t.text })),
+        maxIterations,
+        timeBudgetMin,
+      },
+    })
   }
 
   return (

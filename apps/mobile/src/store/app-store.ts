@@ -2,10 +2,18 @@ import { create } from "zustand"
 import {
   normalizeProviderGoal,
   parseGoalCommand,
-  isRecord,
   type PermissionUpdate,
 } from "@betterc0de/schema"
 import type { ChatAttachment } from "@betterc0de/schema/chat-attachment"
+import {
+  affectsPendingRequests,
+  derivePendingRequests,
+  requestIdFromActivity,
+  settledRequestIds,
+  settlesPendingRequest,
+  stripProposedPlanWrapper,
+  type PendingProviderRequest,
+} from "@betterc0de/schema/pending-requests"
 import {
   PERMISSION_MODE_FAILED,
   PERMISSION_MODE_QUEUED,
@@ -19,6 +27,7 @@ import type {
   ProjectSummary,
   ThreadActivity,
 } from "@/types/remote"
+import { bypassUnavailableNotice, presetWithoutBypass } from "@/lib/bypass"
 import { createId } from "@/lib/ids"
 import { describeRemoteError, remoteErrorMessage } from "@/lib/remote-errors"
 import { maxRequestBytesNow } from "@/lib/request-limit"
@@ -36,6 +45,7 @@ import {
   isTurnStarted,
   isTurnTerminal,
   pendingRequestFromEvent,
+  pendingRequestOfKind,
   reasoningDelta,
   replacementText,
   resolvedRequestId,
@@ -117,10 +127,15 @@ export type SendOutcome =
   | { status: "busy" }
   | { status: "failed"; error: string }
 
-/** A notice the chat shows after a permission change: the desktop's words. */
-export type PermissionNotice =
-  | typeof PERMISSION_MODE_QUEUED
-  | typeof PERMISSION_MODE_FAILED
+/**
+ * A notice the chat shows after a permission change: the desktop's words
+ * (`PERMISSION_MODE_QUEUED`, `PERMISSION_MODE_FAILED`), or why Bypass was
+ * refused (`bypassUnavailableNotice`).
+ */
+export interface PermissionNotice {
+  readonly title: string
+  readonly description: string
+}
 
 interface AppStore {
   threads: ChatThread[]
@@ -237,7 +252,10 @@ interface AppStore {
       decision?: "approve" | "deny"
       answers?: Record<string, unknown>
       message?: string
-      /** "Always allow": the rule the desktop stores with the approval. */
+      /**
+       * "Allow for this session": the session rule the desktop applies with
+       * the approval. It drops lasting rules from a paired phone.
+       */
       updatedPermissions?: PermissionUpdate[]
     }
   ) => Promise<void>
@@ -745,6 +763,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }),
 
   changePermissionLevel: async (api, threadId, level) => {
+    const previous = useComposerSettings
+      .getState()
+      .settingsFor(threadId).permissionLevel
     useComposerSettings.getState().update(threadId, { permissionLevel: level })
     const thread = get().threads.find((candidate) => candidate.id === threadId)
     if (!thread) return null
@@ -768,7 +789,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return running && result.applied !== "live"
         ? PERMISSION_MODE_QUEUED
         : null
-    } catch {
+    } catch (error) {
+      // The desktop refuses Bypass to a phone without the terminal grant
+      // and would run the next message as Ask first anyway: the chat keeps
+      // the preset it had, and the user learns why, running turn or not.
+      if (
+        error instanceof RemoteApiError &&
+        error.code === "remote_bypass_disabled"
+      ) {
+        const settings = useComposerSettings.getState()
+        // Unless the user already chose another preset meanwhile.
+        if (settings.settingsFor(threadId).permissionLevel !== level) {
+          return null
+        }
+        const kept = presetWithoutBypass(previous)
+        settings.update(threadId, { permissionLevel: kept })
+        return bypassUnavailableNotice(kept)
+      }
       return running ? PERMISSION_MODE_FAILED : null
     }
   },
@@ -1351,75 +1388,77 @@ function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   return next
 }
 
+/**
+ * The requests these activities leave open. Which ones are open is derived
+ * by `derivePendingRequests`, shared with the desktop, so the phone and the
+ * desktop agree; the phone only maps each one to its card.
+ */
 export function pendingRequestsFromActivities(
   activities: ThreadActivity[]
 ): PendingRequest[] {
-  const pending = new Map<string, PendingRequest>()
-  const settled = settledRequestIds(activities)
-  const ordered = [...activities].sort(
-    (a, b) =>
-      (a.sequence ?? 0) - (b.sequence ?? 0) ||
-      a.createdAt.localeCompare(b.createdAt) ||
-      a.id.localeCompare(b.id)
-  )
-  for (const activity of ordered) {
-    const eventType = activityEventType(activity.kind)
-    if (!eventType) {
-      if (isStaleRequestFailure(activity)) {
-        const staleId = requestIdFromPayload(activity.payload)
-        if (staleId) pending.delete(staleId)
-      }
-      continue
-    }
-    const event = activityAsEvent(activity, eventType)
-    if (!event) continue
-    const opened = pendingRequestFromEvent(event)
-    if (opened && !settled.has(opened.id)) pending.set(opened.id, opened)
-    const resolved = resolvedRequestId(event)
-    if (resolved) pending.delete(resolved)
-  }
-  return [...pending.values()]
+  return derivePendingRequests(activities).map(pendingRequestCard)
 }
 
-/** The requests these activities settle: answered, or refused as stale. */
-function settledRequestIds(activities: ThreadActivity[]): Set<string> {
-  const settled = new Set<string>()
-  for (const activity of activities) {
-    if (!settlesRequest(activity)) continue
-    const id = requestIdFromPayload(activity.payload)
-    if (id) settled.add(id)
-  }
-  return settled
-}
-
-function settlesRequest(activity: ThreadActivity): boolean {
-  return (
-    [
-      "approval.resolved",
-      "plan-approval.resolved",
-      "user-input.resolved",
-    ].includes(activity.kind) || isStaleRequestFailure(activity)
-  )
-}
-
-/** A request activity read as the runtime event that announced it. */
-function activityAsEvent(activity: ThreadActivity, eventType: string) {
-  const payload = isRecord(activity.payload) ? activity.payload : {}
-  return decodeRuntimeFrame({
-    channel: "provider.runtimeEvent",
-    data: {
-      event_type: eventType,
-      thread_id: activity.threadId,
-      providerInstanceId: activity.providerInstanceId,
+/**
+ * The card for a request a thread's activities left open. A plan approval
+ * shows the plan `derivePendingRequests` found for it, from the request or
+ * else from the plan proposed in its turn (a provider may open the approval
+ * without the plan, e.g. after a session resume), as the desktop does.
+ */
+function pendingRequestCard(request: PendingProviderRequest): PendingRequest {
+  const { activity, payload } = request
+  const plan =
+    request.kind === "plan-approval" ? (request.planMarkdown ?? "") : ""
+  return pendingRequestOfKind(
+    {
+      threadId: activity.threadId,
+      type: activity.kind,
       payload: {
         ...payload,
         detail:
           typeof payload.detail === "string"
             ? payload.detail
             : activity.summary,
+        ...(plan.trim() ? { planMarkdown: plan } : {}),
       },
+      // Never guessed: a request that names no provider gets an empty
+      // kind, which the desktop refuses (see `pendingRequestOfKind`).
+      providerKind: request.providerKind ?? null,
+      providerInstanceId: request.providerInstanceId ?? null,
+      turnId: request.turnId ?? null,
+      requestId: request.requestId,
     },
+    request.requestId,
+    request.kind === "plan-approval" ? "plan" : request.kind
+  )
+}
+
+/**
+ * Plan cards with the plan their thread's activities now provide. A provider
+ * can open a plan approval before it streams the plan
+ * (`turn.proposed.completed`, e.g. after a session resume); the open card
+ * shows the plan once it arrives instead of waiting for a reload.
+ */
+function withRecoveredPlans(
+  requests: PendingRequest[],
+  activities: ThreadActivity[]
+): PendingRequest[] {
+  if (!requests.some((request) => request.kind === "plan")) return requests
+  const plans = new Map<string, string>()
+  for (const request of derivePendingRequests(activities, {
+    kinds: ["plan-approval"],
+  })) {
+    const plan = stripProposedPlanWrapper(request.planMarkdown ?? "")
+    if (plan) plans.set(request.requestId, plan)
+  }
+  let changed = false
+  const next = requests.map((request) => {
+    const plan = request.kind === "plan" ? plans.get(request.id) : undefined
+    if (!plan || plan === request.detail) return request
+    changed = true
+    return { ...request, detail: plan }
   })
+  return changed ? next : requests
 }
 
 /**
@@ -1442,19 +1481,36 @@ function applyActivity(
       activity,
     ]
     // Tool output arrives many times a second; only a request's own
-    // activities can change what the chat waits for.
-    if (!settlesRequest(activity) && activityEventType(activity.kind) === null)
+    // activities can change what the chat waits for, and a proposed plan
+    // what an open plan card shows.
+    if (!affectsPendingRequests(activity)) {
+      const requests =
+        activity.kind === "turn.proposed.completed"
+          ? withRecoveredPlans(current, activities)
+          : current
       return {
         activitiesByThread: {
           ...state.activitiesByThread,
           [threadId]: activities,
         },
+        ...(requests === current
+          ? {}
+          : {
+              requestsByThread: {
+                ...state.requestsByThread,
+                [threadId]: requests,
+              },
+            }),
       }
+    }
     const open = pendingRequestsFromActivities(activities)
     const settled = settledRequestIds(activities)
     // A request only a runtime event has announced so far stays until an
     // activity settles it; the order the chat shows them in is kept.
-    const kept = current.filter((request) => !settled.has(request.id))
+    const kept = withRecoveredPlans(
+      current.filter((request) => !settled.has(request.id)),
+      activities
+    )
     const added = open.filter(
       (request) => !current.some((item) => item.id === request.id)
     )
@@ -1470,66 +1526,17 @@ function applyActivity(
     }
   }
   let requests = current
-  if (settlesRequest(activity)) {
-    const id = requestIdFromPayload(activity.payload)
+  if (settlesPendingRequest(activity)) {
+    const id = requestIdFromActivity(activity)
     requests = requests.filter((request) => request.id !== id)
   } else {
-    const eventType = activityEventType(activity.kind)
-    const event = eventType ? activityAsEvent(activity, eventType) : null
-    const opened = event ? pendingRequestFromEvent(event) : null
-    const resolved = event ? resolvedRequestId(event) : null
-    if (resolved)
-      requests = requests.filter((request) => request.id !== resolved)
+    const [opened] = pendingRequestsFromActivities([activity])
     if (opened && !requests.some((request) => request.id === opened.id))
       requests = [...requests, opened]
   }
   return requests === current
     ? {}
     : { requestsByThread: { ...state.requestsByThread, [threadId]: requests } }
-}
-
-function activityEventType(kind: string): string | null {
-  if (kind === "approval.requested") return "tool_approval_requested"
-  if (kind === "approval.resolved") return "tool_approval_resolved"
-  if (kind === "plan-approval.requested") return "plan_approval_requested"
-  if (kind === "plan-approval.resolved") return "plan_approval_resolved"
-  if (kind === "user-input.requested") return "user_input_requested"
-  if (kind === "user-input.resolved") return "user_input_resolved"
-  return null
-}
-
-function isStaleRequestFailure(activity: ThreadActivity): boolean {
-  if (
-    activity.kind !== "provider.approval.respond.failed" &&
-    activity.kind !== "provider.user-input.respond.failed"
-  ) {
-    return false
-  }
-  const payload = isRecord(activity.payload) ? activity.payload : {}
-  const detail = [
-    payload.detail,
-    payload.error,
-    payload.message,
-    activity.summary,
-  ]
-    .find((value): value is string => typeof value === "string")
-    ?.toLowerCase()
-  return Boolean(
-    detail &&
-    (detail.includes("stale pending") || detail.includes("unknown pending"))
-  )
-}
-
-function requestIdFromPayload(value: unknown): string | null {
-  const payload = isRecord(value) ? value : {}
-  const direct = payload.requestId ?? payload.request_id
-  if (typeof direct === "string" && direct) return direct
-  for (const nested of [payload.data, payload.item]) {
-    if (!isRecord(nested)) continue
-    const id = nested.requestId ?? nested.request_id
-    if (typeof id === "string" && id) return id
-  }
-  return null
 }
 
 function providerHistory(messages: ChatMessage[]): Array<{

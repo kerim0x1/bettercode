@@ -1,16 +1,33 @@
 import path from "node:path"
-import { afterEach, describe, expect, it } from "vitest"
-import {
-  __runBoundedWorkspaceCommandForTests,
-  beginWorkspaceProcessShutdown,
-  resumeWorkspaceProcessAdmissions,
-  runBoundedWorkspaceCommand,
-  shutdownAllWorkspaceProcesses,
-} from "./processes"
+import { beforeEach, describe, expect, it } from "vitest"
+import { sanitizedShellEnvironment } from "../../security/childEnvironment"
+import { WorkspaceProcessService } from "./processes"
 
-afterEach(() => {
-  resumeWorkspaceProcessAdmissions()
+/** Each test gets its own processes, queue and admission. */
+let workspaceProcesses: WorkspaceProcessService
+
+beforeEach(() => {
+  workspaceProcesses = new WorkspaceProcessService()
 })
+
+/** A bounded command with the defaults these tests share. */
+function runTestCommand(input: {
+  command: string
+  args?: string[]
+  timeoutMs?: number
+  outputLimitBytes?: number
+  signal?: AbortSignal
+}) {
+  return workspaceProcesses.runBoundedCommand({
+    command: input.command,
+    args: input.args ?? [],
+    env: sanitizedShellEnvironment(),
+    timeoutMs: input.timeoutMs ?? 10_000,
+    outputLimitBytes: input.outputLimitBytes ?? 64_000,
+    label: "workspace-process-test",
+    signal: input.signal,
+  })
+}
 
 describe("runBoundedWorkspaceCommand failure kinds", () => {
   it.each(["shutdown", "aborted"] as const)(
@@ -25,7 +42,7 @@ describe("runBoundedWorkspaceCommand failure kinds", () => {
       const released = new Promise<void>((resolve) => {
         releaseValidation = resolve
       })
-      const pending = runBoundedWorkspaceCommand({
+      const pending = workspaceProcesses.runBoundedCommand({
         command: process.execPath,
         args: ["-e", "process.stdout.write('unexpected-spawn')"],
         env: process.env,
@@ -39,7 +56,7 @@ describe("runBoundedWorkspaceCommand failure kinds", () => {
         },
       })
       await entered
-      if (kind === "shutdown") await shutdownAllWorkspaceProcesses()
+      if (kind === "shutdown") await workspaceProcesses.shutdownAll()
       else controller.abort()
       releaseValidation()
       const result = await pending
@@ -52,7 +69,7 @@ describe("runBoundedWorkspaceCommand failure kinds", () => {
   it("types an already-aborted request instead of only writing stderr", async () => {
     const controller = new AbortController()
     controller.abort()
-    const result = await __runBoundedWorkspaceCommandForTests({
+    const result = await runTestCommand({
       command: "node",
       args: ["-e", "0"],
       signal: controller.signal,
@@ -62,8 +79,8 @@ describe("runBoundedWorkspaceCommand failure kinds", () => {
   })
 
   it("types shutdown refusals", async () => {
-    beginWorkspaceProcessShutdown()
-    const result = await __runBoundedWorkspaceCommandForTests({
+    workspaceProcesses.beginShutdown()
+    const result = await runTestCommand({
       command: "node",
       args: ["-e", "0"],
     })
@@ -76,7 +93,7 @@ describe("runBoundedWorkspaceCommand failure kinds", () => {
       process.cwd(),
       "definitely-missing-betterc0de-binary-" + process.pid
     )
-    const result = await __runBoundedWorkspaceCommandForTests({
+    const result = await runTestCommand({
       command: missing,
       args: [],
       timeoutMs: 10_000,
@@ -86,7 +103,7 @@ describe("runBoundedWorkspaceCommand failure kinds", () => {
   })
 
   it("leaves failure absent for a real exit", async () => {
-    const result = await __runBoundedWorkspaceCommandForTests({
+    const result = await runTestCommand({
       command: "node",
       args: ["-e", "process.exit(3)"],
       timeoutMs: 20_000,

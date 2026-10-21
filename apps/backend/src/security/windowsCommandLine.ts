@@ -227,10 +227,23 @@ export function buildWindowsCmdArgs(
   return ["/d", "/s", "/c", `"${line}"`]
 }
 
-/** Absolute ComSpec, falling back to `cmd.exe` on PATH. */
+/**
+ * Absolute ComSpec, falling back to `%SystemRoot%\System32\cmd.exe`. Never
+ * the bare `cmd.exe`: spawned with the workspace as cwd, Windows would look
+ * for it in the workspace first.
+ *
+ * Self-contained on purpose: `scripts/spawn-cli-quoting.test.mjs` transpiles
+ * this file on its own, so it must not import other backend modules.
+ */
 export function resolveComSpec(): string {
-  const comSpec = process.env.ComSpec
-  return comSpec && comSpec.length > 0 ? comSpec : "cmd.exe"
+  const comSpec = process.env.ComSpec?.trim()
+  if (comSpec && /^[a-zA-Z]:[\\/]/.test(comSpec)) return comSpec
+  const systemRoot = (process.env.SystemRoot ?? process.env.windir)?.trim()
+  const root =
+    systemRoot && /^[a-zA-Z]:[\\/]/.test(systemRoot)
+      ? systemRoot
+      : "C:\\Windows"
+  return path.win32.join(root, "System32", "cmd.exe")
 }
 
 /**

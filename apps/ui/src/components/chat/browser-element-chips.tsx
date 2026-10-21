@@ -1,4 +1,17 @@
-import { ChevronRightIcon, MousePointer2Icon, XIcon } from "lucide-react"
+import {
+  ChevronRightIcon,
+  FilmIcon,
+  HeadingIcon,
+  ImageIcon,
+  LinkIcon,
+  ListIcon,
+  MousePointer2Icon,
+  MousePointerClickIcon,
+  SquareDashedIcon,
+  TextCursorInputIcon,
+  TypeIcon,
+  type LucideIcon,
+} from "lucide-react"
 import {
   browserElementKey,
   type BrowserElementReference,
@@ -101,6 +114,53 @@ export function BrowserElementDetails({
   )
 }
 
+/** What kind of thing the picked element is, by its tag. */
+function elementKindIcon(tagName: string): LucideIcon {
+  if (/^h[1-6]$/.test(tagName)) return HeadingIcon
+  if (["img", "picture", "svg", "canvas", "figure"].includes(tagName))
+    return ImageIcon
+  if (tagName === "video") return FilmIcon
+  if (tagName === "a") return LinkIcon
+  if (tagName === "button") return MousePointerClickIcon
+  if (["input", "textarea", "select", "form"].includes(tagName))
+    return TextCursorInputIcon
+  if (["ul", "ol", "li", "dl", "table"].includes(tagName)) return ListIcon
+  if (
+    ["p", "span", "label", "strong", "em", "blockquote", "code"].includes(
+      tagName
+    )
+  )
+    return TypeIcon
+  if (
+    [
+      "div",
+      "section",
+      "main",
+      "header",
+      "footer",
+      "nav",
+      "article",
+      "aside",
+    ].includes(tagName)
+  )
+    return SquareDashedIcon
+  return MousePointer2Icon
+}
+
+/**
+ * The words after the mention: the element's own label, or its size when the
+ * label only repeats the tag ("@Img img" says nothing; "@Img 1200 × 630" does).
+ */
+function elementDetail(element: BrowserElementReference, name: string) {
+  const label = element.label.trim()
+  const lower = label.toLowerCase()
+  if (label && lower !== element.tagName && lower !== name.toLowerCase())
+    return label
+  return element.rect
+    ? `${Math.round(element.rect.w)} × ${Math.round(element.rect.h)}`
+    : null
+}
+
 export function BrowserElementMention({
   element,
   onRemove,
@@ -118,6 +178,8 @@ export function BrowserElementMention({
   const name =
     element.mentionName ??
     element.tagName[0].toUpperCase() + element.tagName.slice(1)
+  const KindIcon = elementKindIcon(element.tagName)
+  const detail = mirror ? null : elementDetail(element, name)
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -129,7 +191,7 @@ export function BrowserElementMention({
             "group pointer-events-auto cursor-pointer text-foreground transition-colors duration-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground/50",
             mirror
               ? "relative m-0 inline rounded-md border-0 bg-transparent p-0 align-baseline [line-height:inherit] [letter-spacing:inherit] [font:inherit]"
-              : "inline-flex max-w-full items-center gap-2 rounded-lg border border-border bg-foreground/[0.04] px-2.5 py-1.5 text-xs hover:border-foreground/25 hover:bg-foreground/[0.08] data-[state=open]:border-foreground/30 data-[state=open]:bg-foreground/[0.08]",
+              : "inline-flex h-8 max-w-full items-center gap-2 rounded-lg border border-border/60 bg-foreground/[0.03] pr-2 pl-1 text-xs hover:border-foreground/20 hover:bg-foreground/[0.06] data-[state=open]:border-foreground/25 data-[state=open]:bg-foreground/[0.06]",
             inline && !mirror && "mx-0.5 align-middle"
           )}
           onKeyDown={(event) => {
@@ -157,22 +219,22 @@ export function BrowserElementMention({
             </>
           ) : (
             <>
-              <MousePointer2Icon
-                className="size-3.5 shrink-0 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <span className="shrink-0 font-medium">@{name}</span>
               <span
                 aria-hidden="true"
-                className="h-3 w-px shrink-0 bg-border"
+                className="grid size-6 shrink-0 place-items-center rounded-md bg-foreground/[0.06] text-muted-foreground transition-colors duration-100 group-hover:text-foreground group-data-[state=open]:text-foreground"
+              >
+                <KindIcon className="size-3.5" />
+              </span>
+              <span className="shrink-0 font-medium">@{name}</span>
+              {detail && (
+                <span className="max-w-56 min-w-0 truncate text-muted-foreground">
+                  {detail}
+                </span>
+              )}
+              <ChevronRightIcon
+                aria-hidden="true"
+                className="-ml-0.5 size-3 shrink-0 text-muted-foreground/50 transition-[color,transform] duration-100 group-hover:translate-x-0.5 group-hover:text-foreground group-data-[state=open]:text-foreground motion-reduce:transition-none"
               />
-              <span className="max-w-56 min-w-0 truncate text-muted-foreground">
-                {element.label}
-              </span>
-              <span className="ml-auto flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground group-hover:text-foreground">
-                Details
-                <ChevronRightIcon className="size-3" aria-hidden="true" />
-              </span>
             </>
           )}
         </button>

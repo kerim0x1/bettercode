@@ -20,6 +20,12 @@ vi.mock("@/components/attention/attention-badge", () => ({
 vi.mock("@/components/layout/panes/pane-running-dot", () => ({
   PaneRunningDot: () => null,
 }))
+vi.mock("@/components/chat/compare-group", () => ({
+  CompareSwitcher: () => null,
+}))
+vi.mock("@/components/pull-requests/thread-pull-request-chip", () => ({
+  ThreadPullRequestChip: () => null,
+}))
 import { PaneTabBar } from "./pane-tab-bar"
 
 const chatTab = {

@@ -1,13 +1,14 @@
 import { EventEmitter } from "node:events"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { ProviderAdapter } from "./adapter"
-import { providerEventBus } from "./events"
+import { ProviderEventBus } from "./events"
+import { awaitApproval, resolveApproval } from "./permissions"
 import { ProviderAdapterRegistry } from "./registry"
 import { ProviderService, type ProviderServiceOptions } from "./service"
 import type {
   ModelDefinition,
   ProviderKind,
-  ProviderRuntimeEvent,
+  LegacyProviderEvent,
   ProviderSendTurnInput,
 } from "./types"
 import { ThreadTurnCoordinator } from "./threadTurnCoordinator"
@@ -54,6 +55,9 @@ class StubAdapter implements ProviderAdapter {
   }
 }
 
+/** The bus the services under test publish on; tests emit adapter events on it. */
+const providerEventBus = new ProviderEventBus()
+
 const INPUT: ProviderSendTurnInput = {
   thread_id: "thread-1",
   message: "hello",
@@ -70,7 +74,9 @@ describe("ProviderService", () => {
   it("rejects new dispatches after shutdown admission closes", () => {
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false))
-    const service = new ProviderService(registry)
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+    })
 
     service.beginShutdown()
 
@@ -91,7 +97,10 @@ describe("ProviderService", () => {
     const beforeTurn = vi.fn(() => baselinePending)
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false, send))
-    const service = new ProviderService(registry, { beforeTurn })
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+      beforeTurn,
+    })
     const dispatchTurnId = "00000000-0000-4000-8000-000000000001"
 
     const running = service.sendTurn(INPUT, "openai", dispatchTurnId)
@@ -114,6 +123,68 @@ describe("ProviderService", () => {
     expect(send).toHaveBeenCalledTimes(1)
   })
 
+  it("runs the shared turn lifecycle policy, with individual hooks overriding it", async () => {
+    const send = vi.fn(async () => {})
+    const policyBeforeTurn = vi.fn(async () => {})
+    const policyAfterTurn = vi.fn(async () => {})
+    const preDispatchPolicy = vi.fn(() => ({ decision: "allow" as const }))
+    const overridingAfterTurn = vi.fn(async () => {})
+    const registry = new ProviderAdapterRegistry()
+    registry.register(new StubAdapter("openai", false, send))
+    const turnLifecycle = {
+      beforeTurn: policyBeforeTurn,
+      preDispatchPolicy,
+      afterTurn: policyAfterTurn,
+    }
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+      turnLifecycle,
+    })
+    const overridden = new ProviderService(registry, {
+      eventBus: providerEventBus,
+      turnLifecycle,
+      afterTurn: overridingAfterTurn,
+    })
+
+    const handle = service.dispatchTurnWithHandle(
+      { ...INPUT, project_path: process.cwd(), app_mode: "agent" },
+      "openai"
+    )
+    await expect(handle.settled).resolves.toBeUndefined()
+
+    expect(policyBeforeTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: "turn_started",
+        thread_id: INPUT.thread_id,
+        payload: expect.objectContaining({ turn_id: handle.turnId }),
+      })
+    )
+    expect(preDispatchPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: INPUT.thread_id,
+        turnId: handle.turnId,
+        projectPath: process.cwd(),
+        appMode: "agent",
+        providerKind: "openai",
+      })
+    )
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(policyAfterTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: "turn_completed",
+        thread_id: INPUT.thread_id,
+      })
+    )
+
+    const second = overridden.dispatchTurnWithHandle(
+      { ...INPUT, thread_id: "thread-2" },
+      "openai"
+    )
+    await expect(second.settled).resolves.toBeUndefined()
+    expect(overridingAfterTurn).toHaveBeenCalledTimes(1)
+    expect(policyAfterTurn).toHaveBeenCalledTimes(1)
+  })
+
   it("settles a workspace-trust denial normally without entering the legacy adapter", async () => {
     const send = vi.fn(async () => {})
     const preDispatchPolicy = vi.fn(async () => ({
@@ -123,8 +194,11 @@ describe("ProviderService", () => {
     }))
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false, send))
-    const service = new ProviderService(registry, { preDispatchPolicy })
-    const events: ProviderRuntimeEvent[] = []
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+      preDispatchPolicy,
+    })
+    const events: LegacyProviderEvent[] = []
     providerEventBus.on("event", (event) => events.push(event))
 
     const handle = service.dispatchTurnWithHandle(
@@ -177,7 +251,10 @@ describe("ProviderService", () => {
       })
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false))
-    const service = new ProviderService(registry, { beforeTurn })
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+      beforeTurn,
+    })
 
     await expect(service.sendTurn(INPUT, "openai")).rejects.toThrow(
       "baseline failed"
@@ -199,6 +276,7 @@ describe("ProviderService", () => {
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false, send, interrupt))
     const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
       beforeTurn,
       threadTurnCoordinator: coordinator,
     })
@@ -226,7 +304,10 @@ describe("ProviderService", () => {
     const afterTurn = vi.fn(() => afterTurnPending)
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false))
-    const service = new ProviderService(registry, { afterTurn })
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+      afterTurn,
+    })
     const emitted: string[] = []
     providerEventBus.on("event", (event) => {
       emitted.push(event.event_type)
@@ -262,7 +343,10 @@ describe("ProviderService", () => {
         throw new Error("adapter failed")
       })
     )
-    const service = new ProviderService(registry, { afterTurn })
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+      afterTurn,
+    })
     const emitted: Array<{ event_type: string; payload?: unknown }> = []
     providerEventBus.on("event", (event) => {
       emitted.push(event)
@@ -298,7 +382,10 @@ describe("ProviderService", () => {
     })
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false))
-    const service = new ProviderService(registry, { afterTurn })
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+      afterTurn,
+    })
     const emitted: string[] = []
     providerEventBus.on("event", (event) => {
       emitted.push(event.event_type)
@@ -320,7 +407,7 @@ describe("ProviderService", () => {
     const sendPending = new Promise<void>((resolve) => {
       finishSend = resolve
     })
-    const afterTurn = vi.fn(async (event: ProviderRuntimeEvent) => {
+    const afterTurn = vi.fn(async (event: LegacyProviderEvent) => {
       expect(emitted).toContain(event.event_type)
       await afterTurnPending
     })
@@ -333,7 +420,10 @@ describe("ProviderService", () => {
         async () => {}
       )
     )
-    const service = new ProviderService(registry, { afterTurn })
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+      afterTurn,
+    })
     const emitted: string[] = []
     providerEventBus.on("event", (event) => {
       emitted.push(event.event_type)
@@ -392,7 +482,10 @@ describe("ProviderService", () => {
     const send = vi.fn(() => sendPending)
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false, send, async () => {}))
-    const service = new ProviderService(registry, { shutdownTimeoutMs: 1_000 })
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+      shutdownTimeoutMs: 1_000,
+    })
     service.dispatchTurn(INPUT, "openai")
     await vi.waitFor(() => expect(send).toHaveBeenCalledOnce())
 
@@ -418,7 +511,10 @@ describe("ProviderService", () => {
     vi.spyOn(registry, "interruptAll").mockImplementation(() => {
       throw new Error("registry interruption failed")
     })
-    const service = new ProviderService(registry, { shutdownTimeoutMs: 1_000 })
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+      shutdownTimeoutMs: 1_000,
+    })
     service.dispatchTurn(INPUT, "openai")
     await vi.waitFor(() => expect(send).toHaveBeenCalledOnce())
 
@@ -444,6 +540,7 @@ describe("ProviderService", () => {
       new StubAdapter("openai", false, send, () => new Promise<void>(() => {}))
     )
     const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
       shutdownTimeoutMs: 25,
       turnTimeoutMs: 1_000,
     })
@@ -482,6 +579,7 @@ describe("ProviderService", () => {
       )
     )
     const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
       shutdownTimeoutMs: 25,
       threadTurnCoordinator: coordinator,
     })
@@ -534,6 +632,7 @@ describe("ProviderService", () => {
       )
     )
     const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
       shutdownTimeoutMs: 1_000,
     })
     const handle = service.dispatchTurnWithHandle(INPUT, "openai")
@@ -557,7 +656,9 @@ describe("ProviderService", () => {
   it("emits synthetic turn lifecycle for request-scoped adapters", async () => {
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false))
-    const service = new ProviderService(registry)
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+    })
     const events: string[] = []
     providerEventBus.on("event", (event) => {
       events.push((event as { event_type: string }).event_type)
@@ -572,7 +673,10 @@ describe("ProviderService", () => {
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false))
     const durableTurnCount = vi.fn(() => 4)
-    const service = new ProviderService(registry, { durableTurnCount })
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+      durableTurnCount,
+    })
     const indices: number[] = []
     providerEventBus.on("event", (event) => {
       const typed = event as {
@@ -601,7 +705,10 @@ describe("ProviderService", () => {
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false, send, interrupt))
     const durableTurnCount = vi.fn(() => 0)
-    const service = new ProviderService(registry, { durableTurnCount })
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+      durableTurnCount,
+    })
 
     service.dispatchTurn(INPUT, "openai")
     await vi.waitFor(() => expect(send).toHaveBeenCalledOnce())
@@ -627,7 +734,9 @@ describe("ProviderService", () => {
     const interrupt = vi.fn(async () => {})
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false, send, interrupt))
-    const service = new ProviderService(registry)
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+    })
 
     service.dispatchTurn(INPUT, "openai")
     await vi.waitFor(() => expect(send).toHaveBeenCalledOnce())
@@ -647,7 +756,9 @@ describe("ProviderService", () => {
   it("does not emit premature lifecycle events for self-managed adapters", async () => {
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("anthropic_cli", true))
-    const service = new ProviderService(registry)
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+    })
     const events: string[] = []
     providerEventBus.on("event", (event) => {
       events.push((event as { event_type: string }).event_type)
@@ -665,7 +776,9 @@ describe("ProviderService", () => {
     })
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false, () => pending))
-    const service = new ProviderService(registry)
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+    })
 
     const turnId = service.dispatchTurn(INPUT, "openai")
     expect(turnId).toEqual(expect.any(String))
@@ -684,6 +797,7 @@ describe("ProviderService", () => {
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false))
     const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
       threadTurnCoordinator: coordinator,
     })
 
@@ -702,6 +816,7 @@ describe("ProviderService", () => {
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false))
     const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
       threadTurnCoordinator: coordinator,
     })
 
@@ -720,7 +835,9 @@ describe("ProviderService", () => {
     })
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false, () => pending))
-    const service = new ProviderService(registry)
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+    })
     const terminalEvents: string[] = []
     let interruptAfterCompletion: Promise<void> | undefined
     providerEventBus.on("event", (event) => {
@@ -744,7 +861,9 @@ describe("ProviderService", () => {
   it("coordinates legacy turn admission with thread maintenance", async () => {
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false))
-    const service = new ProviderService(registry)
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+    })
 
     await service.withThreadMaintenance(INPUT.thread_id, async () => {
       expect(() => service.dispatchTurn(INPUT, "openai")).toThrowError(
@@ -764,7 +883,9 @@ describe("ProviderService", () => {
           })
       )
     )
-    const busyService = new ProviderService(pendingRegistry)
+    const busyService = new ProviderService(pendingRegistry, {
+      eventBus: providerEventBus,
+    })
     busyService.dispatchTurn(INPUT, "openai")
     await expect(
       busyService.withThreadMaintenance(INPUT.thread_id, async () => undefined)
@@ -786,7 +907,9 @@ describe("ProviderService", () => {
     registry.register(
       new StubAdapter("openai", false, send, () => interruptPending)
     )
-    const service = new ProviderService(registry)
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+    })
     const terminalEvents: string[] = []
     providerEventBus.on("event", (event) => {
       const type = (event as { event_type: string }).event_type
@@ -822,7 +945,9 @@ describe("ProviderService", () => {
     const interrupt = vi.fn(async () => {})
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false, send, interrupt))
-    const service = new ProviderService(registry)
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+    })
 
     const handle = service.dispatchTurnWithHandle(INPUT, "openai")
     await vi.waitFor(() => expect(send).toHaveBeenCalledOnce())
@@ -869,7 +994,10 @@ describe("ProviderService", () => {
         () => interruptPending
       )
     )
-    const service = new ProviderService(registry, { turnTimeoutMs: 25 })
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+      turnTimeoutMs: 25,
+    })
     const terminalEvents: Array<{ type: string; status?: unknown }> = []
     providerEventBus.on("event", (event) => {
       const typed = event as {
@@ -915,8 +1043,145 @@ describe("ProviderService", () => {
     expect(() => service.dispatchTurn(INPUT, "openai")).not.toThrow()
   })
 
+  describe("turn limits", () => {
+    function recordTerminalEvents(): Array<{ type: string; status?: unknown }> {
+      const terminalEvents: Array<{ type: string; status?: unknown }> = []
+      providerEventBus.on("event", (event) => {
+        const typed = event as {
+          event_type: string
+          payload?: { status?: unknown }
+        }
+        if (
+          ["turn_completed", "turn_interrupted", "turn_error"].includes(
+            typed.event_type
+          )
+        ) {
+          terminalEvents.push({
+            type: typed.event_type,
+            status: typed.payload?.status,
+          })
+        }
+      })
+      return terminalEvents
+    }
+
+    function hangingAdapter(): StubAdapter {
+      let finishSend!: () => void
+      const sendPending = new Promise<void>((resolve) => {
+        finishSend = resolve
+      })
+      return new StubAdapter(
+        "openai",
+        false,
+        () => sendPending,
+        async () => {
+          finishSend()
+        }
+      )
+    }
+
+    function streamDelta(): void {
+      providerEventBus.emitEvent({
+        event_type: "content_delta",
+        thread_id: INPUT.thread_id,
+        payload: { delta: "." },
+      })
+    }
+
+    it("keeps a streaming turn alive past the inactivity limit and times it out once it goes quiet", async () => {
+      vi.useFakeTimers()
+      const registry = new ProviderAdapterRegistry()
+      registry.register(hangingAdapter())
+      const service = new ProviderService(registry, {
+        eventBus: providerEventBus,
+        turnTimeoutMs: 100,
+      })
+      const terminalEvents = recordTerminalEvents()
+
+      const handle = service.dispatchTurnWithHandle(INPUT, "openai")
+      for (let elapsed = 0; elapsed < 1_000; elapsed += 50) {
+        await vi.advanceTimersByTimeAsync(50)
+        streamDelta()
+      }
+      expect(terminalEvents).toEqual([])
+
+      await vi.advanceTimersByTimeAsync(100)
+      await expect(handle.settled).rejects.toMatchObject({
+        name: "ProviderTurnTimeoutError",
+        kind: "idle",
+        timeoutMs: 100,
+      })
+      expect(terminalEvents).toEqual([
+        { type: "turn_error", status: "timed_out" },
+      ])
+    })
+
+    it("pauses the inactivity limit while a tool approval waits for the user", async () => {
+      vi.useFakeTimers()
+      let decision: string | undefined
+      const registry = new ProviderAdapterRegistry()
+      registry.register(
+        new StubAdapter("openai", false, async () => {
+          providerEventBus.emitEvent({
+            event_type: "tool_approval_requested",
+            thread_id: INPUT.thread_id,
+            payload: { requestId: "approval-1", tool: "Bash" },
+          })
+          decision = await awaitApproval(INPUT.thread_id, "approval-1")
+        })
+      )
+      const service = new ProviderService(registry, {
+        eventBus: providerEventBus,
+        turnTimeoutMs: 1_000,
+      })
+      const terminalEvents = recordTerminalEvents()
+
+      const handle = service.dispatchTurnWithHandle(INPUT, "openai")
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+      expect(terminalEvents).toEqual([])
+
+      expect(resolveApproval(INPUT.thread_id, "approval-1", "approve")).toBe(
+        true
+      )
+      await expect(handle.completion).resolves.toBeUndefined()
+      expect(decision).toBe("approve")
+      expect(terminalEvents).toEqual([
+        { type: "turn_completed", status: undefined },
+      ])
+    })
+
+    it("ends a turn at the absolute ceiling even while it keeps streaming", async () => {
+      vi.useFakeTimers()
+      const registry = new ProviderAdapterRegistry()
+      registry.register(hangingAdapter())
+      const service = new ProviderService(registry, {
+        eventBus: providerEventBus,
+        turnTimeoutMs: 100,
+        turnMaxDurationMs: 300,
+      })
+      const terminalEvents = recordTerminalEvents()
+
+      const handle = service.dispatchTurnWithHandle(INPUT, "openai")
+      const rejection = expect(handle.settled).rejects.toMatchObject({
+        name: "ProviderTurnTimeoutError",
+        kind: "max-duration",
+        timeoutMs: 300,
+      })
+      for (let elapsed = 0; elapsed < 400; elapsed += 50) {
+        await vi.advanceTimersByTimeAsync(50)
+        streamDelta()
+      }
+      await rejection
+      expect(terminalEvents).toEqual([
+        { type: "turn_error", status: "timed_out" },
+      ])
+    })
+  })
+
   it("returns typed failures for missing providers and unsupported response capabilities", async () => {
-    const emptyService = new ProviderService(new ProviderAdapterRegistry())
+    const emptyService = new ProviderService(new ProviderAdapterRegistry(), {
+      eventBus: providerEventBus,
+    })
     await expect(
       emptyService.interrupt("openai", "thread-1")
     ).rejects.toMatchObject({
@@ -929,7 +1194,9 @@ describe("ProviderService", () => {
 
     const registry = new ProviderAdapterRegistry()
     registry.register(new StubAdapter("openai", false))
-    const service = new ProviderService(registry)
+    const service = new ProviderService(registry, {
+      eventBus: providerEventBus,
+    })
     await expect(
       service.respondToApproval("openai", "thread-1", "request-1", "deny")
     ).rejects.toMatchObject({

@@ -345,7 +345,9 @@ export function ApiKeySettingsPanel(props: PanelProps) {
                     >
                       Check key
                     </Button>
-                    {(key.status === "invalid" || key.status === "quota") && (
+                    {(key.status === "invalid" ||
+                      key.status === "quota" ||
+                      waiting) && (
                       <Button
                         type="button"
                         variant="outline"
@@ -353,7 +355,7 @@ export function ApiKeySettingsPanel(props: PanelProps) {
                         disabled={busy}
                         onClick={() => props.onRetry(key.id)}
                       >
-                        Retry key
+                        {waiting ? "Retry now" : "Retry key"}
                       </Button>
                     )}
                     {!external && (

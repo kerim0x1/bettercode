@@ -1,11 +1,12 @@
 import { asRecord, readString } from "@betterc0de/schema"
 import type { ThreadActivityProjection } from "../../persistence/projections"
-import type { ProviderRuntimeEvent } from "../types"
+import type { LegacyProviderEvent } from "../types"
 import type { ProjectionContext } from "./context"
 import { projectToolEvents } from "./tool-events"
 import { projectRequestEvents } from "./request-events"
 import { projectSessionEvents } from "./session-events"
 import { projectTurnEvents } from "./turn-events"
+import { boundThreadActivity } from "./output-bounds"
 import {
   flattenProviderPayload,
   normalizeProviderKind,
@@ -18,6 +19,12 @@ export {
   makeResolvedRequestActivity,
 } from "./request-activities"
 export type { ProjectionContext } from "./context"
+export {
+  boundThreadActivity,
+  boundToolActivity,
+  TOOL_ACTIVITY_PAYLOAD_BUDGET_BYTES,
+} from "./output-bounds"
+export { boundProviderRuntimeEventForBroadcast } from "./runtime-event-bounds"
 
 /**
  * Event families in the order they are tried. Every family matches on
@@ -35,11 +42,15 @@ const PROJECTORS: ReadonlyArray<
 
 /**
  * Turns one provider runtime event into the durable, user-visible activity
- * row it stands for, or null when the event carries nothing to show.
+ * row it stands for, or null when the event carries nothing to show. A tool
+ * activity's or an approval request's payload is bounded (see
+ * `output-bounds.ts`); `boundToolOutput: false` returns it whole, for
+ * reading the full output back from the journal.
  */
 export function projectProviderEventToThreadActivity(
-  event: ProviderRuntimeEvent,
-  sequence: number
+  event: LegacyProviderEvent,
+  sequence: number,
+  options: { readonly boundToolOutput?: boolean } = {}
 ): ThreadActivityProjection | null {
   const eventType = event.event_type
   const threadId = event.thread_id
@@ -61,7 +72,11 @@ export function projectProviderEventToThreadActivity(
   }
   for (const project of PROJECTORS) {
     const activity = project(ctx)
-    if (activity) return activity
+    if (activity) {
+      return options.boundToolOutput === false
+        ? activity
+        : boundThreadActivity(activity)
+    }
   }
   return null
 }

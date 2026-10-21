@@ -1,13 +1,23 @@
 import { usePreferencesStore, type PreferencesState } from "./preferences-store"
 
+/**
+ * Whether the current mode's diff surface is showing: in Agent mode the
+ * right panel's Diff view, in Editor and Canvas the sidebar's Diff view.
+ * (Agent's inline `diffOpen` panel is not mounted in the pane layout, so it
+ * no longer counts.)
+ */
 export function isDiffViewOpen(
   preferences: Pick<
     PreferencesState,
-    "appMode" | "diffOpen" | "sidebarOpen" | "editorSidebarView"
+    | "appMode"
+    | "rightSidebarOpen"
+    | "workspaceTab"
+    | "sidebarOpen"
+    | "editorSidebarView"
   >
 ): boolean {
   return preferences.appMode === "agent"
-    ? preferences.diffOpen
+    ? preferences.rightSidebarOpen && preferences.workspaceTab === "diff"
     : preferences.sidebarOpen && preferences.editorSidebarView === "diff"
 }
 
@@ -15,10 +25,13 @@ export function isDiffViewOpen(
 export function setDiffViewOpen(open: boolean): void {
   const preferences = usePreferencesStore.getState()
   if (preferences.appMode === "agent") {
-    preferences.setMultiple({
-      diffOpen: open,
-      ...(open ? { workspaceTab: "diff" } : {}),
-    })
+    preferences.setMultiple(
+      open
+        ? { rightSidebarOpen: true, workspaceTab: "diff", diffOpen: false }
+        : preferences.workspaceTab === "diff"
+          ? { workspaceTab: "overview", diffOpen: false }
+          : { diffOpen: false }
+    )
     return
   }
   preferences.setMultiple({

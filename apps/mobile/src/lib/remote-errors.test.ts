@@ -33,6 +33,11 @@ describe("describeRemoteError", () => {
       [refusal(403, "desktop_only"), "Desktop only", undefined],
       [refusal(403, "remote_terminal_disabled"), "Terminal is off", undefined],
       [
+        refusal(403, "remote_bypass_disabled"),
+        "Bypass is off for this phone",
+        undefined,
+      ],
+      [
         refusal(403, "workspace_not_registered"),
         "Project not open on the desktop",
         undefined,

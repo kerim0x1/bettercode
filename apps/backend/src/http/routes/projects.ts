@@ -1,6 +1,7 @@
 import type { Hono } from "hono"
 import type { AppState } from "../../appState"
 import type { ProjectProjection } from "../../persistence/projections"
+import { contractJson } from "../contracts"
 
 interface ProjectListItem {
   readonly id?: string
@@ -11,7 +12,9 @@ interface ProjectListItem {
 }
 
 export function registerProjectsRoutes(api: Hono, state: AppState): void {
-  api.get("/projects", (c) => c.json(listProjects(state)))
+  api.get("/projects", (c) =>
+    contractJson(c, "listProjects", listProjects(state))
+  )
 }
 
 function listProjects(state: AppState): ProjectListItem[] {

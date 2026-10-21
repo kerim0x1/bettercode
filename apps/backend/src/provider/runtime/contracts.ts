@@ -58,6 +58,8 @@ export {
   type ProviderSlashCommand,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type ProviderSteerTurnInput,
+  type ProviderSteerTurnResult,
   type ProviderThreadSnapshot,
   type ProviderTool,
   type RequestKind,

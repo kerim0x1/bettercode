@@ -1,8 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import {
-  CURSOR_ACP_PENDING_REQUEST_TIMEOUT_MS,
-  CursorAcpAdapter,
-} from "./CursorAcpAdapter"
+import { CursorAcpAdapter } from "./CursorAcpAdapter"
 import type {
   CursorAcpEvent,
   CursorAcpExit,
@@ -14,8 +11,8 @@ import type {
 } from "./CursorAcpRuntime"
 import type { ApprovalRequestId, ThreadId } from "../contracts"
 import {
-  bindAgentPermissionRuntimeContext,
-  configureAgentPermissionRuntime,
+  AgentPermissionRuntime,
+  setDefaultAgentPermissionRuntime,
 } from "../../agent-permission-runtime"
 import { CLEANUP_QUARANTINE_RETRY_WINDOW_MS } from "../CleanupQuarantine"
 import { logger } from "../../../observability/logger"
@@ -93,7 +90,7 @@ const modeState: CursorAcpModeState = {
 
 describe("CursorAcpAdapter", () => {
   afterEach(() => {
-    configureAgentPermissionRuntime(null)
+    setDefaultAgentPermissionRuntime(null)
   })
 
   it("resolves MCP servers only for real sessions and passes them to the runtime", async () => {
@@ -655,17 +652,20 @@ describe("CursorAcpAdapter", () => {
     })
     const events: Array<{ type: string; payload?: unknown }> = []
     adapter.subscribe((event) => events.push(event))
-    configureAgentPermissionRuntime({
-      evaluateTool: () => ({
-        decision: "deny",
-        source: "grant",
-        reason: "Matched workspace deny grant.",
-        normalizedPath: "src/blocked.ts",
-        grant: null,
-      }),
-      listGrants: () => [],
+    const permissionRuntime = new AgentPermissionRuntime({
+      policy: {
+        evaluateTool: () => ({
+          decision: "deny",
+          source: "grant",
+          reason: "Matched workspace deny grant.",
+          normalizedPath: "src/blocked.ts",
+          grant: null,
+        }),
+        listGrants: () => [],
+      },
     })
-    bindAgentPermissionRuntimeContext({
+    setDefaultAgentPermissionRuntime(permissionRuntime)
+    permissionRuntime.bindContext({
       threadId: "thread-durable-deny",
       workspacePath: "/tmp/project",
       appMode: "agent",
@@ -762,7 +762,7 @@ describe("CursorAcpAdapter", () => {
     )
   })
 
-  it("defaults unanswered approval and user-input requests after five minutes", async () => {
+  it("keeps approval and user-input requests open until the user answers or the turn stops", async () => {
     vi.useFakeTimers()
     try {
       const runtime = new FakeCursorRuntime()
@@ -770,7 +770,8 @@ describe("CursorAcpAdapter", () => {
         binaryPath: "node",
         runtimeFactory: () => runtime,
       })
-      await adapter.startSession({ threadId: "thread-timeout" as ThreadId })
+      const threadId = "thread-timeout" as ThreadId
+      await adapter.startSession({ threadId })
 
       const approval = runtime.triggerPermission({
         kind: "execute",
@@ -785,8 +786,19 @@ describe("CursorAcpAdapter", () => {
         questions: [{ id: "scope", prompt: "Which scope?" }],
       })
 
-      await vi.advanceTimersByTimeAsync(CURSOR_ACP_PENDING_REQUEST_TIMEOUT_MS)
+      let approvalSettled = false
+      let questionSettled = false
+      void approval.then(() => (approvalSettled = true))
+      void question.then(() => (questionSettled = true))
 
+      // An unanswered request no longer resolves on its own after five
+      // minutes (a question used to count as answered with no answers).
+      await vi.advanceTimersByTimeAsync(60 * 60_000)
+      expect(approvalSettled).toBe(false)
+      expect(questionSettled).toBe(false)
+
+      // Stopping the turn settles them as denied / unanswered.
+      await adapter.interruptTurn(threadId)
       await expect(approval).resolves.toMatchObject({
         outcome: { outcome: "selected", optionId: "reject-once" },
       })

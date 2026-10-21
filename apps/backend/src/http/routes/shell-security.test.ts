@@ -6,29 +6,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { AppState } from "../../appState"
 import type { ServerConfig } from "../../config"
 import type { RemoteAccessService } from "../../remote/service"
-import { runShellCommand, type RunShellInput } from "../../services/shell"
-import {
-  closeTerminalPtySession,
-  openTerminalPtySession,
-  readTerminalPtySession,
-  resizeTerminalPtySession,
-} from "../../services/terminalPty"
+import type { RunShellInput, RunShellOutput } from "../../services/shell"
 import { stopAllToolOutputArchiveStores } from "../../services/tool-output-archive-store"
-import { registerShellRoutes } from "./shell"
+import { registerShellRoutes as registerShellRoutesUnfilled } from "./shell"
+import { withInertStateArgument } from "../../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const registerShellRoutes = withInertStateArgument(
+  registerShellRoutesUnfilled,
+  3
+)
 
 vi.mock("../../services/shell", () => ({
-  abortShellSession: vi.fn(() => false),
   detectShells: vi.fn(async () => []),
-  runShellCommand: vi.fn(async (input: { sessionId?: string }) => ({
-    success: true,
-    stdout: "ok",
-    stderr: "",
-    exitCode: 0,
-    combined: "ok",
-    sessionId: input.sessionId ?? "generated",
-    aborted: false,
-    timedOut: false,
-  })),
 }))
 
 vi.mock("../../services/workspace", () => ({
@@ -40,15 +30,39 @@ vi.mock("../../services/workspace", () => ({
   listProjectPermissions: vi.fn(async () => []),
 }))
 
-vi.mock("../../services/terminalPty", () => ({
-  closeTerminalPtySession: vi.fn(() => false),
-  openTerminalPtySession: vi.fn(),
-  readTerminalPtySession: vi.fn(() => null),
-  resizeTerminalPtySession: vi.fn(() => false),
-  shutdownTerminalPtySessionsForOwner: vi.fn(async () => undefined),
-  terminalPtySessionCwd: vi.fn(() => null),
-  writeTerminalPtySession: vi.fn(() => false),
-}))
+/** The routes' terminals: a fake PTY service the tests inspect. */
+const terminalPtys = {
+  closeSession: vi.fn(() => false),
+  openSession: vi.fn(),
+  readSession: vi.fn(() => null),
+  resizeSession: vi.fn(() => false),
+  shutdownForOwner: vi.fn(async () => undefined),
+  shutdownForClientInstance: vi.fn(async () => 0),
+  sessionCwd: vi.fn(() => null),
+  writeSession: vi.fn(() => false),
+}
+/** The routes' shell commands: a fake shell service the tests inspect. */
+const runShellCommand = vi.fn(
+  async (input: RunShellInput): Promise<RunShellOutput> => ({
+    success: true,
+    stdout: "ok",
+    stderr: "",
+    exitCode: 0,
+    combined: "ok",
+    sessionId: input.sessionId ?? "generated",
+    aborted: false,
+    timedOut: false,
+  })
+)
+const shellSessions = {
+  runCommand: runShellCommand,
+  abortSession: vi.fn(() => false),
+  closeSessionsForClientInstance: vi.fn(async () => 0),
+}
+const openTerminalPtySession = terminalPtys.openSession
+const readTerminalPtySession = terminalPtys.readSession
+const resizeTerminalPtySession = terminalPtys.resizeSession
+const closeTerminalPtySession = terminalPtys.closeSession
 
 const temporaryDirectories: string[] = []
 
@@ -127,6 +141,8 @@ function makeApp(
       } as unknown as RemoteAccessService)
     : undefined
   registerShellRoutes(api, config, remoteAccess, {
+    terminalPtys,
+    shellSessions,
     projectProjections: { listAll: () => [{ path: workspace }] },
     threads: { listProjects: () => [] },
     worktreeRegistry: { listAll: () => [] },
@@ -205,6 +221,68 @@ describe("shell route security boundaries", () => {
         })
       ).status
     ).toBe(403)
+  })
+
+  it("binds a human run capability to the shell and environment it was minted for", async () => {
+    const { app, workspace } = makeApp()
+    const command = "echo bound"
+    const mint = async (launch?: Record<string, unknown>) => {
+      const grant = await post(
+        app,
+        "/shell/capability",
+        {
+          operation: "run",
+          command,
+          cwd: workspace,
+          ...(launch ? { launch } : {}),
+        },
+        { "X-BetterC0de-Human-Capability": "secret" }
+      )
+      expect(grant.status).toBe(200)
+      return ((await grant.json()) as { capability: string }).capability
+    }
+    const run = (capability: string, launch: Record<string, unknown> = {}) =>
+      post(app, "/shell/run", {
+        command,
+        cwd: workspace,
+        humanOrigin: true,
+        permissionLevel: "bypass",
+        humanCapability: capability,
+        ...launch,
+      })
+
+    const bound = await mint({ shell: "bash", env: { FEATURE: "on" } })
+    expect(
+      (await run(bound, { shell: "bash", env: { FEATURE: "off" } })).status
+    ).toBe(403)
+    expect(
+      (await run(bound, { shell: "zsh", env: { FEATURE: "on" } })).status
+    ).toBe(403)
+    expect(
+      (await run(bound, { shell: "bash", env: { FEATURE: "on" } })).status
+    ).toBe(200)
+
+    // Minted without a launch: good for the default launch only.
+    const unbound = await mint()
+    expect((await run(unbound, { env: { EXTRA: "1" } })).status).toBe(403)
+    expect((await run(unbound)).status).toBe(200)
+    expect(runShellCommand).toHaveBeenCalledTimes(2)
+  })
+
+  it("rejects a malformed capability launch", async () => {
+    const { app, workspace } = makeApp()
+    const grant = await post(
+      app,
+      "/shell/capability",
+      {
+        operation: "run",
+        command: "echo x",
+        cwd: workspace,
+        launch: { shell: "bash", unexpected: true },
+      },
+      { "X-BetterC0de-Human-Capability": "secret" }
+    )
+    expect(grant.status).toBe(400)
   })
 
   it("rejects caller-asserted bypass without a trusted human capability", async () => {
@@ -377,6 +455,8 @@ describe("shell route security boundaries", () => {
       args: [],
       status: "running",
       events: [],
+      nextCursor: 0,
+      lastSeq: 0,
     } as never)
 
     const grant = await post(
@@ -502,6 +582,42 @@ describe("shell route security boundaries", () => {
       // the eleventh-request limit.
       expect(statuses.slice(0, 10)).toEqual(Array(10).fill(403))
       expect(statuses[10]).toBe(429)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("gives terminal input its own capability bucket", async () => {
+    // Frozen clock, as above: the buckets must not refill mid-test.
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      const { app, workspace } = makeApp()
+      const desktop = { "X-BetterC0de-Human-Capability": "secret" }
+      // Typing mints a capability per write, far more than the ten the
+      // command bucket holds.
+      const writes: number[] = []
+      for (let index = 0; index < 30; index += 1) {
+        writes.push(
+          (
+            await post(
+              app,
+              "/shell/capability",
+              { operation: "pty-write", sessionId: "typing", data: "x" },
+              desktop
+            )
+          ).status
+        )
+      }
+      expect(writes).toEqual(Array(30).fill(200))
+
+      // Typing left the command bucket alone.
+      const run = await post(
+        app,
+        "/shell/capability",
+        { operation: "run", command: "echo ok", cwd: workspace },
+        desktop
+      )
+      expect(run.status).toBe(200)
     } finally {
       vi.useRealTimers()
     }

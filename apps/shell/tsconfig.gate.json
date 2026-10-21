@@ -1,0 +1,16 @@
+{
+  // The blocking shell type-check (`npm run typecheck:shell`, run by
+  // release:check and verify:source). It enforces exactly what the gate
+  // always enforced: every shell .cjs file parses (syntax errors only).
+  //
+  // `noCheck` also keeps the files that opted in with `// @ts-check` (and
+  // JSDoc types) out of the gate for now. Once
+  // `npm run typecheck:shell:checkjs` reports none of those files, delete
+  // `noCheck` here: the opted-in files then become blocking while the rest
+  // of the shell (still `checkJs: false` below) stays syntax-only.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "checkJs": false,
+    "noCheck": true
+  }
+}

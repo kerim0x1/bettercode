@@ -1,0 +1,12 @@
+{
+  // Emit-only config for `build:backend` / `backend:dev`. Tests and their
+  // helpers are still type-checked through tsconfig.json (`typecheck:backend`),
+  // but are no longer compiled into dist/ and filtered out again at packaging.
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/**/*.test.ts",
+    "src/**/testUtils/**"
+  ]
+}

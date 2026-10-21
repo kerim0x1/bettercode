@@ -48,8 +48,8 @@ function makeProviderHub(stopSession: () => Promise<void>) {
 
 describe("ProviderSessionReaper", () => {
   it.each([
-    [Number.NaN, 5 * 60 * 1000],
-    [Number.POSITIVE_INFINITY, 5 * 60 * 1000],
+    [Number.NaN, 2 * 60 * 1000],
+    [Number.POSITIVE_INFINITY, 2 * 60 * 1000],
     [30 * 24 * 60 * 60 * 1000, 2 ** 31 - 1],
   ])(
     "keeps invalid or overflowing sweep delay %s from becoming a busy loop",
@@ -201,6 +201,57 @@ describe("ProviderSessionReaper", () => {
       skippedStoppedCount: 1,
     })
     expect(stopSession).not.toHaveBeenCalled()
+    db.close()
+  })
+
+  it("keeps a small warm pool of idle sessions per instance and stops the least recently used", async () => {
+    const db = openDatabase(tmpDbPath("warm-pool"))
+    runMigrations(db)
+    const store = new ProviderSessionBindingStore(db)
+    const threads = ["thread-a", "thread-b", "thread-c", "thread-d"]
+    threads.forEach((threadId, index) => {
+      insertThread(db, threadId)
+      store.setProviderThreadId({
+        threadId,
+        providerKind: "codex",
+        providerInstanceId: "codex-main",
+        providerThreadId: `codex-session-${index}`,
+        continuationKey: "codex:home:/Users/example/.codex",
+      })
+      // a is the oldest, d the most recently used; all are inside the
+      // inactivity threshold.
+      db.prepare(
+        "UPDATE provider_session_bindings SET updated_at = ? WHERE thread_id = ?"
+      ).run(`2026-05-13T00:00:0${index}.000Z`, threadId)
+    })
+
+    const stopSession = vi.fn(async () => {})
+    const logger = makeLogger()
+    const reaper = new ProviderSessionReaper({
+      bindings: store,
+      providerHub: makeProviderHub(stopSession),
+      logger,
+      inactivityThresholdMs: 60_000,
+      maxIdleSessionsPerInstance: 2,
+      now: () => Date.parse("2026-05-13T00:00:05.000Z"),
+    })
+
+    await expect(reaper.sweep()).resolves.toMatchObject({
+      totalBindings: 4,
+      reapedCount: 2,
+      skippedFreshCount: 2,
+      failedCount: 0,
+    })
+    expect(
+      stopSession.mock.calls.map((call) => (call as unknown[])[1])
+    ).toEqual(["thread-b", "thread-a"])
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "idle_session_cap" }),
+      "provider.session.reaped"
+    )
+    expect(store.get("thread-d", "codex-main")).not.toMatchObject({
+      status: "stopped",
+    })
     db.close()
   })
 

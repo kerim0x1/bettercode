@@ -5,8 +5,12 @@ import path from "node:path"
 import { Hono } from "hono"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { AppState } from "../../appState"
-import { registerChatRoutes } from "./chat"
+import { registerChatRoutes as registerChatRoutesUnfilled } from "./chat"
 import { isScratchWorkspacePath } from "../../services/scratchWorkspace"
+import { withInertStateArgument } from "../../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const registerChatRoutes = withInertStateArgument(registerChatRoutesUnfilled, 1)
 
 const cleanupDirectories: string[] = []
 
@@ -51,7 +55,16 @@ describe("chat send workspace and permission trust boundary", () => {
   it("confines a paired device's text generation to registered workspaces", async () => {
     const registered = await temporaryDirectory("generation-registered")
     const outside = await temporaryDirectory("generation-outside")
-    const generate = vi.fn(async () => ({}))
+    // One answer for every generator: it carries each route's contract
+    // fields (commit message, PR content, branch, summary, skill).
+    const generate = vi.fn(async () => ({
+      subject: "Add a flag",
+      body: "",
+      title: "Add a flag",
+      branch: "add-a-flag",
+      summary: "Added a flag.",
+      content: "# Style",
+    }))
     const app = chatApp({
       projects: [registered],
       threadProjectPath: registered,
@@ -110,6 +123,51 @@ describe("chat send workspace and permission trust boundary", () => {
       )
       expect(cwdOfLastCall(), route).toBe(outside)
     }
+  })
+
+  // The terminal grant is the one control over whether a paired device gets
+  // a shell. Asking the agent to run in bypass is a shell by another route.
+  it("caps bypass from a paired device that has no terminal grant", async () => {
+    const registered = await temporaryDirectory("remote-bypass")
+    const startTurn = vi.fn(() => completedTurn())
+    const app = chatApp({
+      projects: [registered],
+      threadProjectPath: registered,
+      startTurn,
+    })
+    const sendAs = (token: string) =>
+      app.request("/chat/send", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          threadId: "thread-1",
+          providerKind: "claude",
+          providerInstanceId: "claude-main",
+          message: "continue",
+          modelId: "claude-opus",
+          history: [],
+          projectPath: registered,
+          permissionLevel: "bypass",
+        }),
+      })
+    const lastPermissionLevel = () =>
+      (
+        startTurn.mock.calls.at(-1) as unknown as [
+          unknown,
+          Record<string, unknown>,
+        ]
+      )[1].permissionLevel
+
+    const remote = await sendAs("remote-secret")
+    expect(remote.status, await remote.clone().text()).toBe(200)
+    expect(lastPermissionLevel()).toBe("ask-on-edit")
+
+    const desktop = await sendAs("desktop-secret")
+    expect(desktop.status, await desktop.clone().text()).toBe(200)
+    expect(lastPermissionLevel()).toBe("bypass")
   })
 
   it("rejects an unregistered caller-selected workspace before dispatch", async () => {

@@ -9,7 +9,19 @@ import { logger } from "../observability/logger"
 const PAIRING_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 const PAIRING_LENGTH = 12
 const DEFAULT_PAIRING_TTL_MS = 10 * 60 * 1000
+/**
+ * Pairing links travel as screenshots and QR codes; an hour is plenty to
+ * scan one and short enough that a forgotten copy stops working soon.
+ */
+const MAX_PAIRING_TTL_MS = 60 * 60 * 1000
 const DEFAULT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
+/**
+ * A session nobody has used for this long is retired before its absolute
+ * expiry, so a forgotten phone — or a token read off the wire — does not
+ * stay valid for the full 30 days. Any authenticated request, connected
+ * socket, running remote turn or terminal counts as use.
+ */
+const SESSION_IDLE_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000
 const LAST_SEEN_WRITE_INTERVAL_MS = 60 * 1000
 const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000
 const SESSION_AUDIT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -51,6 +63,9 @@ export interface RemotePairingGrant {
   createdAt: string
   expiresAt: string
 }
+
+/** An outstanding pairing link as the owner sees it later: never the code. */
+export type RemotePairingGrantSummary = Omit<RemotePairingGrant, "credential">
 
 export interface RemoteAccessSession {
   id: string
@@ -108,6 +123,11 @@ function safeLabel(value: string | undefined, fallback: string): string {
   return (trimmed || fallback).slice(0, 80)
 }
 
+/** Unused past the idle timeout. A malformed timestamp fails closed. */
+function sessionIsIdle(lastSeenAt: string, now: Date): boolean {
+  return !(now.getTime() - Date.parse(lastSeenAt) < SESSION_IDLE_TIMEOUT_MS)
+}
+
 function toSession(row: RemoteSessionRow): RemoteAccessSession {
   return {
     id: row.session_id,
@@ -158,6 +178,9 @@ export class RemoteAccessService {
   private readonly insertPairingGrantStmt
   private readonly selectPairingGrantByHashStmt
   private readonly consumePairingGrantStmt
+  private readonly listPendingPairingGrantsStmt
+  private readonly revokePairingGrantStmt
+  private readonly revokePendingPairingGrantsStmt
   private readonly insertSessionStmt
   private readonly selectSessionByHashStmt
   private readonly touchSessionStmt
@@ -205,6 +228,22 @@ export class RemoteAccessService {
           SET consumed_at = ?
         WHERE pairing_id = ? AND consumed_at IS NULL AND revoked_at IS NULL`
     )
+    this.listPendingPairingGrantsStmt = db.prepare(
+      `SELECT pairing_id, label, created_at, expires_at
+         FROM remote_pairing_grants
+        WHERE consumed_at IS NULL AND revoked_at IS NULL AND expires_at > ?
+        ORDER BY created_at DESC`
+    )
+    this.revokePairingGrantStmt = db.prepare(
+      `UPDATE remote_pairing_grants
+          SET revoked_at = ?
+        WHERE pairing_id = ? AND consumed_at IS NULL AND revoked_at IS NULL`
+    )
+    this.revokePendingPairingGrantsStmt = db.prepare(
+      `UPDATE remote_pairing_grants
+          SET revoked_at = ?
+        WHERE consumed_at IS NULL AND revoked_at IS NULL`
+    )
     this.insertSessionStmt = db.prepare(
       `INSERT INTO remote_access_sessions
         (session_id, credential_hash, label, access_level, created_at,
@@ -229,7 +268,7 @@ export class RemoteAccessService {
         WHERE session_id = ? AND revoked_at IS NULL`
     )
     this.selectSessionLivenessStmt = db.prepare(
-      `SELECT expires_at, revoked_at
+      `SELECT expires_at, revoked_at, last_seen_at
          FROM remote_access_sessions
         WHERE session_id = ?`
     )
@@ -274,15 +313,19 @@ export class RemoteAccessService {
       `DELETE FROM remote_access_sessions
         WHERE expires_at < ? OR revoked_at < ?`
     )
+    // Retires both expired and idle sessions. An expired row is stamped
+    // with its own expiry; an idle one (still before `expires_at`) with now.
     this.selectExpiredSessionsStmt = db.prepare(
       `SELECT session_id
          FROM remote_access_sessions
-        WHERE revoked_at IS NULL AND expires_at <= ?`
+        WHERE revoked_at IS NULL
+          AND (expires_at <= ? OR last_seen_at <= ?)`
     )
     this.expireSessionsStmt = db.prepare(
       `UPDATE remote_access_sessions
-          SET revoked_at = expires_at
-        WHERE revoked_at IS NULL AND expires_at <= ?`
+          SET revoked_at = MIN(expires_at, ?)
+        WHERE revoked_at IS NULL
+          AND (expires_at <= ? OR last_seen_at <= ?)`
     )
     this.selectNextExpiryStmt = db.prepare(
       `SELECT MIN(expires_at) AS expires_at
@@ -332,7 +375,7 @@ export class RemoteAccessService {
     const createdAt = this.now()
     const ttlMs = Math.max(
       60_000,
-      Math.min(input.ttlMs ?? this.pairingTtlMs, 24 * 60 * 60 * 1000)
+      Math.min(input.ttlMs ?? this.pairingTtlMs, MAX_PAIRING_TTL_MS)
     )
     const expiresAt = new Date(createdAt.getTime() + ttlMs)
     const label = safeLabel(input.label, "Pairing link")
@@ -361,6 +404,54 @@ export class RemoteAccessService {
       }
     }
     throw new Error("Could not allocate a unique pairing credential")
+  }
+
+  /** Unredeemed, unrevoked, unexpired pairing links, newest first. */
+  listPairingGrants(): RemotePairingGrantSummary[] {
+    const rows = this.listPendingPairingGrantsStmt.all(
+      this.now().toISOString()
+    ) as Array<
+      Pick<
+        PairingGrantRow,
+        "pairing_id" | "label" | "created_at" | "expires_at"
+      >
+    >
+    return rows.map((row) => ({
+      id: row.pairing_id,
+      label: row.label,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+    }))
+  }
+
+  /** Withdraws one pairing link before it is redeemed. */
+  revokePairingGrant(pairingId: string): boolean {
+    if (!pairingId || pairingId.length > 100) return false
+    return (
+      this.revokePairingGrantStmt.run(this.now().toISOString(), pairingId)
+        .changes === 1
+    )
+  }
+
+  /**
+   * Withdraws every pairing link not yet redeemed. Links are shared as
+   * screenshots and QR codes, so turning hosting off must not leave them
+   * waiting to work again the moment it is turned back on.
+   */
+  revokePendingPairingGrants(): number {
+    return this.revokePendingPairingGrantsStmt.run(this.now().toISOString())
+      .changes
+  }
+
+  /**
+   * Hosting turned off: every paired device and every outstanding pairing
+   * link stops working for good, not just while the switch is off.
+   */
+  revokeAllAccess(): { sessions: number; pairingGrants: number } {
+    return {
+      sessions: this.revokeOtherSessions(),
+      pairingGrants: this.revokePendingPairingGrants(),
+    }
   }
 
   consumePairingCredential(
@@ -453,6 +544,11 @@ export class RemoteAccessService {
     ) {
       return null
     }
+    if (sessionIsIdle(row.last_seen_at, now)) {
+      // The sweep is throttled; retire it now so the revocation is published.
+      this.expireSessions(now)
+      return null
+    }
 
     if (
       now.getTime() - Date.parse(row.last_seen_at) >=
@@ -487,13 +583,29 @@ export class RemoteAccessService {
     const now = this.now()
     this.sweepExpiredIfDue(now)
     const row = this.selectSessionLivenessStmt.get(sessionId) as
-      | Pick<RemoteSessionRow, "expires_at" | "revoked_at">
+      | Pick<RemoteSessionRow, "expires_at" | "revoked_at" | "last_seen_at">
       | undefined
-    return (
-      row !== undefined &&
-      row.revoked_at === null &&
-      Date.parse(row.expires_at) > now.getTime()
-    )
+    if (
+      row === undefined ||
+      row.revoked_at !== null ||
+      !(Date.parse(row.expires_at) > now.getTime())
+    ) {
+      return false
+    }
+    if (sessionIsIdle(row.last_seen_at, now)) {
+      this.expireSessions(now)
+      return false
+    }
+    // Revalidation runs for a connected socket, a running remote turn or a
+    // remote terminal: that is use, so the idle clock must not retire a
+    // device that works over the WebSocket without fresh HTTP requests.
+    if (
+      now.getTime() - Date.parse(row.last_seen_at) >=
+      LAST_SEEN_WRITE_INTERVAL_MS
+    ) {
+      this.touchSessionStmt.run(now.toISOString(), sessionId)
+    }
+    return true
   }
 
   listSessions(): RemoteAccessSession[] {
@@ -618,13 +730,19 @@ export class RemoteAccessService {
 
   private expireSessions(now = this.now()): readonly string[] {
     const timestamp = now.toISOString()
+    const idleCutoff = new Date(
+      now.getTime() - SESSION_IDLE_TIMEOUT_MS
+    ).toISOString()
     this.lastExpirySweepAtMs = now.getTime()
     const expire = this.db.transaction(() => {
-      const rows = this.selectExpiredSessionsStmt.all(timestamp) as Array<{
+      const rows = this.selectExpiredSessionsStmt.all(
+        timestamp,
+        idleCutoff
+      ) as Array<{
         session_id: string
       }>
       if (rows.length === 0) return [] as string[]
-      this.expireSessionsStmt.run(timestamp)
+      this.expireSessionsStmt.run(timestamp, timestamp, idleCutoff)
       return rows.map((row) => row.session_id)
     })
     const sessionIds = expire()

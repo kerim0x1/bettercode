@@ -2,7 +2,7 @@ import type { EventEmitter } from "node:events"
 import type {
   ModelDefinition,
   ProviderKind,
-  ProviderRuntimeEvent,
+  LegacyProviderEvent,
   ProviderSendTurnInput,
 } from "./types"
 
@@ -18,7 +18,7 @@ export interface ProviderAdapter {
    *  resolves. ProviderService skips its synthetic lifecycle wrapper for
    *  these adapters to avoid premature completion. */
   managesOwnTurnLifecycle?(): boolean
-  /** Emits `ProviderRuntimeEvent`s via the global provider event bus. */
+  /** Emits `LegacyProviderEvent`s via the global provider event bus. */
   sendMessage(input: ProviderSendTurnInput): Promise<void>
   /** Cancel an in-flight turn. Fires a `turn_interrupted` event on success. */
   interrupt(threadId: string): Promise<void>
@@ -66,4 +66,4 @@ export interface ProviderAdapter {
 }
 
 /** Shared shape an adapter uses to push events to the global bus. */
-export type EmitProviderEvent = (event: ProviderRuntimeEvent) => void
+export type EmitProviderEvent = (event: LegacyProviderEvent) => void

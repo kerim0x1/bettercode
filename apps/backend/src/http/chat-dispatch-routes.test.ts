@@ -17,14 +17,20 @@ import {
 } from "../services/chat-dispatch-store"
 import { ThreadService } from "../services/threads"
 import { parseThreadSaveRequest } from "../services/threads"
-import { workspaceRecoveryGate } from "../services/workspace-recovery-gate"
-import { registerChatRoutes } from "./routes/chat"
+import { WorkspaceRecoveryGate } from "../services/workspace-recovery-gate"
+import { registerChatRoutes as registerChatRoutesUnfilled } from "./routes/chat"
 import { RemoteProviderTurnOwnership } from "../remote/providerTurnOwnership"
 import { ThreadTurnCoordinator } from "../provider/threadTurnCoordinator"
 import {
   browserElementAttachment,
   withBrowserElementContext,
 } from "@betterc0de/schema"
+import { withInertStateArgument } from "../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const registerChatRoutes = withInertStateArgument(registerChatRoutesUnfilled, 1)
+/** The recovery gate of the backend every app in this file stands for. */
+const workspaceRecoveryGate = new WorkspaceRecoveryGate()
 
 const tempDirs: string[] = []
 
@@ -444,6 +450,47 @@ describe("durable chat dispatch HTTP lifecycle", () => {
       lastError: "legacy rejected late",
     })
     expect(dispatchTurnWithHandle).toHaveBeenCalledTimes(1)
+  })
+
+  it("binds a Legacy turn whose instance only arrives in the model selection", async () => {
+    // OpenRouter and the other API providers have no instances, but the
+    // model picker still sends one. It must not reach the durable dispatch,
+    // or binding the accepted turn fails as pending → pending.
+    const dispatchTurnWithHandle = vi.fn(
+      (_input: unknown, _kind: string, options: AcceptedOptions) => {
+        options.onAccepted?.("openrouter-turn")
+        return testTurnHandle("openrouter-turn", neverSettles())
+      }
+    )
+    const app = new Hono()
+    registerChatRoutes(
+      app,
+      state({
+        providerHub: { has: vi.fn(() => false) },
+        providers: {
+          resolveProviderKind: vi.fn(() => "openrouter"),
+          assertCanDispatch: vi.fn(),
+          dispatchTurnWithHandle,
+        },
+      })
+    )
+    const { providerInstanceId: _omitted, ...withoutInstance } = requestBody()
+    const body = {
+      ...withoutInstance,
+      providerKind: "openrouter",
+      modelId: "google/gemini-4-argon",
+      modelSelection: {
+        instanceId: "openrouter",
+        model: "google/gemini-4-argon",
+      },
+    }
+
+    expect((await send(app, body)).status).toBe(200)
+    expect(dispatches.get("message-1")).toMatchObject({
+      status: "accepted",
+      providerTurnId: "openrouter-turn",
+      providerInstanceId: null,
+    })
   })
 
   it("retains the workspace lease after dispatch ack until turn settlement", async () => {
@@ -993,29 +1040,36 @@ describe("durable chat dispatch HTTP lifecycle", () => {
   })
 
   it.each(["failure", "empty"])(
-    "does not stop the source or start the target on summary %s",
+    "passes on the recorded conversation when the source summary is a %s",
     async (mode) => {
+      // A source CLI that cannot run (e.g. one that quits on start) must not
+      // block the switch; no other model writes the summary instead.
       const fixture = handoffFixture("grok_cli", "codex")
       fixture.summarize.mockImplementationOnce(async () => {
         if (mode === "failure") throw new Error("upstream unavailable")
         return { summary: " " }
       })
       const response = await send(fixture.app, fixture.body)
-      expect(response.status).toBe(503)
-      expect(await response.json()).toMatchObject({
-        code: "provider_handoff_failed",
-      })
-      expect(fixture.startTurn).not.toHaveBeenCalled()
-      expect(fixture.events).not.toContain("stop")
-      expect(bindings.getThreadGeneration("thread-1")).toBe(0)
-      expect(bindings.getLatestForThread("thread-1")?.providerThreadId).toBe(
-        "native-source"
+      expect(response.status, await response.clone().text()).toBe(200)
+      expect(fixture.startTurn).toHaveBeenLastCalledWith(
+        "codex",
+        expect.objectContaining({
+          history: [
+            {
+              role: "assistant",
+              content: expect.stringMatching(
+                /^# Provider Handoff\n\nPrepared by BetterC0de from the stored conversation for codex, because grok_cli could not summarize it\.[\s\S]*grok_cli could not summarize the conversation/
+              ),
+            },
+          ],
+        }),
+        expect.anything()
       )
       expect(
         new ThreadActivityProjectionQuery(db)
           .listByThread("thread-1")
           .find((row) => row.kind === "context.provider-handoff")?.payload
-      ).toMatchObject({ status: "failed" })
+      ).toMatchObject({ status: "completed" })
     }
   )
 
@@ -1260,6 +1314,7 @@ describe("durable chat dispatch HTTP lifecycle", () => {
         resolveProviderKind: vi.fn(() => "openai"),
         assertCanDispatch: vi.fn(),
       },
+      workspaceRecoveryGate,
       ...overrides,
     } as unknown as AppState
   }

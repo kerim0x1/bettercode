@@ -98,9 +98,18 @@ export interface ProviderSendTurnInput {
   } | null
 }
 
-/** Runtime events emitted by adapters during a turn. Identical shape to Rust,
- *  so the renderer's switch on `event_type` continues to work. */
-export interface ProviderRuntimeEvent {
+/**
+ * The untyped snake_case event of the legacy in-process provider stack
+ * (`event_type` + free-form `payload`). Identical shape to Rust, so the
+ * renderer's switch on `event_type` continues to work.
+ *
+ * Not to be confused with the typed canonical `ProviderRuntimeEvent` union
+ * in `@betterc0de/schema` (re-exported by `provider/runtime/contracts`) that
+ * the provider hub emits. `canonicalToLegacy` (runtime/legacyBridge.ts) is
+ * the one translation from that union into this shape; projections, the
+ * checkpoint reactor and both clients still consume this one.
+ */
+export interface LegacyProviderEvent {
   event_type: string
   thread_id: string
   payload: Record<string, unknown>

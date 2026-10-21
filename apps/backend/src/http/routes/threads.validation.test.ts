@@ -1,7 +1,14 @@
 import { Hono } from "hono"
 import { describe, expect, it, vi } from "vitest"
 import type { AppState } from "../../appState"
-import { registerThreadsRoutes } from "./threads"
+import { registerThreadsRoutes as registerThreadsRoutesUnfilled } from "./threads"
+import { withInertStateArgument } from "../../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const registerThreadsRoutes = withInertStateArgument(
+  registerThreadsRoutesUnfilled,
+  1
+)
 
 function modelSwitchBody(): Record<string, unknown> {
   return {
@@ -14,7 +21,28 @@ function modelSwitchBody(): Record<string, unknown> {
 
 describe("thread route input bounds", () => {
   it("clamps the stats window to whole days in [1, 3650]", async () => {
-    const stats = vi.fn(() => ({ total: 0 }))
+    const tokens = {
+      input: 0,
+      output: 0,
+      reasoning: 0,
+      cache: { read: 0, write: 0 },
+    }
+    // The answer is checked against the stats contract, so it is a whole one.
+    const stats = vi.fn(() => ({
+      totalSessions: 0,
+      totalMessages: 0,
+      totalCost: 0,
+      totalTokens: tokens,
+      toolUsage: {},
+      modelUsage: {},
+      providerUsage: {},
+      dailyUsage: [],
+      dateRange: { earliest: null, latest: null },
+      days: 1,
+      costPerDay: 0,
+      tokensPerSession: 0,
+      medianTokensPerSession: 0,
+    }))
     const app = new Hono()
     registerThreadsRoutes(app, { threads: { stats } } as unknown as AppState)
 

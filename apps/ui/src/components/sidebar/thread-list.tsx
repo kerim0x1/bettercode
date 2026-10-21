@@ -1,5 +1,12 @@
 import { copyText } from "@/lib/clipboard"
-import { memo, useCallback, useMemo, useState, type DragEvent } from "react"
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type DragEvent,
+} from "react"
 import {
   ArchiveIcon,
   ChevronDownIcon,
@@ -27,14 +34,100 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Spinner } from "@/components/kibo-ui/spinner"
 import { AttentionBadge } from "@/components/attention/attention-badge"
+import { CompareMarker } from "@/components/chat/compare-group"
 import { useChatStore } from "@/lib/chat-store"
 import { usePrompt } from "@/components/dialogs/prompt-provider"
 import { useSettingsStore } from "@/lib/settings-store"
+import { archiveChatDialog, runThreadAction } from "@/lib/thread-confirm"
 import { timeAgo } from "@/lib/format"
 import { shouldShowThreadInSidebar } from "@/lib/sidebar-thread-visibility"
 import { THREAD_DRAG_TYPE } from "@/components/layout/panes/pane-drop-zone"
 import { buildSessionTree, type SessionTreeNode } from "@/lib/session-tree"
 import type { ChatThread } from "@betterc0de/schema"
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card"
+import { MENU_PANEL, MENU_WIDTH_MD } from "@/components/ui/menu-chrome"
+import { useAttentionStore, useThreadAttention } from "@/lib/attention-store"
+import { useThreadIsRunning } from "@/lib/chat/running-selectors"
+import { useThreadPullRequest } from "@/lib/thread-pull-request"
+import {
+  ThreadDetailsCard,
+  ThreadStatusGlyph,
+} from "@/components/sidebar/thread-row-status"
+import { archiveChats, deleteChats } from "@/lib/chat-list-actions"
+import {
+  openChatFromList,
+  publishChatListOrder,
+  releaseChatListOrder,
+} from "@/lib/chat-list-nav"
+import { useChatSelectionStore } from "@/lib/chat-list-selection"
+import { partitionChatList } from "@/lib/chat-list-sections"
+import { usePendingDeletesStore } from "@/lib/pending-thread-deletes"
+import {
+  ChatBackMark,
+  ChatDraftMark,
+  ChatJumpHint,
+  ROW_FOCUS_CLASS,
+  SELECTED_ROW_CLASS,
+  useChatHasDraft,
+  useChatJumpSlot,
+  useChatRowBehavior,
+  useClearBackWhenActive,
+  useSnoozeWakeTick,
+} from "@/components/sidebar/chat-row-behavior"
+import { ChatOrganizeMenuItems } from "@/components/sidebar/chat-organize-menu"
+import { ChatBulkBar } from "@/components/sidebar/chat-bulk-bar"
+import { PinnedChats } from "@/components/sidebar/pinned-chats"
+import { SnoozedSection } from "@/components/sidebar/snoozed-section"
+
+const NO_IDS: ReadonlySet<string> = new Set()
+
+type ChatState = ReturnType<typeof useChatStore.getState>
+
+/** Ids of chats with an unsent draft (and below, running or waiting), as
+ *  one string, so the list re-renders only when that set changes. */
+function draftThreadIdsKey(state: ChatState): string {
+  return Object.keys(state.draftsByThread)
+    .filter((id) => (state.draftsByThread[id]?.trim().length ?? 0) > 0)
+    .sort()
+    .join("\n")
+}
+
+function streamingThreadIdsKey(state: ChatState): string {
+  return Object.keys(state.streamingByThread)
+    .filter((id) => state.streamingByThread[id]?.isStreaming)
+    .sort()
+    .join("\n")
+}
+
+function waitingThreadIdsKey(
+  state: ReturnType<typeof useAttentionStore.getState>
+): string {
+  return Object.keys(state.byThread).sort().join("\n")
+}
+
+function idSet(key: string): Set<string> {
+  return new Set(key ? key.split("\n") : [])
+}
+
+/** Visible rows of a session tree: each node, then its forks when open. */
+function visibleTreeIds(nodes: SessionTreeNode<ChatThread>[]): string[] {
+  return nodes.flatMap((node) => [
+    node.id,
+    ...(node.children.length > 0 && readSessionTreeExpanded(node.id)
+      ? visibleTreeIds(node.children)
+      : []),
+  ])
+}
+
+function toggled(set: ReadonlySet<string>, key: string): Set<string> {
+  const next = new Set(set)
+  if (!next.delete(key)) next.add(key)
+  return next
+}
 
 /**
  * Drag handlers that let a sidebar chat be dragged into the agent pane grid —
@@ -77,8 +170,13 @@ function threadDragHandlers(threadId: string, title: string) {
  *
  * Archiving is non-destructive: the thread is kept in the store but added
  * to `settings.archived_thread_ids`, which this component filters out.
- * Delete is destructive and routes through the `onConfirm` callback so the
- * parent can show a shared confirmation dialog.
+ * Delete routes through the `onConfirm` callback so the parent can show a
+ * shared confirmation dialog, then waits a few seconds for an undo
+ * (`lib/pending-thread-deletes.ts`).
+ *
+ * Pinned chats lead the list in their own group, snoozed chats fold into a
+ * Snoozed section at the bottom until they are due, and chats select with
+ * Ctrl/Cmd+click and Shift+click for the bulk bar on top.
  */
 export function SidebarThreadList({
   search = "",
@@ -98,28 +196,49 @@ export function SidebarThreadList({
   const threads = useChatStore((s) => s.threads)
   const prompt = usePrompt()
   const messagesLoadedByThread = useChatStore((s) => s.messagesLoadedByThread)
-  const setActiveThread = useChatStore((s) => s.setActiveThread)
-  const deleteThread = useChatStore((s) => s.deleteThread)
   const archivedThreadIds = useSettingsStore((s) => s.archivedThreadIds)
+  const pinnedThreadIds = useSettingsStore((s) => s.pinnedThreadIds)
+  const snoozedThreads = useSettingsStore((s) => s.snoozedThreads)
+  const deletedIds = usePendingDeletesStore((s) => s.hidden)
+  const draftKey = useChatStore(draftThreadIdsKey)
+  const streamingKey = useChatStore(streamingThreadIdsKey)
+  const waitingKey = useAttentionStore(waitingThreadIdsKey)
+  // Open projects and those showing every chat, held here because they
+  // decide the Ctrl/Cmd+number order. Projects start closed.
+  const [openProjects, setOpenProjects] = useState<ReadonlySet<string>>(
+    () => new Set()
+  )
+  const [allShownProjects, setAllShownProjects] = useState<ReadonlySet<string>>(
+    () => new Set()
+  )
+  const selecting = useChatSelectionStore((s) => s.ids.length > 0)
+  useSnoozeWakeTick(snoozedThreads)
 
   /**
    * Opens a thread from the sidebar. Bug before this change: we only called
    * `setActiveThread`, which updates the store but leaves the composer-tab
    * bar untouched. If the tab for that thread had been closed earlier, the
    * main area would keep showing whatever the active tab was — the click
-   * felt dead. Dispatching `betterc0de:open-thread` lets the composer hook
-   * reuse or create a tab for this thread (see use-composer-tabs.ts).
+   * felt dead. `openChatFromList` also dispatches `betterc0de:open-thread`,
+   * which lets the composer hook reuse or create a tab for this thread (see
+   * use-composer-tabs.ts), and ends the chat's snooze.
    */
-  const openThread = useCallback(
-    (threadId: string, title?: string) => {
-      setActiveThread(threadId)
-      window.dispatchEvent(
-        new CustomEvent("betterc0de:open-thread", {
-          detail: { threadId, label: title },
-        })
-      )
-    },
-    [setActiveThread]
+  const openThread = openChatFromList
+
+  // Deletion waits a few seconds for an undo (lib/pending-thread-deletes).
+  const deleteThread = useCallback((threadId: string) => {
+    deleteChats([threadId])
+  }, [])
+
+  const toggleProject = useCallback(
+    (projectName: string) =>
+      setOpenProjects((current) => toggled(current, projectName)),
+    []
+  )
+  const toggleShowAll = useCallback(
+    (projectName: string) =>
+      setAllShownProjects((current) => toggled(current, projectName)),
+    []
   )
 
   const handleRename = useCallback(
@@ -138,13 +257,11 @@ export function SidebarThreadList({
 
   const handleShare = useCallback(async (threadId: string) => {
     // Threads restored by usePersistedThreads are skeletons with
-    // `messages: []` until opened once — sharing an unopened thread used
-    // to copy only the header. Hydrate first (same pattern as forkThread),
-    // then re-read the store for the filled-in messages.
-    const store = useChatStore.getState()
-    if (!store.messagesLoadedByThread[threadId]) {
-      await store.hydrateThreadMessages(threadId)
-    }
+    // `messages: []` until opened once, and an open thread holds only the
+    // pages read so far — sharing used to copy only the header or the tail.
+    // Load every page first (same pattern as forkThread), then re-read the
+    // store for the filled-in messages.
+    await useChatStore.getState().ensureFullThreadMessages(threadId)
     const thread = useChatStore
       .getState()
       .threads.find((t) => t.id === threadId)
@@ -164,11 +281,23 @@ export function SidebarThreadList({
     copyText(header + content)
   }, [])
 
-  const handleArchive = useCallback((threadId: string) => {
-    const settings = useSettingsStore.getState()
-    const updated = [...settings.archivedThreadIds, threadId]
-    settings.update({ archived_thread_ids: updated })
-  }, [])
+  const handleArchive = useCallback(
+    (threadId: string) => {
+      const title = useChatStore
+        .getState()
+        .threads.find((thread) => thread.id === threadId)?.title
+      runThreadAction(
+        "archive",
+        archiveChatDialog(title, () => {
+          archiveChats([threadId])
+        }),
+        onConfirm
+      )
+    },
+    [onConfirm]
+  )
+
+  const draftIds = useMemo(() => idSet(draftKey), [draftKey])
 
   // Filter threads by search + date + archive
   const now = Date.now()
@@ -197,8 +326,11 @@ export function SidebarThreadList({
     // rendered, so the sidebar looked empty ("chats are gone" bug). Fall
     // back to the DB-side `messageCount` for unhydrated threads, which
     // the backend populates via `projection_threads.message_count`.
+    // A chat that only has a draft (never sent) shows too, and one waiting
+    // for its deletion's undo window does not.
+    if (deletedIds[t.id]) return false
     const isHydrated = messagesLoadedByThread[t.id] === true
-    if (!shouldShowThreadInSidebar(t, isHydrated)) {
+    if (!shouldShowThreadInSidebar(t, isHydrated) && !draftIds.has(t.id)) {
       return false
     }
     // Hide archived threads
@@ -224,6 +356,74 @@ export function SidebarThreadList({
     return true
   })
 
+  // Separate swarm threads from regular threads
+  const swarmThreads = filtered.filter((t) => t.title?.startsWith("[Swarm:"))
+  const regularCandidates = filtered.filter(
+    (t) => !t.title?.startsWith("[Swarm:")
+  )
+
+  // Pinned chats lead the list and snoozed ones wait at the bottom; neither
+  // shows in its project. The folder list has no Inactive section.
+  const runningIds = idSet(streamingKey)
+  for (const thread of regularCandidates) {
+    if (thread.session?.activeTurnId) runningIds.add(thread.id)
+  }
+  const sections = partitionChatList({
+    threads: regularCandidates,
+    pinnedIds: pinnedThreadIds,
+    filedIds: null,
+    snoozes: snoozedThreads,
+    runningIds,
+    waitingIds: idSet(waitingKey),
+    closedPullRequestIds: NO_IDS,
+    now,
+    settleAfterMs: Number.POSITIVE_INFINITY,
+  })
+  const regularThreads = regularCandidates.filter(
+    (thread) => !sections.hidden.has(thread.id)
+  )
+
+  // Group regular threads by projectName
+  const projectGroups = new Map<string, typeof threads>()
+  for (const thread of regularThreads) {
+    const key = thread.projectName || "BetterC0de"
+    if (!projectGroups.has(key)) projectGroups.set(key, [])
+    projectGroups.get(key)!.push(thread)
+  }
+
+  // The visible order, for Ctrl/Cmd+1…9 and Shift+click ranges: pinned
+  // chats, then the rows of open projects (with their open forks).
+  const orderKey = [
+    ...sections.pinned.map((thread) => thread.id),
+    ...Array.from(projectGroups.entries()).flatMap(
+      ([projectName, projectThreads]) => {
+        if (!openProjects.has(projectName)) return []
+        const tree = buildSessionTree(projectThreads)
+        return visibleTreeIds(
+          !minimal || allShownProjects.has(projectName)
+            ? tree
+            : tree.slice(0, PROJECT_VISIBLE_THREADS)
+        )
+      }
+    ),
+  ].join("\n")
+  useEffect(() => {
+    publishChatListOrder("folders", orderKey ? orderKey.split("\n") : [])
+  }, [orderKey])
+  useEffect(() => () => releaseChatListOrder("folders"), [])
+
+  // A selection keeps only chats the list still shows, and ends with it.
+  const listedKey = regularCandidates
+    .filter(
+      (thread) => !sections.snoozed.some((s) => s.thread.id === thread.id)
+    )
+    .map((thread) => thread.id)
+    .join("\n")
+  useEffect(() => {
+    useChatSelectionStore.getState().prune(idSet(listedKey))
+  }, [listedKey])
+  useEffect(() => () => useChatSelectionStore.getState().clear(), [])
+
   if (filtered.length === 0) {
     return (
       <div className="px-2 py-6 text-center text-[11px] text-muted-foreground/40">
@@ -234,17 +434,29 @@ export function SidebarThreadList({
     )
   }
 
-  // Separate swarm threads from regular threads
-  const swarmThreads = filtered.filter((t) => t.title?.startsWith("[Swarm:"))
-  const regularThreads = filtered.filter((t) => !t.title?.startsWith("[Swarm:"))
-
-  // Group regular threads by projectName
-  const projectGroups = new Map<string, typeof threads>()
-  for (const thread of regularThreads) {
-    const key = thread.projectName || "BetterC0de"
-    if (!projectGroups.has(key)) projectGroups.set(key, [])
-    projectGroups.get(key)!.push(thread)
+  const rowCallbacks = {
+    openThread,
+    handleRename,
+    handleShare,
+    handleArchive,
+    deleteThread,
+    onConfirm,
   }
+
+  // Stays in view while the list scrolls under it.
+  const bulkBar = selecting ? (
+    <div className="sticky top-0 z-10 bg-sidebar pt-0.5">
+      <ChatBulkBar backIds={sections.back} onConfirm={onConfirm} />
+    </div>
+  ) : null
+
+  const snoozedSection = (
+    <SnoozedSection
+      items={sections.snoozed}
+      openThread={openThread}
+      className={minimal ? "px-2 pt-2" : "pt-2"}
+    />
+  )
 
   if (minimal) {
     // Simple UI mode — threads grouped under their project folder as
@@ -253,6 +465,20 @@ export function SidebarThreadList({
     // row heights, left-aligned at 12 px to match quick actions).
     return (
       <>
+        {bulkBar}
+        <PinnedChats
+          threads={sections.pinned}
+          className="px-2"
+          renderRow={(thread) => (
+            <ThreadListRow
+              thread={thread}
+              threadId={thread.id}
+              title={thread.title}
+              back={sections.back.has(thread.id)}
+              {...rowCallbacks}
+            />
+          )}
+        />
         {/* Swarm threads — px-2 wrapper keeps the icon column at 16px now
             that the outer list wrapper carries no horizontal padding. */}
         {swarmThreads.length > 0 && (
@@ -301,6 +527,11 @@ export function SidebarThreadList({
               key={projectName}
               projectName={projectName}
               threads={projectThreads}
+              expanded={openProjects.has(projectName)}
+              showAll={allShownProjects.has(projectName)}
+              onToggleExpanded={toggleProject}
+              onToggleShowAll={toggleShowAll}
+              backIds={sections.back}
               openThread={openThread}
               handleRename={handleRename}
               handleShare={handleShare}
@@ -310,12 +541,26 @@ export function SidebarThreadList({
             />
           )
         )}
+        {snoozedSection}
       </>
     )
   }
 
   return (
     <>
+      {bulkBar}
+      <PinnedChats
+        threads={sections.pinned}
+        renderRow={(thread) => (
+          <ExtendedProjectRow
+            threadId={thread.id}
+            title={thread.title}
+            updatedAt={thread.updatedAt}
+            back={sections.back.has(thread.id)}
+            {...rowCallbacks}
+          />
+        )}
+      />
       {/* Swarm threads (extended view) */}
       {swarmThreads.length > 0 && (
         <Collapsible defaultOpen>
@@ -352,7 +597,11 @@ export function SidebarThreadList({
       )}
       {Array.from(projectGroups.entries()).map(
         ([projectName, projectThreads]) => (
-          <Collapsible key={projectName} defaultOpen={false}>
+          <Collapsible
+            key={projectName}
+            open={openProjects.has(projectName)}
+            onOpenChange={() => toggleProject(projectName)}
+          >
             <div className="group/project flex w-full items-center">
               <CollapsibleTrigger className="group flex flex-1 cursor-pointer items-center gap-1.5 rounded-md px-1 py-1 text-[10px] text-muted-foreground transition-colors duration-75 hover:bg-foreground/10">
                 <FolderOpenIcon className="size-3.5 shrink-0 text-muted-foreground/60 group-data-[state=closed]:hidden" />
@@ -381,9 +630,9 @@ export function SidebarThreadList({
                       if (onConfirm) {
                         onConfirm({
                           title: "Delete project chats?",
-                          description: `All ${projectThreads.length} chat(s) in "${projectName}" will be permanently deleted.`,
+                          description: `All ${projectThreads.length} chat(s) in "${projectName}" will be deleted. Undo is available for a few seconds.`,
                           action: () => {
-                            projectThreads.forEach((t) => deleteThread(t.id))
+                            deleteChats(projectThreads.map((t) => t.id))
                           },
                         })
                       }
@@ -401,10 +650,16 @@ export function SidebarThreadList({
                   No chats
                 </p>
               ) : (
-                <div className="ml-3 border-l border-border/50 pl-1">
+                <div
+                  role="listbox"
+                  aria-label={projectName}
+                  aria-multiselectable="true"
+                  className="ml-3 border-l border-border/50 pl-1"
+                >
                   <SessionTreeRows
                     nodes={buildSessionTree(projectThreads)}
                     variant="extended"
+                    backIds={sections.back}
                     openThread={openThread}
                     handleRename={handleRename}
                     handleShare={handleShare}
@@ -418,6 +673,7 @@ export function SidebarThreadList({
           </Collapsible>
         )
       )}
+      {snoozedSection}
     </>
   )
 }
@@ -428,6 +684,13 @@ const PROJECT_VISIBLE_THREADS = 5
 interface ProjectSectionProps {
   projectName: string
   threads: ChatThread[]
+  /** Open, and showing every chat (both held by the list). */
+  expanded: boolean
+  showAll: boolean
+  onToggleExpanded: (projectName: string) => void
+  onToggleShowAll: (projectName: string) => void
+  /** Chats back from a snooze, which carry a mark. */
+  backIds: ReadonlySet<string>
   openThread: (id: string, title?: string) => void
   handleRename: (id: string, title: string) => void
   handleShare: (id: string) => void
@@ -448,6 +711,11 @@ interface ProjectSectionProps {
 const ProjectSection = memo(function ProjectSection({
   projectName,
   threads,
+  expanded,
+  showAll,
+  onToggleExpanded,
+  onToggleShowAll,
+  backIds,
   openThread,
   handleRename,
   handleShare,
@@ -457,8 +725,6 @@ const ProjectSection = memo(function ProjectSection({
 }: ProjectSectionProps) {
   // Sections start COLLAPSED — the folder row is the toggle; chats only
   // show once the user opens a project.
-  const [expanded, setExpanded] = useState(false)
-  const [showAll, setShowAll] = useState(false)
   const containsActive = useChatStore((s) =>
     threads.some((t) => t.id === s.activeThreadId)
   )
@@ -469,21 +735,36 @@ const ProjectSection = memo(function ProjectSection({
 
   return (
     <div className="px-2 pb-1">
-      <div className="group/project flex w-full items-center">
+      {/* The fill spans the whole row, actions included, so its right edge
+          lines up with the chat rows below. */}
+      <div
+        className={cn(
+          "group/project flex w-full items-center rounded-md pr-1 transition-colors duration-75 hover:bg-foreground/[0.06]",
+          containsActive && "bg-foreground/[0.07]"
+        )}
+      >
         <button
           type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className={cn(
-            "flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left transition-colors duration-75 hover:bg-foreground/10",
-            containsActive && "bg-foreground/[0.07]"
-          )}
+          aria-expanded={expanded}
+          onClick={() => onToggleExpanded(projectName)}
+          className="flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left focus-visible:outline-2 focus-visible:outline-ring"
         >
-          <FolderIcon
-            className="size-3.5 shrink-0 text-sidebar-foreground/60"
-            strokeWidth={1.75}
-          />
-          <span className="truncate text-[12px] text-sidebar-foreground/90">
+          {expanded ? (
+            <FolderOpenIcon
+              className="size-3.5 shrink-0 text-sidebar-foreground/70"
+              strokeWidth={1.75}
+            />
+          ) : (
+            <FolderIcon
+              className="size-3.5 shrink-0 text-sidebar-foreground/60"
+              strokeWidth={1.75}
+            />
+          )}
+          <span className="truncate text-[12px] font-medium text-sidebar-foreground/90">
             {projectName}
+          </span>
+          <span className="ml-auto shrink-0 text-[10px] text-sidebar-foreground/35 tabular-nums">
+            {threads.length}
           </span>
         </button>
         <DropdownMenu>
@@ -491,7 +772,8 @@ const ProjectSection = memo(function ProjectSection({
             <Button
               variant="ghost"
               size="icon-xs"
-              className="ml-0.5 size-5 shrink-0 text-muted-foreground/35 transition-colors hover:text-foreground"
+              aria-label={`${projectName} actions`}
+              className="ml-0.5 size-5 shrink-0 text-muted-foreground/50 opacity-0 transition-[color,opacity] group-hover/project:opacity-100 hover:text-foreground focus-visible:opacity-100 data-[state=open]:opacity-100"
             >
               <EllipsisIcon className="size-3" />
             </Button>
@@ -503,9 +785,9 @@ const ProjectSection = memo(function ProjectSection({
                 if (onConfirm) {
                   onConfirm({
                     title: "Delete project chats?",
-                    description: `All ${threads.length} chat(s) in "${projectName}" will be permanently deleted.`,
+                    description: `All ${threads.length} chat(s) in "${projectName}" will be deleted. Undo is available for a few seconds.`,
                     action: () => {
-                      threads.forEach((t) => deleteThread(t.id))
+                      deleteChats(threads.map((t) => t.id))
                     },
                   })
                 }
@@ -523,24 +805,47 @@ const ProjectSection = memo(function ProjectSection({
             No tasks
           </p>
         ) : (
-          <div className="space-y-px pt-0.5">
-            <SessionTreeRows
-              nodes={visible}
-              variant="minimal"
-              openThread={openThread}
-              handleRename={handleRename}
-              handleShare={handleShare}
-              handleArchive={handleArchive}
-              deleteThread={deleteThread}
-              onConfirm={onConfirm}
+          // Chat titles start under the project name; a guide line under the
+          // folder icon ties them to their project.
+          <div className="relative space-y-px pt-0.5">
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute top-0.5 bottom-1 left-[14.5px] w-px bg-sidebar-border/70"
             />
+            <div
+              role="listbox"
+              aria-label={projectName}
+              aria-multiselectable="true"
+              className="space-y-px"
+            >
+              <SessionTreeRows
+                nodes={visible}
+                variant="minimal"
+                backIds={backIds}
+                openThread={openThread}
+                handleRename={handleRename}
+                handleShare={handleShare}
+                handleArchive={handleArchive}
+                deleteThread={deleteThread}
+                onConfirm={onConfirm}
+              />
+            </div>
             {sessionTree.length > PROJECT_VISIBLE_THREADS && (
               <button
                 type="button"
-                onClick={() => setShowAll((v) => !v)}
-                className="cursor-pointer py-[3px] pl-[30px] text-left text-[11px] text-sidebar-foreground/40 transition-colors duration-75 hover:text-sidebar-foreground"
+                aria-expanded={showAll}
+                onClick={() => onToggleShowAll(projectName)}
+                className="flex h-6 cursor-pointer items-center gap-1 pl-[30px] text-left text-[11px] text-sidebar-foreground/40 transition-colors duration-75 hover:text-sidebar-foreground"
               >
-                {showAll ? "Show less" : "Show more"}
+                {showAll
+                  ? "Show less"
+                  : `Show ${sessionTree.length - PROJECT_VISIBLE_THREADS} more`}
+                <ChevronDownIcon
+                  className={cn(
+                    "size-3 transition-transform duration-150",
+                    showAll && "rotate-180"
+                  )}
+                />
               </button>
             )}
           </div>
@@ -552,6 +857,8 @@ const ProjectSection = memo(function ProjectSection({
 type SessionTreeRowsProps = {
   nodes: SessionTreeNode<ChatThread>[]
   variant: "minimal" | "extended"
+  /** Chats back from a snooze, which carry a mark. */
+  backIds: ReadonlySet<string>
   openThread: (id: string, title?: string) => void
   handleRename: (id: string, title: string) => void
   handleShare: (id: string) => void
@@ -577,6 +884,7 @@ function SessionTreeRows(props: SessionTreeRowsProps) {
 function SessionTreeBranch({
   node,
   variant,
+  backIds,
   ...callbacks
 }: Omit<SessionTreeRowsProps, "nodes"> & {
   node: SessionTreeNode<ChatThread>
@@ -593,11 +901,13 @@ function SessionTreeBranch({
     })
   }
   const rowProps = {
+    thread: node.value,
     threadId: node.value.id,
     title: node.value.title,
     childCount: node.children.length,
     expanded,
     onToggle: hasChildren ? toggle : undefined,
+    back: backIds.has(node.value.id),
     ...callbacks,
   }
 
@@ -613,6 +923,7 @@ function SessionTreeBranch({
           <SessionTreeRows
             nodes={node.children}
             variant={variant}
+            backIds={backIds}
             {...callbacks}
           />
         </div>
@@ -649,11 +960,14 @@ function writeSessionTreeExpanded(threadId: string, expanded: boolean): void {
 }
 
 interface ThreadListRowProps {
+  thread: ChatThread
   threadId: string
   title: string
   childCount?: number
   expanded?: boolean
   onToggle?: () => void
+  /** Back from a snooze and not opened yet. */
+  back?: boolean
   openThread: (id: string, title?: string) => void
   handleRename: (id: string, title: string) => void
   handleShare: (id: string) => void
@@ -667,11 +981,13 @@ interface ThreadListRowProps {
 }
 
 const ThreadListRow = memo(function ThreadListRow({
+  thread,
   threadId,
   title,
   childCount = 0,
   expanded = true,
   onToggle,
+  back = false,
   openThread,
   handleRename,
   handleShare,
@@ -680,124 +996,170 @@ const ThreadListRow = memo(function ThreadListRow({
   onConfirm,
 }: ThreadListRowProps) {
   const active = useChatStore((s) => s.activeThreadId === threadId)
-  const isStreaming = useChatStore(
-    (s) => !!s.streamingByThread[threadId]?.isStreaming
+  // Includes turns the backend still holds open (another device, or a stream
+  // that has not reattached yet).
+  const isRunning = useThreadIsRunning(threadId)
+  const attention = useThreadAttention(threadId)
+  const attentionEnabled = useSettingsStore((s) => s.attentionBadges)
+  const { selected, menuOpen, setMenuOpen, rowProps } = useChatRowBehavior({
+    threadId,
+    title,
+    openThread,
+  })
+  const draft = useChatHasDraft(threadId)
+  const slot = useChatJumpSlot(threadId)
+  useClearBackWhenActive(threadId, active, back)
+  const pullRequest = useThreadPullRequest(
+    thread.projectPath || thread.worktreePath,
+    thread.branch
   )
   const displayTitle = title || "New Task"
   const truncated =
     displayTitle.length > 34 ? displayTitle.slice(0, 34) + "…" : displayTitle
   return (
-    <div
-      className={cn(
-        // pl-[30px] + the section's px-2 = 38px — thread titles start
-        // exactly under the project NAME (16px icon column + 14px icon +
-        // 8px gap).
-        "group flex cursor-pointer items-center gap-1.5 rounded-md py-[3px] pr-1 pl-[30px]",
-        // Selection reads as a subtle row fill (Codex-style); hover still
-        // brightens the text only.
-        active && "bg-foreground/[0.06]"
-      )}
-      onClick={() => openThread(threadId, title || undefined)}
-      {...threadDragHandlers(threadId, title)}
-    >
-      {onToggle ? (
-        <button
-          type="button"
-          aria-label={expanded ? "Collapse forks" : "Expand forks"}
-          aria-expanded={expanded}
-          className="grid size-4 shrink-0 place-items-center rounded text-sidebar-foreground/50 hover:bg-foreground/10 hover:text-sidebar-foreground"
-          onClick={(event) => {
-            event.stopPropagation()
-            onToggle()
-          }}
-        >
-          {expanded ? (
-            <ChevronDownIcon className="size-3" />
-          ) : (
-            <ChevronRightIcon className="size-3" />
+    <HoverCard openDelay={450} closeDelay={80}>
+      <HoverCardTrigger asChild>
+        <div
+          className={cn(
+            // The status glyph sits in the folder icon's 14px column, on the
+            // guide line, so titles start exactly under the project name
+            // (8px + 14px + 8px gap).
+            "group relative flex h-[26px] cursor-pointer items-center gap-2 rounded-md pr-1 pl-2 transition-colors duration-75",
+            ROW_FOCUS_CLASS,
+            selected
+              ? SELECTED_ROW_CLASS
+              : active
+                ? "bg-foreground/[0.06]"
+                : "hover:bg-foreground/[0.04]"
           )}
-        </button>
-      ) : (
-        <span className="size-4 shrink-0" />
-      )}
-      <span
-        className={cn(
-          "flex-1 truncate text-[11px] transition-colors duration-75",
-          active
-            ? "font-medium text-sidebar-foreground"
-            : "text-sidebar-foreground/65 group-hover:text-sidebar-foreground"
-        )}
+          {...rowProps}
+        >
+          <ThreadStatusGlyph
+            running={isRunning}
+            waiting={attentionEnabled && (attention?.total ?? 0) > 0}
+            pullRequest={pullRequest}
+            active={active}
+            threadId={threadId}
+          />
+          <span
+            className={cn(
+              "flex-1 truncate text-[11px] transition-colors duration-75",
+              active
+                ? "font-medium text-sidebar-foreground"
+                : "text-sidebar-foreground/65 group-hover:text-sidebar-foreground"
+            )}
+          >
+            {truncated}
+          </span>
+          {back ? <ChatBackMark /> : null}
+          {draft ? <ChatDraftMark /> : null}
+          {slot !== null ? <ChatJumpHint slot={slot} /> : null}
+          {pullRequest ? (
+            <span className="shrink-0 text-[9.5px] text-sidebar-foreground/45 tabular-nums">
+              #{pullRequest.number}
+            </span>
+          ) : null}
+          {onToggle ? (
+            <button
+              type="button"
+              aria-label={`${expanded ? "Collapse" : "Expand"} ${childCount} forks`}
+              aria-expanded={expanded}
+              className="flex h-4 shrink-0 items-center gap-0.5 rounded px-0.5 text-[9px] text-sidebar-foreground/45 tabular-nums hover:bg-foreground/[0.06] hover:text-sidebar-foreground"
+              onClick={(event) => {
+                event.stopPropagation()
+                onToggle()
+              }}
+            >
+              {childCount}
+              {expanded ? (
+                <ChevronDownIcon className="size-3" />
+              ) : (
+                <ChevronRightIcon className="size-3" />
+              )}
+            </button>
+          ) : null}
+          <CompareMarker threadId={threadId} />
+          <AttentionBadge threadId={threadId} className="shrink-0" />
+          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`${displayTitle} actions`}
+                className="size-5 shrink-0 text-muted-foreground/50 opacity-0 transition-[color,opacity] group-hover:opacity-100 group-focus-visible:opacity-100 hover:text-foreground focus-visible:opacity-100 data-[state=open]:opacity-100"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <EllipsisIcon className="size-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" side="right">
+              <ChatOrganizeMenuItems threadId={threadId} />
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleRename(threadId, title)
+                }}
+              >
+                <PencilIcon className="size-3.5" />
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleShare(threadId)
+                }}
+              >
+                <CopyIcon className="size-3.5" />
+                Copy to Clipboard
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleArchive(threadId)
+                }}
+              >
+                <ArchiveIcon className="size-3.5" />
+                Archive
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  runThreadAction(
+                    "delete",
+                    {
+                      title: "Delete chat?",
+                      description: `"${title || "New Chat"}" will be deleted. Undo is available for a few seconds.`,
+                      action: () => deleteThread(threadId),
+                    },
+                    onConfirm
+                  )
+                }}
+              >
+                <Trash2Icon className="size-3.5" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </HoverCardTrigger>
+      <HoverCardContent
+        side="right"
+        align="start"
+        sideOffset={10}
+        collisionPadding={12}
+        className={cn(MENU_PANEL, MENU_WIDTH_MD)}
+        onClick={(event) => event.stopPropagation()}
       >
-        {truncated}
-      </span>
-      {childCount > 0 ? (
-        <span className="shrink-0 text-[9px] text-sidebar-foreground/40 tabular-nums">
-          {childCount}
-        </span>
-      ) : null}
-      <AttentionBadge threadId={threadId} className="shrink-0" />
-      {isStreaming && (
-        <Spinner variant="bars" size={14} className="shrink-0 text-primary" />
-      )}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="size-5 shrink-0 text-muted-foreground/35 transition-colors hover:text-foreground"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <EllipsisIcon className="size-3" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" side="right">
-          <DropdownMenuItem
-            onClick={(e) => {
-              e.stopPropagation()
-              handleRename(threadId, title)
-            }}
-          >
-            <PencilIcon className="size-3.5" />
-            Rename
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={(e) => {
-              e.stopPropagation()
-              handleShare(threadId)
-            }}
-          >
-            <CopyIcon className="size-3.5" />
-            Copy to Clipboard
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={(e) => {
-              e.stopPropagation()
-              handleArchive(threadId)
-            }}
-          >
-            <ArchiveIcon className="size-3.5" />
-            Archive
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            variant="destructive"
-            onClick={(e) => {
-              e.stopPropagation()
-              if (onConfirm) {
-                onConfirm({
-                  title: "Delete chat?",
-                  description: `"${title || "New Chat"}" will be permanently deleted.`,
-                  action: () => deleteThread(threadId),
-                })
-              }
-            }}
-          >
-            <Trash2Icon className="size-3.5" />
-            Delete
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+        <ThreadDetailsCard
+          thread={thread}
+          pullRequest={pullRequest}
+          running={isRunning}
+        />
+      </HoverCardContent>
+    </HoverCard>
   )
 })
 
@@ -896,6 +1258,8 @@ interface ExtendedProjectRowProps {
   childCount?: number
   expanded?: boolean
   onToggle?: () => void
+  /** Back from a snooze and not opened yet. */
+  back?: boolean
   openThread: (id: string, title?: string) => void
   handleRename: (id: string, title: string) => void
   handleShare: (id: string) => void
@@ -915,6 +1279,7 @@ const ExtendedProjectRow = memo(function ExtendedProjectRow({
   childCount = 0,
   expanded = true,
   onToggle,
+  back = false,
   openThread,
   handleRename,
   handleShare,
@@ -926,13 +1291,24 @@ const ExtendedProjectRow = memo(function ExtendedProjectRow({
   const isStreaming = useChatStore(
     (s) => !!s.streamingByThread[threadId]?.isStreaming
   )
+  const { selected, menuOpen, setMenuOpen, rowProps } = useChatRowBehavior({
+    threadId,
+    title,
+    openThread,
+  })
+  const draft = useChatHasDraft(threadId)
+  const slot = useChatJumpSlot(threadId)
+  useClearBackWhenActive(threadId, active, back)
   const raw = title || "New Chat"
   const displayTitle = raw.length > 40 ? raw.slice(0, 40) + "..." : raw
   return (
     <div
-      className="group flex cursor-pointer items-center py-1 pr-1 pl-3"
-      onClick={() => openThread(threadId, title || undefined)}
-      {...threadDragHandlers(threadId, title)}
+      className={cn(
+        "group flex cursor-pointer items-center rounded-md py-1 pr-1 pl-3",
+        ROW_FOCUS_CLASS,
+        selected && SELECTED_ROW_CLASS
+      )}
+      {...rowProps}
     >
       <div className="flex min-w-0 flex-1 items-center gap-1">
         {onToggle ? (
@@ -970,6 +1346,8 @@ const ExtendedProjectRow = memo(function ExtendedProjectRow({
             {childCount}
           </span>
         ) : null}
+        {back ? <ChatBackMark className="ml-1" /> : null}
+        {draft ? <ChatDraftMark className="ml-1" /> : null}
       </div>
       <AttentionBadge threadId={threadId} className="mr-1" />
       {isStreaming ? (
@@ -977,14 +1355,19 @@ const ExtendedProjectRow = memo(function ExtendedProjectRow({
       ) : (
         <span />
       )}
-      <span className="px-1.5 text-[9px] whitespace-nowrap text-muted-foreground/50 tabular-nums">
-        {timeAgo(updatedAt)}
-      </span>
-      <DropdownMenu>
+      {slot !== null ? (
+        <ChatJumpHint slot={slot} className="mx-1.5" />
+      ) : (
+        <span className="px-1.5 text-[9px] whitespace-nowrap text-muted-foreground/50 tabular-nums">
+          {timeAgo(updatedAt)}
+        </span>
+      )}
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
             size="icon-xs"
+            aria-label={`${raw} actions`}
             className="size-5 shrink-0 text-muted-foreground/35 transition-colors hover:text-foreground"
             onClick={(e) => e.stopPropagation()}
           >
@@ -992,6 +1375,8 @@ const ExtendedProjectRow = memo(function ExtendedProjectRow({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" side="right">
+          <ChatOrganizeMenuItems threadId={threadId} />
+          <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={(e) => {
               e.stopPropagation()
@@ -1024,13 +1409,15 @@ const ExtendedProjectRow = memo(function ExtendedProjectRow({
             variant="destructive"
             onClick={(e) => {
               e.stopPropagation()
-              if (onConfirm) {
-                onConfirm({
+              runThreadAction(
+                "delete",
+                {
                   title: "Delete chat?",
-                  description: `"${title || "New Chat"}" will be permanently deleted.`,
+                  description: `"${title || "New Chat"}" will be deleted. Undo is available for a few seconds.`,
                   action: () => deleteThread(threadId),
-                })
-              }
+                },
+                onConfirm
+              )
             }}
           >
             <Trash2Icon className="size-3.5" />

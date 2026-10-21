@@ -1,6 +1,6 @@
 import { useCallback } from "react"
 import { useChatStore } from "@/lib/chat-store"
-import { interruptTurn } from "@/services/backend"
+import { interruptTurn } from "@/lib/chat/send-message"
 import type { UiProvider } from "@/lib/provider-types"
 
 /**

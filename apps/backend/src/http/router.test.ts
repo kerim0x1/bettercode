@@ -1,4 +1,7 @@
-import { routingTestServices } from "../testUtils/routing-services"
+import {
+  routerLifecycleServices,
+  routingTestServices,
+} from "../testUtils/routing-services"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import path from "node:path"
 import type { AppState } from "../appState"
@@ -10,8 +13,8 @@ import {
 } from "../observability/metrics"
 import { checkpointRefForThreadTurn } from "@betterc0de/schema"
 import * as git from "../services/git"
-import { buildApp } from "./router"
-import { recoverPendingCheckpointReverts } from "../services/checkpoint-revert-saga"
+import { buildApp as buildAppUnfilled } from "./router"
+import { recoverPendingCheckpointReverts as recoverPendingCheckpointRevertsUnfilled } from "../services/checkpoint-revert-saga"
 import {
   buildBetterC0deRuntimePluginInfo,
   buildBetterC0deRuntimePaths,
@@ -23,12 +26,22 @@ import {
   setSessionPermission,
 } from "../provider/permissions"
 import { ThreadTurnCoordinator } from "../provider/threadTurnCoordinator"
-import { workspaceRecoveryGate } from "../services/workspace-recovery-gate"
+import { WorkspaceRecoveryGate } from "../services/workspace-recovery-gate"
 import { openDatabase } from "../persistence/db"
 import { runMigrations } from "../persistence/migrations"
 import { CheckpointRefCleanupStore } from "../checkpointing/CheckpointRefCleanupStore"
 import { registerThreadActivityBroadcaster } from "../ws/threadActivityBroadcast"
 import { OrchestratorService } from "../services/orchestrator/service"
+import { withInertStateArgument } from "../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const buildApp = withInertStateArgument(buildAppUnfilled, 1)
+const recoverPendingCheckpointReverts = withInertStateArgument(
+  recoverPendingCheckpointRevertsUnfilled,
+  0
+)
+/** The recovery gate of the backend every `makeState()` stands for. */
+const workspaceRecoveryGate = new WorkspaceRecoveryGate()
 
 vi.mock("../services/git", async () => {
   const actual =
@@ -69,10 +82,12 @@ function normalizeRuntimePaths<T extends Record<string, unknown>>(value: T): T {
 
 function makeState(): AppState {
   return {
+    ...routerLifecycleServices(),
     ...routingTestServices(),
     providerRegistry: { all: () => [] },
     threads: { persistUserMessageForTurn: vi.fn() },
     db: { prepare: () => ({ get: () => ({ ok: 1 }) }) },
+    workspaceRecoveryGate,
   } as unknown as AppState
 }
 
@@ -366,6 +381,27 @@ describe("buildApp HTTP metrics", () => {
     }
   })
 
+  it("lets the desktop renderer name its page on shell requests (CORS)", async () => {
+    const app = buildApp(makeConfig(), makeState())
+    const origin = "http://localhost:5174"
+    const preflight = await app.request("/api/v1/shell/pty/open", {
+      method: "OPTIONS",
+      headers: {
+        Origin: origin,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers":
+          "authorization,content-type,x-betterc0de-client-instance",
+      },
+    })
+    expect(preflight.status).toBe(204)
+    const allowed = (
+      preflight.headers.get("Access-Control-Allow-Headers") ?? ""
+    )
+      .split(",")
+      .map((header) => header.trim().toLowerCase())
+    expect(allowed).toContain("x-betterc0de-client-instance")
+  })
+
   it.each(["drainingRef", "taintedRef"] as const)(
     "keeps CORS headers during %s without admitting work",
     async (flag) => {
@@ -520,25 +556,32 @@ describe("buildApp HTTP metrics", () => {
     })
   })
 
-  it("rejects malformed provider credentials before writing auth state", async () => {
-    const set = vi.fn()
-    const app = buildApp(makeConfig(), {
-      ...makeState(),
-      authStore: { set },
-    } as unknown as AppState)
-
-    const response = await app.request("/api/v1/providers/openai/credential", {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer secret",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ type: "oauth" }),
-    })
-
-    expect(response.status).toBe(400)
-    expect(await response.json()).toEqual({ error: "invalid credential" })
-    expect(set).not.toHaveBeenCalled()
+  it("no longer accepts provider OAuth credentials", async () => {
+    // The ChatGPT sign-in flow and its credential store were removed; nothing
+    // may write tokens to disk through the API any more.
+    const app = buildApp(makeConfig(), makeState())
+    for (const method of ["POST", "DELETE"]) {
+      const response = await app.request(
+        "/api/v1/providers/openai/credential",
+        {
+          method,
+          headers: {
+            Authorization: "Bearer secret",
+            "Content-Type": "application/json",
+          },
+          body:
+            method === "POST"
+              ? JSON.stringify({
+                  type: "oauth",
+                  access: "a",
+                  refresh: "r",
+                  expires: 1,
+                })
+              : undefined,
+        }
+      )
+      expect(response.status, method).toBe(404)
+    }
   })
 
   it("rejects authenticated requests from arbitrary browser origins", async () => {
@@ -571,7 +614,7 @@ describe("buildApp HTTP metrics", () => {
 
   it("rejects oversized API bodies before route-level JSON parsing", async () => {
     const app = buildApp(makeConfig(), makeState())
-    const response = await app.request("/api/v1/providers/openai/credential", {
+    const response = await app.request("/api/v1/providers/validate-key", {
       method: "POST",
       headers: {
         Authorization: "Bearer secret",
@@ -3641,8 +3684,14 @@ describe("buildApp HTTP metrics", () => {
 describe("thread recovery fencing and pagination", () => {
   it("allows recovery inspection but blocks unrelated thread mutations", async () => {
     const hasBlockingRecovery = vi.fn(() => true)
+    const passthroughTeardown = async (
+      _threadId: string,
+      operation: () => Promise<unknown>
+    ) => operation()
     const app = buildApp(makeConfig(), {
       ...makeState(),
+      providerHub: { withThreadTeardown: passthroughTeardown },
+      providers: { withThreadTeardown: passthroughTeardown },
       checkpointReverts: {
         hasBlockingRecovery,
         get: vi.fn(() => null),

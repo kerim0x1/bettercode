@@ -1,19 +1,21 @@
 import { isRecord } from "@betterc0de/schema"
+import {
+  providerRefreshModelsSchema,
+  providerValidateKeySchema,
+} from "@betterc0de/schema/http-contracts"
 import type { Hono } from "hono"
 import { z } from "zod"
 import type { AppState } from "../../appState"
 import { LM_STUDIO_BASE_CANDIDATES } from "../../constants"
 import { parseProviderKind, type ModelDefinition } from "../../provider/types"
-import { providerRollbackConversationSchema } from "../validation"
-import { parseAndHandle } from "../routeHelpers"
+import { contractResult, handleHttpContract } from "../contracts"
 import type { ThreadId } from "../../provider/runtime/contracts"
 import type { ProviderRuntimeInstanceSnapshot } from "../../provider/runtime"
 import { recordCheckpointRevertFailed } from "../checkpointRevert"
 import { isRuntimeProviderAllowedByProjectPolicy } from "../../provider/runtime/projectProviderPolicy"
 import { listProjectProviders } from "../../services/workspace"
-import { isValidCredential } from "../../auth/store"
 import { resolveOpenRouterKey } from "../../auth/keyResolution"
-import { getOpenRouterCatalogModels } from "../../provider/adapters/openRouterModelDiscovery"
+import { getOpenRouterCatalogModels } from "../../provider/openRouterModelDiscovery"
 import { HttpError, sanitizeError } from "../errors"
 import {
   recoveryWorkspacesForThread,
@@ -28,28 +30,6 @@ const LM_STUDIO_MODELS_MAX_BYTES = 512 * 1024
 const LM_STUDIO_MODELS_MAX_ITEMS = 2_048
 const LM_STUDIO_MODEL_ID_MAX_CHARS = 512
 
-/**
- * Provider ids a credential may be stored under: the shell/backend catalog
- * ids (`provider/catalog/*.ts`, `apps/shell/provider-ipc.cjs`) plus the two
- * legacy `ProviderKind` spellings the key resolver still reads. The auth
- * store is a flat map keyed by this string, so an arbitrary id would create
- * an orphan entry nothing can ever read or clear.
- */
-const CREDENTIAL_PROVIDER_IDS = [
-  "anthropic",
-  "anthropic_cli",
-  "claude",
-  "codex",
-  "cursor",
-  "deepseek",
-  "google",
-  "grok",
-  "grok-cli",
-  "lmstudio",
-  "openai",
-  "openrouter",
-] as const
-const credentialProviderIdSchema = z.enum(CREDENTIAL_PROVIDER_IDS)
 const providerInstanceIdParamSchema = z
   .string()
   .trim()
@@ -57,20 +37,25 @@ const providerInstanceIdParamSchema = z
   .max(128)
   .regex(/^[A-Za-z0-9._:@-]+$/, "Invalid provider instance id")
 const providerCwdQuerySchema = z.string().max(4_096).optional()
-const refreshModelsSchema = z.object({
-  kind: z.string().trim().max(64).optional(),
-})
-const validateKeySchema = z.object({
-  kind: z.string().trim().min(1, "kind required").max(64),
-  apiKey: z.string().max(4_096).default(""),
-})
 
+/**
+ * Every answer here is checked against its shared contract
+ * (`@betterc0de/schema/http-contracts`, `provider-contracts.ts`) before it
+ * is sent. Requests keep their own parsing where a route answers a bad one
+ * with its own body (`/providers/validate-key`) or reads no body at all.
+ */
 export function registerProvidersRoutes(api: Hono, state: AppState): void {
   registerApiKeyRoutes(api, state)
-  api.get("/providers/catalog", (c) => c.json(listProviderCatalog()))
-  api.get("/providers", (c) => c.json(state.providers.listProviders()))
+  api.get("/providers/catalog", (c) =>
+    contractResult(c, "providerCatalog", listProviderCatalog())
+  )
+  api.get("/providers", (c) =>
+    contractResult(c, "providerKinds", state.providers.listProviders())
+  )
   api.get("/models", async (c) =>
-    c.json(
+    contractResult(
+      c,
+      "listModels",
       withCustomApiModels(
         await state.providers.listModelsLive(),
         state,
@@ -78,13 +63,23 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
       )
     )
   )
-  api.get("/providers/status", (c) => c.json(state.providers.getStatus()))
+  api.get("/providers/status", (c) =>
+    contractResult(c, "providerStatus", state.providers.getStatus())
+  )
   api.get("/providers/instances", async (c) => {
     const cwd = await resolveProviderRequestCwd(state, c.req.query("cwd"))
-    return c.json(await listProjectScopedProviderInstances(state, cwd))
+    return contractResult(
+      c,
+      "providerInstances",
+      await listProjectScopedProviderInstances(state, cwd)
+    )
   })
   api.get("/providers/sessions", async (c) =>
-    c.json(await state.providerHub.listSessions(state.providerSessionBindings))
+    contractResult(
+      c,
+      "providerSessions",
+      await state.providerHub.listSessions(state.providerSessionBindings)
+    )
   )
   api.get("/providers/instances/:id/models", async (c) => {
     const instance = state.providerHub.getInstance(c.req.param("id"))
@@ -92,7 +87,9 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
     if (!instance.enabled)
       return c.json({ error: "provider instance disabled" }, 409)
     const cwd = await resolveProviderRequestCwd(state, c.req.query("cwd"))
-    return c.json(
+    return contractResult(
+      c,
+      "providerInstanceModels",
       await state.providerHub.modelsForInstance(instance.instanceId, { cwd })
     )
   })
@@ -112,7 +109,7 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
     const [snapshot] = providers.filter(
       (item) => item.instanceId === instance.instanceId
     )
-    return c.json({
+    return contractResult(c, "providerInstanceRefresh", {
       instance: snapshot ?? null,
       models: instance.enabled
         ? await state.providerHub.modelsForInstance(instance.instanceId, {
@@ -141,7 +138,7 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
         result.providers,
         cwd
       )
-      return c.json({
+      return contractResult(c, "providerInstanceUpdate", {
         ...result,
         providers,
         instance:
@@ -160,9 +157,9 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
     }
   })
   api.post("/providers/rollback-conversation", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      providerRollbackConversationSchema,
+      "providerRollbackConversation",
       async (body) => {
         if (body.numTurns === 0) return { rolledBack: false }
         const latestBinding = state.providerSessionBindings.getLatestForThread(
@@ -218,50 +215,12 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
     )
   )
 
-  // ── Catalog + credential routes (PR1–PR4) ───────────────────────────
-  // Returns which providers currently have a stored credential, keyed by
-  // provider id, value = credential type ("oauth"|"api"|"wellknown") or
-  // null. The renderer uses this to render "Signed in" badges next to
-  // each provider in Settings.
-  api.get("/providers/auth-status", (c) => {
-    if (!state.authStore) return c.json({})
-    const all = state.authStore.all()
-    const status: Record<string, string> = {}
-    for (const [id, cred] of Object.entries(all)) status[id] = cred.type
-    return c.json(status)
-  })
-
-  // Persist a credential (called by the OAuth IPC after a successful flow).
-  // `isValidCredential` bounds the shape and sizes; the id must be a known
-  // provider. Desktop-only at the router: a paired device never writes
-  // credentials.
-  api.post("/providers/:id/credential", async (c) => {
-    if (!state.authStore)
-      return c.json({ error: "auth store not available" }, 503)
-    const id = credentialProviderIdSchema.safeParse(c.req.param("id"))
-    if (!id.success) return c.json({ error: "unknown provider id" }, 400)
-    const body = await c.req.json().catch(() => null)
-    if (!isValidCredential(body)) {
-      return c.json({ error: "invalid credential" }, 400)
-    }
-    state.authStore.set(id.data, body)
-    return c.json({ ok: true })
-  })
-
-  // Drop the stored credential for a provider.
-  api.delete("/providers/:id/credential", (c) => {
-    if (!state.authStore)
-      return c.json({ error: "auth store not available" }, 503)
-    const id = credentialProviderIdSchema.safeParse(c.req.param("id"))
-    if (!id.success) return c.json({ error: "unknown provider id" }, 400)
-    state.authStore.remove(id.data)
-    return c.json({ ok: true })
-  })
-
   // Invalidate cached model list for a single provider (or all providers when
   // no `kind` is given) and return the freshly-fetched list.
+  // A body that is not JSON reads as `{}` (refresh every provider), as it
+  // always has; only the answer goes through the contract.
   api.post("/providers/refresh-models", async (c) => {
-    const parsed = refreshModelsSchema.safeParse(
+    const parsed = providerRefreshModelsSchema.safeParse(
       await c.req.json().catch(() => ({}))
     )
     if (!parsed.success) return c.json({ error: parsed.error.message }, 400)
@@ -277,20 +236,24 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
       await state.providers.listModelsLive(true),
       state
     )
-    return c.json(models)
+    return contractResult(c, "providerRefreshModels", models)
   })
 
   // LM Studio's model list comes from probing its local HTTP endpoint; if it
   // isn't running we return the `not_running` sentinel the renderer expects.
   // Probes both 1234 and 1111 (default + alt) on localhost and 127.0.0.1.
   api.get("/lmstudio/models", async (c) => {
+    let models: Array<{ id: string }> | null = null
     try {
-      const models = await fetchLmStudioModels()
-      if (!models) return c.json({ error: "not_running" })
-      return c.json({ data: models })
+      models = await fetchLmStudioModels()
     } catch {
-      return c.json({ error: "not_running" })
+      models = null
     }
+    return contractResult(
+      c,
+      "lmStudioModels",
+      models ? { data: models } : { error: "not_running" }
+    )
   })
 
   // Live OpenRouter catalog for the picker's or-* groups. Gated on a
@@ -301,10 +264,11 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
   // fallback entries.
   api.get("/openrouter/models", async (c) => {
     if (!resolveOpenRouterKey(state.settings.get())?.key) {
-      return c.json({ error: "not_configured" })
+      return contractResult(c, "openRouterModels", { error: "not_configured" })
     }
+    let data: Awaited<ReturnType<typeof getOpenRouterCatalogModels>>
     try {
-      return c.json({ data: await getOpenRouterCatalogModels() })
+      data = await getOpenRouterCatalogModels()
     } catch (error) {
       // An upstream failure (401 from a revoked key, network) used to come
       // back as an empty 200 catalog, indistinguishable from "no models".
@@ -328,6 +292,7 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
           | 502
       )
     }
+    return contractResult(c, "openRouterModels", { data })
   })
 
   // Server-side API-key validation. The renderer used to call provider
@@ -336,12 +301,15 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
   // OpenRouter and (b) leaked the user's API key into the renderer's
   // network panel + JS heap. Doing the probe here keeps the key inside
   // the Node process and dodges CORS entirely (Node fetch ignores it).
+  // A bad request is answered in the contract's own shape (`ok: false`).
   api.post("/providers/validate-key", async (c) => {
-    const parsed = validateKeySchema.safeParse(
+    const parsed = providerValidateKeySchema.safeParse(
       await c.req.json().catch(() => ({}))
     )
     if (!parsed.success) {
-      return c.json(
+      return contractResult(
+        c,
+        "providerValidateKey",
         {
           ok: false,
           valid: false,
@@ -355,13 +323,22 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
     if (apiKey && !probe) {
       // A kind we cannot probe is not a kind we can vouch for. This used to
       // answer `{valid:true}`, which turned a typo into a green badge.
-      return c.json(
+      return contractResult(
+        c,
+        "providerValidateKey",
         { ok: false, valid: false, error: `Unknown provider kind: ${kind}` },
         400
       )
     }
-    if (!probe) return c.json({ ok: true, valid: false, status: 0 })
+    if (!probe) {
+      return contractResult(c, "providerValidateKey", {
+        ok: true,
+        valid: false,
+        status: 0,
+      })
+    }
 
+    let status: number
     try {
       const ac = new AbortController()
       const timeout = setTimeout(() => ac.abort(), 8000)
@@ -379,21 +356,25 @@ export function registerProvidersRoutes(api: Hono, state: AppState): void {
       } finally {
         clearTimeout(timeout)
       }
-      // Only a successful authenticated endpoint confirms the key. Invalid
-      // keys can also return 400; rate limits/outages do not prove validity.
-      const valid = res.ok
-      return c.json({ ok: true, valid, status: res.status })
+      status = res.status
     } catch (err) {
       const sanitized = sanitizeError(err, "provider credential validation", {
         kind,
       })
-      return c.json({
+      return contractResult(c, "providerValidateKey", {
         ok: true,
         valid: false,
         status: 0,
         error: sanitized.message,
       })
     }
+    // Only a successful authenticated endpoint confirms the key. Invalid
+    // keys can also return 400; rate limits/outages do not prove validity.
+    return contractResult(c, "providerValidateKey", {
+      ok: true,
+      valid: status >= 200 && status < 300,
+      status,
+    })
   })
 }
 
@@ -402,8 +383,7 @@ function withCustomApiModels(
   state: AppState,
   includeHidden = false
 ): ModelDefinition[] {
-  const providers = state.settings?.get().providers
-  if (!providers) return models
+  const providers = state.settings.get().providers
   const result = [...models]
   for (const kind of ["anthropic", "openai", "grok"] as const) {
     const seen = new Set(

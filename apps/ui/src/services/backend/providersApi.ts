@@ -1,70 +1,115 @@
-import { invoke } from "./runtime"
-import {
-  apiKeyPoolViewSchema,
-  type ApiKeyProvider,
-  type ApiKeyPoolView,
-} from "@betterc0de/schema"
-import type { ProviderCatalogEntry } from "@/types/electron-api"
+import { invokeContract } from "./contracts"
+import type { ApiKeyProvider, ApiKeyPoolView } from "@betterc0de/schema"
+import type {
+  CliStatus,
+  CliStatusResponse,
+  HttpContractResponse,
+  OpenRouterLiveModel,
+  ProviderStatus,
+} from "@betterc0de/schema/http-contracts"
+import type {
+  ProviderAuthMethod,
+  ProviderCatalogEntry,
+} from "@/types/electron-api"
 import type {
   ModelCapabilities,
   ProviderInstanceSnapshot,
   ProviderModel,
 } from "@betterc0de/schema"
 
+// Every call goes through its shared contract
+// (`@betterc0de/schema/http-contracts`, `provider-contracts.ts`): the
+// request is checked before it is sent and the response validated before a
+// caller sees it.
+
 /**
- * Authoritative provider status surfaced by the backend's
- * `/providers/status` route. Mirrors `ProviderStatus` in
- * `apps/backend/src/provider/service.ts` — fields stay structurally
- * compatible across both processes; the renderer treats `provider` as
- * an opaque string keyed by the backend's `ProviderKind`.
+ * `ProviderStatus` is the backend's `/providers/status` row; the renderer
+ * treats `provider` as an opaque string keyed by the backend's
+ * `ProviderKind`. `CliStatusResponse` is `GET /cli/status`.
  */
-export interface ProviderStatus {
-  provider: string
-  name: string
-  configured: boolean
-  /** `"api-key" | "cli" | "local-server" | "oauth" | …` — used by the
-   *  renderer to pick a fallback tooltip copy when the adapter's
-   *  per-provider `hint` isn't supplied. */
-  authType?: string
-  /** Human-readable setup instruction from the adapter; renderered on
-   *  hover over disabled model-picker items. */
-  hint?: string
+export type {
+  CliStatus,
+  CliStatusResponse,
+  OpenRouterLiveModel,
+  ProviderStatus,
 }
 
-export const listProviders = () => invoke<string[]>("/providers")
-export const listProviderCatalog = () =>
-  invoke<ProviderCatalogEntry[]>("/providers/catalog")
+const cwdQuery = (cwd?: string | null) =>
+  cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""
 
-const keyPath = (provider: ApiKeyProvider, id?: string) =>
-  `/providers/api-keys/${provider}${id ? `/${encodeURIComponent(id)}` : ""}`
-async function keyRequest(
-  path: string,
-  options?: Parameters<typeof invoke>[1]
-): Promise<ApiKeyPoolView> {
-  return apiKeyPoolViewSchema.parse(await invoke(path, options))
+export const listProviders = (): Promise<string[]> =>
+  invokeContract("providerKinds")
+
+type CatalogAuthMethod =
+  HttpContractResponse<"providerCatalog">[number]["authMethods"][number]
+
+/** Settings has no OAuth sign-in; a provider keeps its other methods. */
+function settingsAuthMethods(
+  methods: readonly CatalogAuthMethod[]
+): ProviderAuthMethod[] {
+  const shown: ProviderAuthMethod[] = []
+  for (const method of methods) {
+    if (method.type !== "oauth") shown.push(method)
+  }
+  return shown
 }
-export const listApiKeys = (provider: ApiKeyProvider, signal?: AbortSignal) =>
-  keyRequest(keyPath(provider), { signal })
+
+export const listProviderCatalog = (): Promise<ProviderCatalogEntry[]> =>
+  invokeContract("providerCatalog").then((entries) =>
+    entries.map((entry) => ({
+      ...entry,
+      authMethods: settingsAuthMethods(entry.authMethods),
+    }))
+  )
+
+// The API-key calls go through their shared contracts
+// (`@betterc0de/schema/http-contracts`); each answers with the provider's
+// whole key list.
+const forProvider = (provider: ApiKeyProvider) => ({ params: { provider } })
+export const listApiKeys = (
+  provider: ApiKeyProvider,
+  signal?: AbortSignal
+): Promise<ApiKeyPoolView> =>
+  invokeContract("apiKeysList", { ...forProvider(provider), signal })
 export const addApiKey = (
   provider: ApiKeyProvider,
   label: string,
   apiKey: string
-) => keyRequest(keyPath(provider), { method: "POST", body: { label, apiKey } })
+): Promise<ApiKeyPoolView> =>
+  invokeContract("apiKeysAdd", {
+    ...forProvider(provider),
+    body: { label, apiKey },
+  })
 export const editApiKey = (
   provider: ApiKeyProvider,
   id: string,
   patch: { label?: string; enabled?: boolean; apiKey?: string }
-) => keyRequest(keyPath(provider, id), { method: "PATCH", body: patch })
-export const removeApiKey = (provider: ApiKeyProvider, id: string) =>
-  keyRequest(keyPath(provider, id), { method: "DELETE" })
-export const restoreExternalApiKeySource = (provider: ApiKeyProvider) =>
-  keyRequest(keyPath(provider), { method: "DELETE" })
-export const reorderApiKeys = (provider: ApiKeyProvider, ids: string[]) =>
-  keyRequest(`${keyPath(provider)}/order`, { method: "PUT", body: { ids } })
-export const testApiKey = (provider: ApiKeyProvider, id: string) =>
-  keyRequest(`${keyPath(provider, id)}/test`, { method: "POST" })
-export const retryApiKey = (provider: ApiKeyProvider, id: string) =>
-  keyRequest(`${keyPath(provider, id)}/retry`, { method: "POST" })
+): Promise<ApiKeyPoolView> =>
+  invokeContract("apiKeysUpdate", { ...forProvider(provider), id, body: patch })
+export const removeApiKey = (
+  provider: ApiKeyProvider,
+  id: string
+): Promise<ApiKeyPoolView> =>
+  invokeContract("apiKeysRemove", { ...forProvider(provider), id })
+export const restoreExternalApiKeySource = (
+  provider: ApiKeyProvider
+): Promise<ApiKeyPoolView> =>
+  invokeContract("apiKeysUseExternal", forProvider(provider))
+export const reorderApiKeys = (
+  provider: ApiKeyProvider,
+  ids: string[]
+): Promise<ApiKeyPoolView> =>
+  invokeContract("apiKeysReorder", { ...forProvider(provider), body: { ids } })
+export const testApiKey = (
+  provider: ApiKeyProvider,
+  id: string
+): Promise<ApiKeyPoolView> =>
+  invokeContract("apiKeysTest", { ...forProvider(provider), id })
+export const retryApiKey = (
+  provider: ApiKeyProvider,
+  id: string
+): Promise<ApiKeyPoolView> =>
+  invokeContract("apiKeysRetry", { ...forProvider(provider), id })
 
 export interface ApiModel {
   slug: string
@@ -76,61 +121,56 @@ export interface ApiModel {
   capabilities?: ModelCapabilities | null
 }
 
-export const listModels = () => invoke<ApiModel[]>("/models")
-export const listProviderSettingsModels = () =>
-  invoke<ApiModel[]>("/models?includeHidden=1")
+export const listModels = (): Promise<ApiModel[]> =>
+  invokeContract("listModels")
+export const listProviderSettingsModels = (): Promise<ApiModel[]> =>
+  invokeContract("listModels", { query: "?includeHidden=1" })
 
-export const refreshModels = () =>
-  invoke<ApiModel[]>("/providers/refresh-models", {
-    method: "POST",
-    body: {},
-  })
+export const refreshModels = (): Promise<ApiModel[]> =>
+  invokeContract("providerRefreshModels", { body: {} })
 
-export const getProviderStatus = () =>
-  invoke<ProviderStatus[]>("/providers/status")
+export const getProviderStatus = (): Promise<ProviderStatus[]> =>
+  invokeContract("providerStatus")
 
-export const listProviderInstances = (cwd?: string | null) => {
-  const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""
-  return invoke<ProviderInstanceSnapshot[]>(`/providers/instances${query}`)
-}
+export const listProviderInstances = (
+  cwd?: string | null
+): Promise<ProviderInstanceSnapshot[]> =>
+  invokeContract("providerInstances", { query: cwdQuery(cwd) })
 
 export const listProviderInstanceModels = (
   instanceId: string,
   cwd?: string | null
-) => {
-  const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""
-  return invoke<ReadonlyArray<ProviderModel>>(
-    `/providers/instances/${encodeURIComponent(instanceId)}/models${query}`
-  )
-}
+): Promise<ReadonlyArray<ProviderModel>> =>
+  invokeContract("providerInstanceModels", {
+    id: instanceId,
+    query: cwdQuery(cwd),
+  })
 
 export const refreshProviderInstance = (
   instanceId: string,
   cwd?: string | null
-) => {
-  const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""
-  return invoke<{
-    instance: ProviderInstanceSnapshot | null
-    models: ReadonlyArray<ProviderModel>
-  }>(`/providers/instances/${encodeURIComponent(instanceId)}/refresh${query}`, {
-    method: "POST",
+): Promise<{
+  instance: ProviderInstanceSnapshot | null
+  models: ReadonlyArray<ProviderModel>
+}> =>
+  invokeContract("providerInstanceRefresh", {
+    id: instanceId,
+    query: cwdQuery(cwd),
     body: {},
   })
-}
 
 export const updateProviderInstance = (
   instanceId: string,
   cwd?: string | null
-) => {
-  const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""
-  return invoke<{
-    instance: ProviderInstanceSnapshot | null
-    providers: ReadonlyArray<ProviderInstanceSnapshot>
-  }>(`/providers/instances/${encodeURIComponent(instanceId)}/update${query}`, {
-    method: "POST",
+): Promise<{
+  instance: ProviderInstanceSnapshot | null
+  providers: ReadonlyArray<ProviderInstanceSnapshot>
+}> =>
+  invokeContract("providerInstanceUpdate", {
+    id: instanceId,
+    query: cwdQuery(cwd),
     body: {},
   })
-}
 
 export const rollbackProviderConversation = (
   threadId: string,
@@ -139,9 +179,8 @@ export const rollbackProviderConversation = (
     providerKind?: string | null
     providerInstanceId?: string | null
   } = {}
-) =>
-  invoke<{ rolledBack: boolean }>("/providers/rollback-conversation", {
-    method: "POST",
+): Promise<{ rolledBack: boolean }> =>
+  invokeContract("providerRollbackConversation", {
     body: {
       threadId,
       numTurns,
@@ -152,47 +191,26 @@ export const rollbackProviderConversation = (
     },
   })
 
-/** Per-CLI install + auth status. Mirrors `CliStatus` in
- *  `apps/backend/src/provider/catalog/cli-detect.ts`. */
-export interface CliStatus {
-  installed: boolean
-  binaryPath: string | null
-  version: string | null
-  authenticated: boolean
-  authType: string | null
-}
+/** `refresh` probes the CLIs again instead of reading the 30 s cache. */
+export const getCliStatus = (
+  options: { refresh?: boolean } = {}
+): Promise<CliStatusResponse> =>
+  invokeContract(
+    "cliStatus",
+    options.refresh ? { query: "?refresh=true" } : undefined
+  )
 
-/** Shape of `GET /cli/status` once it's been upgraded from stubs to real
- *  detection (PR1 follow-up). The `cli` map keys are provider ids
- *  (`claude`, `codex`, …); legacy callers still get `claude` / `codex` as
- *  top-level shortcuts. */
-export interface CliStatusResponse {
-  claude: CliStatus
-  codex: CliStatus
-  cli: Record<string, CliStatus>
-  adapters: Record<string, { configured: boolean; name: string }>
-}
-
-export const getCliStatus = () => invoke<CliStatusResponse>("/cli/status")
-
-export const listLmStudioModels = () =>
-  invoke<{ data?: { id: string }[]; error?: string }>("/lmstudio/models", {
-    method: "GET",
-  })
-
-export interface OpenRouterLiveModel {
-  id: string
-  name: string
-  contextLength: number | null
-}
+export const listLmStudioModels = (): Promise<{
+  data?: { id: string }[]
+  error?: string
+}> => invokeContract("lmStudioModels")
 
 /** Live OpenRouter catalog subset (backend-cached; `error: "not_configured"`
  *  when no OpenRouter key is set — the picker then keeps its curated list). */
-export const listOpenRouterModels = () =>
-  invoke<{ data?: OpenRouterLiveModel[]; error?: string }>(
-    "/openrouter/models",
-    { method: "GET" }
-  )
+export const listOpenRouterModels = (): Promise<{
+  data?: OpenRouterLiveModel[]
+  error?: string
+}> => invokeContract("openRouterModels")
 
 /**
  * Server-side API-key validation. The renderer must NOT call provider
@@ -201,8 +219,8 @@ export const listOpenRouterModels = () =>
  * renderer's network panel. Backend handles the probe and returns just
  * a yes/no.
  */
-export const validateProviderKey = (kind: string, apiKey: string) =>
-  invoke<{ ok: boolean; valid: boolean; status?: number; error?: string }>(
-    "/providers/validate-key",
-    { method: "POST", body: { kind, apiKey } }
-  )
+export const validateProviderKey = (
+  kind: string,
+  apiKey: string
+): Promise<{ ok: boolean; valid: boolean; status?: number; error?: string }> =>
+  invokeContract("providerValidateKey", { body: { kind, apiKey } })

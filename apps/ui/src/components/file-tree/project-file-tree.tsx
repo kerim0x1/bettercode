@@ -25,7 +25,10 @@ import {
 import { getThreadStream, useChatStore } from "@/lib/chat-store"
 import { confirmCloseDirtyEditorTabs } from "@/lib/editor-close-confirmation"
 import { useEditorStore } from "@/lib/editor-store"
-import { deleteWorkspacePath, moveWorkspacePath } from "@/services/backend"
+import {
+  deleteWorkspacePath,
+  moveWorkspacePath,
+} from "@/services/backend/workspaceApi"
 import { Button } from "@/components/ui/button"
 import { ProjectFileTreeLoader } from "@/lib/project-file-tree-loader"
 import { InlineCreateInput } from "@/components/file-tree/inline-create-input"

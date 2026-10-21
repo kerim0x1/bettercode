@@ -19,7 +19,7 @@ import {
   resolvePinnedThreadSlot,
   resolveSessionCommandThread,
   resolveSiblingChildThread,
-} from "@/hooks/chat-submit/thread-navigation"
+} from "@/lib/chat-commands/thread-navigation"
 import { useChatStore } from "@/lib/chat-store"
 import { HttpError } from "@/lib/errors/types"
 import {
@@ -28,11 +28,9 @@ import {
   type RuntimeSkill,
   type RuntimeSubagent,
 } from "@/lib/runtime-config"
-import {
-  sendChatMessage,
-  sendGoalControl,
-  type WorkspaceProjectReference,
-} from "@/services/backend"
+import { sendChatMessage, sendGoalControl } from "@/lib/chat/send-message"
+import { canSteerPayload, steerTargetFor } from "@/lib/chat/steer-delivery"
+import type { WorkspaceProjectReference } from "@/services/backend/workspaceApi"
 import { resolveProviderTarget } from "@/lib/resolve-provider-target"
 import { coerceThinkingModeForModel } from "@/lib/model-capabilities"
 import { useSettingsStore } from "@/lib/settings-store"
@@ -49,6 +47,10 @@ import {
   isSecuritySlashCommand,
 } from "@/lib/message-utils"
 import { resolveThreadRuntimePath } from "@/lib/thread-context"
+import {
+  isWorkspaceUntrustedError,
+  useWorkspaceTrustPromptStore,
+} from "@/lib/workspace-trust-prompts"
 import type { UiProvider } from "@/lib/provider-types"
 import { type ModelCycleFavoriteEntry } from "@/lib/model-cycle"
 
@@ -161,26 +163,58 @@ export function useChatSubmit({
         initialChat.threads.find((thread) => thread.id === originThreadId) ??
         null
       if (originThreadId && !activeThread) return
-      const enqueue = () => {
+      const enqueue = (steer = false) => {
         if (!originThreadId || msg.queuedSubmission) return false
         try {
           const {
             threadId: _threadId,
             queuedSubmission: _queued,
+            delivery: _delivery,
             ...payload
           } = msg
-          useMessageQueueStore
-            .getState()
-            .enqueue(originThreadId, { ...payload, browserElements })
+          const queue = useMessageQueueStore.getState()
+          const queued = { ...payload, browserElements }
+          // A message to steer waits first in the queue until the running
+          // turn takes it (lib/chat/steer-turn.ts).
+          const entry = steer
+            ? queue.enqueueFirst(originThreadId, queued)
+            : queue.enqueue(originThreadId, queued)
           useBrowserContextStore
             .getState()
             .consume(originThreadId, browserElements)
+          if (steer) {
+            const providerId =
+              initialChat.settingsByThread[originThreadId]
+                ?.selectedProviderId ??
+              usePreferencesStore.getState().selectedProviderId
+            const target = steerTargetFor(
+              providers.find((provider) => provider.id === providerId),
+              activeThread?.session
+            )
+            void import("@/lib/chat/steer-turn")
+              .then(({ steerQueuedMessage }) =>
+                steerQueuedMessage(entry.id, target)
+              )
+              .catch((error: unknown) =>
+                handleError(error, { source: "chat-steer" })
+              )
+          }
           return true
         } catch (error) {
           handleError(error, { source: "message-queue" })
           return false
         }
       }
+      // While a turn runs, Enter queues a message for after it or steers it
+      // into the turn (Settings → Chat); Ctrl/Cmd+Enter does the other one.
+      const steerRunningTurn =
+        Boolean(
+          originThreadId &&
+          initialChat.streamingByThread[originThreadId]?.isStreaming
+        ) &&
+        (msg.delivery ?? useSettingsStore.getState().whileWorkingEnter) ===
+          "steer" &&
+        canSteerPayload(msg)
       if (
         originThreadId &&
         ((preparingThreads.has(originThreadId) &&
@@ -194,7 +228,7 @@ export function useChatSubmit({
                     (entry) => entry.threadId === originThreadId
                   )))))
       )
-        return enqueue()
+        return enqueue(steerRunningTurn)
       const prefs = usePreferencesStore.getState()
       const threadSettings = originThreadId
         ? initialChat.settingsByThread[originThreadId]
@@ -618,7 +652,8 @@ export function useChatSubmit({
             // pass `silent404` to keep DevTools quiet for non-file mentions.
             if (!fileContextEnabled || !activeRuntimePath) continue
             try {
-              const { readFile } = await import("@/services/backend")
+              const { readFile } =
+                await import("@/services/backend/workspaceApi")
               const fullPath =
                 activeRuntimePath.replace(/\\/g, "/") + "/" + mentionName
               const result = await readFile(fullPath, { silent404: true })
@@ -857,7 +892,9 @@ export function useChatSubmit({
           visibleAttachments,
           selectedProviderOptions,
           null,
-          orchestration
+          orchestration,
+          // The Autonomous Work dialog's opening message starts the run.
+          msg.autonomy ? { action: "start", config: msg.autonomy } : null
         )
         if (!msg.queuedSubmission)
           useBrowserContextStore.getState().consume(threadId, browserElements)
@@ -901,8 +938,19 @@ export function useChatSubmit({
             { persist: useSettingsStore.getState().autoSaveConversations }
           )
         }
+        const errorMessageId = crypto.randomUUID()
+        // With automatic trust off, the first Agent turn in a folder is
+        // refused until the user trusts it. Offer that under the error
+        // itself instead of only pointing to Settings.
+        const untrustedWorkspace = isWorkspaceUntrustedError(err)
+          ? resolveThreadRuntimePath(activeThread)
+          : null
+        if (untrustedWorkspace)
+          useWorkspaceTrustPromptStore.getState().register(errorMessageId, {
+            workspacePath: untrustedWorkspace,
+          })
         useChatStore.getState().addMessage(threadId, {
-          id: crypto.randomUUID(),
+          id: errorMessageId,
           role: "assistant",
           content: `Error: ${err instanceof Error ? err.message : String(err)}`,
           createdAt: new Date().toISOString(),

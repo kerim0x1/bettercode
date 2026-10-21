@@ -8,7 +8,7 @@ import {
 // The panel under test never fetches; the menu's own fetch lives in an
 // effect that `renderToStaticMarkup` does not run. Mocked so importing the
 // component does not drag the backend runtime into the test.
-vi.mock("@/services/backend", () => ({
+vi.mock("@/services/backend/workspaceApi", () => ({
   searchEntriesDetailed: vi.fn(async () => ({ entries: [], truncated: false })),
 }))
 

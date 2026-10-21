@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 
-vi.mock("../../services/shell", () => ({ runShellCommand: vi.fn() }))
+vi.mock("../../services/shell", () => ({
+  preferredAgentShell: vi.fn(() => undefined),
+}))
 vi.mock("../../services/workspace", () => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
@@ -9,7 +11,10 @@ vi.mock("../../services/workspace", () => ({
 }))
 
 import { executeTool, type ToolExecContext } from "./tool-executor"
-import { runShellCommand } from "../../services/shell"
+import {
+  preferredAgentShell,
+  type ShellCommandRunner,
+} from "../../services/shell"
 import {
   readFile,
   writeFile,
@@ -17,10 +22,14 @@ import {
   searchContentDetailed,
 } from "../../services/workspace"
 
+/** The shell sessions Bash runs in: a fake the tests inspect. */
+const runShellCommand = vi.fn<ShellCommandRunner["runCommand"]>()
+
 const ctx: ToolExecContext = {
   cwd: "/proj",
   toolId: "t1",
   limits: { maxLines: 2000, maxBytes: 50_000 },
+  shell: { runCommand: runShellCommand },
 }
 
 beforeEach(() => vi.clearAllMocks())
@@ -142,6 +151,16 @@ describe("Write", () => {
       },
     })
   })
+
+  it("never empties a file when a truncated call arrives without content", async () => {
+    // The Anthropic SDK drops an unterminated string and its key when a
+    // tool_use is cut off at max_tokens, so only `path` survives.
+    const result = await executeTool("Write", { path: "big.ts" }, ctx)
+
+    expect(result.error).toContain('missing "content"')
+    expect(readFile).not.toHaveBeenCalled()
+    expect(writeFile).not.toHaveBeenCalled()
+  })
 })
 
 describe("Edit", () => {
@@ -164,6 +183,18 @@ describe("Edit", () => {
       isNew: false,
       patchComplete: true,
     })
+  })
+
+  it("never deletes old_string when new_string is missing", async () => {
+    vi.mocked(readFile).mockResolvedValue(readResult("keep me", "p"))
+    const result = await executeTool(
+      "Edit",
+      { path: "a.txt", old_string: "keep me" },
+      ctx
+    )
+
+    expect(result.error).toContain('missing "new_string"')
+    expect(writeFile).not.toHaveBeenCalled()
   })
 
   it("fails when old_string is not found", async () => {
@@ -259,6 +290,24 @@ describe("Bash", () => {
     })
     expect(r.output).toContain("ok")
     expect(r.error).toBeUndefined()
+  })
+
+  it("runs under the preferred agent shell when one is available", async () => {
+    vi.mocked(preferredAgentShell).mockReturnValueOnce("gitbash")
+    vi.mocked(runShellCommand).mockResolvedValue({
+      success: true,
+      combined: "ok",
+      stdout: "ok",
+      stderr: "",
+      exitCode: 0,
+      sessionId: "t1",
+      aborted: false,
+      timedOut: false,
+    })
+    await executeTool("Bash", { command: "ls -la" }, ctx)
+    expect(runShellCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "ls -la", shell: "gitbash" })
+    )
   })
 
   it("treats a non-zero exit as a normal result (not an executor error)", async () => {

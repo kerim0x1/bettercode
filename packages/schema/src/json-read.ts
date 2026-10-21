@@ -21,6 +21,20 @@ export function asRecord(value: unknown): JsonRecord {
   return isRecord(value) ? value : {}
 }
 
+/**
+ * The record itself, or `undefined` for anything that is not a plain object.
+ * Named for its result so it cannot be mistaken for `asRecord` (which never
+ * returns undefined) when a call site is copied between modules.
+ */
+export function recordOrUndefined(value: unknown): JsonRecord | undefined {
+  return isRecord(value) ? value : undefined
+}
+
+/** The value when it is a non-empty string, untouched; otherwise undefined. */
+export function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined
+}
+
 /** The first of `keys` holding a non-empty string, returned untouched. */
 export function readString(
   record: JsonRecord,

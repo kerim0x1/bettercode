@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo } from "react"
 import { builtinProviders } from "@/lib/builtin-providers"
 import { sortModelsForProviderInstance } from "@/lib/model-ordering"
 import { usePluginStore } from "@/lib/plugin-store"
@@ -14,10 +14,9 @@ import { useProviderInstances } from "@/hooks/use-provider-instances"
 import { useApiModels } from "@/hooks/use-api-models"
 import type { ProviderInstanceSnapshot } from "@betterc0de/schema"
 import { isHiddenChatProvider } from "@betterc0de/schema/model-selection"
-import {
-  listProjectProviders,
-  type WorkspaceProjectProvidersSummary,
-} from "@/services/backend/workspaceApi"
+import type { WorkspaceProjectProvidersSummary } from "@/services/backend/workspaceApi"
+import { projectProvidersStore } from "@/lib/provider-catalog-store"
+import { useSharedResourceKey } from "@/lib/shared-resource"
 
 /**
  * Reactive list of UI providers — enabled plugin-provided providers first,
@@ -35,6 +34,10 @@ import {
  * directly or fall back to `id` (e.g. `"openai-api"` lacks an explicit
  * kind because the backend's OpenAI adapter is keyed `"openai"`). We try
  * both keys so the lookup matches regardless.
+ *
+ * Status, instances, API models and the project policy come from shared,
+ * ref-counted stores (`provider-catalog-store`), so mounting this hook in
+ * several places does not multiply backend requests.
  */
 export function useProviders(
   cwd?: string | null,
@@ -46,27 +49,12 @@ export function useProviders(
   const apiModels = useApiModels()
   const hiddenProviders = usePreferencesStore((s) => s.hiddenProviders)
   const hiddenModels = usePreferencesStore((s) => s.hiddenModels)
-  const [projectProviders, setProjectProviders] =
-    useState<WorkspaceProjectProvidersSummary | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    const workspace = cwd?.trim()
-    if (!workspace) {
-      setProjectProviders(null)
-      return
-    }
-    void listProjectProviders(workspace)
-      .then((summary) => {
-        if (!cancelled) setProjectProviders(summary)
-      })
-      .catch(() => {
-        if (!cancelled) setProjectProviders(null)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [cwd])
+  // Shared per workspace, so every pane showing the same project reuses one
+  // request.
+  const projectProviders = useSharedResourceKey(
+    projectProvidersStore,
+    cwd?.trim() || null
+  )
 
   return useMemo(() => {
     const hiddenProviderIds = hiddenProviderIdsForProjectPolicy(

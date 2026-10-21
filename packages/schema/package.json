@@ -13,6 +13,7 @@
       "default": "./dist/http-contracts.js"
     },
     ".": {
+      "betterc0de-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./src/index.ts",
       "default": "./dist/index.js"
@@ -121,6 +122,31 @@
       "types": "./src/remote-terminal.ts",
       "import": "./src/remote-terminal.ts",
       "default": "./dist/remote-terminal.js"
+    },
+    "./provider-kind": {
+      "types": "./src/provider-kind.ts",
+      "import": "./src/provider-kind.ts",
+      "default": "./dist/provider-kind.js"
+    },
+    "./search-text": {
+      "types": "./src/search-text.ts",
+      "import": "./src/search-text.ts",
+      "default": "./dist/search-text.js"
+    },
+    "./pending-requests": {
+      "types": "./src/pending-requests.ts",
+      "import": "./src/pending-requests.ts",
+      "default": "./dist/pending-requests.js"
+    },
+    "./runtime-records": {
+      "types": "./src/runtime-records.ts",
+      "import": "./src/runtime-records.ts",
+      "default": "./dist/runtime-records.js"
+    },
+    "./output-bounds": {
+      "types": "./src/output-bounds.ts",
+      "import": "./src/output-bounds.ts",
+      "default": "./dist/output-bounds.js"
     }
   },
   "scripts": {
@@ -136,14 +162,62 @@
   },
   "typesVersions": {
     "*": {
+      "activity-tools": [
+        "dist/activity-tools.d.ts"
+      ],
+      "agent-permission-modes": [
+        "dist/agent-permission-modes.d.ts"
+      ],
+      "always-allow": [
+        "dist/always-allow.d.ts"
+      ],
+      "chat-attachment": [
+        "dist/chat-attachment.d.ts"
+      ],
+      "chat-controls": [
+        "dist/chat-controls.d.ts"
+      ],
+      "checkpointing": [
+        "dist/checkpointing.d.ts"
+      ],
+      "design": [
+        "dist/design.d.ts"
+      ],
+      "git-commit-message": [
+        "dist/git-commit-message.d.ts"
+      ],
+      "git-diff": [
+        "dist/git-diff.d.ts"
+      ],
       "http-contracts": [
         "dist/http-contracts.d.ts"
       ],
-      "provider-replay": [
-        "dist/provider-replay.d.ts"
-      ],
       "json-read": [
         "dist/json-read.d.ts"
+      ],
+      "message-queue": [
+        "dist/message-queue.d.ts"
+      ],
+      "model-selection": [
+        "dist/model-selection.d.ts"
+      ],
+      "output-bounds": [
+        "dist/output-bounds.d.ts"
+      ],
+      "pending-requests": [
+        "dist/pending-requests.d.ts"
+      ],
+      "prompt-context": [
+        "dist/prompt-context.d.ts"
+      ],
+      "provider-kind": [
+        "dist/provider-kind.d.ts"
+      ],
+      "provider-label": [
+        "dist/provider-label.d.ts"
+      ],
+      "provider-replay": [
+        "dist/provider-replay.d.ts"
       ],
       "remote-protocol": [
         "dist/remote-protocol.d.ts"
@@ -151,14 +225,23 @@
       "remote-terminal": [
         "dist/remote-terminal.d.ts"
       ],
-      "prompt-context": [
-        "dist/prompt-context.d.ts"
-      ],
       "runtime-hooks": [
         "dist/runtime-hooks.d.ts"
       ],
+      "runtime-records": [
+        "dist/runtime-records.d.ts"
+      ],
+      "search-text": [
+        "dist/search-text.d.ts"
+      ],
       "system-instruction": [
         "dist/system-instruction.d.ts"
+      ],
+      "thread-metadata": [
+        "dist/thread-metadata.d.ts"
+      ],
+      "tool-activity": [
+        "dist/tool-activity.d.ts"
       ]
     }
   }

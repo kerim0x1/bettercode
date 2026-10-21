@@ -12,13 +12,15 @@ vi.mock("@/lib/chat-store", () => ({
   useThreadMessages: () => [],
 }))
 vi.mock("@/hooks/use-chat-streaming-state", () => ({
-  useChatStreamingState: () => ({ isPlanStreaming: false, allPlans: [] }),
+  usePlanStreamingState: () => ({ isPlanStreaming: false, allPlans: [] }),
 }))
 vi.mock("@/hooks/use-open-targets", () => ({
   useOpenTargets: () => ({ targets: [], loading: false }),
 }))
-vi.mock("@/services/backend", () => ({
+vi.mock("@/services/backend/gitApi", () => ({
   openInEditor: vi.fn(),
+}))
+vi.mock("@/services/backend/runtime", () => ({
   pickFolder: vi.fn(),
 }))
 vi.mock("@/components/diff-panel", () => ({ DiffPanel: () => null }))

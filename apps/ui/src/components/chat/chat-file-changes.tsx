@@ -9,15 +9,19 @@ import {
   FileChangeItem,
   type FileDiff,
 } from "@/components/ai-elements/file-changes-bar"
+import type { FullMessageSource } from "@/hooks/use-full-message-payload"
 import { mergeDiffs } from "@/lib/message-utils"
 import { cn } from "@/lib/utils"
 
 export function ChatFileChanges({
   diffs,
   workspaceRoot,
+  source,
 }: {
   diffs: FileDiff[]
   workspaceRoot?: string | null
+  /** The saved message, for diffs a light transcript page left without text. */
+  source?: FullMessageSource | null
 }) {
   const grouped = useMemo(
     () => groupFileChanges(mergeDiffs(diffs), workspaceRoot),
@@ -48,10 +52,12 @@ export function ChatFileChanges({
       <FileChangeList
         files={grouped.projectFiles}
         workspaceRoot={workspaceRoot}
+        source={source}
       />
       <GeneratedFileChanges
         files={grouped.generatedFiles}
         workspaceRoot={workspaceRoot}
+        source={source}
       />
     </section>
   )
@@ -60,9 +66,11 @@ export function ChatFileChanges({
 function GeneratedFileChanges({
   files,
   workspaceRoot,
+  source,
 }: {
   files: FileDiff[]
   workspaceRoot?: string | null
+  source?: FullMessageSource | null
 }) {
   const [open, setOpen] = useState(false)
   const id = useId()
@@ -87,6 +95,7 @@ function GeneratedFileChanges({
           <FileChangeList
             files={files}
             workspaceRoot={workspaceRoot}
+            source={source}
             initialLimit={FILE_CHANGE_PAGE_SIZE}
           />
         )}
@@ -98,10 +107,12 @@ function GeneratedFileChanges({
 function FileChangeList({
   files,
   workspaceRoot,
+  source,
   initialLimit = FILE_CHANGE_PREVIEW_COUNT,
 }: {
   files: FileDiff[]
   workspaceRoot?: string | null
+  source?: FullMessageSource | null
   initialLimit?: number
 }) {
   const [limit, setLimit] = useState(initialLimit)
@@ -120,7 +131,11 @@ function FileChangeList({
             data-file-change={file.path}
             className="border-b border-border/40 last:border-b-0"
           >
-            <FileChangeItem diff={file} workspaceRoot={workspaceRoot} />
+            <FileChangeItem
+              diff={file}
+              workspaceRoot={workspaceRoot}
+              source={source}
+            />
           </div>
         ))}
         {limit < files.length && (

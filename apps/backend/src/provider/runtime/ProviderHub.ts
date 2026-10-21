@@ -1,24 +1,14 @@
 import { EventEmitter } from "node:events"
 import { randomUUID } from "node:crypto"
-import { isSensitiveProviderFieldName } from "@betterc0de/schema"
-import { HttpError } from "../../errors"
 import { logger } from "../../observability/logger"
-import { isProviderChatModeUnsupportedError } from "./providerChatModeErrors"
 import { canonicalProviderKindAlias } from "./providerKindAliases"
 import {
   type ApprovalRequestId,
   type ProviderAdapterShape,
   type ProviderApprovalDecision,
-  type ProviderAgent,
-  type ProviderCapabilities,
-  type ProviderCatalogEntry,
   type ProviderInstanceMetadata,
   type ProviderKind,
   type ProviderModel,
-  type ProviderSession,
-  type ProviderSkill,
-  type ProviderSlashCommand,
-  type ProviderTool,
   type ProviderRuntimeEvent,
   type ProviderSendTurnInput,
   type ThreadId,
@@ -31,193 +21,88 @@ import {
   PROVIDER_TURN_DURATION_MS,
   PROVIDER_TURNS_TOTAL,
 } from "../../observability/metrics"
-import type {
-  ProviderSessionBinding,
-  ProviderSessionBindingStore,
-} from "./ProviderSessionBindingStore"
-import {
-  findConflictingProviderBinding,
-  selectRecoveryBinding,
-} from "./ProviderSessionRecovery"
-import { normalizeRuntimeMode, runtimeModeForTurn } from "./providerTurnOptions"
+import type { ProviderSessionBindingStore } from "./ProviderSessionBindingStore"
+import { findConflictingProviderBinding } from "./ProviderSessionRecovery"
+import { runtimeModeForTurn } from "./providerTurnOptions"
 import type { EventNdjsonLogger } from "./EventNdjsonLogger"
 import { HubAuditLog } from "./HubAuditLog"
-import {
-  createProviderVersionAdvisory,
-  type ProviderMaintenanceCommandResult,
-  type ProviderMaintenanceCommandRunnerInput,
-  type ProviderMaintenanceCapabilities,
+import type {
+  ProviderMaintenanceCommandResult,
+  ProviderMaintenanceCommandRunnerInput,
+  ProviderMaintenanceCapabilities,
 } from "./ProviderMaintenance"
 import {
   ProviderMaintenanceCoordinator,
   ProviderUpdateError,
-  recordConfig,
 } from "./ProviderMaintenanceCoordinator"
 import {
-  ProviderMetadataCache,
   ProviderMetadataCapacityError,
   ProviderMetadataInputError,
-  boundedProviderLimit,
-  hydrateAndPersistInstanceSnapshot,
-  normalizeProviderMetadataCwd,
-  providerMetadataCwdKey,
-  toSnapshotMetadata,
 } from "./ProviderMetadataCache"
-import {
-  filterRuntimeModelsByProjectPolicy,
-  type ProjectProviderPolicy,
-} from "./projectProviderPolicy"
-import {
-  ProviderCatalogs,
-  normalizeProviderModels,
-  readAdapterModels,
-} from "./ProviderCatalogs"
-import { getMasterKey } from "../../settings/crypto"
+import type { ProjectProviderPolicy } from "./projectProviderPolicy"
+import { ProviderCatalogs } from "./ProviderCatalogs"
 import type { ThreadTurnCoordinator } from "../threadTurnCoordinator"
+import {
+  hubTurnLifecycleHooks,
+  type TurnLifecyclePolicy,
+} from "../turnLifecyclePolicy"
+import {
+  normalizeTurnLimits,
+  TURN_IDLE_TIMEOUT_DEFAULT_MS,
+  TURN_MAX_DURATION_DEFAULT_MS,
+} from "../turnLimits"
 import {
   bindAgentPermissionRuntimeContext,
   clearAgentPermissionRuntimeContext,
   runWithAgentPermissionRuntimeContext,
 } from "../agent-permission-runtime"
 import { HubApprovalRequests } from "./HubApprovalRequests"
+import { HubApprovalRouter } from "./HubApprovalRouter"
 import * as SessionBudget from "./ProviderSessionOperationBudget"
+import {
+  ProviderBackendQuarantinedError,
+  ProviderInstanceUnavailableError,
+  ProviderOperationDeadlineError,
+  ProviderSessionAdmissionCapacityError,
+  ProviderSessionCapacityError,
+  ProviderSessionInspectionError,
+  ProviderStaleSessionCleanupError,
+  ProviderTurnCapacityError,
+  ProviderTurnConflictError,
+  ProviderTurnDispatchCancelledError,
+  ProviderTurnDispatchInputError,
+  promiseWithDeadline,
+  publicProviderDispatchErrorMessage,
+} from "./ProviderHubErrors"
+import type {
+  ProviderHubSessionSnapshot,
+  ProviderPreDispatchPolicyDecision,
+  ProviderPreDispatchPolicyInput,
+  ProviderRuntimeInstance,
+  ProviderRuntimeInstanceSnapshot,
+  ProviderTurnHandle,
+} from "./ProviderHubTypes"
+import { ProviderSessionRegistry } from "./ProviderSessionRegistry"
+import {
+  ProviderStatusService,
+  isProviderMetadataChangedEvent,
+  readProviderMetadataChangedCwd,
+} from "./ProviderStatusService"
+import { ProviderTurnCapacity } from "./ProviderTurnCapacity"
 
-export interface ProviderRuntimeInstance {
-  readonly instanceId: string
-  readonly driver: string
-  readonly provider: ProviderKind | null
-  readonly displayName?: string
-  readonly accentColor?: string
-  readonly version?: string | null
-  readonly installed?: boolean
-  readonly enabled: boolean
-  readonly unavailableReason?: string
-  readonly continuationKey?: string
-  readonly environment?: ReadonlyArray<{
-    readonly name: string
-    readonly value: string
-    readonly sensitive?: boolean
-    readonly valueRedacted?: boolean
-    readonly secretState?: {
-      readonly configured: boolean
-      readonly storage: "encrypted" | "plaintext"
-    }
-  }>
-  readonly config?: unknown
-  readonly statusProbe?: (input: {
-    readonly cwd?: string | null
-    readonly refresh?: boolean
-  }) =>
-    | ProviderRuntimeInstanceStatusProbe
-    | Promise<ProviderRuntimeInstanceStatusProbe>
-  readonly adapter: ProviderAdapterShape
-}
-
-export interface ProviderRuntimeInstanceStatusProbe {
-  readonly configured?: boolean
-  readonly installed?: boolean
-  readonly version?: string | null
-  readonly status?: "ready" | "warning" | "error" | "disabled"
-  readonly auth?: ProviderRuntimeInstanceSnapshot["auth"]
-  readonly message?: string
-}
-
-export interface ProviderRuntimeInstanceSnapshot {
-  readonly instanceId: string
-  readonly driver: string
-  readonly displayName: string
-  readonly accentColor?: string
-  readonly badgeLabel?: string
-  readonly enabled: boolean
-  readonly configured: boolean
-  readonly installed: boolean
-  readonly version: string | null
-  readonly status: "ready" | "warning" | "error" | "disabled"
-  readonly auth: {
-    readonly status: "authenticated" | "unauthenticated" | "unknown"
-    readonly type?: string
-    readonly label?: string
-    readonly email?: string
-  }
-  readonly checkedAt: string
-  readonly message?: string
-  readonly availability: "available" | "unavailable"
-  readonly unavailableReason?: string
-  /** Set while this instance's backend refused to retire on replacement. */
-  readonly retirementFailure?: string
-  readonly continuation?: { readonly groupKey: string }
-  readonly continuationKey?: string
-  readonly showInteractionModeToggle?: boolean
-  readonly environment: ReadonlyArray<{
-    readonly name: string
-    readonly value: string
-    readonly sensitive?: boolean
-    readonly valueRedacted?: boolean
-    readonly secretState?: {
-      readonly configured: boolean
-      readonly storage: "encrypted" | "plaintext"
-    }
-  }>
-  readonly config: Record<string, unknown>
-  readonly capabilities: ProviderCapabilities
-  readonly models: ReadonlyArray<ProviderModel>
-  readonly providerCatalog: ReadonlyArray<ProviderCatalogEntry>
-  readonly skills: ReadonlyArray<ProviderSkill>
-  readonly agents: ReadonlyArray<ProviderAgent>
-  readonly tools: ReadonlyArray<ProviderTool>
-  readonly slashCommands: ReadonlyArray<ProviderSlashCommand>
-  readonly versionAdvisory?: {
-    readonly status: "unknown" | "current" | "behind_latest"
-    readonly currentVersion: string | null
-    readonly latestVersion: string | null
-    readonly updateCommand: string | null
-    readonly canUpdate: boolean
-    readonly checkedAt: string | null
-    readonly message: string | null
-  }
-  readonly updateState?: {
-    readonly status:
-      | "idle"
-      | "queued"
-      | "running"
-      | "succeeded"
-      | "failed"
-      | "unchanged"
-    readonly startedAt: string | null
-    readonly finishedAt: string | null
-    readonly message: string | null
-    readonly output: string | null
-  }
-  readonly metadata?: ProviderInstanceMetadata
-}
-
-export interface ProviderHubSessionSnapshot extends ProviderSession {
-  readonly providerKind: ProviderKind
-  readonly instanceId: string
-  readonly driver: string
-  readonly displayName: string
-  readonly runtimeMode?: string | null
-  readonly generation: number
-  readonly active: boolean
-  readonly persisted: boolean
-}
-
-export interface ProviderPreDispatchPolicyInput {
-  readonly threadId: string
-  readonly turnId: string
-  readonly projectPath?: string | null
-  readonly appMode?: string | null
-  readonly providerKind: ProviderKind
-  readonly providerInstanceId: string
-}
-
-export type ProviderPreDispatchPolicyDecision =
-  | { readonly decision: "allow" }
-  | {
-      readonly decision: "deny"
-      readonly reason: string
-      readonly toolName?: string
-    }
+// The hub's data shapes and errors live in ProviderHubTypes / ProviderHubErrors
+// so the modules split out of the hub can share them without importing it.
+// Routes, `index.ts` and the tests keep importing them from here.
+export type {
+  ProviderHubSessionSnapshot,
+  ProviderPreDispatchPolicyDecision,
+  ProviderPreDispatchPolicyInput,
+  ProviderRuntimeInstance,
+  ProviderRuntimeInstanceSnapshot,
+  ProviderRuntimeInstanceStatusProbe,
+  ProviderTurnHandle,
+} from "./ProviderHubTypes"
+export type { ProviderCapacityScope } from "./ProviderHubErrors"
 
 export interface ProviderHubOptions {
   readonly adapters?: ReadonlyArray<ProviderAdapterShape>
@@ -238,8 +123,22 @@ export interface ProviderHubOptions {
   }) =>
     | ReadonlyArray<ProviderRuntimeInstance>
     | Promise<ReadonlyArray<ProviderRuntimeInstance>>
+  /**
+   * Inactivity watchdog for a turn: it fires only when the provider emitted
+   * no event for the thread for this long, and it is paused while an
+   * approval, plan approval or question waits for the user. Long agentic
+   * runs that keep streaming are never cut off by it.
+   */
   readonly turnTimeoutMs?: number
+  /** Absolute ceiling for one turn, whatever its activity. */
+  readonly turnMaxDurationMs?: number
   readonly threadTurnCoordinator?: ThreadTurnCoordinator
+  /**
+   * The checkpoint, trust and admission hooks shared with the direct-API
+   * provider stack (see `provider/turnLifecyclePolicy.ts`). Production wiring
+   * passes this; the three hooks below override its parts individually.
+   */
+  readonly turnLifecycle?: TurnLifecyclePolicy
   readonly beforeTurn?: (input: {
     readonly threadId: string
     readonly turnId: string
@@ -287,152 +186,19 @@ export interface ProviderHubOptions {
 }
 
 // These errors moved with their modules (maintenance coordinator, metadata
-// cache); callers (routes, `index.ts`) still import them from here.
+// cache, hub errors); callers (routes, `index.ts`) still import them from here.
 export {
+  ProviderBackendQuarantinedError,
+  ProviderInstanceUnavailableError,
   ProviderMetadataCapacityError,
   ProviderMetadataInputError,
+  ProviderSessionAdmissionCapacityError,
+  ProviderSessionCapacityError,
+  ProviderSessionInspectionError,
+  ProviderStaleSessionCleanupError,
+  ProviderTurnCapacityError,
+  ProviderTurnConflictError,
   ProviderUpdateError,
-}
-
-export class ProviderTurnConflictError extends Error {
-  readonly statusCode = 409
-  readonly code = "turn_active"
-  readonly activeTurnId: string
-
-  constructor(threadId: string, activeTurnId: string) {
-    super(`Thread '${threadId}' already has an active provider turn.`)
-    this.name = "ProviderTurnConflictError"
-    this.activeTurnId = activeTurnId
-  }
-}
-
-export type ProviderCapacityScope = "global" | "provider" | "instance"
-
-export class ProviderTurnCapacityError extends Error {
-  readonly statusCode = 503
-  readonly code = "provider_turn_capacity"
-
-  constructor(
-    readonly scope: ProviderCapacityScope,
-    readonly limit: number
-  ) {
-    super(`Provider ${scope} active-turn capacity of ${limit} is exhausted.`)
-    this.name = "ProviderTurnCapacityError"
-  }
-}
-
-export class ProviderSessionCapacityError extends Error {
-  readonly statusCode = 503
-  readonly code = "provider_session_capacity"
-
-  constructor(
-    readonly scope: "global" | "instance" | "retained_backend",
-    readonly limit: number | null = null
-  ) {
-    super(
-      scope === "retained_backend"
-        ? "Cannot create a provider session while a backend is quarantined or retiring."
-        : `Provider ${scope} live-session capacity of ${limit} is exhausted.`
-    )
-    this.name = "ProviderSessionCapacityError"
-  }
-}
-
-export class ProviderSessionInspectionError extends Error {
-  readonly statusCode = 503
-  readonly code = "provider_session_inspection_failed"
-  readonly inspectionCause: unknown
-
-  constructor(message: string, cause?: unknown) {
-    super(message)
-    this.name = "ProviderSessionInspectionError"
-    this.inspectionCause = cause
-  }
-}
-
-export class ProviderSessionAdmissionCapacityError extends Error {
-  readonly statusCode = 503
-  readonly code = "provider_session_admission_capacity"
-
-  constructor(readonly limit: number) {
-    super(`Provider session-admission queue capacity of ${limit} is exhausted.`)
-    this.name = "ProviderSessionAdmissionCapacityError"
-  }
-}
-
-export class ProviderStaleSessionCleanupError extends Error {
-  readonly statusCode = 503
-  readonly code = "provider_stale_session_cleanup_failed"
-  readonly cleanupCause: unknown
-
-  constructor(
-    readonly instanceId: string,
-    readonly threadId: string,
-    cause: unknown
-  ) {
-    super("Provider session cleanup could not be completed.")
-    this.name = "ProviderStaleSessionCleanupError"
-    this.cleanupCause = cause
-  }
-}
-
-export class ProviderInstanceUnavailableError extends Error {
-  readonly statusCode = 404
-  readonly code = "provider_instance_not_found"
-
-  constructor(provider: ProviderKind, instanceId?: string | null) {
-    super(
-      instanceId
-        ? `Provider instance '${instanceId}' is not available for '${provider}'.`
-        : `Provider '${provider}' is not available.`
-    )
-    this.name = "ProviderInstanceUnavailableError"
-  }
-}
-
-export class ProviderBackendQuarantinedError extends Error {
-  readonly statusCode = 503
-  readonly code = "provider_backend_quarantined"
-
-  constructor(
-    readonly instanceId: string,
-    readonly quarantinedAt: number,
-    _reason: string
-  ) {
-    super("Provider backend is temporarily unavailable.")
-    this.name = "ProviderBackendQuarantinedError"
-  }
-}
-
-class ProviderOperationDeadlineError extends Error {
-  readonly code = "provider_operation_deadline"
-
-  constructor(message: string) {
-    super(message)
-    this.name = "ProviderOperationDeadlineError"
-  }
-}
-
-export interface ProviderTurnHandle {
-  readonly turnId: string
-  /** Adapter dispatch acknowledgement; not necessarily turn terminality. */
-  readonly completion: Promise<void>
-  /** Correlated terminal lifecycle plus afterTurn/interrupt finalization. */
-  readonly settled: Promise<void>
-}
-
-class ProviderTurnDispatchCancelledError extends Error {
-  constructor(readonly turnId: string) {
-    super(`Provider turn '${turnId}' was cancelled before dispatch completed.`)
-    this.name = "ProviderTurnDispatchCancelledError"
-  }
-}
-
-class ProviderTurnDispatchInputError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "ProviderTurnDispatchInputError"
-  }
 }
 
 interface ProviderTurnAdmission {
@@ -443,7 +209,13 @@ interface ProviderTurnAdmission {
   providerInstanceGeneration: number | null
   providerTurnId: string | null
   phase: "pending" | "active" | "interrupting"
+  /** Inactivity watchdog; re-checked lazily against `lastActivityAt`. */
   timeoutHandle: ReturnType<typeof setTimeout> | null
+  /** Absolute turn ceiling. */
+  deadlineHandle: ReturnType<typeof setTimeout> | null
+  lastActivityAt: number
+  /** Open user-facing requests; the inactivity watchdog waits for them. */
+  readonly pendingRequestIds: Set<string>
   completion: Promise<void> | null
   readonly dispatchQuiesced: Promise<void>
   readonly resolveDispatchQuiesced: () => void
@@ -468,34 +240,17 @@ interface ProviderBackendQuarantine {
   readonly failure: ProviderBackendQuarantinedError
 }
 
-interface ProviderSessionAdmissionWaiter {
-  readonly resolve: (release: () => void) => void
-  readonly reject: (error: unknown) => void
-}
-
 export class ProviderHub {
-  private static readonly LIST_INSTANCES_IN_FLIGHT_MAX_ENTRIES = 64
-  private static readonly ACTIVE_TURNS_DEFAULT = 32
-  private static readonly ACTIVE_TURNS_HARD_MAX = 128
-  private static readonly ACTIVE_TURNS_PER_PROVIDER_DEFAULT = 16
-  private static readonly ACTIVE_TURNS_PER_PROVIDER_HARD_MAX = 64
-  private static readonly ACTIVE_TURNS_PER_INSTANCE_DEFAULT = 8
-  private static readonly ACTIVE_TURNS_PER_INSTANCE_HARD_MAX = 32
-  private static readonly LIVE_SESSIONS_DEFAULT = 64
-  private static readonly LIVE_SESSIONS_HARD_MAX = 256
-  private static readonly LIVE_SESSIONS_PER_INSTANCE_DEFAULT = 16
-  private static readonly LIVE_SESSIONS_PER_INSTANCE_HARD_MAX = 64
-  private static readonly SESSION_ADMISSION_QUEUE_DEFAULT = 64
-  private static readonly SESSION_ADMISSION_QUEUE_HARD_MAX = 256
+  /** No provider event for this long interrupts the turn as timed out. */
+  static readonly TURN_IDLE_TIMEOUT_DEFAULT_MS = TURN_IDLE_TIMEOUT_DEFAULT_MS
+  /** Generous absolute ceiling; streaming turns are bounded only by this. */
+  static readonly TURN_MAX_DURATION_DEFAULT_MS = TURN_MAX_DURATION_DEFAULT_MS
   private readonly byProvider = new Map<ProviderKind, ProviderAdapterShape>()
   private readonly byInstance = new Map<string, ProviderRuntimeInstance>()
   private readonly quarantinedAdapters = new Map<
     ProviderAdapterShape,
     ProviderBackendQuarantine
   >()
-  private readonly metadataCache: ProviderMetadataCache
-  private readonly listInstancesInFlightMaxEntries: number
-  private readonly suppressedSessionExitCorrelation = new Map<string, number>()
   private readonly activeTurnSettlements = new Set<Promise<void>>()
   private readonly adapterSubscriptions = new Map<
     ProviderAdapterShape,
@@ -517,45 +272,26 @@ export class ProviderHub {
   >()
   private readonly confirmedRetiredAdapters = new Set<ProviderAdapterShape>()
   private readonly bus = new EventEmitter()
-  private readonly approvals = new HubApprovalRequests({
-    emit: (event, provider) => this.emitRuntimeEvent(event, provider),
-    onError: (event, instanceId, provider, error) =>
-      this.emitAndForwardError({
-        threadId: event.threadId,
-        providerKind: event.providerKind ?? provider,
-        providerInstanceId: event.providerInstanceId ?? instanceId,
-        message: publicProviderDispatchErrorMessage(error),
-      }),
-  })
+  private readonly capacity: ProviderTurnCapacity
+  private readonly sessions: ProviderSessionRegistry
+  private readonly status: ProviderStatusService
+  private readonly approvals: HubApprovalRouter
   private readonly onEvent?: (
     event: ProviderRuntimeEvent,
     provider: ProviderKind
   ) => void
-  private readonly statusCacheDir: string | null
   private readonly auditLog: HubAuditLog
   private readonly maintenance: ProviderMaintenanceCoordinator
   private readonly catalogs: ProviderCatalogs
   private readonly refreshInstances?: ProviderHubOptions["refreshInstances"]
   private readonly turnsByThread = new Map<string, ProviderTurnAdmission>()
   private readonly maintenanceByThread = new Set<string>()
-  private readonly knownLiveSessions = new Map<
-    ProviderAdapterShape,
-    Set<string>
-  >()
-  private readonly sessionAdmissionWaiters: ProviderSessionAdmissionWaiter[] =
-    []
-  private sessionAdmissionActive = false
   private providerInstanceGeneration = 0
   private pendingInstanceReplacement: ReadonlyArray<ProviderRuntimeInstance> | null =
     null
   private readonly turnTimeoutMs: number
+  private readonly turnMaxDurationMs: number
   private readonly interruptTimeoutMs: number
-  private readonly maxActiveTurns: number
-  private readonly maxActiveTurnsPerProvider: number
-  private readonly maxActiveTurnsPerInstance: number
-  private readonly maxLiveSessions: number
-  private readonly maxLiveSessionsPerInstance: number
-  private readonly sessionAdmissionQueueMaxEntries: number
   private readonly threadTurnCoordinator?: ThreadTurnCoordinator
   private readonly beforeTurn?: ProviderHubOptions["beforeTurn"]
   private readonly preDispatchPolicy?: ProviderHubOptions["preDispatchPolicy"]
@@ -565,7 +301,6 @@ export class ProviderHub {
 
   constructor(options: ProviderHubOptions) {
     this.onEvent = options.onEvent
-    this.statusCacheDir = options.statusCacheDir ?? null
     this.auditLog = new HubAuditLog(options.canonicalEventLogger ?? null)
     this.maintenance = new ProviderMaintenanceCoordinator(
       {
@@ -585,59 +320,86 @@ export class ProviderHub {
     this.catalogs = new ProviderCatalogs(options.projectProviderPolicyLoader)
     this.refreshInstances = options.refreshInstances
     this.threadTurnCoordinator = options.threadTurnCoordinator
-    this.beforeTurn = options.beforeTurn
-    this.preDispatchPolicy = options.preDispatchPolicy
-    this.afterTurn = options.afterTurn
-    this.turnTimeoutMs = Math.max(
-      1,
-      Math.floor(options.turnTimeoutMs ?? 30 * 60_000)
-    )
+    const lifecycle = options.turnLifecycle
+      ? hubTurnLifecycleHooks(options.turnLifecycle)
+      : undefined
+    this.beforeTurn = options.beforeTurn ?? lifecycle?.beforeTurn
+    this.preDispatchPolicy =
+      options.preDispatchPolicy ?? lifecycle?.preDispatchPolicy
+    this.afterTurn = options.afterTurn ?? lifecycle?.afterTurn
+    const turnLimits = normalizeTurnLimits({
+      idleTimeoutMs: options.turnTimeoutMs,
+      maxDurationMs: options.turnMaxDurationMs,
+    })
+    this.turnTimeoutMs = turnLimits.idleTimeoutMs
+    this.turnMaxDurationMs = turnLimits.maxDurationMs
     this.interruptTimeoutMs = Math.max(
       1,
       Math.floor(options.interruptTimeoutMs ?? 5_000)
     )
-    this.metadataCache = new ProviderMetadataCache({
-      concurrencyLimit: options.metadataConcurrencyLimit,
-      queueMaxEntries: options.metadataQueueMaxEntries,
-      inFlightMaxEntries: options.metadataInFlightMaxEntries,
-      probeTimeoutMs: Math.max(
-        this.interruptTimeoutMs,
-        ProviderMetadataCache.PROBE_TIMEOUT_MS
-      ),
-    })
-    this.listInstancesInFlightMaxEntries = boundedProviderLimit(
-      options.listInstancesInFlightMaxEntries,
-      ProviderHub.LIST_INSTANCES_IN_FLIGHT_MAX_ENTRIES
+    this.status = new ProviderStatusService(
+      {
+        instances: () => this.byInstance.values(),
+        getInstance: (instanceId) => this.byInstance.get(instanceId),
+        isQuarantined: (adapter) => this.quarantinedAdapters.has(adapter),
+        retirementFailureOf: (adapter) =>
+          this.retiredAdapterFailures.get(adapter),
+        assertAcceptingWork: (operation) => this.assertAcceptingWork(operation),
+      },
+      {
+        statusCacheDir: options.statusCacheDir,
+        catalogs: this.catalogs,
+        maintenance: this.maintenance,
+        interruptTimeoutMs: this.interruptTimeoutMs,
+        metadataConcurrencyLimit: options.metadataConcurrencyLimit,
+        metadataQueueMaxEntries: options.metadataQueueMaxEntries,
+        metadataInFlightMaxEntries: options.metadataInFlightMaxEntries,
+        listInstancesInFlightMaxEntries:
+          options.listInstancesInFlightMaxEntries,
+      }
     )
-    this.maxActiveTurns = boundedProviderOperationalLimit(
-      options.maxActiveTurns,
-      ProviderHub.ACTIVE_TURNS_DEFAULT,
-      ProviderHub.ACTIVE_TURNS_HARD_MAX
+    this.capacity = new ProviderTurnCapacity(options)
+    this.sessions = new ProviderSessionRegistry(
+      {
+        instances: () => this.byInstance.values(),
+        getInstance: (instanceId) => this.byInstance.get(instanceId),
+        isQuarantined: (adapter) => this.quarantinedAdapters.has(adapter),
+        quarantineOf: (adapter) => this.quarantinedAdapters.get(adapter),
+        isRetainedAdapter: (adapter) => this.isRetainedAdapter(adapter),
+        isAcceptingWork: () => this.acceptingWork,
+        assertAcceptingWork: (operation) => this.assertAcceptingWork(operation),
+        runSessionOperation: <T>(
+          instance: ProviderRuntimeInstance,
+          label: string,
+          operation: () => Promise<T>
+        ) => this.runSessionOperation(instance, label, operation),
+        raceInterruptBudget: <T>(operation: () => Promise<T>, label: string) =>
+          this.raceInterruptBudget(operation, label),
+        emitSessionStarted: (input) => this.emitSessionStarted(input),
+        emitSessionExited: (input) => this.emitSessionExited(input),
+        onSessionAdmissionIdle: () =>
+          this.applyPendingInstanceReplacementIfIdle(),
+      },
+      this.capacity
     )
-    this.maxActiveTurnsPerProvider = boundedProviderOperationalLimit(
-      options.maxActiveTurnsPerProvider,
-      ProviderHub.ACTIVE_TURNS_PER_PROVIDER_DEFAULT,
-      ProviderHub.ACTIVE_TURNS_PER_PROVIDER_HARD_MAX
-    )
-    this.maxActiveTurnsPerInstance = boundedProviderOperationalLimit(
-      options.maxActiveTurnsPerInstance,
-      ProviderHub.ACTIVE_TURNS_PER_INSTANCE_DEFAULT,
-      ProviderHub.ACTIVE_TURNS_PER_INSTANCE_HARD_MAX
-    )
-    this.maxLiveSessions = boundedProviderOperationalLimit(
-      options.maxLiveSessions,
-      ProviderHub.LIVE_SESSIONS_DEFAULT,
-      ProviderHub.LIVE_SESSIONS_HARD_MAX
-    )
-    this.maxLiveSessionsPerInstance = boundedProviderOperationalLimit(
-      options.maxLiveSessionsPerInstance,
-      ProviderHub.LIVE_SESSIONS_PER_INSTANCE_DEFAULT,
-      ProviderHub.LIVE_SESSIONS_PER_INSTANCE_HARD_MAX
-    )
-    this.sessionAdmissionQueueMaxEntries = boundedProviderOperationalLimit(
-      options.sessionAdmissionQueueMaxEntries,
-      ProviderHub.SESSION_ADMISSION_QUEUE_DEFAULT,
-      ProviderHub.SESSION_ADMISSION_QUEUE_HARD_MAX
+    this.approvals = new HubApprovalRouter(
+      new HubApprovalRequests({
+        emit: (event, provider) => this.emitRuntimeEvent(event, provider),
+        onError: (event, instanceId, provider, error) =>
+          this.emitAndForwardError({
+            threadId: event.threadId,
+            providerKind: event.providerKind ?? provider,
+            providerInstanceId: event.providerInstanceId ?? instanceId,
+            message: publicProviderDispatchErrorMessage(error),
+          }),
+      }),
+      {
+        resolveInstance: (input) => this.resolveInstance(input),
+        recoverSessionForThread: (input) =>
+          this.sessions.recoverSessionForThread(input),
+        activeTurnInstanceId: (thread) =>
+          this.turnsByThread.get(thread)?.providerInstanceId,
+      }
     )
     const instances =
       options.instances ??
@@ -656,8 +418,7 @@ export class ProviderHub {
     if (
       this.turnsByThread.size > 0 ||
       this.retiringAdapters.size > 0 ||
-      this.sessionAdmissionActive ||
-      this.sessionAdmissionWaiters.length > 0
+      this.sessions.hasAdmissionActivity()
     ) {
       // A turn is bound to the adapter generation that accepted it. Replacing
       // the registry here would unsubscribe that generation before its final
@@ -723,7 +484,7 @@ export class ProviderHub {
         this.retiredAdapterFailures.delete(adapter)
       }
     }
-    this.metadataCache.retainInstances(
+    this.status.retainInstances(
       new Set(instances.map((instance) => instance.instanceId))
     )
 
@@ -756,12 +517,16 @@ export class ProviderHub {
         }
         let normalized = correlated.event
         if (normalized.type === "session.exited") {
-          this.forgetKnownLiveSession(instance.adapter, normalized.threadId)
+          this.sessions.forgetKnownLiveSession(
+            instance.adapter,
+            normalized.threadId
+          )
         }
         const admission = this.turnsByThread.get(normalized.threadId)
+        if (admission) this.observeTurnActivity(admission, normalized)
         const suppressSessionExitCorrelation =
           normalized.type === "session.exited" &&
-          this.isSessionExitCorrelationSuppressed(
+          this.sessions.isSessionExitCorrelationSuppressed(
             normalized.threadId,
             normalized.providerInstanceId ?? instance.instanceId
           )
@@ -881,7 +646,7 @@ export class ProviderHub {
       .then(() => {
         retirementSucceeded = true
         this.confirmedRetiredAdapters.add(adapter)
-        this.knownLiveSessions.delete(adapter)
+        this.sessions.forgetAdapter(adapter)
         this.retiredAdapterFailures.delete(adapter)
       })
       .catch((error) => {
@@ -965,204 +730,10 @@ export class ProviderHub {
     return this.get(provider) !== null
   }
 
-  // Concurrent listInstances calls with the same cwd share one in-flight
-  // promise. The frontend fans out (multiple mounted hooks × 30s poll ×
-  // StrictMode) and every uncoalesced call used to trigger its own round
-  // of status/model probes — i.e. child-process spawns — per instance.
-  private readonly listInstancesInFlight = new Map<
-    string,
-    Promise<ProviderRuntimeInstanceSnapshot[]>
-  >()
-
   listInstances(
     input: { readonly cwd?: string | null } = {}
   ): Promise<ProviderRuntimeInstanceSnapshot[]> {
-    this.assertAcceptingWork("list provider instances")
-    const cwd = normalizeProviderMetadataCwd(input.cwd)
-    const key = providerMetadataCwdKey(cwd)
-    const inFlight = this.listInstancesInFlight.get(key)
-    if (inFlight) return inFlight
-    if (
-      this.listInstancesInFlight.size >= this.listInstancesInFlightMaxEntries
-    ) {
-      return Promise.reject(new ProviderMetadataCapacityError())
-    }
-    const promise = this.listInstancesUncoalesced({ cwd }).finally(() => {
-      if (this.listInstancesInFlight.get(key) === promise) {
-        this.listInstancesInFlight.delete(key)
-      }
-    })
-    this.listInstancesInFlight.set(key, promise)
-    return promise
-  }
-
-  private async listInstancesUncoalesced(
-    input: { readonly cwd?: string | null } = {}
-  ): Promise<ProviderRuntimeInstanceSnapshot[]> {
-    const projectPolicy = await this.catalogs.loadProjectPolicy(
-      input.cwd ?? null
-    )
-    return Promise.all(
-      Array.from(this.byInstance.values()).map(async (instance) => {
-        const quarantine = this.quarantinedAdapters.get(instance.adapter)
-        const retirementFailure = this.retiredAdapterFailures.get(
-          instance.adapter
-        )
-        const probe = quarantine
-          ? null
-          : await readInstanceStatusProbe(
-              instance,
-              { cwd: input.cwd ?? null },
-              Math.max(
-                this.interruptTimeoutMs,
-                ProviderMetadataCache.PROBE_TIMEOUT_MS
-              )
-            )
-        const effectiveUnavailableReason = quarantine
-          ? "Provider instance is temporarily unavailable."
-          : instance.unavailableReason
-            ? "Provider instance is unavailable."
-            : undefined
-        const installed =
-          probe?.installed ?? instance.installed ?? !instance.unavailableReason
-        const configured =
-          probe?.configured ??
-          (!quarantine &&
-            instance.enabled &&
-            installed &&
-            !instance.unavailableReason &&
-            instance.adapter.isConfigured())
-        const availability: ProviderRuntimeInstanceSnapshot["availability"] =
-          effectiveUnavailableReason ? "unavailable" : "available"
-        const cursorProbeUnavailable =
-          instance.driver === "cursor" && instance.enabled && !probe
-        const authStatus: ProviderRuntimeInstanceSnapshot["auth"]["status"] =
-          probe?.auth?.status ??
-          (cursorProbeUnavailable
-            ? "unknown"
-            : configured
-              ? "authenticated"
-              : "unknown")
-        const checkedAt = new Date().toISOString()
-        const status = quarantine
-          ? "error"
-          : cursorProbeUnavailable
-            ? "warning"
-            : (probe?.status ??
-              providerSnapshotStatus({
-                enabled: instance.enabled,
-                installed,
-                configured,
-                unavailable: Boolean(instance.unavailableReason),
-              }))
-        const version = probe?.version ?? instance.version ?? null
-        const config = recordConfig(instance.config)
-        const environment = redactEnvironment(instance.environment ?? [])
-        const maintenanceCapabilities =
-          this.maintenance.capabilitiesFor(instance)
-        const latestVersion =
-          instance.enabled && installed && version
-            ? await this.maintenance.latestVersionFor(maintenanceCapabilities)
-            : null
-        const message = publicProviderStatusMessage({
-          enabled: instance.enabled,
-          installed,
-          configured,
-          unavailableReason: effectiveUnavailableReason,
-          probe,
-        })
-        const [metadata, models] = configured
-          ? await Promise.all([
-              this.metadataCache.read(instance, input.cwd, { force: false }),
-              readAdapterModels(instance.adapter),
-            ])
-          : ([null, []] as const)
-        const policyModels = filterRuntimeModelsByProjectPolicy(
-          instance,
-          models,
-          projectPolicy
-        )
-        const cursorModelMessage =
-          instance.driver === "cursor" && configured && models.length === 0
-            ? "Cursor Agent did not provide selectable models through ACP. Check the CLI login, then refresh this provider."
-            : undefined
-        const snapshot = {
-          instanceId: instance.instanceId,
-          driver: instance.driver,
-          displayName: instance.displayName ?? instance.adapter.displayName,
-          ...(instance.accentColor
-            ? { accentColor: instance.accentColor }
-            : {}),
-          enabled: instance.enabled,
-          configured,
-          installed,
-          version,
-          status: cursorModelMessage ? "warning" : status,
-          auth: {
-            status: authStatus,
-            ...(probe?.auth?.type ? { type: probe.auth.type } : {}),
-            ...(probe?.auth?.label ? { label: probe.auth.label } : {}),
-            ...(probe?.auth?.email ? { email: probe.auth.email } : {}),
-          },
-          checkedAt,
-          ...(cursorModelMessage || message || cursorProbeUnavailable
-            ? {
-                message:
-                  cursorModelMessage ??
-                  message ??
-                  "Cursor Agent status could not be verified. Refresh this provider.",
-              }
-            : {}),
-          availability,
-          versionAdvisory: createProviderVersionAdvisory({
-            driver: instance.driver,
-            currentVersion: version,
-            latestVersion,
-            checkedAt,
-            maintenanceCapabilities,
-          }),
-          ...(effectiveUnavailableReason
-            ? { unavailableReason: effectiveUnavailableReason }
-            : {}),
-          ...(retirementFailure !== undefined
-            ? {
-                retirementFailure:
-                  retirementFailure instanceof Error
-                    ? retirementFailure.message
-                    : String(retirementFailure),
-              }
-            : {}),
-          ...(instance.continuationKey
-            ? {
-                continuation: { groupKey: instance.continuationKey },
-                continuationKey: instance.continuationKey,
-              }
-            : {}),
-          showInteractionModeToggle: true,
-          environment,
-          config: redactProviderConfig(config),
-          capabilities: instance.adapter.capabilities,
-          models: normalizeProviderModels(policyModels),
-          providerCatalog: metadata?.providerCatalog ?? [],
-          skills: metadata?.skills ?? [],
-          agents: metadata?.agents ?? [],
-          tools: metadata?.tools ?? [],
-          slashCommands: metadata?.slashCommands ?? [],
-          ...(this.maintenance.updateStateFor(instance.instanceId)
-            ? {
-                updateState: this.maintenance.updateStateFor(
-                  instance.instanceId
-                ),
-              }
-            : {}),
-          ...(metadata ? { metadata: toSnapshotMetadata(metadata) } : {}),
-        }
-        return await hydrateAndPersistInstanceSnapshot(
-          this.statusCacheDir,
-          snapshot
-        )
-      })
-    )
+    return this.status.listInstances(input)
   }
 
   async updateProviderInstance(
@@ -1203,136 +774,21 @@ export class ProviderHub {
     this.applyPendingInstanceReplacementIfIdle()
   }
 
-  async refreshInstanceMetadata(
+  refreshInstanceMetadata(
     instanceId: string,
     input: { readonly cwd?: string | null } = {}
   ): Promise<ProviderInstanceMetadata | null> {
-    this.assertAcceptingWork("refresh provider metadata")
-    const instance = this.byInstance.get(instanceId)
-    if (
-      !instance ||
-      !instance.enabled ||
-      instance.unavailableReason ||
-      this.quarantinedAdapters.has(instance.adapter) ||
-      !instance.adapter.isConfigured()
-    ) {
-      return null
-    }
-    if (instance.statusProbe) {
-      await readInstanceStatusProbe(
-        instance,
-        { cwd: input.cwd, refresh: true },
-        Math.max(
-          this.interruptTimeoutMs,
-          ProviderMetadataCache.PROBE_TIMEOUT_MS
-        )
-      )
-    }
-    const metadata = await this.metadataCache.read(instance, input.cwd, {
-      force: true,
-    })
-    await readAdapterModels(instance.adapter, { force: true })
-    return toSnapshotMetadata(metadata)
+    return this.status.refreshInstanceMetadata(instanceId, input)
   }
 
   invalidateInstanceMetadata(instanceId: string, cwd?: string | null): void {
-    const normalizedCwd =
-      cwd === undefined ? undefined : normalizeProviderMetadataCwd(cwd)
-    const instance = this.byInstance.get(instanceId)
-    if (instance && !this.quarantinedAdapters.has(instance.adapter)) {
-      instance.adapter.invalidateMetadata?.(
-        normalizedCwd === undefined ? undefined : { cwd: normalizedCwd }
-      )
-    }
-    this.metadataCache.invalidate(instanceId, normalizedCwd)
+    this.status.invalidateInstanceMetadata(instanceId, cwd)
   }
 
-  async listSessions(
+  listSessions(
     bindings?: ProviderSessionBindingStore
   ): Promise<ProviderHubSessionSnapshot[]> {
-    const sessions: ProviderHubSessionSnapshot[] = []
-    const seen = new Set<string>()
-
-    for (const instance of this.byInstance.values()) {
-      if (
-        !instance.enabled ||
-        instance.unavailableReason ||
-        this.quarantinedAdapters.has(instance.adapter) ||
-        !instance.adapter.isConfigured()
-      ) {
-        continue
-      }
-      const activeSessions = await this.runSessionOperation(
-        instance,
-        "listSessions",
-        () => readAdapterSessions(instance.adapter)
-      )
-      for (const session of activeSessions) {
-        const providerInstanceId = instance.instanceId
-        const binding = bindings?.get(session.threadId, providerInstanceId)
-        const snapshot: ProviderHubSessionSnapshot = {
-          ...session,
-          providerInstanceId,
-          providerKind:
-            instance.provider ??
-            binding?.providerKind ??
-            instance.adapter.provider,
-          instanceId: instance.instanceId,
-          driver: instance.driver,
-          displayName: instance.displayName ?? instance.adapter.displayName,
-          resumeCursor:
-            session.resumeCursor !== undefined
-              ? session.resumeCursor
-              : (binding?.resumeCursor ?? null),
-          continuationKey:
-            session.continuationKey !== undefined
-              ? session.continuationKey
-              : (binding?.continuationKey ?? null),
-          ...(binding?.runtimeMode ? { runtimeMode: binding.runtimeMode } : {}),
-          generation: binding?.generation ?? 0,
-          active: true,
-          persisted: !!binding,
-        }
-        sessions.push(snapshot)
-        seen.add(sessionSnapshotKey(snapshot.threadId, providerInstanceId))
-      }
-    }
-
-    if (bindings) {
-      for (const binding of bindings.list()) {
-        const key = sessionSnapshotKey(
-          binding.threadId,
-          binding.providerInstanceId
-        )
-        if (seen.has(key)) continue
-        const instance = this.byInstance.get(binding.providerInstanceId)
-        sessions.push({
-          threadId: binding.threadId,
-          providerInstanceId: binding.providerInstanceId,
-          providerThreadId: binding.providerThreadId,
-          resumeCursor: binding.resumeCursor,
-          continuationKey: binding.continuationKey,
-          status: binding.status,
-          cwd: binding.cwd,
-          activeTurnId: binding.activeTurnId,
-          createdAt: parseTimestamp(binding.createdAt),
-          updatedAt: parseTimestamp(binding.updatedAt),
-          providerKind: binding.providerKind,
-          instanceId: binding.providerInstanceId,
-          driver: instance?.driver ?? binding.providerKind,
-          displayName:
-            instance?.displayName ??
-            instance?.adapter.displayName ??
-            binding.providerInstanceId,
-          runtimeMode: binding.runtimeMode,
-          generation: binding.generation,
-          active: false,
-          persisted: true,
-        })
-      }
-    }
-
-    return sessions.sort((a, b) => b.updatedAt - a.updatedAt)
+    return this.sessions.listSessions(bindings)
   }
 
   async modelsFor(
@@ -1400,7 +856,7 @@ export class ProviderHub {
         400
       )
     }
-    this.assertTurnCapacity(provider, instance)
+    this.capacity.assertTurnCapacity(this.turnsByThread, provider, instance)
   }
 
   async sendTurn(
@@ -1460,7 +916,11 @@ export class ProviderHub {
     }
     // This check and the reservation below are deliberately synchronous. No
     // promise boundary exists where another caller could pass the same limit.
-    this.assertTurnCapacity(provider, resolvedInstance)
+    this.capacity.assertTurnCapacity(
+      this.turnsByThread,
+      provider,
+      resolvedInstance
+    )
 
     const sharedToken =
       options.sharedToken ??
@@ -1503,6 +963,9 @@ export class ProviderHub {
       providerTurnId: null,
       phase: "pending",
       timeoutHandle: null,
+      deadlineHandle: null,
+      lastActivityAt: Date.now(),
+      pendingRequestIds: new Set<string>(),
       completion: null,
       dispatchQuiesced,
       resolveDispatchQuiesced,
@@ -1521,11 +984,17 @@ export class ProviderHub {
       ...(sharedToken ? { sharedToken } : {}),
     }
     this.turnsByThread.set(input.threadId, admission)
-    admission.timeoutHandle = setTimeout(
-      () => void this.timeoutTurn(input.threadId, admission),
-      this.turnTimeoutMs
+    this.scheduleTurnIdleCheck(input.threadId, admission, this.turnTimeoutMs)
+    admission.deadlineHandle = setTimeout(
+      () =>
+        void this.timeoutTurn(
+          input.threadId,
+          admission,
+          `Turn exceeded the maximum duration of ${this.turnMaxDurationMs}ms.`
+        ),
+      this.turnMaxDurationMs
     )
-    admission.timeoutHandle.unref?.()
+    admission.deadlineHandle.unref?.()
 
     try {
       options.onAccepted?.(admissionId, providerInstanceId)
@@ -1660,7 +1129,7 @@ export class ProviderHub {
         await this.runSessionOperation(instance, "stopSession", () =>
           instance.adapter.stopSession(thread)
         )
-        this.forgetKnownLiveSession(instance.adapter, thread)
+        this.sessions.forgetKnownLiveSession(instance.adapter, thread)
         this.emitSessionExited({
           threadId,
           providerKind: instance.provider ?? instance.adapter.provider,
@@ -1768,7 +1237,7 @@ export class ProviderHub {
           }
           const switchedProvider = Boolean(conflictingBinding)
           if (conflictingBinding && options.bindings) {
-            await this.switchProviderForThread({
+            await this.sessions.switchProviderForThread({
               instance,
               thread: toThreadId(input.threadId),
               bindings: options.bindings,
@@ -1776,7 +1245,7 @@ export class ProviderHub {
               context: sessionContext,
             })
           } else {
-            await this.recoverSessionForThread({
+            await this.sessions.recoverSessionForThread({
               instance,
               thread: toThreadId(input.threadId),
               bindings: options.bindings,
@@ -1803,7 +1272,7 @@ export class ProviderHub {
             }
           }
           if (!switchedProvider) {
-            await this.stopStaleSessionsForThread({
+            await this.sessions.stopStaleSessionsForThread({
               threadId: input.threadId,
               currentInstanceId: instance.instanceId,
             })
@@ -1926,120 +1395,6 @@ export class ProviderHub {
     throw new ProviderTurnDispatchCancelledError(admission.admissionId)
   }
 
-  private async switchProviderForThread(input: {
-    readonly instance: ProviderRuntimeInstance
-    readonly thread: ThreadId
-    readonly bindings: ProviderSessionBindingStore
-    readonly sourceBinding: ProviderSessionBinding
-    readonly context: Pick<
-      ProviderSendTurnInput,
-      "modelSelection" | "projectPath"
-    > & { readonly runtimeMode?: string | null }
-  }): Promise<void> {
-    await this.withSessionAdmission(async () => {
-      await this.stopSessionsForThreadUnderAdmission({
-        threadId: input.thread,
-        reason: `provider switched to ${input.instance.instanceId}`,
-      })
-      const generation = input.bindings.rotateGenerationForProviderSwitch(
-        input.thread,
-        input.sourceBinding.providerInstanceId
-      )
-      if (generation === null) {
-        throw new ProviderSessionInspectionError(
-          `Provider binding for thread '${input.thread}' changed while switching providers.`
-        )
-      }
-      await this.recoverSessionForThreadUnderAdmission({
-        instance: input.instance,
-        thread: input.thread,
-        bindings: input.bindings,
-        context: input.context,
-      })
-    })
-  }
-
-  private async stopStaleSessionsForThread(input: {
-    readonly threadId: string
-    readonly currentInstanceId: string
-  }): Promise<void> {
-    const threadId = toThreadId(input.threadId)
-    const currentAdapter = this.byInstance.get(input.currentInstanceId)?.adapter
-    await this.withSessionAdmission(() =>
-      this.stopSessionsForThreadUnderAdmission({
-        threadId,
-        ...(currentAdapter ? { preservedAdapter: currentAdapter } : {}),
-        reason: `stale session replaced by ${input.currentInstanceId}`,
-      })
-    )
-  }
-
-  private async stopSessionsForThreadUnderAdmission(input: {
-    readonly threadId: ThreadId
-    readonly preservedAdapter?: ProviderAdapterShape
-    readonly reason: string
-  }): Promise<void> {
-    const inspectedAdapters = new Set<ProviderAdapterShape>()
-    if (input.preservedAdapter) inspectedAdapters.add(input.preservedAdapter)
-    for (const instance of this.byInstance.values()) {
-      if (inspectedAdapters.has(instance.adapter)) continue
-      inspectedAdapters.add(instance.adapter)
-      const quarantine = this.quarantinedAdapters.get(instance.adapter)
-      if (quarantine) {
-        // A quarantined backend cannot be asked to stop anything, so a stale
-        // session it may own for this thread blocks the turn (fail closed).
-        // A quarantined backend with no session for this thread is not this
-        // turn's problem: it used to block every turn on every provider.
-        let ownsThread = this.knownLiveSessions
-          .get(instance.adapter)
-          ?.has(input.threadId)
-        if (!ownsThread) {
-          try {
-            ownsThread = instance.adapter.hasSession(input.threadId)
-          } catch {
-            ownsThread = true
-          }
-        }
-        if (ownsThread) throw quarantine.failure
-        continue
-      }
-      try {
-        const hasSession = instance.adapter.hasSession(input.threadId)
-        const listedSession = await this.readLiveAdapterSession(
-          instance,
-          input.threadId
-        )
-        if (hasSession !== Boolean(listedSession)) {
-          throw new ProviderSessionInspectionError(
-            `Provider instance '${instance.instanceId}' reported inconsistent session state for '${input.threadId}'.`
-          )
-        }
-        if (!hasSession) continue
-        await this.withSessionExitCorrelationSuppressed(
-          input.threadId,
-          instance.instanceId,
-          () =>
-            this.runSessionOperation(instance, "stopSession", () =>
-              instance.adapter.stopSession(input.threadId)
-            )
-        )
-        this.forgetKnownLiveSession(instance.adapter, input.threadId)
-        this.emitSessionExited({
-          threadId: input.threadId,
-          providerKind: instance.provider ?? instance.adapter.provider,
-          providerInstanceId: instance.instanceId,
-          reason: input.reason,
-        })
-      } catch (error) {
-        throw new ProviderStaleSessionCleanupError(
-          instance.instanceId,
-          input.threadId,
-          error
-        )
-      }
-    }
-  }
-
   async interruptTurn(provider: ProviderKind, thread: ThreadId): Promise<void> {
     const admission = this.turnsByThread.get(thread)
     if (admission?.providerKind === provider) {
@@ -2103,7 +1458,7 @@ export class ProviderHub {
       this.throwIfRequestedBackendQuarantined(provider, instanceId ?? null)
       throw new ProviderInstanceUnavailableError(provider, instanceId)
     }
-    await this.recoverSessionForThread({ instance, thread, bindings })
+    await this.sessions.recoverSessionForThread({ instance, thread, bindings })
     admission = this.turnsByThread.get(thread)
     if (
       admission?.providerKind === provider &&
@@ -2121,7 +1476,7 @@ export class ProviderHub {
     )
   }
 
-  async respondToRequest(
+  respondToRequest(
     provider: ProviderKind,
     thread: ThreadId,
     requestId: ApprovalRequestId,
@@ -2129,17 +1484,17 @@ export class ProviderHub {
     instanceId?: string | null,
     bindings?: ProviderSessionBindingStore
   ): Promise<void> {
-    const instance = this.resolveInstance({
+    return this.approvals.respondToRequest(
       provider,
-      instanceId: instanceId ?? null,
-    })
-    if (!instance)
-      throw new ProviderInstanceUnavailableError(provider, instanceId)
-    await this.recoverSessionForThread({ instance, thread, bindings })
-    await instance.adapter.respondToRequest(thread, requestId, decision)
+      thread,
+      requestId,
+      decision,
+      instanceId,
+      bindings
+    )
   }
 
-  async setPermissionMode(
+  setPermissionMode(
     provider: ProviderKind,
     thread: ThreadId,
     mode: "default" | "plan" | "acceptEdits" | "bypassPermissions",
@@ -2147,34 +1502,14 @@ export class ProviderHub {
     bindings?: ProviderSessionBindingStore,
     permissionLevel?: string
   ): Promise<{ applied: "live" | "queued" | "unsupported" }> {
-    const instance = this.resolveInstance({
+    return this.approvals.setPermissionMode(
       provider,
-      instanceId: instanceId ?? null,
-    })
-    if (!instance)
-      throw new ProviderInstanceUnavailableError(provider, instanceId)
-    const admission = this.turnsByThread.get(thread)
-    if (
-      admission?.providerInstanceId &&
-      admission.providerInstanceId !== instance.instanceId
-    ) {
-      throw new ProviderInstanceUnavailableError(provider, instanceId)
-    }
-    const change = this.approvals.updatePermissionMode(
       thread,
       mode,
+      instanceId,
+      bindings,
       permissionLevel
     )
-    await this.approvals.reconcile(instance, thread)
-    if (instance.adapter.setPermissionMode && change.nativeMode) {
-      await this.recoverSessionForThread({ instance, thread, bindings })
-      const native = await instance.adapter.setPermissionMode(
-        thread,
-        change.nativeMode
-      )
-      return { applied: change.applied === "live" ? "live" : native.applied }
-    }
-    return { applied: change.applied }
   }
 
   async rollbackConversation(
@@ -2189,7 +1524,7 @@ export class ProviderHub {
       instanceId: instanceId ?? null,
     })
     if (!instance?.adapter.rollbackThread) return false
-    const recovered = await this.recoverSessionForThread({
+    const recovered = await this.sessions.recoverSessionForThread({
       instance,
       thread,
       bindings,
@@ -2199,307 +1534,6 @@ export class ProviderHub {
     return true
   }
 
-  private async recoverSessionForThread(input: {
-    readonly instance: ProviderRuntimeInstance
-    readonly thread: ThreadId
-    readonly bindings?: ProviderSessionBindingStore
-    readonly context?: Pick<
-      ProviderSendTurnInput,
-      "modelSelection" | "projectPath"
-    > & { readonly runtimeMode?: string | null }
-  }): Promise<boolean> {
-    return this.withSessionAdmission(() =>
-      this.recoverSessionForThreadUnderAdmission(input)
-    )
-  }
-
-  private async recoverSessionForThreadUnderAdmission(input: {
-    readonly instance: ProviderRuntimeInstance
-    readonly thread: ThreadId
-    readonly bindings?: ProviderSessionBindingStore
-    readonly context?: Pick<
-      ProviderSendTurnInput,
-      "modelSelection" | "projectPath"
-    > & { readonly runtimeMode?: string | null }
-  }): Promise<boolean> {
-    this.assertAcceptingWork("create or recover provider session")
-    const providerKind =
-      input.instance.provider ?? input.instance.adapter.provider
-    const directBinding =
-      input.bindings?.get(input.thread, input.instance.instanceId) ?? null
-    const recoveryBinding = input.bindings
-      ? selectRecoveryBinding({
-          bindings: input.bindings,
-          thread: input.thread,
-          providerKind,
-          providerInstanceId: input.instance.instanceId,
-          continuationKey: input.instance.continuationKey ?? null,
-          directBinding,
-        })
-      : null
-    let stoppedActiveSession: ProviderSession | null = null
-    let hasActiveSession: boolean
-    try {
-      hasActiveSession = input.instance.adapter.hasSession(input.thread)
-    } catch (error) {
-      throw new ProviderSessionInspectionError(
-        `Could not inspect provider session '${input.thread}' for instance '${input.instance.instanceId}'.`,
-        error
-      )
-    }
-    if (hasActiveSession) {
-      const activeSession = await this.readLiveAdapterSession(
-        input.instance,
-        input.thread
-      )
-      if (!activeSession) {
-        throw new ProviderSessionInspectionError(
-          `Provider instance '${input.instance.instanceId}' reported session '${input.thread}' in hasSession() but omitted it from listSessions().`
-        )
-      }
-      if (
-        !(await input.instance.adapter.needsSessionConfigurationRefresh?.({
-          threadId: input.thread,
-          cwd: input.context?.projectPath ?? activeSession.cwd,
-        })) &&
-        !shouldRestartActiveSessionForContext(activeSession, {
-          cwd:
-            input.context?.projectPath ??
-            directBinding?.cwd ??
-            recoveryBinding?.cwd,
-          runtimeMode:
-            input.context?.runtimeMode ??
-            // Historical bindings may contain a default mode even when the
-            // running adapter never reported one. Only an explicit request can
-            // require changing that unknown mode during an active session.
-            (normalizeRuntimeMode(activeSession.runtimeMode)
-              ? (directBinding?.runtimeMode ?? recoveryBinding?.runtimeMode)
-              : undefined),
-        })
-      ) {
-        return true
-      }
-      await this.withSessionExitCorrelationSuppressed(
-        input.thread,
-        input.instance.instanceId,
-        () =>
-          this.runSessionOperation(input.instance, "stopSession", () =>
-            input.instance.adapter.stopSession(input.thread)
-          )
-      )
-      stoppedActiveSession = activeSession
-    }
-    const startBinding = recoveryBinding ?? directBinding
-    if (!startBinding && !input.context) return false
-
-    const startInput = {
-      threadId: input.thread,
-      cwd:
-        input.context?.projectPath ?? directBinding?.cwd ?? startBinding?.cwd,
-      ...(input.context?.modelSelection
-        ? { modelSelection: input.context.modelSelection }
-        : directBinding?.modelSelection
-          ? { modelSelection: directBinding.modelSelection }
-          : startBinding?.modelSelection
-            ? {
-                modelSelection: {
-                  ...startBinding.modelSelection,
-                  instanceId: input.instance.instanceId,
-                },
-              }
-            : {}),
-      resumeCursor:
-        recoveryBinding?.resumeCursor ??
-        (recoveryBinding?.providerThreadId
-          ? { providerThreadId: recoveryBinding.providerThreadId }
-          : null),
-      runtimeMode:
-        input.context?.runtimeMode ??
-        directBinding?.runtimeMode ??
-        startBinding?.runtimeMode,
-    }
-    if (!stoppedActiveSession) {
-      const liveSessions = await this.inspectLiveSessionsForAdmission(
-        input.instance
-      )
-      const targetSessions =
-        liveSessions.get(input.instance.adapter) ?? new Set<string>()
-      if (targetSessions.has(input.thread)) {
-        throw new ProviderSessionInspectionError(
-          `Provider instance '${input.instance.instanceId}' reported inconsistent state for session '${input.thread}'.`
-        )
-      }
-      this.assertSessionCapacity(input.instance, liveSessions)
-    }
-    this.assertAcceptingWork("create or recover provider session")
-    let session: ProviderSession
-    try {
-      session = await this.runSessionOperation(
-        input.instance,
-        "startSession",
-        () => input.instance.adapter.startSession(startInput)
-      )
-    } catch (err) {
-      if (!(err instanceof ProviderBackendQuarantinedError)) {
-        try {
-          await this.runSessionOperation(input.instance, "startSession", () =>
-            restoreStoppedSession(input.instance.adapter, stoppedActiveSession)
-          )
-        } catch {
-          // The original start failure is the one the turn should see.
-        }
-      }
-      throw err
-    }
-    this.rememberKnownLiveSession(input.instance.adapter, input.thread)
-    let startedSessionVisible: boolean
-    try {
-      startedSessionVisible = input.instance.adapter.hasSession(input.thread)
-    } catch (error) {
-      throw new ProviderSessionInspectionError(
-        `Could not confirm newly started provider session '${input.thread}' for instance '${input.instance.instanceId}'.`,
-        error
-      )
-    }
-    const confirmedSession = await this.readLiveAdapterSession(
-      input.instance,
-      input.thread
-    )
-    if (!startedSessionVisible || !confirmedSession) {
-      throw new ProviderSessionInspectionError(
-        `Provider instance '${input.instance.instanceId}' did not expose newly started session '${input.thread}' consistently.`
-      )
-    }
-    if (stoppedActiveSession) {
-      this.emitSessionExited({
-        threadId: input.thread,
-        providerKind,
-        providerInstanceId: input.instance.instanceId,
-        reason: "session context changed",
-      })
-    }
-    input.bindings?.setProviderThreadId({
-      threadId: input.thread,
-      providerKind,
-      providerInstanceId: input.instance.instanceId,
-      providerThreadId: session.providerThreadId,
-      resumeCursor:
-        session.resumeCursor !== undefined
-          ? session.resumeCursor
-          : (recoveryBinding?.resumeCursor ?? null),
-      continuationKey:
-        session.continuationKey ?? input.instance.continuationKey ?? null,
-    })
-    input.bindings?.updateSessionLifecycle({
-      threadId: input.thread,
-      providerKind,
-      providerInstanceId: input.instance.instanceId,
-      status: session.status,
-      activeTurnId: session.activeTurnId,
-    })
-    this.emitSessionStarted({
-      threadId: input.thread,
-      providerKind,
-      providerInstanceId: input.instance.instanceId,
-      resumeCursor: session.resumeCursor ?? recoveryBinding?.resumeCursor,
-    })
-    return true
-  }
-
-  private async withSessionExitCorrelationSuppressed<T>(
-    threadId: string,
-    providerInstanceId: string,
-    operation: () => Promise<T>
-  ): Promise<T> {
-    const key = this.sessionExitCorrelationKey(threadId, providerInstanceId)
-    this.suppressedSessionExitCorrelation.set(
-      key,
-      (this.suppressedSessionExitCorrelation.get(key) ?? 0) + 1
-    )
-    try {
-      return await operation()
-    } finally {
-      const remaining =
-        (this.suppressedSessionExitCorrelation.get(key) ?? 1) - 1
-      if (remaining <= 0) this.suppressedSessionExitCorrelation.delete(key)
-      else this.suppressedSessionExitCorrelation.set(key, remaining)
-    }
-  }
-
-  private isSessionExitCorrelationSuppressed(
-    threadId: string,
-    providerInstanceId: string
-  ): boolean {
-    return (
-      (this.suppressedSessionExitCorrelation.get(
-        this.sessionExitCorrelationKey(threadId, providerInstanceId)
-      ) ?? 0) > 0
-    )
-  }
-
-  private sessionExitCorrelationKey(
-    threadId: string,
-    providerInstanceId: string
-  ): string {
-    return `${threadId}\u0000${providerInstanceId}`
-  }
-
-  private async withSessionAdmission<T>(
-    operation: () => Promise<T>
-  ): Promise<T> {
-    const release = await this.acquireSessionAdmission()
-    try {
-      this.assertAcceptingWork("create or recover provider session")
-      return await operation()
-    } finally {
-      release()
-    }
-  }
-
-  private acquireSessionAdmission(): Promise<() => void> {
-    this.assertAcceptingWork("create or recover provider session")
-    if (!this.sessionAdmissionActive) {
-      this.sessionAdmissionActive = true
-      return Promise.resolve(() => this.releaseSessionAdmission())
-    }
-    if (
-      this.sessionAdmissionWaiters.length >=
-      this.sessionAdmissionQueueMaxEntries
-    ) {
-      throw new ProviderSessionAdmissionCapacityError(
-        this.sessionAdmissionQueueMaxEntries
-      )
-    }
-    return new Promise<() => void>((resolve, reject) => {
-      this.sessionAdmissionWaiters.push({ resolve, reject })
-    })
-  }
-
-  private releaseSessionAdmission(): void {
-    if (!this.acceptingWork) {
-      this.rejectSessionAdmissionWaiters()
-      this.sessionAdmissionActive = false
-      return
-    }
-    const next = this.sessionAdmissionWaiters.shift()
-    if (next) {
-      next.resolve(() => this.releaseSessionAdmission())
-      return
-    }
-    this.sessionAdmissionActive = false
-    this.applyPendingInstanceReplacementIfIdle()
-  }
-
-  private rejectSessionAdmissionWaiters(): void {
-    const failure = new ProviderUpdateError(
-      "Cannot create or recover provider session: provider service is shutting down.",
-      503
-    )
-    for (const waiter of this.sessionAdmissionWaiters.splice(0)) {
-      waiter.reject(failure)
-    }
-  }
-
   /** Quarantined, retiring, or failed to retire: not safe to enumerate. */
   private isRetainedAdapter(adapter: ProviderAdapterShape): boolean {
     return (
@@ -2507,91 +1541,6 @@ export class ProviderHub {
       this.retiringAdapters.has(adapter) ||
       this.retiredAdapterFailures.has(adapter)
     )
-  }
-
-  private async inspectLiveSessionsForAdmission(
-    target: ProviderRuntimeInstance
-  ): Promise<Map<ProviderAdapterShape, Set<string>>> {
-    if (this.isRetainedAdapter(target.adapter)) {
-      // A retained backend can still own sessions that are no longer safe to
-      // enumerate. Blocking new sessions on it is the only fail-closed
-      // accounting — but only on it: one adapter's failed retirement used to
-      // refuse every session on every other provider, hub-wide.
-      throw new ProviderSessionCapacityError("retained_backend")
-    }
-
-    const adapters = new Set<ProviderAdapterShape>([
-      ...Array.from(this.byInstance.values(), (instance) => instance.adapter),
-      ...this.knownLiveSessions.keys(),
-    ])
-    const result = new Map<ProviderAdapterShape, Set<string>>()
-    for (const adapter of adapters) {
-      const live = new Set<string>()
-      for (const threadId of this.knownLiveSessions.get(adapter) ?? []) {
-        live.add(threadId)
-      }
-      if (this.isRetainedAdapter(adapter)) {
-        // Cannot ask it; count what we know it still owns so the global cap
-        // stays conservative rather than optimistic.
-        result.set(adapter, live)
-        continue
-      }
-      const owner =
-        Array.from(this.byInstance.values()).find(
-          (candidate) => candidate.adapter === adapter
-        ) ?? null
-      const sessions = owner
-        ? await this.runSessionOperation(owner, "listSessions", () =>
-            readAdapterSessions(adapter)
-          )
-        : await this.raceInterruptBudget(
-            () => readAdapterSessions(adapter),
-            "listSessions"
-          )
-      for (const session of sessions) live.add(session.threadId)
-      result.set(adapter, live)
-    }
-    return result
-  }
-
-  private assertSessionCapacity(
-    instance: ProviderRuntimeInstance,
-    liveSessions: ReadonlyMap<ProviderAdapterShape, ReadonlySet<string>>
-  ): void {
-    let globalCount = 0
-    for (const sessions of liveSessions.values()) globalCount += sessions.size
-    if (globalCount >= this.maxLiveSessions) {
-      throw new ProviderSessionCapacityError("global", this.maxLiveSessions)
-    }
-    const targetCount = liveSessions.get(instance.adapter)?.size ?? 0
-    if (targetCount >= this.maxLiveSessionsPerInstance) {
-      throw new ProviderSessionCapacityError(
-        "instance",
-        this.maxLiveSessionsPerInstance
-      )
-    }
-  }
-
-  private rememberKnownLiveSession(
-    adapter: ProviderAdapterShape,
-    threadId: string
-  ): void {
-    let sessions = this.knownLiveSessions.get(adapter)
-    if (!sessions) {
-      sessions = new Set()
-      this.knownLiveSessions.set(adapter, sessions)
-    }
-    sessions.add(threadId)
-  }
-
-  private forgetKnownLiveSession(
-    adapter: ProviderAdapterShape,
-    threadId: string
-  ): void {
-    const sessions = this.knownLiveSessions.get(adapter)
-    if (!sessions) return
-    sessions.delete(threadId)
-    if (sessions.size === 0) this.knownLiveSessions.delete(adapter)
   }
 
   async stopSession(
@@ -2607,7 +1556,7 @@ export class ProviderHub {
     await this.runSessionOperation(instance, "stopSession", () =>
       instance.adapter.stopSession(thread)
     )
-    this.forgetKnownLiveSession(instance.adapter, thread)
+    this.sessions.forgetKnownLiveSession(instance.adapter, thread)
     this.emitSessionExited({
       threadId: thread,
       providerKind: instance.provider ?? instance.adapter.provider,
@@ -2618,7 +1567,7 @@ export class ProviderHub {
 
   beginShutdown(): void {
     this.acceptingWork = false
-    this.rejectSessionAdmissionWaiters()
+    this.sessions.rejectSessionAdmissionWaiters()
   }
 
   async interruptAllTurns(): Promise<number> {
@@ -2661,8 +1610,7 @@ export class ProviderHub {
       admission.phase = "interrupting"
     }
     const backgroundOperations = [
-      ...this.listInstancesInFlight.values(),
-      ...this.metadataCache.inFlightPromises(),
+      ...this.status.pendingOperations(),
       ...this.maintenance.pendingLockTails(),
       ...this.retiringAdapters.values(),
     ]
@@ -2684,7 +1632,7 @@ export class ProviderHub {
     })
     const sessionPersistenceFailures: unknown[] = []
     try {
-      this.persistActiveSessionsBeforeStopAll(bindings, activeSessions)
+      this.sessions.persistActiveSessionsBeforeStopAll(bindings, activeSessions)
     } catch (error) {
       // Saving resume state is best effort during shutdown; a database failure
       // must not prevent the providers from stopping their child processes.
@@ -2719,7 +1667,7 @@ export class ProviderHub {
           stopFailureByAdapter.set(adapter, failure)
         }
       } else if (adapter) {
-        this.knownLiveSessions.delete(adapter)
+        this.sessions.forgetAdapter(adapter)
       }
     }
     const finalizationResults = await Promise.allSettled(
@@ -2790,7 +1738,7 @@ export class ProviderHub {
           reason: "provider.stopAll",
         })
       }
-      this.markPersistedSessionsStopped(bindings, stopFailureByAdapter)
+      this.sessions.markPersistedSessionsStopped(bindings, stopFailureByAdapter)
     } finally {
       this.auditLog.close()
       for (const [adapter, unsubscribe] of this.adapterSubscriptions) {
@@ -2819,41 +1767,6 @@ export class ProviderHub {
       `Cannot ${operation}: provider service is shutting down.`,
       503
     )
-  }
-
-  private assertTurnCapacity(
-    provider: ProviderKind,
-    instance: ProviderRuntimeInstance | null
-  ): void {
-    if (this.turnsByThread.size >= this.maxActiveTurns) {
-      throw new ProviderTurnCapacityError("global", this.maxActiveTurns)
-    }
-
-    let providerTurns = 0
-    let instanceTurns = 0
-    for (const admission of this.turnsByThread.values()) {
-      if (admission.providerKind === provider) providerTurns += 1
-      if (
-        instance &&
-        (admission.providerInstance?.adapter === instance.adapter ||
-          (!admission.providerInstance &&
-            admission.providerInstanceId === instance.instanceId))
-      ) {
-        instanceTurns += 1
-      }
-    }
-    if (providerTurns >= this.maxActiveTurnsPerProvider) {
-      throw new ProviderTurnCapacityError(
-        "provider",
-        this.maxActiveTurnsPerProvider
-      )
-    }
-    if (instance && instanceTurns >= this.maxActiveTurnsPerInstance) {
-      throw new ProviderTurnCapacityError(
-        "instance",
-        this.maxActiveTurnsPerInstance
-      )
-    }
   }
 
   private throwIfRequestedBackendQuarantined(
@@ -2902,64 +1815,9 @@ export class ProviderHub {
     }
     for (const current of this.byInstance.values()) {
       if (current.adapter !== instance.adapter) continue
-      this.metadataCache.invalidateInstance(current.instanceId)
+      this.status.invalidateInstanceCache(current.instanceId)
     }
     return failure
-  }
-
-  private persistActiveSessionsBeforeStopAll(
-    bindings: ProviderSessionBindingStore | undefined,
-    sessions: ReadonlyArray<ProviderHubSessionSnapshot>
-  ): void {
-    if (!bindings) return
-    for (const session of sessions) {
-      if (!session.active) continue
-      const providerInstanceId =
-        session.providerInstanceId ?? session.instanceId
-      bindings.upsert({
-        threadId: session.threadId,
-        providerInstanceId,
-        providerKind: session.providerKind,
-        providerThreadId: session.providerThreadId,
-        resumeCursor: session.resumeCursor ?? null,
-        continuationKey: session.continuationKey ?? null,
-        status: session.status,
-        activeTurnId: session.activeTurnId,
-        runtimeMode: session.runtimeMode ?? null,
-        cwd: session.cwd ?? null,
-      })
-    }
-  }
-
-  private markPersistedSessionsStopped(
-    bindings: ProviderSessionBindingStore | undefined,
-    stopFailureByAdapter: ReadonlyMap<ProviderAdapterShape, unknown>
-  ): void {
-    if (!bindings) return
-    for (const binding of bindings.list()) {
-      const instance = this.byInstance.get(binding.providerInstanceId)
-      const stopFailure = instance
-        ? stopFailureByAdapter.get(instance.adapter)
-        : undefined
-      if (stopFailure !== undefined) {
-        bindings.updateSessionLifecycle({
-          threadId: binding.threadId,
-          providerInstanceId: binding.providerInstanceId,
-          providerKind: binding.providerKind,
-          status: "error",
-          activeTurnId: binding.activeTurnId,
-          lastError: "Provider session could not be stopped.",
-        })
-        continue
-      }
-      bindings.updateSessionLifecycle({
-        threadId: binding.threadId,
-        providerInstanceId: binding.providerInstanceId,
-        providerKind: binding.providerKind,
-        status: "stopped",
-        activeTurnId: null,
-      })
-    }
   }
 
   private resolveFailureMessage(instanceId: string | null): string {
@@ -3144,11 +2002,101 @@ export class ProviderHub {
   private claimTurnSettlement(admission: ProviderTurnAdmission): boolean {
     if (admission.settlementStarted) return false
     admission.settlementStarted = true
+    this.clearTurnWatchdogs(admission)
+    return true
+  }
+
+  private clearTurnWatchdogs(admission: ProviderTurnAdmission): void {
     if (admission.timeoutHandle) {
       clearTimeout(admission.timeoutHandle)
       admission.timeoutHandle = null
     }
-    return true
+    if (admission.deadlineHandle) {
+      clearTimeout(admission.deadlineHandle)
+      admission.deadlineHandle = null
+    }
+  }
+
+  /**
+   * Every provider event for the admission's thread counts as activity.
+   * Re-arming a timer per streamed token would churn timers, so activity only
+   * moves `lastActivityAt`, and the pending check re-schedules itself for the
+   * remaining idle budget when it fires early.
+   */
+  private observeTurnActivity(
+    admission: ProviderTurnAdmission,
+    event: ProviderRuntimeEvent
+  ): void {
+    if (admission.settlementStarted) return
+    if (
+      event.providerInstanceId &&
+      admission.providerInstanceId &&
+      event.providerInstanceId !== admission.providerInstanceId
+    ) {
+      return
+    }
+    admission.lastActivityAt = Date.now()
+    const requestId = (event as { readonly requestId?: unknown }).requestId
+    if (typeof requestId !== "string" || !requestId) return
+    if (
+      event.type === "request.opened" ||
+      event.type === "approval.requested" ||
+      event.type === "user-input.requested"
+    ) {
+      admission.pendingRequestIds.add(requestId)
+    } else if (
+      event.type === "request.resolved" ||
+      event.type === "approval.resolved" ||
+      event.type === "user-input.resolved"
+    ) {
+      admission.pendingRequestIds.delete(requestId)
+      if (admission.pendingRequestIds.size === 0 && !admission.timeoutHandle) {
+        this.scheduleTurnIdleCheck(
+          event.threadId,
+          admission,
+          this.turnTimeoutMs
+        )
+      }
+    }
+  }
+
+  private scheduleTurnIdleCheck(
+    threadId: string,
+    admission: ProviderTurnAdmission,
+    delayMs: number
+  ): void {
+    if (admission.timeoutHandle) clearTimeout(admission.timeoutHandle)
+    admission.timeoutHandle = setTimeout(
+      () => this.checkTurnIdle(threadId, admission),
+      Math.max(1, delayMs)
+    )
+    admission.timeoutHandle.unref?.()
+  }
+
+  private checkTurnIdle(
+    threadId: string,
+    admission: ProviderTurnAdmission
+  ): void {
+    admission.timeoutHandle = null
+    if (
+      admission.settlementStarted ||
+      this.turnsByThread.get(threadId) !== admission
+    ) {
+      return
+    }
+    // Waiting on the user is not provider inactivity; the check is re-armed
+    // when the last open request resolves.
+    if (admission.pendingRequestIds.size > 0) return
+    const remaining = admission.lastActivityAt + this.turnTimeoutMs - Date.now()
+    if (remaining > 0) {
+      this.scheduleTurnIdleCheck(threadId, admission, remaining)
+      return
+    }
+    void this.timeoutTurn(
+      threadId,
+      admission,
+      `Turn timed out after ${this.turnTimeoutMs}ms without provider activity.`
+    )
   }
 
   private async finishClaimedTurnAdmission(
@@ -3514,18 +2462,6 @@ export class ProviderHub {
     }
   }
 
-  private async readLiveAdapterSession(
-    instance: ProviderRuntimeInstance,
-    thread: ThreadId
-  ): Promise<ProviderSession | null> {
-    const sessions = await this.runSessionOperation(
-      instance,
-      "listSessions",
-      () => readAdapterSessions(instance.adapter)
-    )
-    return sessions.find((session) => session.threadId === thread) ?? null
-  }
-
   private async runInterruptWithTimeout(
     operation: () => Promise<void>
   ): Promise<void> {
@@ -3564,10 +2500,7 @@ export class ProviderHub {
     threadId: string,
     admission: ProviderTurnAdmission
   ): void {
-    if (admission.timeoutHandle) {
-      clearTimeout(admission.timeoutHandle)
-      admission.timeoutHandle = null
-    }
+    this.clearTurnWatchdogs(admission)
     if (this.turnsByThread.get(threadId) === admission) {
       this.turnsByThread.delete(threadId)
       if (admission.sharedToken) {
@@ -3582,8 +2515,7 @@ export class ProviderHub {
       this.turnsByThread.size > 0 ||
       !this.pendingInstanceReplacement ||
       !this.acceptingWork ||
-      this.sessionAdmissionActive ||
-      this.sessionAdmissionWaiters.length > 0 ||
+      this.sessions.hasAdmissionActivity() ||
       this.retiringAdapters.size > 0
     ) {
       return
@@ -3600,13 +2532,13 @@ export class ProviderHub {
 
   private async timeoutTurn(
     threadId: string,
-    admission: ProviderTurnAdmission
+    admission: ProviderTurnAdmission,
+    message: string
   ): Promise<void> {
     if (this.turnsByThread.get(threadId) !== admission) return
+    if (admission.settlementStarted) return
     try {
-      const timeoutError = new Error(
-        `Turn timed out after ${this.turnTimeoutMs}ms.`
-      )
+      const timeoutError = new Error(message)
       await this.interruptAdmission(threadId, admission, {
         reason: timeoutError.message,
         status: "timed_out",
@@ -3679,77 +2611,6 @@ export class ProviderHub {
   }
 }
 
-function boundedProviderOperationalLimit(
-  requested: number | undefined,
-  defaultValue: number,
-  hardMaximum: number
-): number {
-  if (requested === undefined || !Number.isFinite(requested)) {
-    return defaultValue
-  }
-  return Math.max(1, Math.min(hardMaximum, Math.floor(requested)))
-}
-
-function promiseWithDeadline<T>(
-  operation: () => Promise<T>,
-  timeoutMs: number,
-  message: string
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let settled = false
-  const pending = Promise.resolve().then(operation)
-  return new Promise<T>((resolve, reject) => {
-    const finish = (settle: () => void) => {
-      if (settled) return
-      settled = true
-      if (timer) clearTimeout(timer)
-      settle()
-    }
-    timer = setTimeout(() => {
-      finish(() => reject(new ProviderOperationDeadlineError(message)))
-    }, timeoutMs)
-    timer.unref?.()
-    pending.then(
-      (value) => finish(() => resolve(value)),
-      (error) => finish(() => reject(error))
-    )
-  })
-}
-
-async function readInstanceStatusProbe(
-  instance: ProviderRuntimeInstance,
-  input: { readonly cwd?: string | null; readonly refresh?: boolean },
-  timeoutMs: number
-): Promise<ProviderRuntimeInstanceStatusProbe | null> {
-  if (
-    !instance.enabled ||
-    instance.unavailableReason ||
-    !instance.statusProbe
-  ) {
-    return null
-  }
-  try {
-    return await promiseWithDeadline(
-      () => Promise.resolve(instance.statusProbe!(input)),
-      timeoutMs,
-      `Provider status probe did not complete within ${timeoutMs}ms`
-    )
-  } catch {
-    return null
-  }
-}
-
-function providerSnapshotStatus(input: {
-  readonly enabled: boolean
-  readonly installed: boolean
-  readonly configured: boolean
-  readonly unavailable: boolean
-}): "ready" | "warning" | "error" | "disabled" {
-  if (!input.enabled) return "disabled"
-  if (input.unavailable || !input.installed) return "error"
-  return input.configured ? "ready" : "warning"
-}
-
 function providerKindFromDriverAlias(
   value: string | undefined
 ): ProviderKind | null {
@@ -3757,149 +2618,6 @@ function providerKindFromDriverAlias(
   // The hub routes by adapter: the Codex CLI and the Codex adapter are the
   // same backend here, so the CLI alias folds into it.
   return kind === "codex_cli" ? "codex" : kind
-}
-
-function isProviderMetadataChangedEvent(event: ProviderRuntimeEvent): boolean {
-  if (event.type === "provider.metadata.changed") return true
-  if (event.type !== "config.warning" || !("payload" in event)) return false
-  const payload = event.payload
-  return (
-    !!payload &&
-    typeof payload === "object" &&
-    !Array.isArray(payload) &&
-    "metadataKind" in payload
-  )
-}
-
-function readProviderMetadataChangedCwd(
-  event: ProviderRuntimeEvent
-): string | null | undefined {
-  if (!("payload" in event)) return undefined
-  const payload = event.payload
-  if (!payload || typeof payload !== "object" || Array.isArray(payload))
-    return undefined
-  const cwd = (payload as Record<string, unknown>).cwd
-  return typeof cwd === "string" || cwd === null ? cwd : undefined
-}
-
-function redactEnvironment(
-  environment: NonNullable<ProviderRuntimeInstance["environment"]>
-): NonNullable<ProviderRuntimeInstanceSnapshot["environment"]> {
-  return environment.map((envVar) => {
-    if (!envVar.sensitive && !isSensitiveProviderFieldName(envVar.name))
-      return envVar
-    const configured = envVar.value.length > 0
-    return {
-      ...envVar,
-      sensitive: true,
-      value: "",
-      valueRedacted: configured,
-      secretState: {
-        configured,
-        storage: getMasterKey() ? "encrypted" : "plaintext",
-      },
-    }
-  })
-}
-
-function redactProviderConfig(
-  config: Record<string, unknown>
-): Record<string, unknown> {
-  const redactValue = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(redactValue)
-    if (value !== null && typeof value === "object") {
-      return redactProviderConfig(value as Record<string, unknown>)
-    }
-    return value
-  }
-  return Object.fromEntries(
-    Object.entries(config).map(([key, value]) => [
-      key,
-      isSensitiveProviderFieldName(key)
-        ? {
-            configured: typeof value === "string" && value.length > 0,
-            storage: getMasterKey() ? "encrypted" : "plaintext",
-          }
-        : redactValue(value),
-    ])
-  )
-}
-
-async function readAdapterSessions(
-  adapter: ProviderAdapterShape
-): Promise<ReadonlyArray<ProviderSession>> {
-  if (!adapter.listSessions) {
-    throw new ProviderSessionInspectionError(
-      `Provider adapter '${adapter.displayName}' cannot enumerate live sessions.`
-    )
-  }
-  try {
-    const sessions = await adapter.listSessions()
-    if (!Array.isArray(sessions)) {
-      throw new Error("listSessions() returned a non-array value")
-    }
-    for (const session of sessions) {
-      if (
-        !session ||
-        typeof session !== "object" ||
-        typeof session.threadId !== "string" ||
-        session.threadId.length === 0
-      ) {
-        throw new Error("listSessions() returned an invalid session")
-      }
-    }
-    return sessions
-  } catch (error) {
-    if (error instanceof ProviderSessionInspectionError) throw error
-    throw new ProviderSessionInspectionError(
-      `Could not enumerate live sessions for provider adapter '${adapter.displayName}'.`,
-      error
-    )
-  }
-}
-
-async function restoreStoppedSession(
-  adapter: ProviderAdapterShape,
-  session: ProviderSession | null
-): Promise<void> {
-  if (!session) return
-  try {
-    await adapter.startSession({
-      threadId: toThreadId(session.threadId),
-      cwd: session.cwd,
-      resumeCursor:
-        session.resumeCursor ??
-        (session.providerThreadId
-          ? { providerThreadId: session.providerThreadId }
-          : null),
-      runtimeMode: session.runtimeMode ?? null,
-    })
-  } catch {
-    // Best effort only: the original failure still describes why the requested
-    // restart failed, and callers should surface that error.
-  }
-}
-
-function shouldRestartActiveSessionForContext(
-  activeSession: ProviderSession | null,
-  context: {
-    readonly cwd?: string | null
-    readonly runtimeMode?: string | null
-  }
-): boolean {
-  if (!activeSession) return false
-  const activeCwd = normalizeSessionCwd(activeSession.cwd)
-  const requestedCwd = normalizeSessionCwd(context.cwd)
-  if (!!activeCwd && !!requestedCwd && activeCwd !== requestedCwd) return true
-  const activeRuntimeMode = normalizeRuntimeMode(activeSession.runtimeMode)
-  const requestedRuntimeMode = normalizeRuntimeMode(context.runtimeMode)
-  return !!requestedRuntimeMode && activeRuntimeMode !== requestedRuntimeMode
-}
-
-function normalizeSessionCwd(value: string | null | undefined): string | null {
-  if (typeof value !== "string") return null
-  const trimmed = value.trim()
-  return trimmed ? trimmed : null
 }
 
 function readDispatchTurnId(event: ProviderRuntimeEvent): string | null {
@@ -3921,68 +2639,6 @@ function combineProviderTurnFailures(
     defined,
     "Provider turn finalization encountered multiple failures"
   )
-}
-
-function publicProviderStatusMessage(input: {
-  readonly enabled: boolean
-  readonly installed: boolean
-  readonly configured: boolean
-  readonly unavailableReason: string | undefined
-  readonly probe: ProviderRuntimeInstanceStatusProbe | null
-}): string | undefined {
-  if (!input.enabled) return undefined
-  if (input.unavailableReason) return input.unavailableReason
-  if (!input.installed) return "Provider backend is not installed."
-  // Prefer the adapter's own probe message: it is specific and actionable
-  // (e.g. "Run `codex login`", or "authenticated, but the app-server metadata
-  // probe failed — provider remains selectable"). The generic strings below
-  // are last-resort fallbacks for probes that report a bad status without an
-  // explanatory message.
-  const probeMessage = input.probe?.message?.trim() || undefined
-  if (input.probe?.auth?.status === "unauthenticated") {
-    return probeMessage ?? "Provider authentication is required."
-  }
-  if (!input.configured)
-    return probeMessage ?? "Provider instance is not configured."
-  if (input.probe?.status === "error") {
-    return probeMessage ?? "Provider status check failed."
-  }
-  if (input.probe?.status === "warning") {
-    return probeMessage ?? "Provider status requires attention."
-  }
-  return undefined
-}
-
-function publicProviderDispatchErrorMessage(error: unknown): string {
-  if (
-    error instanceof HttpError ||
-    error instanceof ProviderSessionInspectionError ||
-    error instanceof ProviderSessionCapacityError ||
-    error instanceof ProviderSessionAdmissionCapacityError ||
-    error instanceof ProviderTurnDispatchInputError ||
-    error instanceof ProviderStaleSessionCleanupError ||
-    error instanceof ProviderBackendQuarantinedError ||
-    error instanceof ProviderUpdateError ||
-    // A provider that cannot honor the selected chat mode is the user's to
-    // resolve — they can switch mode or provider — so the explanation must
-    // reach them instead of the generic fault message.
-    isProviderChatModeUnsupportedError(error)
-  ) {
-    return (error as Error).message
-  }
-  return "Provider turn dispatch failed."
-}
-
-function sessionSnapshotKey(
-  threadId: string,
-  providerInstanceId: string
-): string {
-  return `${threadId}\u0000${providerInstanceId}`
-}
-
-function parseTimestamp(value: string): number {
-  const parsed = Date.parse(value)
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
 }
 
 export { toThreadId, toApprovalRequestId }

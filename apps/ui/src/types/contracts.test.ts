@@ -88,10 +88,15 @@ describe("settings schema", () => {
     expect(s.backend_log_format).toBe("simple")
     expect(s.backend_trace_http).toBe(false)
     expect(s.backend_trace_provider_events).toBe(false)
+    // Telemetry is opt-in.
+    expect(s.crash_reports_enabled).toBe(false)
+    expect(s.usage_ping_enabled).toBe(false)
     expect(s.providers).not.toHaveProperty("BetterC0de")
-    expect(s.mcp_servers).toEqual([])
-    expect(s.hooks).toEqual([])
-    expect(s.skills).toEqual([])
+    // Legacy keys: the desktop configuration files hold these now, so a
+    // fresh settings object has none of them.
+    expect(s.mcp_servers).toBeUndefined()
+    expect(s.hooks).toBeUndefined()
+    expect(s.skills).toBeUndefined()
   })
 
   it("migrates legacy BetterC0de provider settings to canonical BetterC0de settings", () => {
@@ -120,6 +125,35 @@ describe("settings schema", () => {
         custom_future_field: 42,
       })
     ).toThrow(/Unrecognized key/)
+  })
+
+  it("defaults the helper models and restores a default for a blank value", () => {
+    const defaults = defaultSettings()
+    expect(defaults.image_generation_model).toBe("gpt-5.5")
+    expect(defaults.commit_message_codex_model).toBe("gpt-5.6-luna")
+    expect(defaults.commit_message_claude_model).toBe("claude-sonnet-5")
+
+    const parsed = settingsSchema.parse({
+      image_generation_model: " gpt-image-3 ",
+      commit_message_codex_model: "",
+      commit_message_claude_model: null,
+    })
+    expect(parsed.image_generation_model).toBe("gpt-image-3")
+    expect(parsed.commit_message_codex_model).toBe("gpt-5.6-luna")
+    expect(parsed.commit_message_claude_model).toBe("claude-sonnet-5")
+  })
+
+  it("rejects helper model ids that are not a single model id", () => {
+    for (const value of ["gpt-5.5 & calc", "--model=x", "a b", 42]) {
+      expect(
+        settingsSchema.safeParse({ image_generation_model: value }).success
+      ).toBe(false)
+    }
+    expect(
+      settingsSchema.safeParse({
+        commit_message_claude_model: "x".repeat(201),
+      }).success
+    ).toBe(false)
   })
 
   it("skillSchema requires id and name", () => {

@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it, vi } from "vitest"
 import { CodeSearchSettingsPanel } from "./code-search-section"
 
-vi.mock("@/services/backend", () => ({
+vi.mock("@/services/backend/coreApi", () => ({
   getSettings: vi.fn(),
   updateSettings: vi.fn(),
 }))
@@ -82,5 +82,14 @@ describe("Jev settings disclosure and controls", () => {
     expect(html.match(/<button[^>]*role="switch"[^>]*>/)?.[0]).toContain(
       'disabled=""'
     )
+  })
+
+  it("says it is off by default and shows the CLIs that receive the tools", () => {
+    const html = render(null)
+    expect(html).toContain("Off by default.")
+    for (const name of ["Claude Code", "Codex", "Cursor", "Grok CLI"]) {
+      expect(html).toContain(`alt="${name}"`)
+    }
+    expect(html).toContain("Jev is TypeSafe AI&#x27;s ranking model")
   })
 })

@@ -344,7 +344,8 @@ describe("ThreadService round-trip", () => {
       status: "running",
       activeTurnId: "turn-1",
       lastError: "Provider session failed.",
-      runtimeMode: "full-access",
+      // A binding written without a mode fails closed, never bypass.
+      runtimeMode: "approval-required",
       cwd: "/Users/example/project",
       modelSelection: {
         instanceId: "codex-work",

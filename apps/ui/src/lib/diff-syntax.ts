@@ -1,5 +1,6 @@
 import type { BundledLanguage, ThemedToken } from "shiki"
 import { buildSplitDiffLines, type DiffFile, type DiffLine } from "./git-diff"
+import { getHighlighter } from "./shiki-highlighter"
 
 const languages: Record<string, BundledLanguage> = {
   ts: "typescript",
@@ -77,11 +78,12 @@ export async function highlightDiff(file: DiffFile): Promise<DiffSyntax> {
     file.lines.some((line) => line.content.length > 5000)
   )
     return result
-  const { getSingletonHighlighter } = await import("shiki")
-  const highlighter = await getSingletonHighlighter({
-    langs: [language],
+  // Shares the renderer-wide highlighter with chat code blocks (PERF-08).
+  const { highlighter, language: lang } = await getHighlighter({
+    language,
     themes: ["light-plus", "dark-plus"],
   })
+  if (lang === "text") return result
   for (const hunk of file.hunks) {
     // Tokenize each revision separately so removed comments/strings cannot
     // leak grammar state into the new code. Disjoint hunks reset that state.
@@ -95,7 +97,7 @@ export async function highlightDiff(file: DiffFile): Promise<DiffSyntax> {
       const { tokens } = highlighter.codeToTokens(
         lines.map((line) => line.content).join("\n"),
         {
-          lang: language,
+          lang,
           themes: { light: "light-plus", dark: "dark-plus" },
         }
       )

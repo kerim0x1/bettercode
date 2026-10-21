@@ -14,6 +14,7 @@ import {
   threadId as toThreadId,
   type ProviderKind,
 } from "../../provider/runtime"
+import { isHubProviderKind } from "../../provider/runtime/providerDrivers"
 import type { ProviderSendTurnInput } from "../../provider/types"
 import type { RemoteProviderTurnReservation } from "../../remote/providerTurnOwnership"
 import {
@@ -46,6 +47,7 @@ import {
 } from "./turn-preparation"
 import { threadGoals } from "./goal-registry"
 import type { GoalTurn } from "./goals"
+import { chatResumes } from "./resume-registry"
 
 /**
  * Admissions currently running in this process, keyed by client dispatch id.
@@ -125,17 +127,10 @@ function isTurnActiveError(error: unknown): boolean {
   return error instanceof HttpError && error.code === "turn_active"
 }
 
-const HUB_PROVIDER_KINDS: ReadonlySet<string> = new Set([
-  "codex",
-  "claude",
-  "cursor",
-  "grok_cli",
-  "betterc0de",
-])
-
+/** The hub-served kinds come from the driver registry (providerDrivers.ts). */
 export function asHubProviderKind(raw: string): ProviderKind | null {
   const normalized = raw.trim().toLowerCase()
-  if (HUB_PROVIDER_KINDS.has(normalized)) return normalized as ProviderKind
+  if (isHubProviderKind(normalized)) return normalized
   return null
 }
 
@@ -174,7 +169,7 @@ function recordPendingSourceProposedPlanImplementation(
   const source = input.sourceProposedPlan
   if (!source) return
 
-  state.sourceProposedPlanImplementations?.recordPending({
+  state.sourceProposedPlanImplementations.recordPending({
     sourceProposedPlan: source,
     implementationThreadId: input.implementationThreadId,
     providerKind: input.providerKind,
@@ -194,7 +189,7 @@ function clearPendingSourceProposedPlanImplementation(
   }
 ): void {
   if (!input.sourceProposedPlan) return
-  state.sourceProposedPlanImplementations?.clearPending?.({
+  state.sourceProposedPlanImplementations.clearPending?.({
     implementationThreadId: input.implementationThreadId,
     providerKind: input.providerKind,
     providerInstanceId: input.providerInstanceId ?? null,
@@ -259,7 +254,7 @@ export async function prepareChatSendBody(
   // the user's account; this root is not an operating-system sandbox.
   const projectPath =
     boundPath ??
-    (await ensureScratchWorkspace(state.config?.dataDir, body.thread_id))
+    (await ensureScratchWorkspace(state.config.dataDir, body.thread_id))
   let effectiveBody: ChatSendBody = {
     ...body,
     project_path: projectPath,
@@ -309,7 +304,15 @@ export async function dispatchChatTurn(
   state: AppState,
   parsedBody: ChatSendBody,
   reserveRemoteTurn: () => RemoteProviderTurnReservation | null,
-  goalHooks?: { guard: () => void; started: (turn: GoalTurn) => void }
+  goalHooks?: { guard: () => void; started: (turn: GoalTurn) => void },
+  options: {
+    /**
+     * `false` only for turns the backend starts itself that are not a
+     * user's message (an orchestration worker's task). Every message from a
+     * client runs the user's "on message send" hooks.
+     */
+    readonly messageHooks?: boolean
+  } = {}
 ): Promise<ChatSendResponse> {
   const prepared = await prepareChatSendBody(state, parsedBody)
   const body = prepared
@@ -358,9 +361,16 @@ export async function dispatchChatTurn(
       const effectiveProviderKind = hubKind ?? legacyKind!
       // Keep the idempotency identity tied to the caller's request. A Hub
       // instance inferred from mutable session state is an execution detail,
-      // not part of the immutable retry fingerprint.
-      const effectiveProviderInstanceId =
-        body.provider_instance_id ?? body.model_selection?.instanceId ?? null
+      // not part of the immutable retry fingerprint. Legacy (API) providers
+      // have no instances: their turns bind, accept and finish under the
+      // request's own `provider_instance_id`, so the model selection's
+      // instance must not reach their durable dispatch, or binding the
+      // accepted turn fails as a pending → pending transition.
+      const effectiveProviderInstanceId = useHub
+        ? (body.provider_instance_id ??
+          body.model_selection?.instanceId ??
+          null)
+        : (body.provider_instance_id ?? null)
       const admissionId = Symbol("chat-dispatch-admission")
       const requestFingerprint = body.user_message_id
         ? dispatchRequestFingerprint(
@@ -419,13 +429,15 @@ export async function dispatchChatTurn(
         if (admission && admissionKey) admissions.set(admissionKey, admission)
       }
       const admit = async (): Promise<ChatSendResponse> => {
-        // A client that does not prepare its turns (the phone app) gets the
-        // desktop's preparation: its hooks run first, and one that fails
-        // refuses the message before anything is recorded. A goal's turns
-        // were prepared with the /goal command (controlThreadGoal), as on
-        // the desktop; each still gets the instruction.
+        // The user's "on message send" hooks run here for every message,
+        // whichever client sent it and whether or not it prepared the turn
+        // itself: one that fails refuses the message before anything is
+        // recorded. A goal's turns ran them with the /goal command
+        // (controlThreadGoal). A prepared turn (every BetterC0de client
+        // sends `prepareTurn`) gets its system instruction built here.
         const prepared = body.prepare_turn === true
-        if (prepared && !goalHooks) await runMessageSendHooks(state, body)
+        if (!goalHooks && options.messageHooks !== false)
+          await runMessageSendHooks(state, body)
         const baseSystemInstruction =
           prepared && !body.system_instruction?.trim()
             ? await buildPreparedTurnInstruction(state, body)
@@ -472,7 +484,7 @@ export async function dispatchChatTurn(
           }
           registerAdmission()
           if (remoteProviderReservation) {
-            state.remoteProviderTurns?.assertActive(remoteProviderReservation)
+            state.remoteProviderTurns.assertActive(remoteProviderReservation)
           }
           if (useHub && hubKind) {
             state.providerHub.assertCanStartTurn?.(
@@ -488,6 +500,18 @@ export async function dispatchChatTurn(
           goalHooks?.guard()
           if (!goalHooks)
             threadGoals.get(state)?.pauseForMessage(body.thread_id)
+          // A chat waiting to resume after a limit continues with this
+          // turn instead (resume-scheduler.ts).
+          chatResumes
+            .get(state)
+            ?.noteDispatch(
+              body,
+              goalHooks
+                ? "scheduler"
+                : options.messageHooks === false
+                  ? "worker"
+                  : "user"
+            )
           const durableDispatch = reserveDurableChatDispatch(
             state,
             body,
@@ -521,15 +545,13 @@ export async function dispatchChatTurn(
             persistedUserMessageId
           )
           setSessionPermission(body.thread_id, body.permission_level)
-          const orchestrated = state.orchestrator
-            ? await state.orchestrator.prepareForTurn({
-                ...body,
-                provider_instance_id:
-                  hubProviderInstanceId ?? body.provider_instance_id,
-              })
-            : body
+          const orchestrated = await state.orchestrator.prepareForTurn({
+            ...body,
+            provider_instance_id:
+              hubProviderInstanceId ?? body.provider_instance_id,
+          })
           goalHooks?.guard()
-          state.orchestrator?.assertDispatchAllowed(body.thread_id)
+          state.orchestrator.assertDispatchAllowed(body.thread_id)
           // Hub and legacy providers share the admission, permission,
           // compaction, and durable-dispatch work above. The launch below
           // is the only provider-specific step; settlement (owner attach,
@@ -710,6 +732,12 @@ export async function dispatchChatTurn(
                 })
               },
             })
+            // Goals refuse these providers before dispatch; Autonomous
+            // Work runs on them too and learns of the turn here.
+            goalHooks?.started({
+              turnId: turn.turnId,
+              settled: turn.settled ?? turn.completion,
+            })
             const ownerAttachment =
               remoteProviderReservation && state.remoteProviderTurns
                 ? state.remoteProviderTurns.attach(remoteProviderReservation, {
@@ -812,7 +840,7 @@ export async function dispatchChatTurn(
     }
   } finally {
     if (remoteProviderReservation && !remoteProviderReservationTransferred) {
-      state.remoteProviderTurns?.cancel(remoteProviderReservation)
+      state.remoteProviderTurns.cancel(remoteProviderReservation)
     }
   }
 }

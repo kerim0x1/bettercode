@@ -1,17 +1,62 @@
-import type { ShellCommandResult, TerminalPtySnapshot } from "./types"
 import type {
   WorkspaceContextArtifactResult as SchemaWorkspaceContextArtifactResult,
   WorkspaceContextSource as SchemaWorkspaceContextSource,
   WorkspaceEffectiveRuleSource as SchemaWorkspaceEffectiveRuleSource,
   WorkspaceEffectiveRulesResult as SchemaWorkspaceEffectiveRulesResult,
 } from "@betterc0de/schema"
+import type {
+  WorkspaceBinaryFile,
+  WorkspaceFileContent,
+  WorkspaceMapDirectory,
+  WorkspaceMapExtension,
+  WorkspaceMapFile,
+  WorkspaceMapFileKind,
+  WorkspaceMapOverview,
+  WorkspaceProjectAgent,
+  WorkspaceProjectCommand,
+  WorkspaceProjectConfigSetting,
+  WorkspaceProjectFormatResult,
+  WorkspaceProjectFormatRun,
+  WorkspaceProjectFormatter,
+  WorkspaceProjectInstruction,
+  WorkspaceProjectLspServer,
+  WorkspaceProjectMcpServer,
+  WorkspaceProjectPermissionRule,
+  WorkspaceProjectPlugin,
+  WorkspaceProjectProvider,
+  WorkspaceProjectProviderAuth,
+  WorkspaceProjectProviderModel,
+  WorkspaceProjectProvidersSummary,
+  WorkspaceProjectReference,
+  WorkspaceProjectSkill,
+  WorkspaceProjectToolFlag,
+  WorkspaceQuickOpenFile,
+  WorkspaceScratchAdoptResult,
+  WorkspaceSearchEntriesResult,
+  WorkspaceSearchEntriesTruncationReason,
+  WorkspaceSearchEntry,
+  ShellCommandResult,
+  ShellInfo,
+  TerminalPtySnapshot,
+} from "@betterc0de/schema/http-contracts"
 import {
   isAbsoluteEditorPath,
   normalizeEditorPath,
   workspaceRelativeEditorPath,
 } from "@/lib/editor-path"
 import { HttpError } from "@/lib/errors"
-import { httpInvoke, invoke, isRemoteRuntime } from "./runtime"
+import type {
+  ShellCapabilityLaunch,
+  ShellCapabilityScope,
+} from "@/types/electron-api"
+import { clientInstanceRequestOptions } from "./client-instance"
+import { invokeContract } from "./contracts"
+import { isRemoteRuntime } from "./runtime"
+
+// The `/workspace/*` calls go through their shared contracts
+// (`@betterc0de/schema/http-contracts`): the request is checked before it is
+// sent and the response validated before a caller sees it. The read models
+// are defined once, in `@betterc0de/schema`, and re-exported here.
 
 export type WorkspaceEffectiveRuleSource = SchemaWorkspaceEffectiveRuleSource
 export type WorkspaceEffectiveRulesResult = SchemaWorkspaceEffectiveRulesResult
@@ -19,12 +64,40 @@ export type WorkspaceContextSource = SchemaWorkspaceContextSource
 export type WorkspaceContextArtifactResult =
   SchemaWorkspaceContextArtifactResult
 
-export interface ShellInfo {
-  id: string
-  name: string
-  path: string
-  default?: boolean
+export type {
+  WorkspaceBinaryFile,
+  WorkspaceFileContent,
+  WorkspaceMapDirectory,
+  WorkspaceMapExtension,
+  WorkspaceMapFile,
+  WorkspaceMapFileKind,
+  WorkspaceMapOverview,
+  WorkspaceProjectAgent,
+  WorkspaceProjectCommand,
+  WorkspaceProjectConfigSetting,
+  WorkspaceProjectFormatResult,
+  WorkspaceProjectFormatRun,
+  WorkspaceProjectFormatter,
+  WorkspaceProjectInstruction,
+  WorkspaceProjectLspServer,
+  WorkspaceProjectMcpServer,
+  WorkspaceProjectPermissionRule,
+  WorkspaceProjectPlugin,
+  WorkspaceProjectProvider,
+  WorkspaceProjectProviderAuth,
+  WorkspaceProjectProviderModel,
+  WorkspaceProjectProvidersSummary,
+  WorkspaceProjectReference,
+  WorkspaceProjectSkill,
+  WorkspaceProjectToolFlag,
+  WorkspaceQuickOpenFile,
+  WorkspaceScratchAdoptResult,
+  WorkspaceSearchEntriesResult,
+  WorkspaceSearchEntriesTruncationReason,
+  WorkspaceSearchEntry,
 }
+
+export type { ShellInfo }
 
 /**
  * Probe the backend for available shells. Returns the list the backend
@@ -33,40 +106,17 @@ export interface ShellInfo {
  * picker; no auth/permission flags are required because the route is
  * read-only.
  */
-export const detectShells = () => httpInvoke<ShellInfo[]>("/shell/detect")
-
-/** One row of `/workspace/search`: project-relative, forward-slash `path`. */
-export interface WorkspaceSearchEntry {
-  path: string
-  name: string
-  is_dir: boolean
-}
-
-/** Why the backend stopped an entry walk early (`services/workspace/search`). */
-export type WorkspaceSearchEntriesTruncationReason =
-  | "results"
-  | "visited"
-  | "deadline"
-
-export interface WorkspaceSearchEntriesResult {
-  entries: WorkspaceSearchEntry[]
-  /** True when a cap stopped the walk; `entries` is then incomplete. */
-  truncated: boolean
-  truncatedReason?: WorkspaceSearchEntriesTruncationReason
-}
+export const detectShells = (): Promise<ShellInfo[]> =>
+  invokeContract("shellDetect")
 
 /**
- * The backend answers both search routes with a detailed object. A bare array
- * is what an older backend build sent (the dev sidecar is not hot-reloaded,
- * so a stale `dist` is a real state); it is accepted and reported as
- * complete because that is all such a backend can say.
+ * The truncation flag wins over a stray reason, so a UI keyed on
+ * `truncatedReason` alone can never show a cut that did not happen. Anything
+ * that is not a detailed result reads as an empty, complete one.
  */
 export function unwrapSearchEntriesResponse(
   raw: unknown
 ): WorkspaceSearchEntriesResult {
-  if (Array.isArray(raw)) {
-    return { entries: raw as WorkspaceSearchEntry[], truncated: false }
-  }
   const detailed = (raw ?? {}) as Partial<WorkspaceSearchEntriesResult>
   return {
     entries: Array.isArray(detailed.entries) ? detailed.entries : [],
@@ -77,12 +127,13 @@ export function unwrapSearchEntriesResponse(
   }
 }
 
-export const searchEntriesDetailed = (cwd: string, query: string) =>
-  invoke<unknown>("/workspace/search", {
-    args: { cwd, query },
-    method: "POST",
-    body: { cwd, query },
-  }).then(unwrapSearchEntriesResponse)
+export const searchEntriesDetailed = (
+  cwd: string,
+  query: string
+): Promise<WorkspaceSearchEntriesResult> =>
+  invokeContract("workspaceSearch", { body: { cwd, query } }).then(
+    unwrapSearchEntriesResponse
+  )
 
 /**
  * Array form kept for callers that only need the rows. It cannot tell the
@@ -130,19 +181,32 @@ export interface WorkspaceContentSearchDetailedResult {
   truncatedReason?: WorkspaceContentSearchTruncationReason
 }
 
-/** See {@link unwrapSearchEntriesResponse} for why a bare array is accepted. */
+const CONTENT_SEARCH_TRUNCATION_REASONS: ReadonlySet<string> =
+  new Set<WorkspaceContentSearchTruncationReason>([
+    "limit",
+    "files",
+    "bytes",
+    "deadline",
+  ])
+
+/**
+ * See {@link unwrapSearchEntriesResponse}. The wire's reason is any string
+ * (a newer desktop may add one); this client keeps only the reasons it knows.
+ */
 export function unwrapContentSearchResponse(
   raw: unknown
 ): WorkspaceContentSearchDetailedResult {
-  if (Array.isArray(raw)) {
-    return { results: raw as WorkspaceContentSearchResult[], truncated: false }
-  }
-  const detailed = (raw ?? {}) as Partial<WorkspaceContentSearchDetailedResult>
+  const detailed = (raw ?? {}) as Partial<
+    Omit<WorkspaceContentSearchDetailedResult, "truncatedReason">
+  > & { truncatedReason?: unknown }
+  const reason = detailed.truncatedReason
   return {
     results: Array.isArray(detailed.results) ? detailed.results : [],
     truncated: detailed.truncated === true,
-    ...(detailed.truncated === true && detailed.truncatedReason
-      ? { truncatedReason: detailed.truncatedReason }
+    ...(detailed.truncated === true &&
+    typeof reason === "string" &&
+    CONTENT_SEARCH_TRUNCATION_REASONS.has(reason)
+      ? { truncatedReason: reason as WorkspaceContentSearchTruncationReason }
       : {}),
   }
 }
@@ -151,14 +215,12 @@ export const searchContentDetailed = (
   cwd: string,
   query: string,
   limitOrOptions: number | WorkspaceContentSearchOptions = 200
-) => {
+): Promise<WorkspaceContentSearchDetailedResult> => {
   const options =
     typeof limitOrOptions === "number"
       ? { limit: limitOrOptions }
       : limitOrOptions
-  return invoke<unknown>("/workspace/search-content", {
-    args: { cwd, query, ...options },
-    method: "POST",
+  return invokeContract("workspaceSearchContent", {
     body: { cwd, query, ...options },
   }).then(unwrapContentSearchResponse)
 }
@@ -177,11 +239,6 @@ export const searchContent = (
     (result) => result.results
   )
 
-export interface WorkspaceQuickOpenFile {
-  path: string
-  name: string
-}
-
 export interface WorkspaceQuickOpenOptions {
   limit?: number
   include?: string
@@ -191,172 +248,52 @@ export const quickOpenFiles = (
   cwd: string,
   query: string,
   limitOrOptions: number | WorkspaceQuickOpenOptions = 80
-) => {
+): Promise<WorkspaceQuickOpenFile[]> => {
   const options =
     typeof limitOrOptions === "number"
       ? { limit: limitOrOptions }
       : limitOrOptions
-  return invoke<WorkspaceQuickOpenFile[]>("/workspace/quick-open", {
-    args: { cwd, query, ...options },
-    method: "POST",
+  return invokeContract("workspaceQuickOpen", {
     body: { cwd, query, ...options },
   })
 }
 
-export type WorkspaceMapFileKind = "source" | "config" | "docs" | "data"
+export const getWorkspaceMap = (
+  cwd: string,
+  maxFiles = 5000
+): Promise<WorkspaceMapOverview> =>
+  invokeContract("workspaceMap", { body: { cwd, maxFiles } })
 
-export interface WorkspaceMapFile {
-  path: string
-  name: string
-  directory: string
-  extension: string
-  sizeBytes: number
-  kind: WorkspaceMapFileKind
-}
+export const listProjectCommands = (
+  cwd: string
+): Promise<WorkspaceProjectCommand[]> =>
+  invokeContract("workspaceProjectCommands", { body: { cwd } })
 
-export interface WorkspaceMapDirectory {
-  path: string
-  name: string
-  fileCount: number
-  codeFileCount: number
-  totalBytes: number
-}
+export const listProjectAgents = (
+  cwd: string
+): Promise<WorkspaceProjectAgent[]> =>
+  invokeContract("workspaceProjectAgents", { body: { cwd } })
 
-export interface WorkspaceMapExtension {
-  extension: string
-  label: string
-  fileCount: number
-  codeFileCount: number
-  totalBytes: number
-}
+export const listProjectSkills = (
+  cwd: string
+): Promise<WorkspaceProjectSkill[]> =>
+  invokeContract("workspaceProjectSkills", { body: { cwd } })
 
-export interface WorkspaceMapOverview {
-  rootName: string
-  totalFiles: number
-  scannedFiles: number
-  codeFiles: number
-  totalBytes: number
-  truncated: boolean
-  files: WorkspaceMapFile[]
-  topDirectories: WorkspaceMapDirectory[]
-  extensions: WorkspaceMapExtension[]
-  importantFiles: WorkspaceMapFile[]
-  largestFiles: WorkspaceMapFile[]
-}
+export const listProjectMcpServers = (
+  cwd: string
+): Promise<WorkspaceProjectMcpServer[]> =>
+  invokeContract("workspaceProjectMcpServers", { body: { cwd } })
 
-export const getWorkspaceMap = (cwd: string, maxFiles = 5000) =>
-  invoke<WorkspaceMapOverview>("/workspace/map", {
-    args: { cwd, maxFiles },
-    method: "POST",
-    body: { cwd, maxFiles },
-  })
+export const listProjectInstructions = (
+  cwd: string
+): Promise<WorkspaceProjectInstruction[]> =>
+  invokeContract("workspaceProjectInstructions", { body: { cwd } })
 
-export interface WorkspaceProjectCommand {
-  name: string
-  description?: string
-  agent?: string
-  model?: string
-  subtask?: boolean
-  sourcePath: string
-  template: string
-}
-
-export const listProjectCommands = (cwd: string) =>
-  invoke<WorkspaceProjectCommand[]>("/workspace/project-commands", {
-    args: { cwd },
-    method: "POST",
-    body: { cwd },
-  })
-
-export interface WorkspaceProjectAgent {
-  id: string
-  name: string
-  description?: string
-  enabled: boolean
-  hidden?: boolean
-  mode?: string
-  model?: string
-  variant?: string
-  temperature?: number
-  topP?: number
-  color?: string
-  steps?: number
-  tools: Record<string, boolean>
-  optionKeys: string[]
-  permissions: WorkspaceProjectPermissionRule[]
-  sourcePath: string
-  prompt: string
-}
-
-export const listProjectAgents = (cwd: string) =>
-  invoke<WorkspaceProjectAgent[]>("/workspace/project-agents", {
-    args: { cwd },
-    method: "POST",
-    body: { cwd },
-  })
-
-export interface WorkspaceProjectSkill {
-  id: string
-  name: string
-  description?: string
-  sourcePath: string
-  sourceUrl?: string
-  content: string
-}
-
-export const listProjectSkills = (cwd: string) =>
-  invoke<WorkspaceProjectSkill[]>("/workspace/project-skills", {
-    args: { cwd },
-    method: "POST",
-    body: { cwd },
-  })
-
-export interface WorkspaceProjectMcpServer {
-  id: string
-  name: string
-  type: "local" | "remote"
-  command: string
-  args: string[]
-  env: Record<string, string>
-  envKeys?: string[]
-  headerKeys?: string[]
-  enabled: boolean
-  sourcePath: string
-  url?: string | null
-  timeoutMs?: number
-  oauth?: "auto" | "disabled" | "configured"
-  oauthKeys?: string[]
-  authStatus?: "authenticated" | "expired" | "not_authenticated"
-  authStorageKeys?: string[]
-  authSourcePath?: string
-  authServerUrl?: string | null
-}
-
-export const listProjectMcpServers = (cwd: string) =>
-  invoke<WorkspaceProjectMcpServer[]>("/workspace/project-mcp-servers", {
-    args: { cwd },
-    method: "POST",
-    body: { cwd },
-  })
-
-export interface WorkspaceProjectInstruction {
-  sourcePath: string
-  content: string
-}
-
-export const listProjectInstructions = (cwd: string) =>
-  invoke<WorkspaceProjectInstruction[]>("/workspace/project-instructions", {
-    args: { cwd },
-    method: "POST",
-    body: { cwd },
-  })
-
-export const getEffectiveRules = (cwd: string, targetPath = ".") =>
-  invoke<WorkspaceEffectiveRulesResult>("/workspace/effective-rules", {
-    args: { cwd, targetPath },
-    method: "POST",
-    body: { cwd, targetPath },
-  })
+export const getEffectiveRules = (
+  cwd: string,
+  targetPath = "."
+): Promise<WorkspaceEffectiveRulesResult> =>
+  invokeContract("workspaceEffectiveRules", { body: { cwd, targetPath } })
 
 export const getContextArtifact = (
   cwd: string,
@@ -371,7 +308,7 @@ export const getContextArtifact = (
       sizeBytes: number | null
     }>
   }
-) => {
+): Promise<WorkspaceContextArtifactResult> => {
   const normalizedThreadId = threadId?.trim()
   const pendingMessageCharacters = Math.max(
     0,
@@ -385,256 +322,57 @@ export const getContextArtifact = (
     ...(pendingMessageCharacters > 0 ? { pendingMessageCharacters } : {}),
     ...(pendingAttachments.length > 0 ? { pendingAttachments } : {}),
   }
-  return invoke<WorkspaceContextArtifactResult>("/workspace/context-artifact", {
-    args: request,
-    method: "POST",
-    body: request,
-  })
+  return invokeContract("workspaceContextArtifact", { body: request })
 }
 
-export interface WorkspaceProjectReference {
-  id: string
-  name: string
-  kind: "local" | "git" | "invalid"
-  sourcePath: string
-  path?: string
-  relativePath?: string
-  repository?: string
-  branch?: string
-  exists?: boolean
-  message?: string
-}
+export const listProjectReferences = (
+  cwd: string
+): Promise<WorkspaceProjectReference[]> =>
+  invokeContract("workspaceProjectReferences", { body: { cwd } })
 
-export const listProjectReferences = (cwd: string) =>
-  invoke<WorkspaceProjectReference[]>("/workspace/project-references", {
-    args: { cwd },
-    method: "POST",
-    body: { cwd },
-  })
-
-export interface WorkspaceProjectFormatter {
-  id: string
-  name: string
-  enabled: boolean
-  available?: boolean
-  sourcePath: string
-  command: string
-  args: string[]
-  env: Record<string, string>
-  extensions: string[]
-  builtin: boolean
-}
-
-export const listProjectFormatters = (cwd: string) =>
-  invoke<WorkspaceProjectFormatter[]>("/workspace/project-formatters", {
-    args: { cwd },
-    method: "POST",
-    body: { cwd },
-  })
-
-export interface WorkspaceProjectFormatRun {
-  id: string
-  name: string
-  sourcePath: string
-  command: string
-  args: string[]
-  success: boolean
-  exitCode: number | null
-  signal?: string | null
-  stdout: string
-  stderr: string
-  timedOut: boolean
-  skippedReason?: string
-}
-
-export interface WorkspaceProjectFormatResult {
-  file: string
-  formatted: boolean
-  results: WorkspaceProjectFormatRun[]
-  skippedReason?: string
-}
+export const listProjectFormatters = (
+  cwd: string
+): Promise<WorkspaceProjectFormatter[]> =>
+  invokeContract("workspaceProjectFormatters", { body: { cwd } })
 
 export const formatProjectFile = (
   cwd: string,
   relativePath: string,
   formatterId?: string
-) =>
-  invoke<WorkspaceProjectFormatResult>("/workspace/project-format", {
-    args: { cwd, relativePath, formatterId },
-    method: "POST",
+): Promise<WorkspaceProjectFormatResult> =>
+  invokeContract("workspaceProjectFormat", {
     body: { cwd, relativePath, formatterId },
   })
 
-export interface WorkspaceProjectLspServer {
-  id: string
-  name: string
-  enabled: boolean
-  sourcePath: string
-  command: string
-  args: string[]
-  env: Record<string, string>
-  extensions: string[]
-  initialization: Record<string, unknown>
-  builtin: boolean
-}
+export const listProjectLspServers = (
+  cwd: string
+): Promise<WorkspaceProjectLspServer[]> =>
+  invokeContract("workspaceProjectLspServers", { body: { cwd } })
 
-export const listProjectLspServers = (cwd: string) =>
-  invoke<WorkspaceProjectLspServer[]>("/workspace/project-lsp-servers", {
-    args: { cwd },
-    method: "POST",
-    body: { cwd },
-  })
+export const listProjectPermissions = (
+  cwd: string
+): Promise<WorkspaceProjectPermissionRule[]> =>
+  invokeContract("workspaceProjectPermissions", { body: { cwd } })
 
-export interface WorkspaceProjectPermissionRule {
-  permission: string
-  pattern: string
-  action: "ask" | "allow" | "deny"
-  sourcePath: string
-}
+export const listProjectConfigSettings = (
+  cwd: string
+): Promise<WorkspaceProjectConfigSetting[]> =>
+  invokeContract("workspaceProjectConfig", { body: { cwd } })
 
-export const listProjectPermissions = (cwd: string) =>
-  invoke<WorkspaceProjectPermissionRule[]>("/workspace/project-permissions", {
-    args: { cwd },
-    method: "POST",
-    body: { cwd },
-  })
+export const listProjectProviders = (
+  cwd: string
+): Promise<WorkspaceProjectProvidersSummary> =>
+  invokeContract("workspaceProjectProviders", { body: { cwd } })
 
-export interface WorkspaceProjectConfigSetting {
-  key: string
-  label: string
-  kind: "scalar" | "toggle" | "list" | "object"
-  value: string
-  sourcePath: string
-}
+export const listProjectPlugins = (
+  cwd: string
+): Promise<WorkspaceProjectPlugin[]> =>
+  invokeContract("workspaceProjectPlugins", { body: { cwd } })
 
-export const listProjectConfigSettings = (cwd: string) =>
-  invoke<WorkspaceProjectConfigSetting[]>("/workspace/project-config", {
-    args: { cwd },
-    method: "POST",
-    body: { cwd },
-  })
-
-export interface WorkspaceProjectProviderModel {
-  id: string
-  name?: string
-  family?: string
-  releaseDate?: string
-  sourcePath: string
-  attachment?: boolean
-  reasoning?: boolean
-  temperature?: boolean
-  toolCall?: boolean
-  interleaved?: boolean
-  interleavedField?: string
-  experimental?: boolean
-  status?: string
-  contextLimit?: number
-  inputLimit?: number
-  outputLimit?: number
-  inputModalities?: string[]
-  outputModalities?: string[]
-  cost?: Record<string, number>
-  contextOver200kCost?: Record<string, number>
-  providerApi?: string
-  providerNpm?: string
-  optionKeys: string[]
-  headerKeys: string[]
-  variants: string[]
-  disabledVariants: string[]
-}
-
-export interface WorkspaceProjectProvider {
-  id: string
-  name?: string
-  sourcePath: string
-  api?: string
-  npm?: string
-  env: string[]
-  whitelist: string[]
-  blacklist: string[]
-  optionKeys: string[]
-  hasApiKey: boolean
-  baseURL?: string
-  enterpriseUrl?: string
-  setCacheKey?: boolean
-  timeout?: number | false
-  chunkTimeout?: number
-  models: WorkspaceProjectProviderModel[]
-}
-
-export interface WorkspaceProjectProviderAuth {
-  serviceId: string
-  sourcePath: string
-  accountCount: number
-  credentialTypes: string[]
-  activeAccountId?: string
-  activeDescription?: string
-  activeCredentialType?: string
-  activeExpiresAt?: number
-  activeExpired?: boolean
-  metadataKeys?: string[]
-}
-
-export interface WorkspaceProjectProvidersSummary {
-  defaultModel?: string
-  smallModel?: string
-  enabledProviders: string[]
-  disabledProviders: string[]
-  providers: WorkspaceProjectProvider[]
-  authAccounts: WorkspaceProjectProviderAuth[]
-}
-
-export const listProjectProviders = (cwd: string) =>
-  invoke<WorkspaceProjectProvidersSummary>("/workspace/project-providers", {
-    args: { cwd },
-    method: "POST",
-    body: { cwd },
-  })
-
-export interface WorkspaceProjectPlugin {
-  id: string
-  spec: string
-  kind: "npm" | "file" | "url" | "invalid"
-  sourcePath: string
-  optionsKeys: string[]
-  path?: string
-  relativePath?: string
-  exists?: boolean
-  message?: string
-  skipped?: boolean
-  skippedReason?: string
-  metaSourcePath?: string
-  metaSource?: "file" | "npm"
-  metaTarget?: string
-  metaRequested?: string
-  metaVersion?: string
-  metaLoadCount?: number
-  metaLastTime?: number
-  metaTimeChanged?: number
-  metaThemes?: string[]
-}
-
-export const listProjectPlugins = (cwd: string) =>
-  invoke<WorkspaceProjectPlugin[]>("/workspace/project-plugins", {
-    args: { cwd },
-    method: "POST",
-    body: { cwd },
-  })
-
-export interface WorkspaceProjectToolFlag {
-  tool: string
-  enabled: boolean
-  sourcePath: string
-  kind?: "flag" | "custom"
-  exportName?: string
-}
-
-export const listProjectTools = (cwd: string) =>
-  invoke<WorkspaceProjectToolFlag[]>("/workspace/project-tools", {
-    args: { cwd },
-    method: "POST",
-    body: { cwd },
-  })
+export const listProjectTools = (
+  cwd: string
+): Promise<WorkspaceProjectToolFlag[]> =>
+  invokeContract("workspaceProjectTools", { body: { cwd } })
 
 /**
  * Resolve `{cwd, relativePath}` for `/workspace/read` from a single-string
@@ -646,10 +384,6 @@ export const listProjectTools = (cwd: string) =>
  * - A relative path is resolved against the active worktree/project.
  * - Without an active workspace, an absolute path is split at its last
  *   separator and bare filenames keep the legacy `"."` fallback.
- *
- * Dynamic require into chat-store avoids a module cycle at load time
- * (`workspaceApi` ← `editor-store` ← `chat-store` ← `workspaceApi`).
- * By the time any read fires the store is always initialised.
  */
 export function splitReadPathForWorkspace(
   path: string,
@@ -698,37 +432,76 @@ export function splitReadPathForKnownRoots(
   return null
 }
 
-function splitReadPath(path: string): { cwd: string; relativePath: string } {
-  let workspacePath: string | null = null
-  const knownRoots: string[] = []
-  try {
-    const { useChatStore } =
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require("@/lib/chat-store") as typeof import("@/lib/chat-store")
-    const state = useChatStore.getState()
-    const active = state.threads.find((t) => t.id === state.activeThreadId)
-    workspacePath =
-      active?.worktreePath?.trim() || active?.projectPath?.trim() || null
-    // The pane grid can show a file from a project other than the active
-    // thread's (file tree in another pane, file-editor modal). Every thread
-    // root the renderer knows is a backend-approved root, so collect them
-    // all as containment candidates — active thread first.
-    for (const thread of state.threads) {
-      for (const root of [thread.worktreePath, thread.projectPath]) {
-        const value = typeof root === "string" ? root.trim() : ""
-        if (value && !knownRoots.includes(value)) knownRoots.push(value)
-      }
+/** Workspace roots the renderer knows, used to resolve a single-string read path. */
+export interface WorkspaceReadRoots {
+  /** The active thread's worktree or project root. */
+  readonly active: string | null
+  /** Every thread root, active first. Each is a backend-approved root. */
+  readonly known: readonly string[]
+}
+
+/** Collects read roots from chat state. Pure so it is testable without the store. */
+export function workspaceReadRootsFromThreads(state: {
+  readonly activeThreadId: string | null
+  readonly threads: ReadonlyArray<{
+    readonly id: string
+    readonly worktreePath?: string | null
+    readonly projectPath?: string | null
+  }>
+}): WorkspaceReadRoots {
+  const active = state.threads.find((t) => t.id === state.activeThreadId)
+  const activeRoot =
+    active?.worktreePath?.trim() || active?.projectPath?.trim() || null
+  // The pane grid can show a file from a project other than the active
+  // thread's (file tree in another pane, file-editor modal). Every thread
+  // root the renderer knows is a backend-approved root, so collect them
+  // all as containment candidates — active thread first.
+  const known: string[] = activeRoot ? [activeRoot] : []
+  for (const thread of state.threads) {
+    for (const root of [thread.worktreePath, thread.projectPath]) {
+      const value = typeof root === "string" ? root.trim() : ""
+      if (value && !known.includes(value)) known.push(value)
     }
-  } catch {
-    // Store not yet ready (very early boot) — fall through.
   }
+  return { active: activeRoot, known }
+}
+
+/**
+ * Reads the roots from the chat store. The store is imported on demand, not
+ * statically: it depends on this module (through editor-store), so a static
+ * import would form a load-time cycle. A dynamic `import()` is resolved by the
+ * bundler and returns the already-loaded module; the `require()` used before
+ * does not exist in the sandboxed ESM renderer and always threw, which left
+ * every read without its workspace root.
+ */
+async function currentWorkspaceReadRoots(): Promise<WorkspaceReadRoots> {
+  try {
+    const { useChatStore } = await import("@/lib/chat-store")
+    return workspaceReadRootsFromThreads(useChatStore.getState())
+  } catch (error) {
+    console.warn("[workspace] could not read workspace roots:", error)
+    return { active: null, known: [] }
+  }
+}
+
+/** Resolves `{cwd, relativePath}` for `/workspace/read` against known roots. */
+export function splitReadPathForRoots(
+  path: string,
+  roots: WorkspaceReadRoots
+): { cwd: string; relativePath: string } {
   return (
-    splitReadPathForKnownRoots(path, [workspacePath, ...knownRoots]) ??
-    splitReadPathForWorkspace(path, workspacePath) ?? {
-      cwd: workspacePath || ".",
+    splitReadPathForKnownRoots(path, roots.known) ??
+    splitReadPathForWorkspace(path, roots.active) ?? {
+      cwd: roots.active || ".",
       relativePath: normalizeEditorPath(path).replace(/^\/+/, ""),
     }
   )
+}
+
+async function splitReadPath(
+  path: string
+): Promise<{ cwd: string; relativePath: string }> {
+  return splitReadPathForRoots(path, await currentWorkspaceReadRoots())
 }
 
 /**
@@ -739,23 +512,20 @@ function splitReadPath(path: string): { cwd: string; relativePath: string } {
  *   and would otherwise spam DevTools. The Promise still rejects with an
  *   {@link HttpError}, so caller try/catch logic is unchanged.
  */
-export const readFile = (path: string, opts?: { silent404?: boolean }) =>
-  httpInvoke<{ content: string; path: string }>("/workspace/read", {
-    method: "POST",
-    body: splitReadPath(path),
+export const readFile = async (
+  path: string,
+  opts?: { silent404?: boolean }
+): Promise<WorkspaceFileContent> =>
+  invokeContract("workspaceRead", {
+    body: await splitReadPath(path),
     silentStatuses: opts?.silent404 ? [404] : undefined,
   })
 
-export interface WorkspaceBinaryFile {
-  base64: string
+export const readBinaryFile = async (
   path: string
-  size: number
-}
-
-export const readBinaryFile = (path: string) =>
-  httpInvoke<WorkspaceBinaryFile>("/workspace/read-binary", {
-    method: "POST",
-    body: splitReadPath(path),
+): Promise<WorkspaceBinaryFile> =>
+  invokeContract("workspaceReadBinary", {
+    body: await splitReadPath(path),
     // During renderer HMR an older development sidecar can briefly lack this
     // route. The preview surfaces a useful restart message without flooding
     // DevTools with duplicate React StrictMode errors.
@@ -796,7 +566,7 @@ export const writeFile = (
   relativePath: string,
   contents: string,
   options: { expectedSha256?: string | null } = {}
-) => {
+): Promise<void> => {
   const body = {
     cwd,
     relativePath,
@@ -805,24 +575,17 @@ export const writeFile = (
       ? {}
       : { expectedSha256: options.expectedSha256 }),
   }
-  return invoke<void>("/workspace/write", {
-    args: body,
-    method: "POST",
-    body,
-  }).then((result) => {
+  return invokeContract("workspaceWrite", { body }).then(() => {
     dispatchWorkspaceFileChanged(cwd, relativePath)
-    return result
   })
 }
 
-export const createDirectory = (cwd: string, relativePath: string) =>
-  invoke<void>("/workspace/mkdir", {
-    args: { cwd, relativePath },
-    method: "POST",
-    body: { cwd, relativePath },
-  }).then((result) => {
+export const createDirectory = (
+  cwd: string,
+  relativePath: string
+): Promise<void> =>
+  invokeContract("workspaceMkdir", { body: { cwd, relativePath } }).then(() => {
     dispatchWorkspaceFileChanged(cwd, relativePath)
-    return result
   })
 
 /**
@@ -830,56 +593,57 @@ export const createDirectory = (cwd: string, relativePath: string) =>
  * being forked into. Files already present in the destination are reported as
  * `skipped` rather than overwritten.
  */
-export const adoptScratchWorkspace = (threadId: string, destination: string) =>
-  invoke<{ copied: number; skipped: string[]; truncated?: boolean }>(
-    "/workspace/scratch/adopt",
-    {
-      args: { threadId, destination },
-      method: "POST",
-      body: { threadId, destination },
-    }
-  )
+export const adoptScratchWorkspace = (
+  threadId: string,
+  destination: string
+): Promise<WorkspaceScratchAdoptResult> =>
+  invokeContract("workspaceScratchAdopt", {
+    body: { threadId, destination },
+  })
 
 export const moveWorkspacePath = (
   cwd: string,
   fromRelativePath: string,
   toRelativePath: string
-) =>
-  invoke<void>("/workspace/move", {
-    args: { cwd, fromRelativePath, toRelativePath },
-    method: "POST",
+): Promise<void> =>
+  invokeContract("workspaceMove", {
     body: { cwd, fromRelativePath, toRelativePath },
-  }).then((result) => {
+  }).then(() => {
     dispatchWorkspaceFileChanged(cwd, toRelativePath, {
       previousRelativePath: fromRelativePath,
       previousPath: normalizedWorkspacePath(cwd, fromRelativePath),
     })
-    return result
   })
 
 export const deleteWorkspacePath = (
   cwd: string,
   relativePath: string,
   recursive = false
-) =>
-  invoke<void>("/workspace/delete", {
-    args: { cwd, relativePath, recursive },
-    method: "POST",
+): Promise<void> =>
+  invokeContract("workspaceDelete", {
     body: { cwd, relativePath, recursive },
-  }).then((result) => {
+  }).then(() => {
     dispatchWorkspaceFileChanged(cwd, relativePath, { deleted: true })
-    return result
   })
 
-type HumanShellCapabilityScope =
-  | { operation: "run"; command: string; cwd: string }
-  | {
-      operation: "pty-open"
-      cwd: string
-      sessionId?: string
-      command?: string
-    }
-  | { operation: "pty-write"; sessionId: string; data: string }
+type HumanShellCapabilityScope = ShellCapabilityScope
+
+/**
+ * The launch a capability is bound to: exactly the shell, PTY arguments and
+ * environment the request that spends it sends (the backend refuses the
+ * capability for any other). Absent fields stay absent ("the default").
+ */
+function shellCapabilityLaunch(input: {
+  shell?: string
+  args?: string[]
+  env?: Record<string, string>
+}): ShellCapabilityLaunch {
+  return {
+    ...(input.shell !== undefined ? { shell: input.shell } : {}),
+    ...(input.args !== undefined ? { args: input.args } : {}),
+    ...(input.env !== undefined ? { env: input.env } : {}),
+  }
+}
 
 const REMOTE_TERMINAL_HINT =
   'Enable "Allow terminal from remote devices" in Remote Access settings on the desktop app.'
@@ -938,10 +702,7 @@ const requestHumanShellCapability = async (
   // host's decision (`remote_access_allow_terminal`), not something the
   // renderer can know up front.
   try {
-    const result = await httpInvoke<{ capability: string }>(
-      "/shell/capability",
-      { method: "POST", body: scope }
-    )
+    const result = await invokeContract("shellCapability", { body: scope })
     return result.capability
   } catch (error) {
     throw remoteShellCapabilityError(error)
@@ -957,40 +718,46 @@ export const terminalOpen = async (input: {
   env?: Record<string, string>
   cols?: number
   rows?: number
-}) => {
+}): Promise<TerminalPtySnapshot> => {
   const humanCapability = await requestHumanShellCapability({
     operation: "pty-open",
     cwd: input.cwd,
     sessionId: input.sessionId,
     command: input.command,
+    launch: shellCapabilityLaunch(input),
   })
-  return httpInvoke<TerminalPtySnapshot>("/shell/pty/open", {
-    method: "POST",
+  return invokeContract("terminalOpen", {
     body: {
       ...input,
       humanOrigin: true,
       permissionLevel: "bypass",
       humanCapability,
     },
+    // The desktop shell ends this terminal when the page goes away.
+    ...clientInstanceRequestOptions(),
   })
 }
 
-export const terminalRead = (sessionId: string, cursor = 0) =>
-  httpInvoke<TerminalPtySnapshot>("/shell/pty/read", {
-    method: "POST",
+export const terminalRead = (
+  sessionId: string,
+  cursor = 0
+): Promise<TerminalPtySnapshot> =>
+  invokeContract("terminalRead", {
     body: { sessionId, cursor },
     timeoutMs: 15_000,
     silentStatuses: [404],
   })
 
-export const terminalWrite = async (sessionId: string, data: string) => {
+export const terminalWrite = async (
+  sessionId: string,
+  data: string
+): Promise<{ ok: boolean }> => {
   const humanCapability = await requestHumanShellCapability({
     operation: "pty-write",
     sessionId,
     data,
   })
-  return httpInvoke<{ ok: boolean }>("/shell/pty/write", {
-    method: "POST",
+  return invokeContract("terminalWrite", {
     body: {
       sessionId,
       data,
@@ -998,12 +765,24 @@ export const terminalWrite = async (sessionId: string, data: string) => {
       permissionLevel: "bypass",
       humanCapability,
     },
+    // The terminal ended between two keystrokes: the caller shows that.
+    silentStatuses: [404],
   })
 }
 
-export const terminalClose = (sessionId: string) =>
-  httpInvoke<{ ok: boolean }>("/shell/pty/close", {
-    method: "POST",
+/** Tells the shell the terminal's new size; a 404 means it has ended. */
+export const terminalResize = (
+  sessionId: string,
+  cols: number,
+  rows: number
+): Promise<{ ok: boolean }> =>
+  invokeContract("terminalResize", {
+    body: { sessionId, cols, rows },
+    silentStatuses: [404],
+  })
+
+export const terminalClose = (sessionId: string): Promise<{ ok: boolean }> =>
+  invokeContract("terminalClose", {
     body: { sessionId },
     silentStatuses: [404],
   })
@@ -1014,7 +793,7 @@ export const runShellCommandDetailed = async (
   shell?: string,
   env?: Record<string, string>,
   opts?: { humanOrigin?: boolean; permissionLevel?: string }
-) => {
+): Promise<ShellCommandResult> => {
   // Read-only git/gh queries and similar commands (classified as `read` by
   // the backend) pass the permission gate without extra flags. For anything
   // that may classify as `execute`, the caller must mark it human-origin
@@ -1024,19 +803,14 @@ export const runShellCommandDetailed = async (
   const permissionLevel =
     opts?.permissionLevel ?? (humanOrigin ? "bypass" : undefined)
   const humanCapability = humanOrigin
-    ? await requestHumanShellCapability({ operation: "run", command, cwd })
+    ? await requestHumanShellCapability({
+        operation: "run",
+        command,
+        cwd,
+        launch: shellCapabilityLaunch({ shell, env }),
+      })
     : undefined
-  return invoke<ShellCommandResult>("/shell/run", {
-    args: {
-      command,
-      cwd,
-      shell,
-      env,
-      humanOrigin,
-      permissionLevel,
-      humanCapability,
-    },
-    method: "POST",
+  return invokeContract("shellRun", {
     body: {
       command,
       cwd,
@@ -1046,6 +820,7 @@ export const runShellCommandDetailed = async (
       permissionLevel,
       humanCapability,
     },
+    ...clientInstanceRequestOptions(),
   })
 }
 

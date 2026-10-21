@@ -2,7 +2,7 @@ import { FolderOpenIcon, SquarePenIcon } from "lucide-react"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { pickFolder } from "@/services/backend"
+import { pickFolder } from "@/services/backend/runtime"
 import { useChatStore } from "@/lib/chat-store"
 import { usePreferencesStore } from "@/lib/preferences-store"
 import {

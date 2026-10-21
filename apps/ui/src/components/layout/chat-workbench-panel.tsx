@@ -4,6 +4,7 @@ import type { ComposerTabs } from "@/components/layout/composer-tabs"
 import { ChatSwitcherMenu } from "@/components/layout/chat-switcher-menu"
 import { EditorChatStack } from "@/components/layout/editor-chat-stack"
 import { ChatToolbar } from "@/components/chat/chat-toolbar"
+import { CompareSwitcher } from "@/components/chat/compare-group"
 
 /**
  * The chat container of the editor-style workbench: an inset rounded card
@@ -59,6 +60,8 @@ export function ChatWorkbenchPanel({
           {...tabs}
           projectPath={activeThread?.worktreePath || activeThread?.projectPath}
         />
+        {/* The chats one prompt started with several models. */}
+        <CompareSwitcher threadId={activeThread?.id} />
         <ChatToolbar
           thread={activeThread}
           onConfirm={setConfirmAction}

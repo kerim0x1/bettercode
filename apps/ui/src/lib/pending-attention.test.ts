@@ -197,4 +197,21 @@ describe("deriveThreadAttention", () => {
       "plan:plan-1",
     ])
   })
+
+  // The phone counts the same requests (`@betterc0de/schema/pending-requests`).
+  it("counts a question request without questions, and settles it by any resolution", () => {
+    const asked = activity("user-input.requested", { requestId: "input-9" })
+    const open = deriveThreadAttention("thread-1", [asked])
+    expect(open.questions).toBe(1)
+    expect(open.openRequestKeys).toEqual(["input:input-9"])
+
+    const cancelled = deriveThreadAttention("thread-1", [
+      asked,
+      activity("approval.resolved", {
+        requestId: "input-9",
+        decision: "cancel",
+      }),
+    ])
+    expect(cancelled.total).toBe(0)
+  })
 })

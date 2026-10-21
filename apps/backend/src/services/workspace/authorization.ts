@@ -1,13 +1,30 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { AppState } from "../../appState"
+import type { ServerConfig } from "../../config"
 import { HttpError } from "../../errors"
+import type { Db } from "../../persistence/db"
+import type {
+  ProjectProjectionQuery,
+  WorktreeRegistryQuery,
+} from "../../persistence/projections"
+import type { ThreadWorkspaceLookup } from "../checkpoint-recovery-fence"
 import { isScratchWorkspacePath } from "../scratchWorkspace"
+import type { ThreadService } from "../threads"
 
-type WorkspaceRegistryState = Pick<
-  AppState,
-  "db" | "config" | "projectProjections" | "threads" | "worktreeRegistry"
->
+/**
+ * What the registry of approved workspace roots is built from: the
+ * registered projects, the threads' projects and the ready worktrees, cached
+ * by the database's workspace read revision; the app data directory approves
+ * its scratch tree.
+ */
+export interface WorkspaceRegistryState {
+  readonly db: Pick<Db, "prepare">
+  readonly config: Pick<ServerConfig, "dataDir">
+  readonly projectProjections: Pick<ProjectProjectionQuery, "listAll">
+  readonly threads: Pick<ThreadService, "listProjects">
+  readonly worktreeRegistry: Pick<WorktreeRegistryQuery, "listAll">
+}
 interface RootRegistry {
   revision: number | null
   roots: Promise<Map<string, string[]>>
@@ -39,13 +56,6 @@ export async function openWorkspaceRoot(
   }
   // Preserves an explicit untrusted decision. Registration allows metadata
   // reads; the permission policy continues to gate tools and mutations.
-  if (!state.agentPermissions) {
-    throw new HttpError(
-      503,
-      "Workspace permission service is unavailable.",
-      "permissions_unavailable"
-    )
-  }
   state.agentPermissions.ensureWorkspaceTrusted(canonical)
   const roots = openedRoots.get(state) ?? new Set<string>()
   roots.add(canonical)
@@ -55,7 +65,6 @@ export async function openWorkspaceRoot(
 }
 
 function registryRevision(state: WorkspaceRegistryState): number | null {
-  if (!state.db) return null
   return (
     state.db
       .prepare(
@@ -70,15 +79,15 @@ async function loadRegisteredRoots(
 ): Promise<Map<string, string[]>> {
   const approved = new Set<string>()
   for (const opened of openedRoots.get(state) ?? []) approved.add(opened)
-  for (const project of state.projectProjections?.listAll?.() ?? []) {
+  for (const project of state.projectProjections.listAll()) {
     if (project.path?.trim()) approved.add(project.path)
   }
-  for (const project of (state.threads?.listProjects?.() ?? []) as Array<{
+  for (const project of state.threads.listProjects() as Array<{
     path?: string
   }>) {
     if (project.path?.trim()) approved.add(project.path)
   }
-  for (const worktree of state.worktreeRegistry?.listAll?.() ?? []) {
+  for (const worktree of state.worktreeRegistry.listAll()) {
     if (worktree.state === "ready" && worktree.worktree_path?.trim())
       approved.add(worktree.worktree_path)
   }
@@ -120,7 +129,7 @@ export async function resolveApprovedWorkspaceRoot(
       "workspace_unavailable"
     )
   if (
-    state.config?.dataDir &&
+    state.config.dataDir &&
     isScratchWorkspacePath(state.config.dataDir, requested)
   )
     return requested
@@ -176,24 +185,23 @@ export async function resolveApprovedWorkspaceRoot(
  * thread to another registered project through `/chat/send`.
  */
 export async function resolveChatWorkspaceRoot(
-  state: AppState,
+  state: WorkspaceRegistryState & ThreadWorkspaceLookup,
   threadId: string,
   requestedRoot?: string | null
 ): Promise<string | null> {
   const worktree =
-    state.worktrees?.findForThread?.(threadId) ??
-    state.worktreeRegistry?.findByThread?.(threadId) ??
+    state.worktrees.findForThread(threadId) ??
+    state.worktreeRegistry.findByThread(threadId) ??
     null
   const readyWorktreePath =
     worktree?.state?.trim().toLowerCase() === "ready"
       ? worktree.worktree_path?.trim()
       : null
   const threadProjectPath =
-    state.threads?.getThreadProjectPath?.(threadId)?.trim() || null
+    state.threads.getThreadProjectPath(threadId)?.trim() || null
   const providerWorkspace =
-    state.providerSessionBindings
-      ?.getLatestForThread?.(threadId)
-      ?.cwd?.trim() || null
+    state.providerSessionBindings.getLatestForThread(threadId)?.cwd?.trim() ||
+    null
   const boundRoot =
     readyWorktreePath || threadProjectPath || providerWorkspace || null
   const requested = requestedRoot?.trim() || null

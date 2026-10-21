@@ -8,6 +8,12 @@
  * SSRF, refuses to follow redirects (a 302 to an internal host would defeat
  * the DNS check), and caps response size. User confirmation happens in-app
  * (ConfirmActionDialog in the renderer) before these handlers are invoked.
+ *
+ * BetterC0de's own skills (`skills/<id>/manifest.json` + `content.md` in the
+ * runtime home) belong to the backend: this process reads and writes them
+ * only through `/api/v1/config/skills` (shared/desktop-config-client.cjs).
+ * The copies it keeps in the provider CLIs' own folders (`~/.codex/skills`,
+ * `~/.claude/skills`) are still written here.
  */
 
 const fs = require("fs")
@@ -16,22 +22,18 @@ const path = require("path")
 const { IpcChannel } = require("./shared/ipc-contract.cjs")
 const { safeHandle, rawHandle } = require("./shared/ipc-handlers-factory.cjs")
 const appConfig = require("./shared/appConfig.cjs")
-const {
-  readJson,
-  writeJson,
-  readText,
-  writeText,
-} = require("./shared/json-fs.cjs")
+const { readText, writeText } = require("./shared/json-fs.cjs")
 const {
   assertSafePublicHost,
   resolvePublicHostPinned,
-  assertPathContained,
 } = require("./shared/security-checks.cjs")
+const { ensureDir, slugify } = require("./shared/runtime-paths.cjs")
 const {
-  getRuntimePaths,
-  ensureDir,
-  slugify,
-} = require("./shared/runtime-paths.cjs")
+  getDirectoryEntry,
+  listDirectory,
+  putDirectoryEntry,
+  removeDirectoryEntry,
+} = require("./shared/desktop-config-client.cjs")
 
 function parseSkillContentFromPath(skillPath) {
   if (!skillPath) return ""
@@ -184,56 +186,26 @@ function deleteClaudeSkillCopy(manifest, id) {
   }
 }
 
-function listSkillDirs() {
-  const { skillsDir } = getRuntimePaths()
-  ensureDir(skillsDir)
-  return fs
-    .readdirSync(skillsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
+/** The ids (folder names) of BetterC0de's readable skills. */
+async function listSkillDirs() {
+  return (await listDirectory("skills")).map((entry) => entry.id)
 }
 
-function readSkills() {
-  const { skillsDir } = getRuntimePaths()
-  return listSkillDirs()
-    .map((name) => {
-      try {
-        const dir = path.join(skillsDir, name)
-        const manifest = readJson(path.join(dir, "manifest.json"), null, {
-          warn: "skills-ipc",
-        })
-        if (!manifest) return null
-        const content = readText(path.join(dir, "content.md"), "", {
-          warn: "skills-ipc",
-        })
-        return {
-          ...manifest,
-          enabled: manifest.enabled !== false,
-          content,
-        }
-      } catch {
-        return null
-      }
-    })
-    .filter(Boolean)
+async function readSkills() {
+  return (await listDirectory("skills")).map(({ manifest, text }) => ({
+    ...manifest,
+    enabled: manifest.enabled !== false,
+    content: text,
+  }))
 }
 
 /** Persist a skill into its per-id directory. Returns `{id}` on success;
  *  the IPC layer wraps that into the standard envelope. */
-function saveSkill(data) {
-  const { skillsDir } = getRuntimePaths()
+async function saveSkill(data) {
   const id = slugify(data.id || data.name)
   if (!id) throw new Error("Skill id is required")
-  const dir = path.join(skillsDir, id)
-  ensureDir(dir)
 
-  const existing = readJson(
-    path.join(dir, "manifest.json"),
-    {},
-    {
-      warn: "skills-ipc",
-    }
-  )
+  const existing = (await getDirectoryEntry("skills", id))?.manifest ?? {}
   const now = new Date().toISOString()
   const manifest = {
     id,
@@ -256,30 +228,31 @@ function saveSkill(data) {
   }
 
   const content = data.content || ""
-  writeJson(path.join(dir, "manifest.json"), manifest)
-  writeText(path.join(dir, "content.md"), content)
+  // undefined fields are left out, as the file writer always did.
+  await putDirectoryEntry(
+    "skills",
+    id,
+    JSON.parse(JSON.stringify(manifest)),
+    content,
+  )
   syncCodexSkill(manifest, content)
   syncClaudeSkill(manifest, content)
   return { id }
 }
 
-function deleteSkill(id) {
-  const { skillsDir } = getRuntimePaths()
+async function deleteSkill(id) {
   const safeId = slugify(id)
   if (!safeId) throw new Error("Invalid skill id")
-  const dir = assertPathContained(skillsDir, safeId, "Skill path")
-  const manifest = readJson(path.join(dir, "manifest.json"), null, {
-    warn: "skills-ipc",
-  })
+  const manifest = (await getDirectoryEntry("skills", safeId))?.manifest ?? null
   if (manifest) deleteCodexSkillCopy(manifest, safeId)
   if (manifest) deleteClaudeSkillCopy(manifest, safeId)
-  if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true })
+  await removeDirectoryEntry("skills", safeId)
 }
 
-function importScannedSkills(skills) {
+async function importScannedSkills(skills) {
   for (const skill of skills || []) {
     const content = parseSkillContentFromPath(skill.path)
-    saveSkill({
+    await saveSkill({
       id: skill.id || skill.name,
       name: skill.name,
       description: skill.source
@@ -313,7 +286,7 @@ function registerSkillsHandlers() {
   )
 
   safeHandle(IpcChannel.SkillDelete, async (_event, { id } = {}) => {
-    deleteSkill(id)
+    await deleteSkill(id)
   })
 
   safeHandle(IpcChannel.SkillImportUrl, async (_event, { url, name } = {}) => {

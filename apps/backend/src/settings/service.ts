@@ -227,6 +227,17 @@ function normalizeProviderInstanceConfigPatch(
   return normalized
 }
 
+/**
+ * Settings keys whose values moved to the desktop configuration files
+ * (services/desktop-config/migration.ts `LEGACY_DESKTOP_CONFIG_SETTINGS_KEYS`).
+ */
+const RELOCATED_SETTINGS_KEYS = [
+  "custom_rules",
+  "skills",
+  "mcp_servers",
+  "hooks",
+] as const
+
 export class InvalidSettingsPatchError extends HttpError {
   constructor(message: string) {
     super(400, message, "invalid_settings_patch")
@@ -948,9 +959,9 @@ export class SettingsService extends EventEmitter {
    * opportunistically upgrade legacy settings files on the next write.
    */
   /**
-   * Defaults for a file that exists but cannot be applied. A missing file
-   * keeps the product default, including auto-trust. A present file that
-   * we refuse to parse must not turn auto-trust back on.
+   * Defaults for a file that exists but cannot be applied. Auto-trust is off
+   * by default; a present file that we refuse to parse must not turn it on
+   * either, whatever the default becomes.
    */
   private static settingsForUnusableFile(): Settings {
     return { ...defaultSettings(), auto_trust_workspaces: false }
@@ -1100,6 +1111,18 @@ export class SettingsService extends EventEmitter {
       if (this.undecryptableSecretPaths.length > 0) {
         throw new InvalidSettingsPatchError(
           `Settings contain encrypted secrets that cannot be decrypted (${this.undecryptableSecretPaths.join(", ")}). Writes are disabled until the original encryption key is restored.`
+        )
+      }
+
+      // The desktop configuration has one store now (the runtime home's
+      // files, services/desktop-config); its legacy settings keys may only be
+      // removed (set to `undefined` by the migration), never stored again.
+      const relocated = RELOCATED_SETTINGS_KEYS.filter(
+        (key) => Object.hasOwn(patch, key) && patch[key] !== undefined
+      )
+      if (relocated.length > 0) {
+        throw new InvalidSettingsPatchError(
+          `${relocated.join(", ")} moved out of settings: rules, skills, MCP servers and hooks are saved in the desktop's configuration files.`
         )
       }
 

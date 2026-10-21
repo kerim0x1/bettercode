@@ -20,11 +20,9 @@ function lineCount(relative: string): number {
 }
 
 /**
- * Code only: comments and import declarations are stripped. Imports are
- * excluded on purpose — the generic ACP protocol helpers (`AcpJsonRpcClient`,
- * `AcpMcpServers`, the config-option heuristics in `CursorAcpSupport`) still
- * live under `cursor/` and are imported under neutral aliases; what must not
- * appear is vendor knowledge in the logic itself.
+ * Code only: comments and import declarations are stripped; what must not
+ * appear is vendor knowledge in the logic itself. The vendor-folder imports
+ * are checked separately below.
  */
 function logicOnly(source: string): string {
   return source
@@ -34,8 +32,23 @@ function logicOnly(source: string): string {
     .replace(/^import\s+["'][^"']+["']\s*$/gm, "")
 }
 
+/** The provider-neutral ACP modules: the bases and the protocol helpers. */
+const GENERIC_ACP_MODULES = [
+  "acp/AcpAdapterBase.ts",
+  "acp/AcpRuntimeBase.ts",
+  "acp/AcpJsonRpcClient.ts",
+  "acp/AcpMcpServers.ts",
+  "acp/AcpSessionConfig.ts",
+]
+
+function importSpecifiers(source: string): string[] {
+  return [...source.matchAll(/^import[\s\S]*?from\s+["']([^"']+)["']/gm)].map(
+    (match) => match[1]!
+  )
+}
+
 describe("ACP base structure", () => {
-  it.each(["acp/AcpAdapterBase.ts", "acp/AcpRuntimeBase.ts"])(
+  it.each(GENERIC_ACP_MODULES)(
     "%s carries no vendor knowledge outside comments and imports",
     (file) => {
       const logic = logicOnly(read(file))
@@ -47,6 +60,27 @@ describe("ACP base structure", () => {
       expect(hits).toEqual([])
     }
   )
+
+  it.each(GENERIC_ACP_MODULES)(
+    "%s never imports from a provider folder",
+    (file) => {
+      // A vendor module under a generic one inverts the dependency: a
+      // Cursor-only change could then break Grok and the API MCP path.
+      const vendorImports = importSpecifiers(read(file)).filter((specifier) =>
+        /(^|\/)(cursor|grok-cli)\//.test(specifier)
+      )
+      expect(vendorImports).toEqual([])
+    }
+  )
+
+  it("keeps the generic ACP helpers out of the provider folders", () => {
+    for (const moved of [
+      "cursor/AcpJsonRpcClient.ts",
+      "cursor/AcpMcpServers.ts",
+    ]) {
+      expect(fs.existsSync(path.join(runtimeDir, moved)), moved).toBe(false)
+    }
+  })
 
   it.each([
     "cursor/CursorAcpAdapter.ts",

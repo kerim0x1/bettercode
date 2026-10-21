@@ -22,7 +22,7 @@ npm ci
 npm run dev
 ```
 
-Run commands from the repository root. `npm ci` uses the committed lockfile. The postinstall hook aligns SQLite's native binding with your local Node runtime. Development starts the backend build, backend watcher, Vite, and Electron.
+Run commands from the repository root. `npm ci` uses the committed lockfile. The postinstall hook aligns SQLite's native binding with your local Node runtime. Development builds the schema and backend, then starts the schema and backend watchers, Vite, and Electron.
 
 The package manifests keep `private: true` to prevent accidental npm publishing. This setting does not control the GitHub repository's visibility or its source-code license.
 
@@ -82,9 +82,11 @@ For a focused edit, use the relevant scripts: `npm test`, `npm run test:backend`
 | macOS | `npm run build:mac` | macOS DMG and ZIP targets. |
 | Linux | `npm run build:linux` | Configured Linux packages. |
 
+Each command runs `npm run build`, then the `package`, `smoke` and `installers` steps of `release:check`: the same pipeline CI uses, without the clean install, tests or phone app. The packaged app is launched before its installers are built. `npm run package` does the same for whichever OS it runs on, and `npm run package:dir` stops after the launch, without installers.
+
 Artifacts are written to `release/`. These local commands explicitly disable publishing. Packaging rebuilds native modules for Electron and then restores the development dependency setup. Close apps using this checkout before packaging so native files are not locked.
 
-Build and test on the target operating system and architecture: macOS packages cannot be built on Windows, and a Mac build packages only its own architecture. Releases are unsigned by decision; see [code signing](code-signing.md). See the [release checklist](../release-checklist.md) for the maintainer workflow.
+Build and test on the target operating system and architecture: packaging always targets the host, so `build:mac` on Windows fails in preflight instead of producing the wrong packages, and a Mac build packages only its own architecture. Releases are unsigned by decision; see [code signing](code-signing.md). See the [release checklist](../release-checklist.md) for the maintainer workflow.
 
 Fork maintainers must change the repository/publishing target in `package.json` and review app IDs, mobile bundle identifiers, diagnostic endpoints, and branding before distributing their own builds. The current package metadata points to `kerim0x1/bettercode`.
 
@@ -102,7 +104,7 @@ The default desktop profile is `~/.betterc0de-dev` in development and `~/.better
 
 ### Diagnostics during development
 
-The standard app sends a heartbeat every 25 seconds and can send automatic error reports to BetterC0de. For local work without those automatic requests, set both environment variables before starting it.
+Automatic crash reports and the usage ping are off unless turned on in **Settings → Privacy & Diagnostics**. Two environment variables force them off even when they are turned on there, for example in CI or on managed machines. Set them before starting the app.
 
 PowerShell:
 
@@ -119,6 +121,10 @@ BETTERC0DE_DISABLE_PING=1 BETTERC0DE_DISABLE_CRASH_REPORTS=1 npm run dev
 ```
 
 Manual **Send Report** remains available. The [product guide](../../PRODUCT_GUIDE.md#diagnostics-and-data) describes the payloads. CI sets these controls at workflow level.
+
+The app keeps a redacted, rotating log in `<data dir>/logs/app.log` (`~/.betterc0de-dev/userdata/logs` during development); **Open logs folder** in the same settings section opens it.
+
+Packaged builds keep DevTools closed. Start the app with `BETTERC0DE_ENABLE_DEVTOOLS=1` to allow them (F12 or Ctrl/Cmd+Shift+I); development runs always allow them.
 
 ## Mobile and optional demos
 

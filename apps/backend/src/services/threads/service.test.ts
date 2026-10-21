@@ -579,6 +579,132 @@ describe("ThreadService thread list query plan", () => {
     ).toEqual([])
   })
 
+  it("pages light messages without diff text or inline data and serves one in full", () => {
+    const imageUrl = `data:image/png;base64,${"A".repeat(2048)}`
+    const diff = {
+      path: "src/a.ts",
+      additions: 1,
+      deletions: 1,
+      oldText: "before",
+      newText: "after",
+      isNew: false,
+    }
+    svc.save(
+      saveRequest([
+        message("m-0", "user", "look", {
+          extra: {
+            attachments: [
+              {
+                type: "image",
+                filename: "a.png",
+                mediaType: "image/png",
+                url: imageUrl,
+              },
+              { type: "file", url: "https://example.com/notes.txt" },
+            ],
+          },
+        }),
+        message("m-1", "assistant", "edited", {
+          turn_id: "turn-1",
+          extra: { diffs: [diff] },
+        }),
+      ])
+    )
+
+    const full = svc.listMessages("thread-1", { limit: 10 }) as Array<
+      Record<string, unknown>
+    >
+    const light = svc.listMessages("thread-1", {
+      limit: 10,
+      light: true,
+    }) as Array<Record<string, unknown>>
+
+    // The default read is unchanged.
+    expect(full[0]?.attachments).toEqual([
+      {
+        type: "image",
+        filename: "a.png",
+        mediaType: "image/png",
+        url: imageUrl,
+      },
+      { type: "file", url: "https://example.com/notes.txt" },
+    ])
+    expect(full[1]?.diffs).toEqual([diff])
+
+    expect(light.map((entry) => entry.sequence)).toEqual(
+      full.map((entry) => entry.sequence)
+    )
+    expect(light[0]?.attachments).toEqual([
+      {
+        type: "image",
+        filename: "a.png",
+        mediaType: "image/png",
+        url: "data:image/png;base64,",
+        dataOmitted: true,
+      },
+      { type: "file", url: "https://example.com/notes.txt" },
+    ])
+    expect(light[1]?.diffs).toEqual([
+      { ...diff, oldText: "", newText: "", textOmitted: true },
+    ])
+
+    expect(svc.getMessageView("thread-1", "m-1")).toEqual(full[1])
+    expect(svc.getMessageView("thread-1", "m-0")).toEqual(full[0])
+    expect(svc.getMessageView("thread-1", "missing")).toBeNull()
+    // Another thread's id does not reveal this thread's message.
+    expect(svc.getMessageView("thread-2", "m-1")).toBeNull()
+  })
+
+  it("never lets a light copy written back replace stored diff text or data", () => {
+    const imageUrl = `data:image/png;base64,${"A".repeat(4096)}`
+    const diff = {
+      path: "src/a.ts",
+      additions: 1,
+      deletions: 1,
+      oldText: "before",
+      newText: "after",
+      isNew: false,
+    }
+    const original = message("m-1", "user", "edited", {
+      extra: {
+        diffs: [diff],
+        attachments: [{ type: "image", mediaType: "image/png", url: imageUrl }],
+      },
+    })
+    svc.save(saveRequest([original]))
+    const lightCopy = (): ThreadSaveMessage => ({
+      ...original,
+      content: "edited again",
+      extra: {
+        diffs: [{ ...diff, oldText: "", newText: "", textOmitted: true }],
+        attachments: [
+          {
+            type: "image",
+            mediaType: "image/png",
+            url: "data:image/png;base64,",
+            dataOmitted: true,
+          },
+        ],
+      },
+    })
+
+    svc.upsertMessage({ thread_id: "thread-1", message: lightCopy() })
+    let stored = svc.getMessageView("thread-1", "m-1")
+    expect(stored?.content).toBe("edited again")
+    expect(stored?.diffs).toEqual([diff])
+    expect(stored?.attachments).toEqual([
+      { type: "image", mediaType: "image/png", url: imageUrl },
+    ])
+
+    svc.save(saveRequest([{ ...lightCopy(), content: "saved whole" }]))
+    stored = svc.getMessageView("thread-1", "m-1")
+    expect(stored?.content).toBe("saved whole")
+    expect(stored?.diffs).toEqual([diff])
+    expect(stored?.attachments).toEqual([
+      { type: "image", mediaType: "image/png", url: imageUrl },
+    ])
+  })
+
   it("pages newest-first through the cursor and joins each thread's latest binding", () => {
     const threads = [
       ["thread-a", "2026-01-01T00:00:03.000Z"],

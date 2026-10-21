@@ -5,6 +5,8 @@ import { EventEmitter } from "node:events"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { StringDecoder } from "node:string_decoder"
+import { logger } from "../../../observability/logger"
 import type {
   ApprovalRequestId,
   ModelSelection,
@@ -61,6 +63,10 @@ import {
   listConfiguredAgentPermissionGrants,
 } from "../../agent-permission-runtime"
 import { normalizeAgentPermissionToolName } from "../../agent-permission-policy"
+import {
+  isBypassPermissionLevel,
+  providerPermissionModeForLevel,
+} from "../../permissions"
 
 export interface ClaudeTerminalAdapterOptions {
   readonly modelCacheDir?: string
@@ -444,13 +450,19 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
       this.claudeConfigDir()
     )
     if (admission.cancellation.signal.aborted) return
+    const currentPrompt = isPlanMode
+      ? buildPlanModePrompt(providerMessage)
+      : providerMessage
+    // The prompt is a command-line argument, so it must fit the platform's
+    // argument limits. History is the part that can shrink: the newest
+    // groups that fit are kept.
     const prompt = prependProviderHistoryForFreshSession({
       history: input.history,
-      currentPrompt: isPlanMode
-        ? buildPlanModePrompt(providerMessage)
-        : providerMessage,
+      currentPrompt,
       resumed: resume,
+      maxBytes: claudeTerminalHistoryBudget(currentPrompt),
     })
+    assertClaudeTerminalPromptFits(prompt)
     this.setSessionRuntime(ctx, {
       providerThreadId: sessionId,
       status: "running",
@@ -472,11 +484,14 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
       },
     })
 
-    const sessionPath = claudeSessionFilePath({
+    const sessionLocation = {
       cwd,
       sessionId,
       configDir: this.claudeConfigDir(),
-    })
+    }
+    const sessionPath =
+      (await findClaudeSessionFile(sessionLocation)) ??
+      claudeSessionFilePath(sessionLocation)
     const startOffset = await fileSizeOrZero(sessionPath)
     if (admission.cancellation.signal.aborted) return
     const args = this.buildClaudeArgs({
@@ -514,6 +529,7 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
     let tailError: unknown = null
     const tailPromise = tailClaudeSessionJsonl({
       path: sessionPath,
+      locate: () => findClaudeSessionFile(sessionLocation),
       startOffset,
       signal: abortTail.signal,
       onRecord: (message) => {
@@ -879,7 +895,9 @@ export class ClaudeTerminalAdapter implements ProviderAdapterShape {
     if (input.dangerouslySkipPermissions) {
       args.push("--dangerously-skip-permissions")
     }
-    args.push(input.prompt)
+    // `--` ends option parsing, so a message that starts with "-" (a
+    // markdown bullet, `--help`) is the prompt rather than a CLI option.
+    args.push("--", input.prompt)
     return args
   }
 
@@ -1246,7 +1264,7 @@ async function resolveTurnSession(
   const resume = Boolean(
     existing &&
     isUuid(existing) &&
-    (await claudeSessionFileExists({
+    (await findClaudeSessionFile({
       cwd,
       sessionId: existing,
       configDir,
@@ -1324,7 +1342,9 @@ function shouldSkipPermissions(
   if (chatMode === "plan" || chatMode === "ask" || chatMode === "security") {
     return false
   }
-  return permissionLevel === "bypass" || permissionLevel === "full-access"
+  // Only an explicit bypass level skips Claude's permission prompts.
+  // `full`/`full-access` are the old picker's label for allow-edits.
+  return isBypassPermissionLevel(permissionLevel)
 }
 
 async function loadBetterC0deProjectToolPolicy(
@@ -1438,27 +1458,29 @@ function applyClaudeTerminalPermissionCeiling(
   permissionLevel: string | null | undefined,
   chatMode: string | null | undefined
 ): string[] {
-  const level = permissionLevel?.trim().toLowerCase()
   if (
     chatMode === "plan" ||
     chatMode === "ask" ||
     chatMode === "security" ||
-    level === "read-only" ||
-    level === "ask-on-edit" ||
-    !level
+    !permissionLevel?.trim()
   ) {
     return tools.filter((tool) => classifyToolPermission(tool) === "read")
   }
-  if (level === "allow-edits" || level === "auto-accept-edits") {
-    return tools.filter((tool) => {
-      const permission = claudeTerminalToolNamesForPermission("edit")
-      return (
-        classifyToolPermission(tool) === "read" || permission.includes(tool)
+  // The shared alias table decides what a level means, so `full-access`
+  // grants edits here exactly as it does at the tool gates — never bypass.
+  switch (providerPermissionModeForLevel(permissionLevel)) {
+    case "bypassPermissions":
+      return [...tools]
+    case "acceptEdits": {
+      const editTools = claudeTerminalToolNamesForPermission("edit")
+      return tools.filter(
+        (tool) =>
+          classifyToolPermission(tool) === "read" || editTools.includes(tool)
       )
-    })
+    }
+    default:
+      return tools.filter((tool) => classifyToolPermission(tool) === "read")
   }
-  if (level === "bypass" || level === "full-access") return [...tools]
-  return tools.filter((tool) => classifyToolPermission(tool) === "read")
 }
 
 function claudeTerminalToolSpecs(
@@ -1550,18 +1572,27 @@ async function normalizeCwd(cwd: string | null | undefined): Promise<string> {
   }
 }
 
-async function claudeSessionFileExists(input: {
-  readonly cwd: string
-  readonly sessionId: string
-  readonly configDir: string
-}): Promise<boolean> {
-  try {
-    await fs.promises.access(claudeSessionFilePath(input), fs.constants.R_OK)
-    return true
-  } catch {
-    return false
+/**
+ * The directory name Claude Code gives a project under
+ * `<config>/projects`: every character outside `[a-zA-Z0-9]` becomes `-`
+ * (so `C:\Users\me\.app` is `C--Users-me--app`), and names longer than 200
+ * characters are cut and suffixed with a base-36 string hash. Mirrors the
+ * CLI's own function; the session lookup below also falls back to a search
+ * by session id should a CLI version name it differently.
+ */
+export function claudeProjectDirectoryName(cwd: string): string {
+  const sanitized = cwd.replace(/[^a-zA-Z0-9]/g, "-")
+  if (sanitized.length <= CLAUDE_PROJECT_DIR_MAX_CHARS) return sanitized
+  let hash = 0
+  for (let index = 0; index < cwd.length; index += 1) {
+    hash = ((hash << 5) - hash + cwd.charCodeAt(index)) | 0
   }
+  return `${sanitized.slice(0, CLAUDE_PROJECT_DIR_MAX_CHARS)}-${Math.abs(
+    hash
+  ).toString(36)}`
 }
+
+const CLAUDE_PROJECT_DIR_MAX_CHARS = 200
 
 function claudeSessionFilePath(input: {
   readonly cwd: string
@@ -1573,9 +1604,51 @@ function claudeSessionFilePath(input: {
   const projectDir = path.join(
     input.configDir,
     "projects",
-    path.resolve(input.cwd).replace(/[/.]/g, "-")
+    claudeProjectDirectoryName(path.resolve(input.cwd).normalize("NFC"))
   )
   return path.resolve(projectDir, `${input.sessionId}.jsonl`)
+}
+
+/**
+ * The session transcript for `sessionId`: the file at the expected project
+ * directory, or else the one with that (unique) session id in any project
+ * directory. Null when Claude has not written it yet.
+ */
+async function findClaudeSessionFile(input: {
+  readonly cwd: string
+  readonly sessionId: string
+  readonly configDir: string
+}): Promise<string | null> {
+  const expected = claudeSessionFilePath(input)
+  if (await isReadableFile(expected)) return expected
+  const projectsDir = path.join(input.configDir, "projects")
+  let directories: fs.Dirent[]
+  try {
+    directories = await fs.promises.readdir(projectsDir, {
+      withFileTypes: true,
+    })
+  } catch {
+    return null
+  }
+  for (const directory of directories) {
+    if (!directory.isDirectory()) continue
+    const candidate = path.join(
+      projectsDir,
+      directory.name,
+      `${input.sessionId}.jsonl`
+    )
+    if (await isReadableFile(candidate)) return candidate
+  }
+  return null
+}
+
+async function isReadableFile(filePath: string): Promise<boolean> {
+  try {
+    await fs.promises.access(filePath, fs.constants.R_OK)
+    return (await fs.promises.stat(filePath)).isFile()
+  } catch {
+    return false
+  }
 }
 
 async function fileSizeOrZero(filePath: string): Promise<number> {
@@ -1586,22 +1659,42 @@ async function fileSizeOrZero(filePath: string): Promise<number> {
   }
 }
 
+/** Polls between looking for a transcript written under another directory name. */
+const SESSION_FILE_LOCATE_EVERY_POLLS = 20
+
 async function tailClaudeSessionJsonl(input: {
   readonly path: string
+  readonly locate?: () => Promise<string | null>
   readonly startOffset: number
   readonly signal: AbortSignal
   readonly onRecord: (record: Record<string, unknown>) => void
 }): Promise<void> {
+  let filePath = input.path
   let offset = input.startOffset
   let buffer = ""
+  let missingPolls = 0
+  // Reads end wherever the file ended at that moment, possibly inside a
+  // multi-byte character; the decoder carries the partial sequence over.
+  const decoder = new StringDecoder("utf8")
   while (!input.signal.aborted) {
-    const size = await fileSizeOrNull(input.path)
+    const size = await fileSizeOrNull(filePath)
+    if (size === null && input.locate) {
+      missingPolls += 1
+      if (missingPolls % SESSION_FILE_LOCATE_EVERY_POLLS === 0) {
+        const located = await input.locate()
+        if (located && located !== filePath) {
+          filePath = located
+          offset = 0
+          continue
+        }
+      }
+    }
     if (size === null || size <= offset) {
       await delayWithSignal(50, input.signal)
       continue
     }
 
-    buffer += await readUtf8Range(input.path, offset, size)
+    buffer += decoder.write(await readByteRange(filePath, offset, size))
     offset = size
 
     let newlineIndex = buffer.indexOf("\n")
@@ -1610,7 +1703,18 @@ async function tailClaudeSessionJsonl(input: {
       buffer = buffer.slice(newlineIndex + 1)
       const trimmed = line.trim()
       if (trimmed) {
-        const parsed = JSON.parse(trimmed) as unknown
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(trimmed) as unknown
+        } catch {
+          // One malformed line must not end the turn's transcript; the
+          // records after it are still Claude's answer.
+          logger.warn(
+            { path: filePath },
+            "skipping an unparsable Claude Terminal transcript line"
+          )
+          parsed = null
+        }
         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
           input.onRecord(parsed as Record<string, unknown>)
         }
@@ -1629,19 +1733,62 @@ async function fileSizeOrNull(filePath: string): Promise<number | null> {
   }
 }
 
-async function readUtf8Range(
+async function readByteRange(
   filePath: string,
   start: number,
   endExclusive: number
-): Promise<string> {
-  const chunks: string[] = []
+): Promise<Buffer> {
+  const chunks: Buffer[] = []
   const stream = fs.createReadStream(filePath, {
-    encoding: "utf8",
     start,
     end: endExclusive - 1,
   })
-  for await (const chunk of stream) chunks.push(String(chunk))
-  return chunks.join("")
+  for await (const chunk of stream) chunks.push(chunk as Buffer)
+  return Buffer.concat(chunks)
+}
+
+/** Longest prompt passed as one command-line argument (see below). */
+const CLAUDE_TERMINAL_PROMPT_ARGV_BUDGET =
+  process.platform === "win32" ? 24_000 : 100_000
+
+/**
+ * Upper bound of the space `value` takes as one argument: UTF-8 bytes on
+ * POSIX (Linux caps a single argument at 128 KiB), and on Windows the
+ * MSVCRT-quoted UTF-16 length, since `CreateProcess` caps the whole command
+ * line at 32,767 characters and every `"` and `\` may gain an escape.
+ */
+function claudeTerminalArgvLength(value: string): number {
+  if (process.platform !== "win32") return Buffer.byteLength(value, "utf8")
+  let escapes = 0
+  for (const character of value) {
+    if (character === '"' || character === "\\") escapes += 1
+  }
+  return value.length + escapes + 2
+}
+
+/**
+ * How many bytes of conversation history fit next to `currentPrompt`.
+ * Serialized history is JSON, whose quotes are escaped again on Windows, so
+ * it gets half of the remaining Windows budget.
+ */
+function claudeTerminalHistoryBudget(currentPrompt: string): number {
+  const remaining =
+    CLAUDE_TERMINAL_PROMPT_ARGV_BUDGET -
+    claudeTerminalArgvLength(currentPrompt) -
+    512
+  if (remaining <= 0) return 0
+  return process.platform === "win32" ? Math.floor(remaining / 2) : remaining
+}
+
+function assertClaudeTerminalPromptFits(prompt: string): void {
+  const length = claudeTerminalArgvLength(prompt)
+  if (length <= CLAUDE_TERMINAL_PROMPT_ARGV_BUDGET) return
+  throw Object.assign(
+    new Error(
+      `This message is too long for Claude Terminal, which passes it to the CLI as a command-line argument (${length} of ${CLAUDE_TERMINAL_PROMPT_ARGV_BUDGET} allowed). Shorten it or use the Claude provider.`
+    ),
+    { code: "CLAUDE_TERMINAL_PROMPT_TOO_LONG", statusCode: 413 }
+  )
 }
 
 export async function delayWithSignal(

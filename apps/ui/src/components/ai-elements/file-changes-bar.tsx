@@ -11,11 +11,18 @@ import {
 } from "lucide-react"
 import { getFileIconUrl } from "@/lib/file-icons"
 import { useChatStore, getThreadStream } from "@/lib/chat-store"
-import { useCheckpointStore } from "@/lib/checkpoint-store"
+import { useCheckpointStore, type Checkpoint } from "@/lib/checkpoint-store"
+import { HttpError } from "@/lib/errors/types"
 import { createLogger } from "@/lib/logger"
+import { preTurnFileState } from "@/lib/turn-file-revert"
 import { openSourceTarget } from "@/lib/source-opener"
 import { resolveSourceTarget } from "@/lib/source-target"
 import { workspaceRelativeEditorPath } from "@/lib/editor-path"
+import {
+  useFullMessagePayload,
+  type FullMessageSource,
+} from "@/hooks/use-full-message-payload"
+import { FullPayloadStatus } from "@/components/chat/full-payload-status"
 
 const log = createLogger("file-changes-bar") // M11
 
@@ -26,6 +33,8 @@ export interface FileDiff {
   oldText: string
   newText: string
   isNew: boolean
+  /** A light transcript page left the text out; `source` has it. */
+  textOmitted?: boolean
 }
 
 type FileChangeStatus = "pending" | "accepted" | "rejected"
@@ -35,6 +44,44 @@ type FileChangeStatus = "pending" | "accepted" | "rejected"
 // before being dropped from the list entirely.
 const BADGE_MS = 550
 const EXIT_MS = 300
+
+type TurnGitCheckpoint = Checkpoint & {
+  projectPath: string
+  checkpointRef: string
+  baseCheckpointRef: string
+}
+
+/**
+ * The backend's Git checkpoint pair for this turn in this workspace. Its base
+ * ref holds the files as they were before the turn, which is what "Reject"
+ * restores. The renderer's own file snapshots are read after the edits and
+ * cannot be used for that.
+ */
+export function findTurnGitCheckpoint(
+  checkpoints: readonly Checkpoint[],
+  {
+    threadId,
+    turnId,
+    messageId,
+    workspacePath,
+  }: {
+    threadId: string
+    turnId: string | null | undefined
+    messageId: string | undefined
+    workspacePath: string
+  }
+): TurnGitCheckpoint | undefined {
+  return checkpoints.findLast(
+    (cp): cp is TurnGitCheckpoint =>
+      cp.threadId === threadId &&
+      Boolean(cp.projectPath && cp.checkpointRef && cp.baseCheckpointRef) &&
+      workspaceRelativeEditorPath(workspacePath, cp.projectPath!) === "" &&
+      Boolean(
+        (turnId && cp.turnId === turnId) ||
+        (messageId && cp.messageId === messageId)
+      )
+  )
+}
 
 /** Unified file changes component with per-file accept/reject */
 export function FileChangesBar({ threadId }: { threadId: string | null }) {
@@ -92,6 +139,18 @@ function ThreadFileChanges({
   const [dismissed, setDismissed] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const pendingReverts = useRef(new Set<string>())
+  // "Reject all" reverses every file against the same turn diff.
+  const turnDiffs = useRef(new Map<string, Promise<string>>())
+  // Reverting needs the turn's Git checkpoint. It is recorded when the turn
+  // ends, and only in a Git repository; until then there is no Reject.
+  const revertCheckpoint = useCheckpointStore((s) =>
+    findTurnGitCheckpoint(s.checkpoints, {
+      threadId,
+      turnId,
+      messageId,
+      workspacePath,
+    })
+  )
   const timersRef = useRef<number[]>([])
   const mountedRef = useRef(true)
   useEffect(() => {
@@ -113,11 +172,13 @@ function ThreadFileChanges({
         (existing.oldText && d.oldText ? "\n" : "") + d.oldText
       existing.newText +=
         (existing.newText && d.newText ? "\n" : "") + d.newText
+      if (d.textOmitted) existing.textOmitted = true
     } else {
       fileMap.set(d.path, { ...d })
     }
   }
   const files = [...fileMap.values()]
+  const diffSource = messageId ? { threadId, messageId } : null
   const visibleFiles = files.filter((f) => !gone.has(f.path))
   const pendingFiles = files.filter((f) => !resolved[f.path])
   const totalAdd = visibleFiles.reduce((s, f) => s + f.additions, 0)
@@ -162,40 +223,66 @@ function ThreadFileChanges({
       )
       if (!target || target.kind !== "file")
         throw new Error("File is outside this chat's workspace.")
-      const checkpoints = useCheckpointStore.getState().checkpoints
-      const checkpoint = checkpoints.findLast(
-        (cp) =>
-          cp.threadId === threadId &&
-          (!cp.projectPath ||
-            workspaceRelativeEditorPath(workspacePath, cp.projectPath) ===
-              "") &&
-          ((turnId && cp.turnId === turnId) ||
-            (messageId && cp.messageId === messageId))
-      )
-      const snapshot = Object.entries(checkpoint?.files ?? {}).find(
-        ([filePath]) => {
-          const saved = resolveSourceTarget(
-            { kind: "file", filePath },
-            { workspacePath }
-          )
-          return (
-            saved?.kind === "file" &&
-            workspaceRelativeEditorPath(target.filePath, saved.filePath) === ""
-          )
-        }
-      )
-      if (!snapshot)
-        throw new Error(
-          "No file snapshot is available for this chat turn. Use its restore checkpoint action."
-        )
       const relativePath = workspaceRelativeEditorPath(
         workspacePath,
         target.filePath
       )
       if (!relativePath)
         throw new Error("Cannot resolve this file inside the chat's workspace.")
-      const { writeFile } = await import("@/services/backend")
-      await writeFile(workspacePath, relativePath, snapshot[1])
+      const checkpoint = findTurnGitCheckpoint(
+        useCheckpointStore.getState().checkpoints,
+        {
+          threadId,
+          turnId,
+          messageId,
+          workspacePath,
+        }
+      )
+      if (!checkpoint)
+        throw new Error("This turn has no Git checkpoint to revert from.")
+      const [gitApi, workspaceApi] = await Promise.all([
+        import("@/services/backend/gitApi"),
+        import("@/services/backend/workspaceApi"),
+      ])
+      let turnDiff = turnDiffs.current.get(checkpoint.id)
+      if (!turnDiff) {
+        turnDiff = gitApi
+          .gitDiffCheckpoints(
+            checkpoint.projectPath,
+            checkpoint.baseCheckpointRef,
+            checkpoint.checkpointRef,
+            // Exact hunks: the display default ignores whitespace changes.
+            { ignoreWhitespace: false }
+          )
+          .then((result) => result.diff)
+        turnDiffs.current.set(checkpoint.id, turnDiff)
+        turnDiff.catch(() => turnDiffs.current.delete(checkpoint.id))
+      }
+      let current: string | null
+      try {
+        current = (
+          await workspaceApi.readFile(target.filePath, { silent404: true })
+        ).content
+      } catch (readError) {
+        if (!(readError instanceof HttpError && readError.status === 404))
+          throw readError
+        current = null
+      }
+      const before = preTurnFileState(await turnDiff, relativePath, current)
+      if (!before) {
+        throw new Error(
+          "Its edits can't be reversed here: the file changed after this turn, or the change is binary or a rename. Use the reply's restore checkpoint action instead."
+        )
+      }
+      if (before.kind === "absent") {
+        await workspaceApi.deleteWorkspacePath(workspacePath, relativePath)
+      } else {
+        await workspaceApi.writeFile(
+          workspacePath,
+          relativePath,
+          before.content
+        )
+      }
       if (mountedRef.current) resolve(path, "rejected")
     } catch (e) {
       log.warn("Failed to revert file change:", path, e)
@@ -266,14 +353,16 @@ function ThreadFileChanges({
               <CheckIcon className="size-3.5" strokeWidth={2} />
               Accept all
             </button>
-            <button
-              type="button"
-              onClick={handleRejectAll}
-              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-            >
-              <Undo2Icon className="size-3.5" strokeWidth={2} />
-              Reject all
-            </button>
+            {revertCheckpoint && (
+              <button
+                type="button"
+                onClick={handleRejectAll}
+                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                <Undo2Icon className="size-3.5" strokeWidth={2} />
+                Reject all
+              </button>
+            )}
           </>
         )}
         <button
@@ -306,10 +395,13 @@ function ThreadFileChanges({
             <div className="min-h-0 overflow-hidden">
               <FileChangeItem
                 diff={f}
+                source={diffSource}
                 status={resolved[f.path] ?? "pending"}
                 onOpen={() => handleReview(f.path)}
                 onAccept={() => handleAcceptFile(f.path)}
-                onReject={() => handleRejectFile(f.path)}
+                onReject={
+                  revertCheckpoint ? () => handleRejectFile(f.path) : undefined
+                }
               />
             </div>
           </div>
@@ -326,6 +418,7 @@ export function FileChangeItem({
   onAccept,
   onReject,
   workspaceRoot,
+  source,
 }: {
   diff: FileDiff
   status?: FileChangeStatus
@@ -333,12 +426,17 @@ export function FileChangeItem({
   onAccept?: () => void
   onReject?: () => void
   workspaceRoot?: string | null
+  /** The saved message the diff belongs to, to read omitted text from. */
+  source?: FullMessageSource | null
 }) {
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const normalizedPath = diff.path.replace(/\\/g, "/")
   const fileName = normalizedPath.split("/").pop() || normalizedPath
-  const hasLines = Boolean(diff.oldText || diff.newText)
+  // The text is read when the diff is opened, not with the transcript.
+  const textOmitted = diff.textOmitted === true
+  const fullText = useFullMessagePayload(source, open && textOmitted)
+  const hasLines = textOmitted || Boolean(diff.oldText || diff.newText)
   // The transcript can contain thousands of files. Parse content only when
   // the user opens or copies this file's diff.
   const readLines = () => [
@@ -496,7 +594,7 @@ export function FileChangeItem({
               <Undo2Icon className="size-3.5" strokeWidth={2} />
             </button>
           )}
-          {hasLines && (
+          {hasLines && !textOmitted && (
             <button
               type="button"
               onClick={handleCopy}
@@ -527,6 +625,14 @@ export function FileChangeItem({
       {/* Expanded diff lines — VS-Code-style: subtle row tint + 2px
           left-edge accent stripe. Numbers stay green/red, body text
           stays foreground tone for readability. */}
+      {open && textOmitted && (
+        <FullPayloadStatus
+          status={fullText.status}
+          onRetry={fullText.retry}
+          subject="diff"
+          className="border-t border-border bg-card/50 px-3 py-2"
+        />
+      )}
       {open && diffLines.length > 0 && (
         <div className="max-h-64 overflow-auto overscroll-contain border-t border-border bg-card/50 font-mono text-[11px] leading-[1.6]">
           {diffLines.map((line, i) => (

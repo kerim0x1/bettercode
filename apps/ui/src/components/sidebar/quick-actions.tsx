@@ -1,4 +1,10 @@
-import { PackageIcon, RefreshCwIcon, SquarePenIcon } from "lucide-react"
+import {
+  GitPullRequestIcon,
+  PackageIcon,
+  RefreshCwIcon,
+  SquarePenIcon,
+} from "lucide-react"
+import { openPullRequestsPage } from "@/lib/pull-requests-page"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
@@ -106,6 +112,20 @@ export function SidebarQuickActions({
           Scheduled
         </span>
         <Shortcut keys={["Ctrl", "⇧", "A"]} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className={btnClass}
+        onClick={() => openPullRequestsPage()}
+      >
+        <span className="flex items-center gap-2.5">
+          <GitPullRequestIcon
+            className="size-3.5 text-sidebar-foreground/70"
+            strokeWidth={1.75}
+          />
+          Pull Requests
+        </span>
       </Button>
       <Button
         variant="ghost"

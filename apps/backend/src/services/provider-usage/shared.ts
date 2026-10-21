@@ -50,6 +50,8 @@ export interface DayBucket {
   tokens: number
   messages: number
   sessions: number
+  /** USD at list prices; only set for days with a per-model split. */
+  cost?: number
 }
 
 export function addDay(
@@ -62,6 +64,8 @@ export function addDay(
   current.tokens += bucket.tokens ?? 0
   current.messages += bucket.messages ?? 0
   current.sessions += bucket.sessions ?? 0
+  if (bucket.cost !== undefined)
+    current.cost = (current.cost ?? 0) + bucket.cost
   daily.set(date, current)
 }
 

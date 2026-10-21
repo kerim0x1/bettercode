@@ -6,6 +6,8 @@ import test from "node:test"
 
 test("disposing a backend status observer leaves other windows' consumers subscribed", () => {
   const ipc = new EventEmitter()
+  // The preload reports its page-load client id over invoke when it loads.
+  ipc.invoke = async () => undefined
   let api
   vm.runInNewContext(readFileSync(new URL("../apps/shell/preload.cjs", import.meta.url), "utf8"), {
     process: { platform: process.platform },

@@ -1,3 +1,4 @@
+import { isWholeWordMatch } from "@betterc0de/schema/search-text"
 import ignore, { type Ignore } from "ignore"
 import fs from "node:fs/promises"
 import path from "node:path"
@@ -1420,21 +1421,6 @@ function createSearchGlobMatcher(
 
 function normalizeSearchPath(value: string): string {
   return value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "")
-}
-
-function isWholeWordMatch(
-  line: string,
-  index: number,
-  length: number
-): boolean {
-  return (
-    !isSearchWordChar(line[index - 1]) &&
-    !isSearchWordChar(line[index + length])
-  )
-}
-
-function isSearchWordChar(value: string | undefined): boolean {
-  return Boolean(value && /[A-Za-z0-9_$-]/.test(value))
 }
 
 function makeSearchPreview(

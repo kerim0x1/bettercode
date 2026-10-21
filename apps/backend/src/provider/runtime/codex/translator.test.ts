@@ -1011,6 +1011,59 @@ describe("translateCodexEvent", () => {
     })
   })
 
+  it("reads the app-server's total/last token usage breakdown", () => {
+    const breakdown = (totalTokens: number, inputTokens: number) => ({
+      totalTokens,
+      inputTokens,
+      cachedInputTokens: 19_328,
+      cacheWriteInputTokens: 0,
+      outputTokens: totalTokens - inputTokens,
+      reasoningOutputTokens: 40,
+    })
+    expect(
+      translate({
+        kind: "notification",
+        method: "thread/tokenUsage/updated",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          tokenUsage: {
+            total: breakdown(187_000, 186_500),
+            last: breakdown(35_000, 34_900),
+            modelContextWindow: 950_000,
+          },
+        },
+      })[0]
+    ).toMatchObject({
+      type: "thread.token-usage.updated",
+      payload: {
+        usage: {
+          usedTokens: 35_000,
+          totalProcessedTokens: 187_000,
+          maxTokens: 950_000,
+          inputTokens: 186_500,
+          lastInputTokens: 34_900,
+          lastUsedTokens: 35_000,
+          compactsAutomatically: true,
+        },
+      },
+    })
+
+    expect(
+      translate({
+        kind: "notification",
+        method: "thread/tokenUsage/updated",
+        params: {
+          tokenUsage: {
+            total: breakdown(0, 0),
+            last: breakdown(0, 0),
+            modelContextWindow: null,
+          },
+        },
+      }).map((event) => event.type)
+    ).not.toContain("thread.token-usage.updated")
+  })
+
   it("emits thread, plan, diff, and item update notifications", () => {
     expect(
       translate({

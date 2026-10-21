@@ -195,7 +195,7 @@ export function PlanImplementationCard({
     if (!workspaceRoot || !relativePath) return
     setIsSaving(true)
     try {
-      const { writeFile } = await import("@/services/backend")
+      const { writeFile } = await import("@/services/backend/workspaceApi")
       await writeFile(workspaceRoot, relativePath, exportContents)
       setIsSaveDialogOpen(false)
       setActionMessage(`Saved ${relativePath}`)

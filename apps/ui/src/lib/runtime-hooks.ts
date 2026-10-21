@@ -1,7 +1,6 @@
 import { useEffect } from "react"
 
 import {
-  blockingHookFailureMessage,
   buildHookEnv,
   hookFailureText,
   resolveHookCwd,
@@ -12,13 +11,16 @@ import {
   updateRuntimeHookRun,
   type RuntimeHook,
 } from "@/lib/runtime-config"
-import { runShellCommandDetailed } from "@/services/backend"
+import { runShellCommandDetailed } from "@/services/backend/workspaceApi"
 
-async function executeSingleHook(
-  hook: RuntimeHook,
-  payload: HookPayload,
-  blocking: boolean
-) {
+/*
+ * The user's notification hooks (response complete, file change, commit),
+ * run by the desktop after the fact. Blocking "on message send" hooks are
+ * not run here: the backend runs them before every message, from every
+ * client (apps/backend services/chat/turn-preparation.ts).
+ */
+
+async function executeHook(hook: RuntimeHook, payload: HookPayload) {
   await updateRuntimeHookRun(hook.id, "running", null, null)
 
   // User-configured runtime hooks execute with bypass — the user explicitly
@@ -37,24 +39,13 @@ async function executeSingleHook(
     return result
   }
 
-  const error = hookFailureText(result)
-  await updateRuntimeHookRun(hook.id, "error", result.exitCode ?? 1, error)
-
-  if (blocking) {
-    throw new Error(blockingHookFailureMessage(hook.command, error))
-  }
-
-  return result
-}
-
-export async function runBlockingMessageSendHooks(payload: HookPayload) {
-  const hooks = (await listRuntimeHooks()).filter(
-    (hook) => hook.enabled && hook.event === "on_message_send"
+  await updateRuntimeHookRun(
+    hook.id,
+    "error",
+    result.exitCode ?? 1,
+    hookFailureText(result)
   )
-
-  for (const hook of hooks) {
-    await executeSingleHook(hook, payload, true)
-  }
+  return result
 }
 
 export async function queueRuntimeHooks(
@@ -67,9 +58,9 @@ export async function queueRuntimeHooks(
 
   for (const hook of hooks) {
     try {
-      await executeSingleHook(hook, payload, false)
+      await executeHook(hook, payload)
     } catch {
-      // blocking=false never rethrows, this is defensive.
+      // A notification hook never stops anything; the next one still runs.
     }
   }
 }

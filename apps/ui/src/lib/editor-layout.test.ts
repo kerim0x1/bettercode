@@ -7,7 +7,7 @@ import {
   EDITOR_CHAT_PANEL_DEFAULT_WIDTH,
   clampDesignChatPanelWidth,
   clampEditorChatPanelWidth,
-  clampEditorSidebarWidth,
+  clampLeftSidebarWidth,
   readStoredDesignChatPanelWidth,
 } from "@/lib/editor-layout"
 
@@ -36,10 +36,11 @@ describe("editor layout sizing", () => {
     expect(clampEditorChatPanelWidth(520)).toBe(EDITOR_CHAT_PANEL_DEFAULT_WIDTH)
   })
 
-  it("keeps the editor explorer useful for nested paths and large displays", () => {
-    expect(clampEditorSidebarWidth(160)).toBe(240)
-    expect(clampEditorSidebarWidth(320)).toBe(320)
-    expect(clampEditorSidebarWidth(900)).toBe(520)
+  it("clamps the left sidebar to one range for every mode", () => {
+    expect(clampLeftSidebarWidth(160)).toBe(220)
+    expect(clampLeftSidebarWidth(320)).toBe(320)
+    expect(clampLeftSidebarWidth(900)).toBe(500)
+    expect(clampLeftSidebarWidth("wide")).toBe(300)
   })
 })
 

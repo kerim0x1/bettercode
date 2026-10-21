@@ -8,7 +8,7 @@ import {
 
 // The tree fetches in an effect that a static render never runs; mocked so
 // importing the component does not pull the backend runtime into the test.
-vi.mock("@/services/backend", () => ({
+vi.mock("@/services/backend/workspaceApi", () => ({
   createDirectory: vi.fn(),
   deleteWorkspacePath: vi.fn(),
   moveWorkspacePath: vi.fn(),

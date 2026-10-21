@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import type { ProviderUsageReport } from "@/services/backend"
+import type { ProviderUsageReport } from "@/services/backend/coreApi"
 
-vi.mock("@/services/backend", () => ({ loadProviderUsage: vi.fn() }))
-import { loadProviderUsage } from "@/services/backend"
+vi.mock("@/services/backend/coreApi", () => ({
+  loadProviderUsage: vi.fn(),
+}))
+import { loadProviderUsage } from "@/services/backend/coreApi"
 import { useUsageStore } from "./usage-store"
 
 describe("usage page report loading", () => {

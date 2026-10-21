@@ -30,7 +30,7 @@ Use Agent when you want to focus on AI conversations and task progress. Arrange 
 
 Multiple conversations can work with the same repository. Keep their responsibilities clear: separate chats alone do not isolate their file changes. Use separate worktrees when tasks need independent checkouts.
 
-The **Orchestration** icon with connected nodes sits immediately left of the chat's permissions control. Open its compact menu to see the main model, enable experimental delegation, and choose agent models from the provider dropdowns. Each selected model has the same thinking slider as the chat; **Auto** uses that model's provider default. The icon indicates whether orchestration is on, and the menu shows the selection count. Above the composer controls, selected models form an overlapping group with each logo and model name visible. Hover or focus a model to see its thinking level and colored level icon; Escape closes the tooltip. You can change the selection between turns. The **+** menu holds file attachments.
+The **Orchestration** icon with connected nodes sits immediately left of the chat's permissions control. Open its compact menu to enable experimental delegation and choose agent models: the main model is at the top of a tree, and each provider expands in place to list its models. Each selected model has the same thinking slider as the chat; **Auto** uses that model's provider default. The icon indicates whether orchestration is on, and the menu shows the selection count. Above the composer controls, an Orchestration heading shows how many models are selected, over a row with each model's provider logo and colored thinking-level icon; from the sixth model, the rest collapse into a **+N** count. Hover or focus a model to see its name and thinking level, and click it to change that level; Escape closes the tooltip. You can change the selection between turns. The **+** menu holds file attachments.
 
 ### Canvas: see the project in context
 
@@ -49,21 +49,27 @@ In browser previews, **Select** lets you pick elements and attach visual context
 
 BetterC0de runs as a desktop app and works with files on your computer. Connected AI providers may receive prompts, file context, and tool output as part of their operation. Their own terms and data policies apply.
 
-Remote access can pair another device with the running desktop app over your network. The desktop must remain running and reachable for that connection to work.
+Opening a project folder does not trust it. Before an agent works in Agent mode there, or the project's own MCP servers, formatters and Claude hooks run, choose **Settings → Permissions → Trust project**. Chats without a folder need no trust decision.
+
+Remote access can pair another device with the running desktop app over your network. The desktop must remain running and reachable for that connection to work. Over plain HTTP on your network the device can watch for one hour but not act; Tailscale or an HTTPS address gives a full session. See [Remote Access](docs/remote-access.md).
+
+Automations run a prompt in a trusted project on a schedule or when their webhook URL is called, each run in a new chat, while the desktop app is open. Data from a webhook request reaches the agent marked as untrusted input. See [Automations](docs/automations.md).
 
 ## Diagnostics and data
 
-The current desktop implementation includes the following diagnostic requests to BetterC0de:
+Nothing is sent to BetterC0de automatically unless you turn it on in **Settings → Privacy & Diagnostics**. The current desktop implementation can make these diagnostic requests:
 
 | Request | When it happens | Information included |
 | --- | --- | --- |
-| **Heartbeat** | Every 25 seconds while the app is running, starting after the timer's first interval | A persistent random installation ID, app version, operating-system platform, and processor architecture. |
-| **Manual bug report** | When you select Send Report in the Console's Report tab | Report text, available error details and stack trace, recent logs, installation ID, app version, platform, architecture, and available device information. |
-| **Automatic error report** | For captured unhandled errors and supported renderer crash events | Available error details, stack trace, recent logs, and the same installation and device context used by bug reports. |
+| **Usage ping** | Only with **Send a usage ping** on: once per app start, about 30 seconds after launch | A random installation ID, app version, operating-system platform, and processor architecture. |
+| **Manual bug report** | When you select Send Report in the Console's Report tab | Report text, available error details and stack trace, recent logs, app version, platform, architecture, and available device information. The installation ID is included only while the usage ping is on. |
+| **Automatic error report** | Only with **Send crash reports automatically** on: for captured unhandled errors and supported renderer crash events | Available error details, stack trace, recent logs, and the same device context used by bug reports. The installation ID is included only while the usage ping is on. |
 
-Device information can include the OS version and build, CPU model and logical core count, graphics adapter and driver information, total and used system RAM, and memory measurements for Electron processes. Some fields may be unavailable on a particular device. App memory figures do not include every external tool or child process.
+Device information can include the OS version and build, CPU model and logical core count, graphics adapter and driver information, total and used system RAM, and memory measurements for Electron processes by process type. Some fields may be unavailable on a particular device. App memory figures do not include every external tool or child process.
 
-The heartbeat itself contains no project files or conversation text. Error reports can contain sensitive information through their messages, stack traces, or logs. The installation ID links requests from the same app profile; it is randomly generated rather than taken from a hardware serial number.
+The usage ping contains no project files or conversation text. Before a report is sent, its message, stack trace and logs are redacted: known credential formats, values of credential-named keys, user information in URLs, email addresses and your home folder path are removed. Redaction is pattern-based, so a report can still contain other sensitive text from an error message or log; review a copied report before sharing it publicly. The installation ID links pings from the same app profile; it is randomly generated rather than taken from a hardware serial number, created only once you turn the ping on, and deleted at the next start after you turn it off.
+
+BetterC0de also keeps a local application log with the same redaction, `logs/app.log` in its data folder, limited to three files of 5 MB. **Open logs folder** in the same settings section opens it. Reports include only the most recent log lines; the log file itself stays on your computer.
 
 Manual and automatic reports share a 10-second cooldown. Reporting is best effort: an unavailable network or a sudden process termination can prevent delivery. Not every crash can be captured.
 
@@ -80,5 +86,7 @@ Recent reports remain available when you leave and reopen the page. **Refresh** 
 ## Availability and provider costs
 
 BetterC0de is in beta. Check the [official website](https://betterc0de.com) for available installers and release information. Features and provider compatibility can change between versions.
+
+**Settings → General → Updates** shows the installed version and the update status. AppImage builds, and code-signed Windows and macOS builds, download and install updates when you quit. Unsigned Windows and macOS builds and the other Linux packages check for new versions and link to the download; install those yourself.
 
 AI usage is governed by your chosen provider's account, plan, and limits. Connecting a provider does not make its paid usage free.

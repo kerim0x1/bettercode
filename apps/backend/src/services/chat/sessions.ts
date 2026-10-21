@@ -11,12 +11,15 @@ import { asHubProviderKind, resolveHubInstanceId } from "./dispatch"
 import { markActiveDispatchInterrupted } from "./dispatch-lifecycle"
 import { withChatRecoveryMutation } from "./requests"
 import { threadGoals } from "./goal-registry"
+import { chatResumes } from "./resume-registry"
 
 export async function interruptChatTurn(
   state: AppState,
   body: z.output<typeof chatInterruptSchema>
 ): Promise<{ status: "interrupted" }> {
   threadGoals.get(state)?.pauseForMessage(body.threadId)
+  // A stopped chat is neither resumed after a limit nor after a restart.
+  chatResumes.get(state)?.noteUserStop(body.threadId)
   const interrupt = () =>
     withChatRecoveryMutation(
       state,
@@ -50,9 +53,7 @@ export async function interruptChatTurn(
         return { status: "interrupted" }
       }
     )
-  return state.orchestrator
-    ? state.orchestrator.withInterruptedChildren(body.threadId, interrupt)
-    : interrupt()
+  return state.orchestrator.withInterruptedChildren(body.threadId, interrupt)
 }
 
 export async function rotateChatSession(

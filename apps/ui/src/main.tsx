@@ -12,8 +12,12 @@ import { logToErrorStore } from "@/lib/error-log-store"
 import { createLogger } from "@/lib/logger"
 import { RemoteAccessGate } from "@/components/remote/remote-access-gate"
 import { prefetchStreamdownCodePlugin } from "@/components/ai-elements/streamdown-plugins"
+import { initDesktopRuntimeConfig } from "@/services/backend/desktop-runtime-config"
 
 const log = createLogger("window")
+
+// Desktop: backend port and preview settings come from the shell over IPC.
+void initDesktopRuntimeConfig()
 
 // [SECURITY/OBSERVABILITY] Capture otherwise-silent async failures so they surface in the
 // error log store (and eventually in the copy-diagnostics button) instead of disappearing.

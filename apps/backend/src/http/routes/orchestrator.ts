@@ -1,6 +1,5 @@
 import type { Hono } from "hono"
 import type { AppState } from "../../appState"
-import { HttpError } from "../../errors"
 import { requestIdentity } from "../../remote/http"
 import { handleHttpContract } from "../contracts"
 import { resolveApprovedWorkspaceRoot } from "../../services/workspace/authorization"
@@ -12,11 +11,7 @@ export function registerOrchestratorRoutes(api: Hono, state: AppState): void {
       return c.json({ error: "Only the desktop host can manage teams." }, 403)
     return next()
   })
-  const service = () => {
-    if (!state.orchestrator)
-      throw new HttpError(503, "Orchestrator unavailable.")
-    return state.orchestrator
-  }
+  const service = () => state.orchestrator
   api.post("/orchestrator/start", (c) =>
     handleHttpContract(
       c,

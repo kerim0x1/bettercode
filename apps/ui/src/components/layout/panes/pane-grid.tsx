@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
-import { Pane } from "@/components/layout/panes/pane"
+import { Pane, type PaneChatBag } from "@/components/layout/panes/pane"
 import { PaneDropZone } from "@/components/layout/panes/pane-drop-zone"
 import type {
   PaneLayout,
@@ -32,8 +32,7 @@ export function PaneGrid({
   openThreadOnPane,
 }: {
   layout: PaneLayout
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  chatBag: any
+  chatBag: PaneChatBag
   setActivePane: (id: string) => void
   closePane: (id: string) => void
   setActiveTab: (paneId: string, tabId: string) => void

@@ -50,6 +50,7 @@ export function WorkspacePanelBody({
             onClose={onCloseToChat}
             cwd={projectPath}
             mode="agent"
+            variant="fill"
           />
         </ErrorBoundary>
       </div>

@@ -4,8 +4,20 @@ import { EventEmitter } from "node:events"
 import { sanitizedChildEnvironment } from "../../../security/childEnvironment"
 import { terminateProviderChildProcessTree } from "../ChildProcessTermination"
 import { ChildStdinWriter } from "../ChildStdinWriter"
-import { buildWindowsCmdArgs } from "../../../security/windowsCommandLine"
+import {
+  buildWindowsCmdArgs,
+  resolveComSpec,
+} from "../../../security/windowsCommandLine"
+import { trackChildProcessTree } from "../../../services/child-process-registry"
 import { logger } from "../../../observability/logger"
+import {
+  DEFAULT_NDJSON_LINE_BYTE_CAP,
+  NdjsonLineReader,
+  dispatchNdjsonNotification,
+  identifyOversizedLine,
+  type OversizedNdjsonLine,
+} from "../NdjsonLineReader"
+import { ProcessStderrTail } from "../ProcessStderrTail"
 
 export interface JsonRpcRequest {
   version: 2
@@ -57,7 +69,7 @@ export interface SpawnOptions {
 }
 
 const DEFAULT_CALL_TIMEOUT_MS = 60_000
-const DEFAULT_STDOUT_LINE_CAP = 4 * 1024 * 1024
+const DEFAULT_STDOUT_LINE_CAP = DEFAULT_NDJSON_LINE_BYTE_CAP
 const CODEX_APP_SERVER_PROTOCOL_VERSION = 2
 
 interface PendingRequest {
@@ -107,7 +119,8 @@ export class CodexRpcClient extends EventEmitter {
   private stderrHandler: StderrHandler | null = null
   private readonly callTimeoutMs: number
   private readonly stdoutLineCap: number
-  private readonly stderrTail: string[] = []
+  private readonly stderrTail = new ProcessStderrTail()
+  private untrackChild: (() => void) | null = null
 
   constructor(private readonly options: SpawnOptions) {
     super()
@@ -117,6 +130,11 @@ export class CodexRpcClient extends EventEmitter {
 
   isAlive(): boolean {
     return !this.closed && this.child !== null && this.child.exitCode === null
+  }
+
+  /** Redacted tail of the app-server's stderr; empty when it printed nothing. */
+  stderrText(maxChars = 2_000): string {
+    return this.stderrTail.isEmpty ? "" : this.stderrTail.tail(maxChars)
   }
 
   onNotification(method: string, handler: NotificationHandler): () => void {
@@ -147,11 +165,7 @@ export class CodexRpcClient extends EventEmitter {
       isWindows && path.isAbsolute(binaryPath) && /\.exe$/i.test(binaryPath)
     const viaCmd = isWindows && !directExe
     const allArgs = ["app-server", ...(args ?? [])]
-    const spawnCommand = viaCmd
-      ? process.env.ComSpec && process.env.ComSpec.length > 0
-        ? process.env.ComSpec
-        : "cmd.exe"
-      : binaryPath
+    const spawnCommand = viaCmd ? resolveComSpec() : binaryPath
     const spawnArgs = viaCmd
       ? buildWindowsCmdArgs(binaryPath, allArgs)
       : allArgs
@@ -195,6 +209,10 @@ export class CodexRpcClient extends EventEmitter {
       throw error
     }
 
+    // Registered so a backend that dies does not leave the app-server
+    // running; released once the tree is confirmed gone in close().
+    this.untrackChild?.()
+    this.untrackChild = trackChildProcessTree(child, "codex app-server")
     this.attachChild(child)
   }
 
@@ -210,67 +228,27 @@ export class CodexRpcClient extends EventEmitter {
     // a child that died mid-request never surfaces as an unhandled `error`.
     if (this.stdinChild !== child) this.stdin = this.createStdinWriter(child)
 
-    let stdoutChunks: Buffer[] = []
-    let stdoutBytes = 0
-    let stdoutFailed = false
-    child.stdout.on("data", (rawChunk: Buffer | string) => {
-      if (stdoutFailed) return
-      const chunk = Buffer.isBuffer(rawChunk)
-        ? rawChunk
-        : Buffer.from(rawChunk, "utf8")
-      let offset = 0
-      while (offset < chunk.length) {
-        const newline = chunk.indexOf(0x0a, offset)
-        const end = newline >= 0 ? newline : chunk.length
-        const segment = chunk.subarray(offset, end)
-        if (stdoutBytes + segment.byteLength > this.stdoutLineCap) {
-          stdoutFailed = true
-          stdoutChunks = []
-          stdoutBytes = 0
-          const error = new Error(
-            `codex rpc stdout line exceeded ${this.stdoutLineCap} bytes.`
-          )
-          this.rejectAllPending(() => error)
-          this.emit("child-error", error)
-          void this.close().catch((cleanupError) =>
-            this.emit("child-error", cleanupError)
-          )
-          return
-        }
-        if (segment.byteLength > 0) {
-          stdoutChunks.push(segment)
-          stdoutBytes += segment.byteLength
-        }
-        if (newline < 0) break
-        const line = Buffer.concat(stdoutChunks, stdoutBytes)
-          .toString("utf8")
-          .replace(/\r$/, "")
-        stdoutChunks = []
-        stdoutBytes = 0
-        this.handleLine(line)
-        offset = newline + 1
-      }
-    })
-    child.stdout.on("end", () => {
-      if (!stdoutFailed && stdoutBytes > 0) {
-        const line = Buffer.concat(stdoutChunks, stdoutBytes)
-          .toString("utf8")
-          .replace(/\r$/, "")
-        stdoutChunks = []
-        stdoutBytes = 0
-        this.handleLine(line)
-      }
-    })
+    // One oversized line (the cumulative turn diff of a lockfile change, say)
+    // is skipped and fails only the request it belongs to; it no longer
+    // tears the app-server down mid-turn.
+    const stdout = new NdjsonLineReader(
+      this.stdoutLineCap,
+      (line) => this.handleLine(line),
+      (line) => this.handleOversizedLine(line)
+    )
+    child.stdout.on("data", (chunk: Buffer | string) => stdout.push(chunk))
+    child.stdout.on("end", () => stdout.end())
 
+    // Lines are assembled across chunks so a line split between two reads is
+    // classified once and whole.
+    const emitStderr = (lines: string[]) => {
+      for (const line of lines) this.stderrHandler?.(line)
+    }
     child.stderr.setEncoding("utf8")
-    child.stderr.on("data", (chunk: string) => {
-      for (const line of chunk.split(/\r?\n/)) {
-        if (!line) continue
-        this.stderrTail.push(line)
-        if (this.stderrTail.length > 12) this.stderrTail.shift()
-        this.stderrHandler?.(line)
-      }
-    })
+    child.stderr.on("data", (chunk: Buffer | string) =>
+      emitStderr(this.stderrTail.push(chunk))
+    )
+    child.stderr.on("end", () => emitStderr(this.stderrTail.flush()))
 
     child.on("exit", (code, signal) => {
       this.closed = true
@@ -435,6 +413,8 @@ export class CodexRpcClient extends EventEmitter {
     this.cleanupRequiredChild = child
     const operation = (async () => {
       await terminateProviderChildProcessTree(child)
+      this.untrackChild?.()
+      this.untrackChild = null
       if (this.cleanupRequiredChild === child) this.cleanupRequiredChild = null
       if (this.child === child) this.child = null
     })()
@@ -446,38 +426,54 @@ export class CodexRpcClient extends EventEmitter {
     }
   }
 
-  private handleLine(line: string): void {
-    if (!line) return
-    if (Buffer.byteLength(line, "utf8") > this.stdoutLineCap) {
-      // Do not drop this silently. If the oversized line was a RESPONSE, the
-      // pending call would otherwise hang until the 60s timeout and surface as
-      // "codex rpc timeout" — a misleading error for "the payload was too
-      // big". If it was a notification, the event would vanish from the
-      // transcript with no trace at all. Recover the id cheaply from the head
-      // of the line so the waiting caller gets an accurate failure.
-      const idMatch = /"id"\s*:\s*(\d+)/.exec(line.slice(0, 256))
-      const id = idMatch ? Number(idMatch[1]) : null
-      const entry = id !== null ? this.pending.get(id) : undefined
-      logger.warn(
-        {
-          bytes: Buffer.byteLength(line, "utf8"),
-          cap: this.stdoutLineCap,
-          method: entry?.method ?? null,
-          correlated: Boolean(entry),
-        },
-        "codex rpc line exceeded the stdout cap and was dropped"
-      )
-      if (id !== null && entry) {
-        this.pending.delete(id)
-        clearTimeout(entry.timer)
-        entry.reject(
-          new Error(
-            `codex rpc response for ${entry.method} exceeded the ${this.stdoutLineCap}-byte line cap and was discarded`
-          )
+  /**
+   * A line over the cap was skipped. Do not drop it silently: a RESPONSE
+   * would leave its call waiting for the 60 s timeout ("codex rpc timeout" is
+   * misleading for "the payload was too big"), and a server REQUEST would
+   * leave the app-server waiting for an answer forever. The envelope is
+   * recovered from the head of the line so only that exchange fails.
+   */
+  private handleOversizedLine(line: OversizedNdjsonLine): void {
+    const identity = identifyOversizedLine(line.head)
+    const entry =
+      typeof identity.id === "number" && !identity.method
+        ? this.pending.get(identity.id)
+        : undefined
+    logger.warn(
+      {
+        bytes: line.bytes,
+        cap: this.stdoutLineCap,
+        method: identity.method ?? entry?.method ?? null,
+        correlated: Boolean(entry),
+      },
+      "codex rpc line exceeded the stdout cap and was dropped"
+    )
+    if (entry && typeof identity.id === "number") {
+      this.pending.delete(identity.id)
+      clearTimeout(entry.timer)
+      entry.reject(
+        new Error(
+          `codex rpc response for ${entry.method} exceeded the ${this.stdoutLineCap}-byte line cap and was discarded`
         )
-      }
+      )
       return
     }
+    if (identity.id !== null && identity.method) {
+      const resp: JsonRpcResponse = {
+        version: CODEX_APP_SERVER_PROTOCOL_VERSION,
+        jsonrpc: "2.0",
+        id: identity.id,
+        error: {
+          code: -32600,
+          message: `Request exceeded the client's ${this.stdoutLineCap}-byte line limit.`,
+        },
+      }
+      this.writeServerResponse(resp, identity.method)
+    }
+  }
+
+  private handleLine(line: string): void {
+    if (!line) return
     let msg: Record<string, unknown>
     try {
       msg = JSON.parse(line) as Record<string, unknown>
@@ -527,6 +523,21 @@ export class CodexRpcClient extends EventEmitter {
           respond,
           respondError
         )
+      } else {
+        // Answer instead of leaving the app-server waiting forever (the ACP
+        // client already does this).
+        this.writeServerResponse(
+          {
+            version: CODEX_APP_SERVER_PROTOCOL_VERSION,
+            jsonrpc: "2.0",
+            id,
+            error: {
+              code: -32601,
+              message: `No handler registered for ${method}`,
+            },
+          },
+          method
+        )
       }
       return
     }
@@ -550,26 +561,12 @@ export class CodexRpcClient extends EventEmitter {
     }
 
     if (method) {
-      const handlers = this.notificationHandlers.get(method)
-      if (handlers) {
-        for (const h of handlers) {
-          try {
-            h(method, msg.params ?? {})
-          } catch {
-            /* isolate */
-          }
-        }
-      }
-      const wildcard = this.notificationHandlers.get("*")
-      if (wildcard) {
-        for (const h of wildcard) {
-          try {
-            h(method, msg.params ?? {})
-          } catch {
-            /* isolate */
-          }
-        }
-      }
+      dispatchNdjsonNotification(
+        this.notificationHandlers,
+        method,
+        msg.params ?? {},
+        "codex rpc"
+      )
     }
   }
 
@@ -578,7 +575,7 @@ export class CodexRpcClient extends EventEmitter {
     code: number | null,
     signal: NodeJS.Signals | null
   ): string {
-    const stderr = this.stderrTail.join("\n").trim()
+    const stderr = this.stderrTail.tail(1_200).trim()
     const stderrSuffix = stderr
       ? ` stderr=${truncateForMessage(stderr, 1_200)}`
       : ""

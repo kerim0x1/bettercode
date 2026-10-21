@@ -8,9 +8,13 @@ import {
   RPC_REQUEST_DURATION_MS,
   RPC_REQUESTS_TOTAL,
 } from "../observability/metrics"
-import { createWsRpcHandler } from "./rpc"
+import { createWsRpcHandler as createWsRpcHandlerUnfilled } from "./rpc"
 import type { WsConnection } from "./server"
 import { RemoteTerminalChannel } from "./terminalChannel"
+import { withInertStateArgument } from "../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const createWsRpcHandler = withInertStateArgument(createWsRpcHandlerUnfilled, 0)
 
 const LOCAL_PRINCIPAL = { kind: "local" as const }
 
@@ -49,6 +53,8 @@ function makeState() {
   const models = [{ slug: "gpt-5.3-codex", name: "Codex 5.3", context: "1M" }]
 
   return {
+    taintedRef: () => false,
+    drainingRef: () => false,
     providerHub: {
       listInstances: vi.fn(() => [instanceSnapshot]),
       modelsForInstance: vi.fn(async (instanceId: string) =>

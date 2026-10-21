@@ -9,8 +9,9 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type {
   PortableMcpServer,
   PortableMcpServerResolver,
-} from "../runtime/cursor/AcpMcpServers"
+} from "../runtime/acp/AcpMcpServers"
 import type { ToolExecLimits, ToolExecResult } from "./tool-executor"
+import type { ShellCommandRunner } from "../../services/shell"
 import { normalizeLevel } from "../permissions"
 import { normalizeChatMode } from "../shared/chat-mode-tools"
 
@@ -58,6 +59,11 @@ export type DirectMcpClientFactory = (
 export interface DirectMcpAdapterOptions {
   readonly mcpServerResolver?: PortableMcpServerResolver
   readonly mcpClientFactory?: DirectMcpClientFactory
+  /**
+   * The backend's shell sessions, which the built-in Bash tool runs in
+   * (`ToolExecContext.shell`). Bootstrap passes `AppState.shellSessions`.
+   */
+  readonly shellSessions?: ShellCommandRunner
 }
 
 export interface DirectMcpToolDefinition {

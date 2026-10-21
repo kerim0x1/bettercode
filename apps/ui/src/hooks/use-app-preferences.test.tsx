@@ -31,7 +31,7 @@ vi.mock("@/lib/chat-store", async (importOriginal) => {
   }
 })
 
-vi.mock("@/services/backend", () => ({
+vi.mock("@/services/backend/chatApi", () => ({
   saveThreadModelSwitchActivity: vi.fn().mockResolvedValue(undefined),
 }))
 

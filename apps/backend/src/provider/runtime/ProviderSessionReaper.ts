@@ -5,8 +5,13 @@ import type {
   ProviderSessionBindingStore,
 } from "./ProviderSessionBindingStore"
 
-const DEFAULT_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000
-const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60 * 1000
+// Each live Codex/ACP session keeps its own agent process (tens to hundreds
+// of MB). Idle ones are released after 10 minutes, and beyond a small warm
+// pool per provider instance the least recently used idle ones go first.
+// Stopping a session keeps its resume cursor, so the next turn resumes it.
+const DEFAULT_INACTIVITY_THRESHOLD_MS = 10 * 60 * 1000
+const DEFAULT_SWEEP_INTERVAL_MS = 2 * 60 * 1000
+const DEFAULT_MAX_IDLE_SESSIONS_PER_INSTANCE = 4
 const MAX_TIMER_DELAY_MS = 2 ** 31 - 1
 
 export interface ProviderSessionReaperLogger {
@@ -24,6 +29,11 @@ export interface ProviderSessionReaperOptions {
   readonly logger: ProviderSessionReaperLogger
   readonly inactivityThresholdMs?: number
   readonly sweepIntervalMs?: number
+  /**
+   * Idle (no active turn) sessions kept warm per provider instance before
+   * the least recently used ones are stopped. `Infinity` disables the cap.
+   */
+  readonly maxIdleSessionsPerInstance?: number
   readonly now?: () => number
 }
 
@@ -39,6 +49,7 @@ export interface ProviderSessionReaperSweepResult {
 export class ProviderSessionReaper {
   private readonly inactivityThresholdMs: number
   private readonly sweepIntervalMs: number
+  private readonly maxIdleSessionsPerInstance: number
   private readonly now: () => number
   private timer: NodeJS.Timeout | null = null
   private sweepInFlight: Promise<ProviderSessionReaperSweepResult> | null = null
@@ -55,6 +66,12 @@ export class ProviderSessionReaper {
     this.sweepIntervalMs = Number.isFinite(sweepInterval)
       ? Math.min(MAX_TIMER_DELAY_MS, Math.max(1, Math.trunc(sweepInterval)))
       : DEFAULT_SWEEP_INTERVAL_MS
+    const maxIdle =
+      options.maxIdleSessionsPerInstance ??
+      DEFAULT_MAX_IDLE_SESSIONS_PER_INSTANCE
+    this.maxIdleSessionsPerInstance = Number.isNaN(maxIdle)
+      ? DEFAULT_MAX_IDLE_SESSIONS_PER_INSTANCE
+      : Math.max(0, Math.floor(maxIdle))
     this.now = options.now ?? Date.now
   }
 
@@ -77,6 +94,7 @@ export class ProviderSessionReaper {
       {
         inactivityThresholdMs: this.inactivityThresholdMs,
         sweepIntervalMs: this.sweepIntervalMs,
+        maxIdleSessionsPerInstance: this.maxIdleSessionsPerInstance,
       },
       "provider.session.reaper.started"
     )
@@ -114,6 +132,10 @@ export class ProviderSessionReaper {
     let skippedFreshCount = 0
     let skippedStoppedCount = 0
     let failedCount = 0
+    const idleByInstance = new Map<
+      string,
+      Array<{ binding: ProviderSessionBinding; updatedAtMs: number }>
+    >()
 
     for (const binding of bindings) {
       if (isStoppedBinding(binding)) {
@@ -150,51 +172,40 @@ export class ProviderSessionReaper {
 
       const idleDurationMs = now - updatedAtMs
       if (idleDurationMs < this.inactivityThresholdMs) {
-        skippedFreshCount += 1
+        const group = idleByInstance.get(binding.providerInstanceId) ?? []
+        group.push({ binding, updatedAtMs })
+        idleByInstance.set(binding.providerInstanceId, group)
         continue
       }
 
-      try {
-        const providerKind = providerKindForHub(binding.providerKind)
-        await this.options.providerHub.withThreadMaintenance(
-          binding.threadId,
-          () =>
-            this.options.providerHub.stopSession(
-              providerKind,
-              binding.threadId as ThreadId,
-              binding.providerInstanceId
-            )
-        )
-        this.options.bindings.updateSessionLifecycle({
-          threadId: binding.threadId,
-          providerKind: binding.providerKind,
-          providerInstanceId: binding.providerInstanceId,
-          status: "stopped",
-          activeTurnId: null,
-        })
+      if (await this.reap(binding, idleDurationMs, "inactivity_threshold")) {
         reapedCount += 1
-        this.options.logger.info(
-          {
-            threadId: binding.threadId,
-            providerKind: binding.providerKind,
-            providerInstanceId: binding.providerInstanceId,
-            idleDurationMs,
-            reason: "inactivity_threshold",
-          },
-          "provider.session.reaped"
-        )
-      } catch (err) {
+      } else {
         failedCount += 1
-        this.options.logger.warn(
-          {
-            err,
-            threadId: binding.threadId,
-            providerKind: binding.providerKind,
-            providerInstanceId: binding.providerInstanceId,
-            idleDurationMs,
-          },
-          "provider.session.reaper.stop-failed"
-        )
+      }
+    }
+
+    // Warm pool: keep the most recently used idle sessions per instance and
+    // stop the rest, so ten chats touched in ten minutes do not keep ten
+    // agent processes resident.
+    for (const group of idleByInstance.values()) {
+      group.sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+      skippedFreshCount += Math.min(
+        group.length,
+        this.maxIdleSessionsPerInstance
+      )
+      for (const entry of group.slice(this.maxIdleSessionsPerInstance)) {
+        if (
+          await this.reap(
+            entry.binding,
+            now - entry.updatedAtMs,
+            "idle_session_cap"
+          )
+        ) {
+          reapedCount += 1
+        } else {
+          failedCount += 1
+        }
       }
     }
 
@@ -212,6 +223,57 @@ export class ProviderSessionReaper {
       skippedFreshCount,
       skippedStoppedCount,
       failedCount,
+    }
+  }
+
+  /** Stops one session and marks its binding stopped; false on failure. */
+  private async reap(
+    binding: ProviderSessionBinding,
+    idleDurationMs: number,
+    reason: "inactivity_threshold" | "idle_session_cap"
+  ): Promise<boolean> {
+    try {
+      const providerKind = providerKindForHub(binding.providerKind)
+      await this.options.providerHub.withThreadMaintenance(
+        binding.threadId,
+        () =>
+          this.options.providerHub.stopSession(
+            providerKind,
+            binding.threadId as ThreadId,
+            binding.providerInstanceId
+          )
+      )
+      this.options.bindings.updateSessionLifecycle({
+        threadId: binding.threadId,
+        providerKind: binding.providerKind,
+        providerInstanceId: binding.providerInstanceId,
+        status: "stopped",
+        activeTurnId: null,
+      })
+      this.options.logger.info(
+        {
+          threadId: binding.threadId,
+          providerKind: binding.providerKind,
+          providerInstanceId: binding.providerInstanceId,
+          idleDurationMs,
+          reason,
+        },
+        "provider.session.reaped"
+      )
+      return true
+    } catch (err) {
+      this.options.logger.warn(
+        {
+          err,
+          threadId: binding.threadId,
+          providerKind: binding.providerKind,
+          providerInstanceId: binding.providerInstanceId,
+          idleDurationMs,
+          reason,
+        },
+        "provider.session.reaper.stop-failed"
+      )
+      return false
     }
   }
 }

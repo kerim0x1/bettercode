@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import os from "node:os"
 import { isRecord } from "@betterc0de/schema"
+import { httpContracts } from "@betterc0de/schema/http-contracts"
 import {
   REMOTE_CLIENT_HEADER,
   REMOTE_MIN_CLIENT_VERSION,
@@ -8,24 +9,19 @@ import {
   remoteClientNeedsUpdate,
   type RemoteAccessLevel,
   type RemoteClientInfo,
+  type RemoteEndpoint,
   type RemoteProtocol,
+  type TailscaleRemoteStatus,
 } from "@betterc0de/schema/remote-protocol"
 import type { Context, Hono, MiddlewareHandler } from "hono"
 import { deleteCookie, setCookie } from "hono/cookie"
 import type { AppState } from "../appState"
 import type { ServerConfig } from "../config"
+import { contractResult } from "../http/contracts"
 import { createRateLimiter } from "../http/middleware/rateLimit"
 import { logger } from "../observability/logger"
 import { readCookie } from "../security/cookie"
 import { constantTimeEqual } from "../security/token"
-import {
-  activeShellSessionCountForOwner,
-  closeShellSessionsForOwner,
-} from "../services/shell"
-import {
-  activeTerminalPtySessionCount,
-  shutdownTerminalPtySessionsForOwner,
-} from "../services/terminalPty"
 import type { RemoteTerminalChannel } from "../ws/terminalChannel"
 import {
   REMOTE_SESSION_COOKIE,
@@ -41,9 +37,9 @@ import {
 import { describeRemoteProtocol, publicRemoteProtocol } from "./protocol"
 import {
   DEFAULT_TAILSCALE_SERVE_PORT,
+  TailscaleCommandError,
   isTailscaleAddress,
   normalizeSocketAddress,
-  type TailscaleRemoteState,
 } from "./tailscale"
 
 export interface RemoteRequestIdentity {
@@ -62,15 +58,8 @@ interface ResolvedRequestIdentity {
   readonly identity: RemoteRequestIdentity | null
 }
 
-export interface AdvertisedRemoteEndpoint {
-  id: string
-  label: string
-  httpBaseUrl: string
-  wsBaseUrl: string
-  reachability: "loopback" | "lan" | "private-network" | "public"
-  hostedHttpsCompatible: boolean
-  isDefault: boolean
-}
+/** An address the desktop advertises; the shared record the clients read. */
+export type AdvertisedRemoteEndpoint = RemoteEndpoint
 
 const INSECURE_REMOTE_SESSION_TTL_MS = 60 * 60 * 1000
 
@@ -141,7 +130,6 @@ export function requestIdentity(
 }
 
 function remoteService(state: AppState): RemoteAccessService {
-  if (!state.remoteAccess) throw new Error("Remote access is unavailable")
   return state.remoteAccess
 }
 
@@ -289,7 +277,9 @@ export function requestPeerIsTailnet(
  * Classifies LAN and VPN clients for private-network pairing. The address is the
  * forwarded one behind a trusted proxy, else the TCP peer — the same source
  * loopback classification uses. A public peer never qualifies, so a port
- * forwarded from a router without TLS still gets 426.
+ * forwarded from a router without TLS still gets 426. Qualifying only admits
+ * the transport: a private address is not encryption, so plaintext from such
+ * a peer is still downgraded (see `isInsecureNonLoopbackRequest`).
  */
 export function requestPeerIsPrivateNetwork(
   c: Context,
@@ -317,8 +307,16 @@ export function isRemoteRequestTransportAllowed(
 }
 
 /**
- * Plaintext from a *public* peer. Only ever reachable with the plaintext
- * escape hatch, and then downgraded to read-only monitoring.
+ * Plaintext that left this computer without an encrypted tunnel: neither
+ * TLS, nor loopback, nor the tailnet (WireGuard). That covers a public peer
+ * (only reachable with the plaintext escape hatch) and a private-network
+ * peer alike. A private address is not an encrypted transport — anyone on
+ * the same office, hotel or café Wi-Fi can read the pairing code and the
+ * bearer off the wire and replay them — so both get the same policy: the
+ * session is issued read-only with a one-hour lifetime, and a full session
+ * presented over such a connection is downgraded to read-only for that
+ * request. Private peers still pass `isRemoteRequestTransportAllowed`, so
+ * pairing over the LAN keeps working; it just cannot operate the host.
  */
 export function isInsecureNonLoopbackRequest(
   c: Context,
@@ -327,8 +325,7 @@ export function isInsecureNonLoopbackRequest(
   return (
     !requestIsSecure(c, config) &&
     !requestPeerIsLoopback(c, config) &&
-    !requestPeerIsTailnet(c, config) &&
-    !requestPeerIsPrivateNetwork(c, config)
+    !requestPeerIsTailnet(c, config)
   )
 }
 
@@ -348,13 +345,15 @@ const READ_ONLY_REMOTE_GET_PATHS = [
   /^\/api\/v1\/threads\/stats$/,
   /^\/api\/v1\/threads\/[^/]+$/,
   /^\/api\/v1\/threads\/[^/]+\/(?:messages|activities|diffs|checkpoint-recovery)$/,
+  /^\/api\/v1\/threads\/[^/]+\/messages\/[^/]+$/,
+  /^\/api\/v1\/threads\/[^/]+\/activities\/[^/]+\/output$/,
 ] as const
 
 /**
- * Plaintext remote access is an explicit compatibility mode, not a way to
- * grant terminal or mutation rights. A session issued over plaintext stays
- * read-only even when replayed over TLS; any remote session used over
- * plaintext is also downgraded for that request.
+ * Plaintext remote access (public with the escape hatch, or a private LAN)
+ * is monitoring, not a way to grant terminal or mutation rights. A session
+ * issued over plaintext stays read-only even when replayed over TLS; any
+ * remote session used over plaintext is also downgraded for that request.
  */
 export function requiresReadOnlyRemoteAccess(
   c: Context,
@@ -428,8 +427,7 @@ export function requestRemoteProtocol(
   }
   return describeRemoteProtocol({
     accessLevel: effectiveRemoteAccessLevel(c, config, identity),
-    terminalAllowed:
-      state.settings?.get().remote_access_allow_terminal === true,
+    terminalAllowed: state.settings.get().remote_access_allow_terminal === true,
   })
 }
 
@@ -483,6 +481,23 @@ const DESKTOP_ONLY_PATHS: ReadonlyArray<{
   { methods: null, pattern: /^\/api\/v1\/themes\/installed$/ },
   { methods: new Set(["POST"]), pattern: /^\/api\/v1\/themes\/import$/ },
   { methods: new Set(["DELETE"]), pattern: /^\/api\/v1\/themes\/[^/]+$/ },
+  // The desktop configuration (rules, skills, subagents, MCP servers, hooks)
+  // belongs to the desktop's main process; its routes also require the main
+  // process's capability header (routes/desktopConfig.ts).
+  { methods: null, pattern: /^\/api\/v1\/config\// },
+  // Importing earlier Claude Code and Codex conversations reads this
+  // computer's home folder (routes/conversationImport.ts).
+  { methods: null, pattern: /^\/api\/v1\/conversation-imports$/ },
+  // Pull request wake-ups start turns from the desktop window at the chat's
+  // own permission level; a paired device can neither turn them on nor
+  // claim the waiting messages.
+  {
+    methods: null,
+    pattern: /^\/api\/v1\/github\/pull-requests\/watch(?:\/claim)?$/,
+  },
+  // Automations start unattended agent runs in the desktop's projects with
+  // a stored permission preset, and show their webhook URLs (secrets).
+  { methods: null, pattern: /^\/api\/v1\/automations(?:\/|$)/ },
 ]
 
 export function isDesktopOnlyRequest(c: Context): boolean {
@@ -574,12 +589,25 @@ function endpoint(
 }
 
 /**
- * Tailnet endpoints. The tailnet IPv4 address is advertised as plain HTTP
- * whenever this machine is on a tailnet: the tunnel is the encryption and
- * the peer authentication, and `requestPeerIsTailnet` classifies requests on
- * it as private transport. The HTTPS name is added only while the serve
- * setting is on *and* Tailscale confirms a mapping to this backend's port —
- * a setting without a live mapping must not produce a dead pairing link.
+ * The backend listens beyond this computer: Remote Access with "Local
+ * network" on binds every interface (or `BETTERC0DE_REMOTE_HOST`). Without
+ * it the backend stays on loopback and only Tailscale Serve or a tunnel
+ * reaches it, so no interface address may be advertised.
+ */
+export function listensOnNetwork(config: Pick<ServerConfig, "host">): boolean {
+  return !isLoopbackHostname(config.host)
+}
+
+/**
+ * Tailnet endpoints. The HTTPS name comes first and is the recommended link
+ * while the serve setting is on *and* Tailscale confirms a mapping to this
+ * backend's port (a setting without a live mapping must not produce a dead
+ * pairing link): tailscaled accepts those connections itself, so they need
+ * no listener on the network and no firewall rule, and the name survives a
+ * changed tailnet address. The tailnet IPv4 address follows as plain HTTP
+ * while the backend listens on the network: the tunnel is the encryption
+ * and the peer authentication, and `requestPeerIsTailnet` classifies
+ * requests on it as private transport.
  */
 export async function discoverTailscaleEndpoints(
   config: ServerConfig,
@@ -589,9 +617,26 @@ export async function discoverTailscaleEndpoints(
   const found: AdvertisedRemoteEndpoint[] = []
   try {
     const status = await state.tailscale.status()
+    if (state.settings.get().remote_access_tailscale_serve === true) {
+      const described = await state.tailscale.describe({
+        localPort: config.port,
+        serveEnabled: true,
+      })
+      if (described.serveActive && described.httpsBaseUrl) {
+        found.push(
+          endpoint(
+            "tailscale",
+            "Tailscale HTTPS",
+            described.httpsBaseUrl,
+            "private-network",
+            true
+          )
+        )
+      }
+    }
     const address =
       status.state === "running" ? status.tailnetIpv4Addresses[0] : null
-    if (address) {
+    if (address && listensOnNetwork(config)) {
       found.push(
         endpoint(
           "tailscale-ip",
@@ -600,24 +645,6 @@ export async function discoverTailscaleEndpoints(
           "private-network"
         )
       )
-    }
-    if (state.settings.get().remote_access_tailscale_serve === true) {
-      const described = await state.tailscale.describe({
-        localPort: config.port,
-        serveEnabled: true,
-      })
-      // Listed after the address so the zero-config link stays recommended;
-      // browsers that need a secure context pick this one deliberately.
-      if (described.serveActive && described.httpsBaseUrl) {
-        found.push(
-          endpoint(
-            "tailscale",
-            "Tailscale HTTPS",
-            described.httpsBaseUrl,
-            "private-network"
-          )
-        )
-      }
     }
   } catch {
     // Tailscale unreachable: no tailnet endpoints, the rest still works.
@@ -662,13 +689,14 @@ export async function discoverRemoteEndpoints(
   }
 
   // Private-network interfaces are always usable for pairing (see
-  // `requestPeerIsPrivateNetwork`); a public interface address only with the
+  // `requestPeerIsPrivateNetwork`), though plaintext pairing there yields a
+  // short read-only session; a public interface address only with the
   // plaintext escape hatch, since a public peer is otherwise refused. The
   // tailnet address is advertised by `discoverTailscaleEndpoints` instead.
+  // None of them answers while the backend listens on loopback only.
   const seen = new Set<string>()
-  for (const [interfaceName, addresses] of Object.entries(
-    os.networkInterfaces()
-  )) {
+  const interfaces = listensOnNetwork(config) ? os.networkInterfaces() : {}
+  for (const [interfaceName, addresses] of Object.entries(interfaces)) {
     for (const address of addresses ?? []) {
       if (
         address.family !== "IPv4" ||
@@ -713,13 +741,16 @@ export async function discoverRemoteEndpoints(
 }
 
 /** Shape of `/remote/tailscale`: detection plus what the setting asks for. */
-export interface TailscaleRemoteStatusResponse extends TailscaleRemoteState {
-  available: boolean
-}
+export type TailscaleRemoteStatusResponse = TailscaleRemoteStatus
 
+/**
+ * The owner's view: detection, the setting, and whether the HTTPS name
+ * answers as this desktop. The probe runs only while Remote Access is on,
+ * because the public bootstrap names this desktop only then.
+ */
 async function describeTailscale(
   config: ServerConfig,
-  state: Pick<AppState, "settings" | "tailscale">
+  state: Pick<AppState, "settings" | "tailscale" | "remoteAccess">
 ): Promise<TailscaleRemoteStatusResponse> {
   const serveEnabled =
     state.settings.get().remote_access_tailscale_serve === true
@@ -736,13 +767,21 @@ async function describeTailscale(
       serveActive: false,
       servePort: DEFAULT_TAILSCALE_SERVE_PORT,
       httpsBaseUrl: null,
+      serviceRunning: false,
+      magicDnsEnabled: null,
+      serveReachable: null,
+      serveError: null,
+      serveConsentUrl: null,
     }
   }
+  const service = state.remoteAccess
   return {
     available: true,
     ...(await state.tailscale.describe({
       localPort: config.port,
       serveEnabled,
+      probe: service.enabled(),
+      environmentId: service.enabled() ? service.environmentId() : null,
     })),
   }
 }
@@ -812,6 +851,13 @@ export function createPairingAdmissionMiddleware(
   }
 }
 
+/**
+ * Full 30-day sessions only over transport that encrypts the credential:
+ * TLS, this computer, or the tailnet. Plaintext pairing — a private LAN or
+ * the public escape hatch — yields short read-only monitoring, because the
+ * session token in the response (and on every later request) is readable by
+ * anyone on that network.
+ */
 function pairingSessionRestrictions(
   c: Context,
   config: ServerConfig
@@ -832,7 +878,7 @@ export function registerRemotePublicRoutes(
 ): void {
   app.get("/api/v1/remote/bootstrap", (c) => {
     c.header("Cache-Control", "no-store")
-    const enabled = state.remoteAccess?.enabled() === true
+    const enabled = state.remoteAccess.enabled()
     if (
       !isRemoteRequestTransportAllowed(c, config) &&
       (c.req.header("Authorization") !== undefined ||
@@ -847,14 +893,12 @@ export function registerRemotePublicRoutes(
       )
     }
     const identity = requestIdentity(c, config, state)
-    return c.json({
+    return contractResult(c, "remoteBootstrap", {
       enabled,
       authenticated: identity !== null,
       authentication: identity?.kind ?? null,
       session: identity?.session ?? null,
-      environmentId: enabled
-        ? (state.remoteAccess?.environmentId() ?? null)
-        : null,
+      environmentId: enabled ? state.remoteAccess.environmentId() : null,
       protocol: requestRemoteProtocol(c, config, state, identity),
     })
   })
@@ -887,7 +931,7 @@ async function handlePairing(
   delivery: "cookie" | "bearer"
 ): Promise<Response> {
   const service = state.remoteAccess
-  if (!service?.enabled()) {
+  if (!service.enabled()) {
     return c.json(
       { error: "remote access is disabled", code: "remote_access_disabled" },
       403
@@ -905,29 +949,18 @@ async function handlePairing(
   if (remoteClientNeedsUpdate(client)) {
     return c.json(clientUpdateRequiredBody(), 426)
   }
-  let body: unknown
-  try {
-    body = await c.req.json()
-  } catch {
+  // Both deliveries read the same request (`remotePairRequestSchema`).
+  const body = await readJsonBody(c)
+  const request = body.ok
+    ? httpContracts.remotePair.request.safeParse(body.value)
+    : null
+  if (!request?.success) {
     return c.json(
       { error: "invalid pairing request", code: "invalid_request" },
       400
     )
   }
-  if (!isRecord(body)) {
-    return c.json(
-      { error: "invalid pairing request", code: "invalid_request" },
-      400
-    )
-  }
-  const credential =
-    typeof body.credential === "string" && body.credential.length <= 64
-      ? body.credential
-      : ""
-  const label =
-    typeof body.label === "string" && body.label.length <= 80
-      ? body.label
-      : undefined
+  const { credential, label } = request.data
   const issued = service.consumePairingCredential(credential, {
     label,
     ...pairingSessionRestrictions(c, config),
@@ -954,8 +987,7 @@ async function handlePairing(
   }
   const protocol = describeRemoteProtocol({
     accessLevel: issued.accessLevel,
-    terminalAllowed:
-      state.settings?.get().remote_access_allow_terminal === true,
+    terminalAllowed: state.settings.get().remote_access_allow_terminal === true,
   })
   c.header("Cache-Control", "no-store")
   if (delivery === "cookie") {
@@ -970,7 +1002,7 @@ async function handlePairing(
       sameSite: "Strict",
       secure: requestIsSecure(c, config),
     })
-    return c.json({
+    return contractResult(c, "remotePair", {
       enabled: true,
       authenticated: true,
       authentication: "remote",
@@ -980,7 +1012,7 @@ async function handlePairing(
     })
   }
   c.header("Pragma", "no-cache")
-  return c.json({
+  return contractResult(c, "remoteMobilePair", {
     enabled: true,
     authenticated: true,
     authentication: "remote",
@@ -993,14 +1025,36 @@ async function handlePairing(
 }
 
 /**
+ * A request's JSON body, or `ok: false` when it has none or it is not JSON.
+ * The `/remote/*` routes read their bodies with their shared contracts
+ * themselves, not through `handleHttpContract`, so each keeps the refusal
+ * installed apps already handle (its own text and `code`) and the
+ * defaults an empty body stands for.
+ */
+async function readJsonBody(
+  c: Context
+): Promise<
+  { readonly ok: true; readonly value: unknown } | { readonly ok: false }
+> {
+  try {
+    return { ok: true, value: await c.req.json() }
+  } catch {
+    return { ok: false }
+  }
+}
+
+/**
  * A paired device's running terminals: its PTYs and its shell commands,
  * whichever way it opened them (the WebSocket or the shell routes).
  */
-function runningRemoteTerminals(sessionId: string): number {
+function runningRemoteTerminals(
+  state: Pick<AppState, "terminalPtys" | "shellSessions">,
+  sessionId: string
+): number {
   const ownerId = `remote:${sessionId}`
   return (
-    activeTerminalPtySessionCount(ownerId) +
-    activeShellSessionCountForOwner(ownerId)
+    state.terminalPtys.activeSessionCount(ownerId) +
+    state.shellSessions.activeSessionCount(ownerId)
   )
 }
 
@@ -1019,12 +1073,14 @@ export function registerRemoteRoutes(
   api.get("/remote/status", async (c) => {
     const service = remoteService(state)
     const identity = requestIdentity(c, config, state)
-    return c.json({
+    return contractResult(c, "remoteStatus", {
       enabled: service.enabled(),
+      // Reachable from other devices: on the network, or through Tailscale
+      // Serve while the backend itself stays on loopback.
       listeningOnNetwork:
         service.enabled() &&
-        config.host !== "127.0.0.1" &&
-        config.host !== "localhost",
+        (listensOnNetwork(config) ||
+          state.settings.get().remote_access_tailscale_serve === true),
       environmentId: service.environmentId(),
       host: config.host,
       port: config.port,
@@ -1046,7 +1102,11 @@ export function registerRemoteRoutes(
         403
       )
     }
-    return c.json(await describeTailscale(config, state))
+    return contractResult(
+      c,
+      "remoteTailscaleStatus",
+      await describeTailscale(config, state)
+    )
   })
 
   api.post("/remote/tailscale/serve", async (c) => {
@@ -1059,21 +1119,23 @@ export function registerRemoteRoutes(
     if (!state.tailscale) {
       return c.json({ error: "Tailscale integration is unavailable" }, 503)
     }
-    let body: unknown
-    try {
-      body = await c.req.json()
-    } catch {
+    const body = await readJsonBody(c)
+    if (!body.ok || !isRecord(body.value)) {
       return c.json({ error: "invalid request" }, 400)
     }
-    if (!isRecord(body)) return c.json({ error: "invalid request" }, 400)
-    if (typeof body.enabled !== "boolean") {
+    const request = httpContracts.remoteTailscaleServe.request.safeParse(
+      body.value
+    )
+    if (!request.success) {
       return c.json({ error: "enabled must be a boolean" }, 400)
     }
-    if (body.enabled && !remoteService(state).enabled()) {
+    const { enabled } = request.data
+    const service = remoteService(state)
+    if (enabled && !service.enabled()) {
       return c.json({ error: "remote access is disabled" }, 409)
     }
     try {
-      if (body.enabled) {
+      if (enabled) {
         await state.tailscale.enableServe(config.port)
       } else {
         await state.tailscale.disableServe()
@@ -1083,6 +1145,10 @@ export function registerRemoteRoutes(
         {
           error:
             error instanceof Error ? error.message : "Tailscale command failed",
+          // Tailscale's page for allowing Serve on the tailnet, when the CLI
+          // stopped to ask for it.
+          consentUrl:
+            error instanceof TailscaleCommandError ? error.consentUrl : null,
         },
         502
       )
@@ -1091,9 +1157,21 @@ export function registerRemoteRoutes(
     // must not leave a setting claiming an endpoint that does not exist.
     // The settings watcher flips `trustLoopbackProxyHeaders` from here.
     await state.settings.updatePublic({
-      remote_access_tailscale_serve: body.enabled,
+      remote_access_tailscale_serve: enabled,
     })
-    return c.json(await describeTailscale(config, state))
+    if (enabled) {
+      // Answer once the name works: Tailscale issues the certificate on the
+      // first request to a new mapping. A slow certificate is not a failure;
+      // the status then says it is still on its way.
+      await state.tailscale.waitForServe({
+        environmentId: service.environmentId(),
+      })
+    }
+    return contractResult(
+      c,
+      "remoteTailscaleServe",
+      await describeTailscale(config, state)
+    )
   })
 
   api.post("/remote/pairing-links", async (c) => {
@@ -1107,23 +1185,19 @@ export function registerRemoteRoutes(
     if (!service.enabled()) {
       return c.json({ error: "remote access is disabled" }, 409)
     }
-    let body: unknown = {}
-    try {
-      body = await c.req.json()
-    } catch {
-      // An empty body is valid and uses safe defaults.
-    }
-    if (!isRecord(body)) return c.json({ error: "invalid request" }, 400)
-    const ttlMinutes =
-      typeof body.ttlMinutes === "number" && Number.isFinite(body.ttlMinutes)
-        ? body.ttlMinutes
-        : undefined
+    // An empty body is valid and uses safe defaults.
+    const body = await readJsonBody(c)
+    const request = httpContracts.remotePairingLinkCreate.request.safeParse(
+      body.ok ? body.value : {}
+    )
+    if (!request.success) return c.json({ error: "invalid request" }, 400)
+    const { label, ttlMinutes } = request.data
     const grant = service.issuePairingGrant({
-      label: typeof body.label === "string" ? body.label : undefined,
+      label,
       ttlMs: ttlMinutes === undefined ? undefined : ttlMinutes * 60 * 1000,
     })
     const endpoints = await discoverRemoteEndpoints(config, state)
-    return c.json({
+    return contractResult(c, "remotePairingLinkCreate", {
       ...grant,
       links: endpoints.map((candidate) => ({
         endpointId: candidate.id,
@@ -1131,6 +1205,49 @@ export function registerRemoteRoutes(
         url: pairingUrl(candidate.httpBaseUrl, grant.credential),
         isDefault: candidate.isDefault,
       })),
+    })
+  })
+
+  // Outstanding pairing links are often shared as screenshots or QR codes,
+  // so the owner can list and withdraw them before anyone redeems one. The
+  // listing never carries the code itself: it was shown once, at creation.
+  api.get("/remote/pairing-links", (c) => {
+    if (!isLocalOwnerRequest(c, config, state)) {
+      return c.json(
+        { error: "pairing links can only be managed by the desktop host" },
+        403
+      )
+    }
+    return contractResult(c, "remotePairingLinkList", {
+      pairingLinks: remoteService(state).listPairingGrants(),
+    })
+  })
+
+  api.delete("/remote/pairing-links", (c) => {
+    if (!isLocalOwnerRequest(c, config, state)) {
+      return c.json(
+        { error: "pairing links can only be managed by the desktop host" },
+        403
+      )
+    }
+    return contractResult(c, "remotePairingLinkRevokeAll", {
+      revoked: remoteService(state).revokePendingPairingGrants(),
+    })
+  })
+
+  api.delete("/remote/pairing-links/:pairingId", (c) => {
+    if (!isLocalOwnerRequest(c, config, state)) {
+      return c.json(
+        { error: "pairing links can only be managed by the desktop host" },
+        403
+      )
+    }
+    const pairingId = c.req.param("pairingId")
+    if (!pairingId || pairingId.length > 100) {
+      return c.json({ error: "invalid pairing id" }, 400)
+    }
+    return contractResult(c, "remotePairingLinkRevoke", {
+      revoked: remoteService(state).revokePairingGrant(pairingId),
     })
   })
 
@@ -1143,11 +1260,11 @@ export function registerRemoteRoutes(
     }
     const service = remoteService(state)
     const identity = requestIdentity(c, config, state)
-    return c.json({
+    return contractResult(c, "remoteSessionList", {
       currentSessionId: identity?.session?.id ?? null,
       sessions: service.listSessions().map((session) => ({
         ...session,
-        terminals: runningRemoteTerminals(session.id),
+        terminals: runningRemoteTerminals(state, session.id),
       })),
     })
   })
@@ -1166,11 +1283,11 @@ export function registerRemoteRoutes(
       return c.json({ error: "invalid session id" }, 400)
     }
     const ownerId = `remote:${sessionId}`
-    const running = runningRemoteTerminals(sessionId)
+    const running = runningRemoteTerminals(state, sessionId)
     options.remoteTerminals?.endedOnDesktop(sessionId)
     const results = await Promise.allSettled([
-      shutdownTerminalPtySessionsForOwner(ownerId),
-      closeShellSessionsForOwner(ownerId),
+      state.terminalPtys.shutdownForOwner(ownerId),
+      state.shellSessions.closeSessionsForOwner(ownerId),
     ])
     const failures = results.flatMap((result) =>
       result.status === "rejected" ? [result.reason] : []
@@ -1190,7 +1307,7 @@ export function registerRemoteRoutes(
         500
       )
     }
-    return c.json({ ended: running })
+    return contractResult(c, "remoteSessionTerminalsEnd", { ended: running })
   })
 
   api.delete("/remote/sessions/:sessionId", async (c) => {
@@ -1205,7 +1322,7 @@ export function registerRemoteRoutes(
     if (!sessionId || sessionId.length > 100) {
       return c.json({ error: "invalid session id" }, 400)
     }
-    return c.json({
+    return contractResult(c, "remoteSessionRevoke", {
       revoked: await service.revokeSessionAndWait(sessionId),
     })
   })
@@ -1219,7 +1336,7 @@ export function registerRemoteRoutes(
     }
     const service = remoteService(state)
     const identity = requestIdentity(c, config, state)
-    return c.json({
+    return contractResult(c, "remoteSessionRevokeOthers", {
       revoked: await service.revokeOtherSessionsAndWait(identity?.session?.id),
     })
   })
@@ -1231,6 +1348,8 @@ export function registerRemoteRoutes(
       await service.revokeSessionAndWait(identity.session.id)
     }
     deleteCookie(c, REMOTE_SESSION_COOKIE, { path: "/" })
-    return c.json({ loggedOut: identity?.kind === "remote" })
+    return contractResult(c, "remoteLogout", {
+      loggedOut: identity?.kind === "remote",
+    })
   })
 }

@@ -32,11 +32,15 @@ import { ClaudeApiAdapter } from "./claudeApi"
 import { ApiKeyPool } from "../../auth/apiKeyPool"
 import { defaultSettings } from "../../settings/schema"
 import { executeTool } from "../agent-loop/tool-executor"
-import type { ProviderRuntimeEvent, ProviderSendTurnInput } from "../types"
+import type { LegacyProviderEvent, ProviderSendTurnInput } from "../types"
 
 type Block = Record<string, unknown> & { type: string }
 
-function makeStream(message: { content: Block[]; usage?: unknown }) {
+function makeStream(message: {
+  content: Block[]
+  usage?: unknown
+  stop_reason?: string
+}) {
   const handlers: Record<string, Array<(arg: unknown) => void>> = {}
   return {
     on(event: string, cb: (arg: unknown) => void) {
@@ -169,7 +173,7 @@ describe("ClaudeApiAdapter agent loop", () => {
       },
     })
     const adapter = new ClaudeApiAdapter(null, {}, undefined, pool)
-    const events: ProviderRuntimeEvent[] = []
+    const events: LegacyProviderEvent[] = []
     adapter.subscribeEvents().on("event", (event) => events.push(event))
     await expect(adapter.sendMessage(baseInput())).rejects.toThrow("Temporary")
     expect(streamMock).toHaveBeenCalledTimes(1)
@@ -202,10 +206,10 @@ describe("ClaudeApiAdapter agent loop", () => {
           makeStream({ content: [{ type: "text", text: "done" }] })
         )
       const adapter = new ClaudeApiAdapter("sk-test")
-      const events: ProviderRuntimeEvent[] = []
+      const events: LegacyProviderEvent[] = []
       adapter
         .subscribeEvents()
-        .on("event", (event: ProviderRuntimeEvent) => events.push(event))
+        .on("event", (event: LegacyProviderEvent) => events.push(event))
 
       await adapter.sendMessage(
         baseInput({ chat_mode: chatMode, permission_level: "bypass" })
@@ -271,10 +275,10 @@ describe("ClaudeApiAdapter agent loop", () => {
       )
 
     const adapter = new ClaudeApiAdapter("sk-test")
-    const events: ProviderRuntimeEvent[] = []
+    const events: LegacyProviderEvent[] = []
     adapter
       .subscribeEvents()
-      .on("event", (e: ProviderRuntimeEvent) => events.push(e))
+      .on("event", (e: LegacyProviderEvent) => events.push(e))
 
     await adapter.sendMessage(baseInput())
 
@@ -404,10 +408,10 @@ describe("ClaudeApiAdapter agent loop", () => {
     })
 
     const adapter = new ClaudeApiAdapter("sk-test")
-    const events: ProviderRuntimeEvent[] = []
+    const events: LegacyProviderEvent[] = []
     adapter
       .subscribeEvents()
-      .on("event", (event: ProviderRuntimeEvent) => events.push(event))
+      .on("event", (event: LegacyProviderEvent) => events.push(event))
 
     await adapter.sendMessage(baseInput())
 
@@ -468,10 +472,10 @@ describe("ClaudeApiAdapter agent loop", () => {
       }
     )
     const adapter = new ClaudeApiAdapter("sk-test")
-    const events: ProviderRuntimeEvent[] = []
+    const events: LegacyProviderEvent[] = []
     adapter
       .subscribeEvents()
-      .on("event", (event: ProviderRuntimeEvent) => events.push(event))
+      .on("event", (event: LegacyProviderEvent) => events.push(event))
 
     const pending = adapter.sendMessage(baseInput())
     await vi.waitFor(() => expect(executeTool).toHaveBeenCalledOnce())
@@ -619,10 +623,10 @@ describe("ClaudeApiAdapter agent loop", () => {
         })
       )
     const adapter = new ClaudeApiAdapter("sk-test")
-    const events: ProviderRuntimeEvent[] = []
+    const events: LegacyProviderEvent[] = []
     adapter
       .subscribeEvents()
-      .on("event", (event: ProviderRuntimeEvent) => events.push(event))
+      .on("event", (event: LegacyProviderEvent) => events.push(event))
 
     await adapter.sendMessage(baseInput({ permission_level: "read-only" }))
 
@@ -785,6 +789,159 @@ describe("ClaudeApiAdapter agent loop", () => {
         }),
       ])
     )
+  })
+
+  it("never runs a tool_use cut off at max_tokens and asks for a smaller retry", async () => {
+    streamMock
+      .mockReturnValueOnce(
+        makeStream({
+          content: [
+            {
+              type: "tool_use",
+              id: "tu_read",
+              name: "Read",
+              input: { path: "a.ts" },
+            },
+            // The SDK partial-parser drops the unterminated `content` string.
+            {
+              type: "tool_use",
+              id: "tu_write",
+              name: "Write",
+              input: { path: "big.ts" },
+            },
+          ],
+          stop_reason: "max_tokens",
+          usage: USAGE,
+        })
+      )
+      .mockReturnValueOnce(
+        makeStream({ content: [{ type: "text", text: "done" }], usage: USAGE })
+      )
+    const adapter = new ClaudeApiAdapter("sk-test")
+    const events: LegacyProviderEvent[] = []
+    adapter
+      .subscribeEvents()
+      .on("event", (event: LegacyProviderEvent) => events.push(event))
+
+    await adapter.sendMessage(baseInput())
+
+    // The complete Read before the cut still runs; the cut-off Write does not.
+    expect(executeTool).toHaveBeenCalledTimes(1)
+    expect(executeTool).toHaveBeenCalledWith(
+      "Read",
+      { path: "a.ts" },
+      expect.anything()
+    )
+    expect(
+      events.find(
+        (event) =>
+          event.event_type === "tool_result" &&
+          event.payload.tool_id === "tu_write"
+      )?.payload
+    ).toMatchObject({
+      tool_name: "Write",
+      error: expect.stringContaining("output token limit"),
+    })
+    const secondRequest = streamMock.mock.calls[1]?.[0] as {
+      messages: Array<{ role: string; content: unknown }>
+    }
+    const writeResult = secondRequest.messages
+      .flatMap((message) =>
+        Array.isArray(message.content) ? message.content : []
+      )
+      .find(
+        (block) =>
+          typeof block === "object" &&
+          block !== null &&
+          "tool_use_id" in block &&
+          block.tool_use_id === "tu_write"
+      ) as { is_error?: boolean; content?: string } | undefined
+    expect(writeResult?.is_error).toBe(true)
+    expect(writeResult?.content).toContain("smaller")
+  })
+
+  it("runs every tool_use when max_tokens cut a trailing text block", async () => {
+    streamMock
+      .mockReturnValueOnce(
+        makeStream({
+          content: [
+            {
+              type: "tool_use",
+              id: "tu_read",
+              name: "Read",
+              input: { path: "a.ts" },
+            },
+            { type: "text", text: "and then" },
+          ],
+          stop_reason: "max_tokens",
+          usage: USAGE,
+        })
+      )
+      .mockReturnValueOnce(
+        makeStream({ content: [{ type: "text", text: "done" }], usage: USAGE })
+      )
+    const adapter = new ClaudeApiAdapter("sk-test")
+    await adapter.sendMessage(baseInput())
+    expect(executeTool).toHaveBeenCalledTimes(1)
+  })
+
+  it("gives tool turns a larger visible output reserve than plain chat", async () => {
+    streamMock.mockReturnValueOnce(
+      makeStream({ content: [{ type: "text", text: "a" }], usage: USAGE })
+    )
+    const adapter = new ClaudeApiAdapter("sk-test")
+    await adapter.sendMessage(baseInput({ model_id: "claude-sonnet-4-5" }))
+    expect(streamMock.mock.calls[0][0].max_tokens).toBe(16_384)
+    expect(streamMock.mock.calls[0][0].tools?.length).toBeGreaterThan(0)
+  })
+
+  it("retries an overloaded request on the same key before failing over", async () => {
+    const settings = defaultSettings()
+    settings.providers.anthropic = {
+      enabled: true,
+      custom_models: [],
+      hidden_models: [],
+    }
+    settings.providers.anthropic.api_keys = [
+      {
+        id: "primary",
+        label: "Primary",
+        enabled: true,
+        api_key: "synthetic-primary",
+      },
+    ]
+    const pool = new ApiKeyPool({
+      get: () => settings,
+      getPublic: () => ({}),
+      update: () => settings,
+    })
+    streamMock
+      .mockReturnValueOnce({
+        on() {
+          return this
+        },
+        finalMessage: async () => {
+          throw { status: 529, headers: { "retry-after-ms": "10" } }
+        },
+      })
+      .mockReturnValueOnce(
+        makeStream({ content: [{ type: "text", text: "done" }], usage: USAGE })
+      )
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
+    try {
+      const adapter = new ClaudeApiAdapter(null, {}, undefined, pool)
+      const pending = adapter.sendMessage(baseInput({ message: "hi" }))
+      await vi.waitFor(() => expect(streamMock).toHaveBeenCalledTimes(1))
+      await vi.advanceTimersByTimeAsync(20_000)
+      await expect(pending).resolves.toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(streamMock).toHaveBeenCalledTimes(2)
+    expect(sdkOptions.mock.calls.map((call) => call[0].apiKey)).toEqual([
+      "synthetic-primary",
+      "synthetic-primary",
+    ])
   })
 
   it("replays durable tool history as tool_use + tool_result blocks", async () => {

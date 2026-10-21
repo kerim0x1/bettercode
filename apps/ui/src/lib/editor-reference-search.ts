@@ -1,3 +1,4 @@
+import { isWholeWordMatch } from "@betterc0de/schema/search-text"
 import { relativeEditorPath, normalizeEditorPath } from "@/lib/editor-path"
 import { isReferenceSearchableSymbol } from "@/lib/editor-references-store"
 import type { EditorTab } from "@/lib/editor-store"
@@ -120,21 +121,6 @@ export function findOpenEditorSymbolMatches(
 
 function referencePathKey(path: string): string {
   return normalizeEditorPath(path).toLowerCase()
-}
-
-function isWholeWordMatch(
-  line: string,
-  index: number,
-  length: number
-): boolean {
-  return (
-    !isSearchWordChar(line[index - 1]) &&
-    !isSearchWordChar(line[index + length])
-  )
-}
-
-function isSearchWordChar(value: string | undefined): boolean {
-  return Boolean(value && /[A-Za-z0-9_$-]/.test(value))
 }
 
 function makeOpenEditorSearchPreview(

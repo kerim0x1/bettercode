@@ -12,7 +12,7 @@ import {
   type CodeSearchServer,
 } from "./contracts"
 import { withCodeSearchServer } from "./provider-resolver"
-import { portableMcpServersToAcp } from "../../provider/runtime/cursor/AcpMcpServers"
+import { portableMcpServersToAcp } from "../../provider/runtime/acp/AcpMcpServers"
 import { DirectMcpToolSession } from "../../provider/agent-loop/direct-mcp-tools"
 
 const cleanups: Array<() => Promise<unknown>> = []

@@ -86,6 +86,16 @@ constant scale inside the frame, before the shared camera transform. Element
 selection captures the originating thread ID. It enters the existing browser
 context store and opens that thread through the shared chat-tab event.
 
+Every guest is its own Chromium renderer process, so the board keeps only some
+of them live. `lib/canvas-live-guests.ts` (`decideCanvasGuests`, used through
+`hooks/use-canvas-live-guests.ts`) mounts a device preview or embedded page
+only while it is near the viewport, large enough on screen to read, and within
+`MAX_LIVE_CANVAS_GUESTS` (6). The guest the inspector follows and the selected
+embed are pinned and stay live; the active chat's card and recently used
+guests rank next. Separate enter and exit margins and sizes keep a guest from
+flickering at the edge. A paused guest shows a same-size placeholder that says
+why and how to load it again; a paused device keeps its console entries.
+
 Alt temporarily enables the pan shield; V selects the pointer and H selects
 the hand tool when focus is in the canvas and outside editable controls.
 Temporary navigation keeps preview selection overlays mounted, so releasing a

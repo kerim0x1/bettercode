@@ -1,10 +1,24 @@
 import { startNodeBackend, type StartedBackend } from "./inProcess"
 import { logger } from "./observability/logger"
+import {
+  sendStartupControl,
+  startupControlChannelFromEnvironment,
+} from "./startupControl"
+import {
+  createSettingsKeyIntake,
+  createUnhandledRejectionPolicy,
+  installSettingsMasterKey,
+} from "./processGuards"
 
 /**
  * Standalone backend entrypoint. Signal/IPC handlers are installed before any
  * startup work so termination also unwinds a partially initialized backend.
  */
+const SETTINGS_KEY_TIMEOUT_MS = 30_000
+const settingsKeyIntake = createSettingsKeyIntake()
+// Read once, before any child process could inherit the request.
+const startupControl = { channel: startupControlChannelFromEnvironment() }
+const rejectionPolicy = createUnhandledRejectionPolicy()
 const startupAbort = new AbortController()
 let startedBackend: StartedBackend | null = null
 let shutdownSignal: string | null = null
@@ -63,12 +77,30 @@ async function shutdownStartedBackend(
 process.on("SIGINT", () => requestShutdown("SIGINT"))
 process.on("SIGTERM", () => requestShutdown("SIGTERM"))
 process.on("unhandledRejection", (reason) => {
-  requestFatalShutdown(reason, "unhandledRejection")
+  const verdict = rejectionPolicy.classify(reason)
+  if (verdict.fatal) {
+    requestFatalShutdown(reason, `unhandledRejection: ${verdict.why}`)
+    return
+  }
+  // A rejected promise nobody awaited is a bug in one code path, not proof
+  // that shared state is broken. Ending the process here would drop every
+  // chat, terminal and file operation for it, so log it with enough context
+  // to fix and keep serving. (Uncaught exceptions stay fatal: the stack they
+  // unwound may have left state half-updated.)
+  const err = reason instanceof Error ? reason : new Error(String(reason))
+  // The logger prints the stack and cause chain of `err` below the line.
+  logger.error(
+    { err, origin: "unhandledRejection", recentCount: verdict.recentCount },
+    "Unhandled promise rejection; the backend keeps running"
+  )
 })
 process.on("uncaughtException", (error, origin) => {
   requestFatalShutdown(error, origin)
 })
 process.on("message", (msg: unknown) => {
+  // The Electron host hands over the settings master key first (see
+  // processGuards.ts); it never travels through the environment.
+  if (settingsKeyIntake.accept(msg)) return
   if (
     msg &&
     typeof msg === "object" &&
@@ -92,17 +124,25 @@ process.on("disconnect", () => {
 
 async function main(): Promise<void> {
   try {
+    if (process.env.BETTERC0DE_SETTINGS_KEY_VIA_IPC === "1") {
+      delete process.env.BETTERC0DE_SETTINGS_KEY_VIA_IPC
+      // Settings are decrypted during startup, so wait for the key first.
+      const key = await settingsKeyIntake.wait({
+        timeoutMs: SETTINGS_KEY_TIMEOUT_MS,
+        signal: startupAbort.signal,
+      })
+      installSettingsMasterKey(key)
+    }
     const started = await startNodeBackend({
       dataDir: process.env.BETTERC0DE_DATA_DIR,
+      // The desktop configuration folder the shell resolved
+      // (apps/shell/shared/runtime-paths.cjs).
+      runtimeHome: process.env.BETTERC0DE_RUNTIME_HOME,
       signal: startupAbort.signal,
+      // Startup frames go over the fork IPC channel when the Electron shell
+      // asked for that, and to stderr otherwise (startupControl.ts).
       onStartupHeartbeat: () => {
-        process.stderr.write(
-          `${JSON.stringify({
-            control: "betterc0de/backend-startup",
-            status: "starting",
-            protocol: 1,
-          })}\n`
-        )
+        void sendStartupControl({ status: "starting" }, startupControl)
       },
       onFatal: (error, origin) => requestFatalShutdown(error, origin),
     })
@@ -112,12 +152,13 @@ async function main(): Promise<void> {
       return
     }
 
-    process.stderr.write(
-      `${JSON.stringify({
+    await sendStartupControl(
+      {
+        status: "ready",
         port: started.port,
         token: started.token,
-        status: "ready",
-      })}\n`
+      },
+      startupControl
     )
   } catch (err) {
     if (fatalError) {
@@ -135,7 +176,8 @@ async function main(): Promise<void> {
       process.exit(0)
     }
     const message = err instanceof Error ? err.message : String(err)
-    process.stderr.write(`${JSON.stringify({ status: "error", message })}\n`)
+    // Delivered (or timed out) before exiting, so the host can say why.
+    await sendStartupControl({ status: "error", message }, startupControl)
     process.exit(1)
   }
 }

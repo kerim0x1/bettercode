@@ -1,3 +1,4 @@
+import { nonEmptyString } from "@betterc0de/schema/json-read"
 import { asRecord } from "@betterc0de/schema"
 import type { ThreadActivity } from "@/lib/chat-store"
 import {
@@ -28,10 +29,6 @@ export interface ThreadAttention {
   openRequestKeys: string[]
 }
 
-function stringFrom(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined
-}
-
 /** Mirrors chat-transcript's sourceProposedPlanKey pairing for legacy plan captures. */
 function derivePendingLegacyPlanKey(
   activities: ThreadActivity[]
@@ -45,14 +42,14 @@ function derivePendingLegacyPlanKey(
     if (payload.decision !== "approve") continue
     const requestId = requestIdFromActivity(activity)
     if (requestId) approvedRequests.add(requestId)
-    const turnId = stringFrom(payload.turn_id) ?? activity.turnId
+    const turnId = nonEmptyString(payload.turn_id) ?? activity.turnId
     if (turnId) approvedTurns.add(`${activity.threadId}::${turnId}`)
   }
   for (const activity of activities) {
     if (activity.kind !== "plan-approval.requested") continue
     const requestId = requestIdFromActivity(activity)
     const turnId =
-      stringFrom(asRecord(activity.payload).turn_id) ?? activity.turnId
+      nonEmptyString(asRecord(activity.payload).turn_id) ?? activity.turnId
     if (requestId && approvedRequests.has(requestId) && turnId) {
       approvedTurns.add(`${activity.threadId}::${turnId}`)
     }
@@ -64,26 +61,29 @@ function derivePendingLegacyPlanKey(
       payload.sourceProposedPlan ?? payload.source_proposed_plan
     )
     const threadId =
-      stringFrom(source.threadId) ??
-      stringFrom(source.thread_id) ??
+      nonEmptyString(source.threadId) ??
+      nonEmptyString(source.thread_id) ??
       activity.threadId
-    const planId = stringFrom(source.planId) ?? stringFrom(source.plan_id)
+    const planId =
+      nonEmptyString(source.planId) ?? nonEmptyString(source.plan_id)
     if (planId) implemented.add(`${threadId}::${planId}`)
   }
   let latest: { key: string; createdAt: string } | null = null
   for (const activity of activities) {
     if (activity.kind !== "turn.proposed.completed") continue
     const payload = asRecord(activity.payload)
-    const turnId = stringFrom(payload.turn_id) ?? activity.turnId
+    const turnId = nonEmptyString(payload.turn_id) ?? activity.turnId
     if (turnId && approvedTurns.has(`${activity.threadId}::${turnId}`)) continue
     const content =
-      stringFrom(payload.planMarkdown) ??
-      stringFrom(payload.plan_markdown) ??
-      stringFrom(payload.detail) ??
+      nonEmptyString(payload.planMarkdown) ??
+      nonEmptyString(payload.plan_markdown) ??
+      nonEmptyString(payload.detail) ??
       ""
     if (!content.trim()) continue
     const planId =
-      stringFrom(payload.planId) ?? stringFrom(payload.plan_id) ?? activity.id
+      nonEmptyString(payload.planId) ??
+      nonEmptyString(payload.plan_id) ??
+      activity.id
     const key = `${activity.threadId}::${planId}`
     if (implemented.has(key)) continue
     if (!latest || activity.createdAt.localeCompare(latest.createdAt) >= 0) {

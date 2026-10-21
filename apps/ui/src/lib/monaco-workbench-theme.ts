@@ -19,9 +19,11 @@ export function defineWorkbenchThemes(monaco: typeof Monaco) {
       { token: "string.value.json", foreground: "CE9178" },
       { token: "keyword.json", foreground: "569CD6" },
     ],
+    // The code panel is a card like the agent chat, so the editor matches
+    // the default dark `--background` (#0f0f0f), not the shell around it.
     colors: {
-      "editor.background": "#141414",
-      "editorGutter.background": "#141414",
+      "editor.background": "#0f0f0f",
+      "editorGutter.background": "#0f0f0f",
       "editorLineNumber.foreground": "#626262",
       "editorLineNumber.activeForeground": "#c8c8c8",
       "editor.lineHighlightBackground": "#ffffff06",
@@ -31,8 +33,8 @@ export function defineWorkbenchThemes(monaco: typeof Monaco) {
       "editorIndentGuide.activeBackground1": "#ffffff25",
       "editorWidget.background": "#1a1a1a",
       "editorWidget.border": "#ffffff18",
-      "editorStickyScroll.background": "#141414",
-      "minimap.background": "#141414",
+      "editorStickyScroll.background": "#0f0f0f",
+      "minimap.background": "#0f0f0f",
       "scrollbarSlider.background": "#ffffff12",
       "scrollbarSlider.hoverBackground": "#ffffff24",
     },

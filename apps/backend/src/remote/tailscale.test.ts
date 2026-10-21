@@ -3,6 +3,7 @@ import {
   buildTailscaleHttpsBaseUrl,
   classifyTailscaleStderr,
   createTailscaleRemoteAccess,
+  findTailscaleConsentUrl,
   findTailscaleServeMapping,
   isTailscaleIpv4Address,
   isTailscaleAddress,
@@ -13,6 +14,8 @@ import {
   tailscaleServeOffArgs,
   type TailscaleCommandResult,
   type TailscaleCommandRunner,
+  type TailscaleHttpsProbe,
+  type TailscaleProbeResult,
 } from "./tailscale"
 
 const STATUS_RUNNING = JSON.stringify({
@@ -54,7 +57,17 @@ describe("tailscale status parsing", () => {
       tailnetIpv4Addresses: ["100.101.102.103"],
       selfAddresses: ["100.101.102.103", "fd7a:115c:a1e0::1"],
       httpsCertificates: true,
+      serviceRunning: true,
+      magicDnsEnabled: null,
     })
+    expect(
+      parseTailscaleStatus(
+        JSON.stringify({
+          BackendState: "Running",
+          CurrentTailnet: { MagicDNSEnabled: false },
+        })
+      ).magicDnsEnabled
+    ).toBe(false)
   })
 
   it("maps backend states and tolerates missing fields", () => {
@@ -165,6 +178,43 @@ describe("tailscale CLI safety", () => {
     )
   })
 
+  it("tells a stopped Tailscale service apart from a refusal", () => {
+    expect(
+      classifyTailscaleStderr(
+        "failed to connect to local tailscaled process; is the Tailscale service running?"
+      )
+    ).toBe("not-running")
+    expect(
+      classifyTailscaleStderr(
+        "failed to connect to local tailscaled; it doesn't appear to be running (sudo systemctl start tailscaled ?)"
+      )
+    ).toBe("not-running")
+    // A socket the user may not open is a permission problem first.
+    expect(
+      classifyTailscaleStderr(
+        "failed to connect to local tailscaled (which appears to be running). Got error: connect: permission denied"
+      )
+    ).toBe("permission-denied")
+  })
+
+  it("keeps only Tailscale's consent page from the serve output", () => {
+    expect(
+      findTailscaleConsentUrl(
+        "Serve is not enabled on your tailnet.\nTo enable, visit:\n\n         https://login.tailscale.com/f/serve?node=nAbc123CNTRL\n"
+      )
+    ).toBe("https://login.tailscale.com/f/serve?node=nAbc123CNTRL")
+    expect(
+      findTailscaleConsentUrl(
+        "\u001b[1mhttps://login.tailscale.com/f/https?node=n9\u001b[0m"
+      )
+    ).toBe("https://login.tailscale.com/f/https?node=n9")
+    // Any other address, and any other text, stays unread.
+    expect(
+      findTailscaleConsentUrl("visit https://evil.example/f/serve?node=n1")
+    ).toBeUndefined()
+    expect(findTailscaleConsentUrl("tskey-auth-secret")).toBeUndefined()
+  })
+
   it("spawns tailscale.exe on Windows and falls back to the install directory", () => {
     expect(
       tailscaleExecutableCandidates("win32", { ProgramFiles: "C:\\PF" })
@@ -189,6 +239,23 @@ describe("tailscale remote access service", () => {
       serveActive: true,
       servePort: 443,
       httpsBaseUrl: "https://desk.tail1234.ts.net",
+    })
+  })
+
+  it("reports a stopped Tailscale service as stopped, not as missing", async () => {
+    const run = scriptedRunner({
+      "status --json": {
+        ok: false,
+        reason: "exit",
+        exitCode: 1,
+        diagnostic: "not-running",
+      },
+    })
+    const service = createTailscaleRemoteAccess({ run })
+    await expect(service.status()).resolves.toMatchObject({
+      installed: true,
+      state: "stopped",
+      serviceRunning: false,
     })
   })
 
@@ -245,6 +312,135 @@ describe("tailscale remote access service", () => {
     await expect(service.disableServe()).resolves.toBeUndefined()
   })
 
+  it("keeps the consent page of a refused serve until it works", async () => {
+    let serveResult: TailscaleCommandResult = {
+      ok: false,
+      reason: "timeout",
+      consentUrl: "https://login.tailscale.com/f/serve?node=nAbc123CNTRL",
+    }
+    const run: TailscaleCommandRunner = async (args) => {
+      const key = args.join(" ")
+      if (key === "status --json") return { ok: true, stdout: STATUS_RUNNING }
+      if (key === "serve status --json") return { ok: true, stdout: "{}" }
+      if (key === "serve --bg --https=443 http://127.0.0.1:3773")
+        return serveResult
+      return { ok: false, reason: "exit", exitCode: 1 }
+    }
+    const service = createTailscaleRemoteAccess({ run })
+    await expect(service.enableServe(3773)).rejects.toThrow(
+      "not allowed on this tailnet"
+    )
+    await expect(
+      service.describe({ localPort: 3773, serveEnabled: false })
+    ).resolves.toMatchObject({
+      serveConsentUrl: "https://login.tailscale.com/f/serve?node=nAbc123CNTRL",
+      serveError: expect.stringContaining("not allowed on this tailnet"),
+    })
+    serveResult = { ok: true, stdout: "" }
+    await service.enableServe(3773)
+    await expect(
+      service.describe({ localPort: 3773, serveEnabled: true })
+    ).resolves.toMatchObject({ serveConsentUrl: null, serveError: null })
+  })
+
+  it("waits for the HTTPS name to answer as this desktop", async () => {
+    const answers: TailscaleProbeResult[] = [
+      "unreachable",
+      "unreachable",
+      "reachable",
+    ]
+    const probe = vi.fn<TailscaleHttpsProbe>(
+      async () => answers.shift() ?? "unreachable"
+    )
+    const sleep = vi.fn(async () => undefined)
+    const run = scriptedRunner({
+      "status --json": { ok: true, stdout: STATUS_RUNNING },
+    })
+    const service = createTailscaleRemoteAccess({ run, probe, sleep })
+    await expect(
+      service.waitForServe({ environmentId: "env-1", attempts: 5 })
+    ).resolves.toBe(true)
+    expect(probe).toHaveBeenCalledTimes(3)
+    expect(sleep).toHaveBeenCalledTimes(2)
+    // Dials the tailnet address with the MagicDNS name for the certificate.
+    expect(probe).toHaveBeenLastCalledWith({
+      magicDnsName: "desk.tail1234.ts.net",
+      servePort: 443,
+      address: "100.101.102.103",
+      environmentId: "env-1",
+      timeoutMs: 2_500,
+    })
+
+    // Another server behind the name ends the wait at once.
+    const other = vi.fn<TailscaleHttpsProbe>(async () => "other")
+    const busy = createTailscaleRemoteAccess({ run, probe: other, sleep })
+    await expect(busy.waitForServe({ environmentId: "env-1" })).resolves.toBe(
+      false
+    )
+    expect(other).toHaveBeenCalledTimes(1)
+  })
+
+  it("reports whether the served name answers, and who else does", async () => {
+    const run = scriptedRunner({
+      "status --json": { ok: true, stdout: STATUS_RUNNING },
+      "serve status --json": { ok: true, stdout: SERVE_MAPPED },
+    })
+    const reachable = createTailscaleRemoteAccess({
+      run,
+      probe: async () => "reachable",
+    })
+    await expect(
+      reachable.describe({
+        localPort: 3773,
+        serveEnabled: true,
+        probe: true,
+        environmentId: "env-1",
+      })
+    ).resolves.toMatchObject({ serveReachable: true, serveError: null })
+    // Without asking for it nothing is dialed.
+    const untouched = vi.fn<TailscaleHttpsProbe>(async () => "reachable")
+    await expect(
+      createTailscaleRemoteAccess({ run, probe: untouched }).describe({
+        localPort: 3773,
+        serveEnabled: true,
+      })
+    ).resolves.toMatchObject({ serveReachable: null })
+    expect(untouched).not.toHaveBeenCalled()
+
+    const occupied = createTailscaleRemoteAccess({
+      run,
+      probe: async () => "other",
+    })
+    await expect(
+      occupied.describe({
+        localPort: 3773,
+        serveEnabled: true,
+        probe: true,
+        environmentId: "env-1",
+      })
+    ).resolves.toMatchObject({
+      serveReachable: false,
+      serveError: expect.stringContaining("https://desk.tail1234.ts.net"),
+    })
+  })
+
+  it("takes down only a mapping this process put in place", async () => {
+    const run = scriptedRunner({
+      "serve --bg --https=443 http://127.0.0.1:3773": { ok: true, stdout: "" },
+      "serve --https=443 off": { ok: true, stdout: "" },
+    })
+    const service = createTailscaleRemoteAccess({ run })
+    await service.releaseServe()
+    expect(run.calls).toEqual([])
+    await service.enableServe(3773)
+    await service.releaseServe()
+    await service.releaseServe()
+    expect(run.calls).toEqual([
+      ["serve", "--bg", "--https=443", "http://127.0.0.1:3773"],
+      ["serve", "--https=443", "off"],
+    ])
+  })
+
   it("re-applies the mapping at boot only when both settings ask for it", async () => {
     const enableServe = vi.fn().mockResolvedValue(undefined)
     const tailscale = {
@@ -253,6 +449,8 @@ describe("tailscale remote access service", () => {
       status: vi.fn().mockResolvedValue(undefined),
       selfAddresses: () => new Set<string>(),
       describe: vi.fn(),
+      waitForServe: vi.fn(),
+      releaseServe: vi.fn(),
     }
     await reconcileTailscaleServe(tailscale, {
       enabled: true,

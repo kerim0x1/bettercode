@@ -10,6 +10,7 @@ import type {
 } from "../persistence/projections"
 import {
   createWorktree as gitCreateWorktree,
+  createWorktreeOnBranch as gitCreateWorktreeOnBranch,
   removeWorktree as gitRemoveWorktree,
   resetWorktree as gitResetWorktree,
   pruneWorktrees as gitPruneWorktrees,
@@ -52,6 +53,11 @@ export interface WorktreeCreateOptions {
   baseBranch: string
   /** Any free-form human-ish string — used to slugify the branch name. */
   firstMessage?: string | null
+  /**
+   * Check out this existing local branch (a pull request's) instead of
+   * creating `agent/<thread>/<slug>`. `baseBranch` is then only recorded.
+   */
+  existingBranch?: string | null
 }
 
 export interface WorktreeCreateResult {
@@ -182,7 +188,10 @@ export class WorktreeManager {
       if (recovered) return recovered
     }
 
-    const branch = await this.allocateUniqueBranch(threadId, firstMessage)
+    const existingBranch = opts.existingBranch?.trim() || null
+    const branch =
+      existingBranch ??
+      (await this.allocateUniqueBranch(threadId, firstMessage))
     const worktreePath = computeWorktreePath(baseRepoPath, threadId)
 
     if (this.registry.findByPath(worktreePath)) {
@@ -221,7 +230,11 @@ export class WorktreeManager {
     })
 
     try {
-      await gitCreateWorktree(baseRepoPath, worktreePath, branch, baseBranch)
+      if (existingBranch) {
+        await gitCreateWorktreeOnBranch(baseRepoPath, worktreePath, branch)
+      } else {
+        await gitCreateWorktree(baseRepoPath, worktreePath, branch, baseBranch)
+      }
     } catch (err) {
       let materializationVerifiedAbsent = false
       try {

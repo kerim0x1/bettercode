@@ -143,4 +143,22 @@ describe("API key settings", () => {
     expect(html).toContain('aria-label="Replacement API key"')
     expect(html).toContain("Retry after")
   })
+  it("offers an enabled retry during a cooldown while the check stays disabled", () => {
+    const html = render({
+      ...view,
+      keys: [
+        {
+          ...view.keys[0],
+          status: "cooldown" as const,
+          retryAt: Date.now() + 60_000,
+        },
+      ],
+    })
+    const buttons = html.match(/<button[^>]*>[^<]*<\/button>/g) ?? []
+    const retry = buttons.find((button) => button.includes("Retry now"))
+    const check = buttons.find((button) => button.includes("Check key"))
+    expect(retry).toBeDefined()
+    expect(retry).not.toContain('disabled=""')
+    expect(check).toContain('disabled=""')
+  })
 })

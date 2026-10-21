@@ -62,6 +62,31 @@ export async function createWorktree(
   }
 }
 
+/**
+ * Create a git worktree at `worktreePath` checked out on the existing local
+ * branch `branch` (a pull request's branch), instead of a fresh one. Git
+ * refuses a branch already checked out in another worktree.
+ */
+export async function createWorktreeOnBranch(
+  cwd: string,
+  worktreePath: string,
+  branch: string
+): Promise<{ path: string; branch: string }> {
+  const cleanBranch = validateGitRefName(branch, "Branch")
+  await gitRun(cwd, [
+    "rev-parse",
+    "--verify",
+    "--end-of-options",
+    `refs/heads/${cleanBranch}^{commit}`,
+  ])
+  await gitRun(cwd, ["worktree", "add", "--", worktreePath, cleanBranch])
+  await invalidateStatusCaches(cwd, worktreePath)
+  return {
+    path: canonicalizeExistingPath(worktreePath),
+    branch: cleanBranch,
+  }
+}
+
 /** Remove a worktree. Pass `force: true` to override uncommitted changes
  *  (equivalent of `git worktree remove --force`). */
 export async function removeWorktree(

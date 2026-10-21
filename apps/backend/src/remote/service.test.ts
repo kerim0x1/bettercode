@@ -276,6 +276,138 @@ describe("RemoteAccessService", () => {
     ).toBe(0)
   })
 
+  it("caps pairing links at one hour", () => {
+    const { service } = serviceFixture()
+    const grant = service.issuePairingGrant({ ttlMs: 24 * 60 * 60 * 1000 })
+    expect(Date.parse(grant.expiresAt) - Date.parse(grant.createdAt)).toBe(
+      60 * 60 * 1000
+    )
+  })
+
+  it("lists, withdraws and bulk-revokes unredeemed pairing links without exposing codes", () => {
+    const { db, service, advance } = serviceFixture()
+    const redeemed = service.issuePairingGrant({ label: "Redeemed" })
+    service.consumePairingCredential(redeemed.credential)
+    const expiring = service.issuePairingGrant({
+      label: "Expiring",
+      ttlMs: 60_000,
+    })
+    advance(1_000)
+    const first = service.issuePairingGrant({ label: "First" })
+    advance(1_000)
+    const second = service.issuePairingGrant({ label: "Second" })
+
+    expect(service.listPairingGrants()).toEqual([
+      {
+        id: second.id,
+        label: "Second",
+        createdAt: second.createdAt,
+        expiresAt: second.expiresAt,
+      },
+      {
+        id: first.id,
+        label: "First",
+        createdAt: first.createdAt,
+        expiresAt: first.expiresAt,
+      },
+      {
+        id: expiring.id,
+        label: "Expiring",
+        createdAt: expiring.createdAt,
+        expiresAt: expiring.expiresAt,
+      },
+    ])
+    advance(60_000)
+    expect(service.listPairingGrants().map((grant) => grant.id)).toEqual([
+      second.id,
+      first.id,
+    ])
+
+    expect(service.revokePairingGrant(first.id)).toBe(true)
+    expect(service.revokePairingGrant(first.id)).toBe(false)
+    expect(service.revokePairingGrant(redeemed.id)).toBe(false)
+    expect(service.revokePairingGrant("")).toBe(false)
+    expect(service.consumePairingCredential(first.credential)).toBeNull()
+    expect(service.listPairingGrants().map((grant) => grant.id)).toEqual([
+      second.id,
+    ])
+
+    // Bulk revocation covers the still-pending link and the expired one;
+    // redeemed and already-revoked links are left as they were.
+    expect(service.revokePendingPairingGrants()).toBe(2)
+    expect(service.listPairingGrants()).toEqual([])
+    expect(service.consumePairingCredential(second.credential)).toBeNull()
+    expect(
+      (
+        db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM remote_pairing_grants WHERE revoked_at IS NULL"
+          )
+          .get() as { count: number }
+      ).count
+    ).toBe(1)
+  })
+
+  it("ends every device and pending link when hosting is turned off, for good", () => {
+    const { service, setEnabled } = serviceFixture()
+    const device = service.consumePairingCredential(
+      service.issuePairingGrant().credential
+    )!
+    const shared = service.issuePairingGrant({ label: "Shared QR code" })
+    const revoked: string[][] = []
+    service.subscribeToSessionRevocations((sessionIds) => {
+      revoked.push([...sessionIds])
+    })
+
+    setEnabled(false)
+    expect(service.revokeAllAccess()).toEqual({
+      sessions: 1,
+      pairingGrants: 1,
+    })
+    expect(revoked).toEqual([[device.id]])
+
+    // Re-enabling hosting does not revive anything issued before.
+    setEnabled(true)
+    expect(service.authenticate(device.token)).toBeNull()
+    expect(service.consumePairingCredential(shared.credential)).toBeNull()
+    expect(service.listSessions()).toEqual([])
+  })
+
+  it("retires a session left unused for a week, and counts revalidation as use", async () => {
+    const { service, advance } = serviceFixture()
+    const day = 24 * 60 * 60 * 1000
+    const idle = service.consumePairingCredential(
+      service.issuePairingGrant().credential,
+      { label: "Forgotten phone" }
+    )!
+    const socket = service.consumePairingCredential(
+      service.issuePairingGrant().credential,
+      { label: "Connected phone" }
+    )!
+    const revoked: string[][] = []
+    service.subscribeToSessionRevocations((sessionIds) => {
+      revoked.push([...sessionIds])
+    })
+
+    // Six days of silence are fine, and any use restarts the clock.
+    advance(6 * day)
+    expect(service.authenticate(idle.token)?.id).toBe(idle.id)
+    expect(service.isSessionActive(socket.id)).toBe(true)
+    advance(6 * day)
+    expect(service.isSessionActive(socket.id)).toBe(true)
+    expect(service.authenticate(idle.token)?.id).toBe(idle.id)
+
+    // A week without any use retires the session before its 30-day expiry,
+    // and connected clients hear about it like any other revocation.
+    advance(7 * day + 1)
+    expect(service.authenticate(idle.token)).toBeNull()
+    await service.waitForSessionRevocation(idle.id)
+    expect(revoked.flat()).toContain(idle.id)
+    expect(service.isSessionActive(idle.id)).toBe(false)
+    expect(service.isSessionActive(socket.id)).toBe(false)
+    expect(service.listSessions()).toEqual([])
+  })
+
   it("remembers which app uses a session, writing only when it changes", () => {
     const { db, service } = serviceFixture()
     const issued = service.consumePairingCredential(

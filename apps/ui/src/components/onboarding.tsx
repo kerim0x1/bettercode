@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { lazy, Suspense, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
@@ -12,6 +12,13 @@ import { MarketplaceStep } from "./onboarding/step-marketplace"
 import { ImportStep } from "./onboarding/step-import"
 import { DetectStep } from "./onboarding/step-detect"
 import { DoneStep } from "./onboarding/step-done"
+
+// The conversation import loads only for the setup step that offers it.
+const ConversationsStep = lazy(() =>
+  import("./onboarding/step-conversations").then((module) => ({
+    default: module.ConversationsStep,
+  }))
+)
 
 export function Onboarding() {
   const { step, done, checked, checkDone } = useOnboardingStore()
@@ -79,7 +86,12 @@ export function Onboarding() {
         {step === 2 && <MarketplaceStep />}
         {step === 3 && <ImportStep />}
         {step === 4 && <DetectStep />}
-        {step === 5 && <DoneStep />}
+        {step === 5 && (
+          <Suspense fallback={null}>
+            <ConversationsStep />
+          </Suspense>
+        )}
+        {step === 6 && <DoneStep />}
       </div>
     </div>
   )

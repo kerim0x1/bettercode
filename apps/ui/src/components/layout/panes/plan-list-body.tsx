@@ -8,14 +8,14 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { MessageResponse } from "@/components/ai-elements/message"
-import { useThreadActivities, useThreadMessages } from "@/lib/chat-store"
-import { useChatStreamingState } from "@/hooks/use-chat-streaming-state"
+import { usePlanStreamingState } from "@/hooks/use-chat-streaming-state"
 import type { SetPlanModalContent } from "@/lib/plan-modal"
 
 /**
  * Per-pane Plans tab. Derives its plan list from the pane's own thread via
- * `useChatStreamingState` (the same call ChatColumn makes), so each pane shows
- * its own plans independent of the globally active thread. Markup lifted from
+ * `usePlanStreamingState` (the same cached plan derivation ChatColumn reads),
+ * so each pane shows its own plans independent of the globally active thread,
+ * without re-rendering on ordinary answer deltas. Markup lifted from
  * the former global WorkspaceRightPanel plan tab.
  */
 export function PlanListBody({
@@ -25,16 +25,7 @@ export function PlanListBody({
   threadId: string | null
   setPlanModalContent: SetPlanModalContent
 }) {
-  const messages = useThreadMessages(threadId)
-  const activities = useThreadActivities(threadId)
-  const streaming = useChatStreamingState(
-    messages,
-    threadId,
-    undefined,
-    activities
-  )
-  const allPlans = streaming.allPlans
-  const isPlanStreaming = streaming.isPlanStreaming
+  const { allPlans, isPlanStreaming } = usePlanStreamingState(threadId)
 
   return (
     <div className="flex h-full flex-col">

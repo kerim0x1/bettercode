@@ -16,7 +16,10 @@ const backend = vi.hoisted(() => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
 }))
 
-vi.mock("@/services/backend", () => backend)
+// The hoisted object carries the functions of all three backend modules.
+vi.mock("@/services/backend/gitApi", () => backend)
+vi.mock("@/services/backend/coreApi", () => backend)
+vi.mock("@/services/backend/workspaceApi", () => backend)
 
 if (typeof globalThis.crypto === "undefined") {
   let counter = 0
@@ -27,7 +30,11 @@ if (typeof globalThis.crypto === "undefined") {
 
 import {
   autoCheckpointFromToolCalls,
+  enforceCheckpointLimits,
+  MAX_CHECKPOINTS_PER_THREAD,
+  MAX_SNAPSHOT_FILE_CHARS,
   useCheckpointStore,
+  type Checkpoint,
 } from "@/lib/checkpoint-store"
 
 function resetStore() {
@@ -143,6 +150,10 @@ describe("checkpoint-store git turn checkpoints", () => {
     )
     expect(backend.gitStatus).toHaveBeenCalledExactlyOnceWith(cwd)
     expect(useCheckpointStore.getState().checkpoints[0].projectPath).toBe(cwd)
+    // Read when the turn ends, so it is the state after the edit.
+    expect(useCheckpointStore.getState().checkpoints[0].label).toBe(
+      "After editing src/app.ts"
+    )
   })
 
   it.each([undefined, null, "", "   ", "."])(
@@ -375,5 +386,178 @@ describe("checkpoint-store git turn checkpoints", () => {
       useCheckpointStore.getState().checkpoints.map((cp) => cp.id)
     ).toEqual(["cp-1", "cp-other"])
     expect(useCheckpointStore.getState().activeCheckpointId).toBeNull()
+  })
+})
+
+function checkpoint(
+  id: string,
+  overrides: Partial<Checkpoint> = {}
+): Checkpoint {
+  return {
+    id,
+    threadId: "thread-1",
+    messageId: `message-${id}`,
+    label: id,
+    timestamp: "2026-05-12T00:00:00.000Z",
+    files: {},
+    gitBranch: "main",
+    ...overrides,
+  }
+}
+
+describe("checkpoint-store retention limits", () => {
+  beforeEach(() => {
+    resetStore()
+    vi.clearAllMocks()
+    backend.gitStatus.mockResolvedValue({ branch: "main" })
+    backend.readFile.mockResolvedValue({ content: "old", path: "file.ts" })
+  })
+
+  it("keeps only the newest checkpoints of a chat", () => {
+    const store = useCheckpointStore.getState()
+    const other = store.createCheckpoint("thread-2", "m-other", "Other", {
+      "/repo/other.ts": "other",
+    })
+    const ids: string[] = []
+    for (let index = 0; index < MAX_CHECKPOINTS_PER_THREAD + 5; index += 1) {
+      ids.push(
+        useCheckpointStore
+          .getState()
+          .createCheckpoint("thread-1", `m-${index}`, "Files", {
+            "/repo/app.ts": `v${index}`,
+          })
+      )
+    }
+
+    const state = useCheckpointStore.getState()
+    const kept = state.checkpoints
+      .filter((cp) => cp.threadId === "thread-1")
+      .map((cp) => cp.id)
+    expect(kept).toEqual(ids.slice(5))
+    expect(state.checkpoints.some((cp) => cp.id === other)).toBe(true)
+    expect(state.activeCheckpointId).toBe(ids.at(-1))
+  })
+
+  it("caps the total across chats, dropping the oldest first", () => {
+    const list = ["a", "b", "c", "d"].map((id, index) =>
+      checkpoint(id, { threadId: `thread-${index}` })
+    )
+    expect(
+      enforceCheckpointLimits(list, {
+        perThread: 10,
+        total: 2,
+        snapshotChars: 1_000,
+      }).map((cp) => cp.id)
+    ).toEqual(["c", "d"])
+  })
+
+  it("drops older file snapshots once the snapshot budget is used up", () => {
+    const list = [
+      checkpoint("old-files-only", { files: { "/repo/a.ts": "x".repeat(40) } }),
+      checkpoint("old-git", {
+        files: { "/repo/b.ts": "x".repeat(40) },
+        checkpointRef: "refs/betterc0de/checkpoints/old",
+      }),
+      checkpoint("newest", { files: { "/repo/c.ts": "x".repeat(60) } }),
+    ]
+
+    const limited = enforceCheckpointLimits(list, {
+      perThread: 10,
+      total: 10,
+      snapshotChars: 80,
+    })
+
+    // The newest snapshot fits; the Git-backed one keeps its ref without its
+    // files, and the snapshot-only one could no longer restore anything.
+    expect(limited.map((cp) => cp.id)).toEqual(["old-git", "newest"])
+    expect(limited[0].files).toEqual({})
+    expect(limited[0].checkpointRef).toBe("refs/betterc0de/checkpoints/old")
+    expect(limited[1].files).toEqual({ "/repo/c.ts": "x".repeat(60) })
+  })
+
+  it("returns the same list when every checkpoint is within the limits", () => {
+    const list = [checkpoint("a"), checkpoint("b")]
+    expect(enforceCheckpointLimits(list)).toBe(list)
+  })
+
+  it("does not keep the unified diff of a backend-captured checkpoint", () => {
+    const id = useCheckpointStore.getState().recordGitCheckpoint({
+      threadId: "thread-1",
+      messageId: "assistant-1",
+      projectPath: "/repo",
+      checkpointRef: checkpointRefForThreadTurn("thread-1", 1),
+      turnNumber: 1,
+      diff: "diff --git a/src/app.ts b/src/app.ts\n+".repeat(1_000),
+      diffFiles: [{ path: "src/app.ts", additions: 1, deletions: 0 }],
+    })
+
+    const stored = useCheckpointStore
+      .getState()
+      .checkpoints.find((cp) => cp.id === id)
+    expect(stored).toBeDefined()
+    expect(stored).not.toHaveProperty("diff")
+    expect(stored?.diffFiles).toEqual([
+      { path: "src/app.ts", additions: 1, deletions: 0 },
+    ])
+  })
+
+  it("resolves tool paths against the chat workspace and skips huge files", async () => {
+    backend.readFile.mockImplementation(async (filePath: string) => ({
+      path: filePath,
+      content: filePath.endsWith("huge.log")
+        ? "x".repeat(MAX_SNAPSHOT_FILE_CHARS + 1)
+        : "before",
+    }))
+
+    const id = await autoCheckpointFromToolCalls(
+      "thread-1",
+      "message-1",
+      [
+        {
+          id: "edit-1",
+          name: "Edit",
+          state: "output-available",
+          input: { path: "src/app.ts" },
+        },
+        {
+          id: "write-1",
+          name: "Write",
+          state: "output-available",
+          input: { file_path: "/repo/huge.log" },
+        },
+      ],
+      "/repo"
+    )
+
+    expect(backend.readFile).toHaveBeenCalledWith("/repo/src/app.ts")
+    const stored = useCheckpointStore
+      .getState()
+      .checkpoints.find((cp) => cp.id === id)
+    expect(stored?.files).toEqual({ "/repo/src/app.ts": "before" })
+  })
+
+  it("clears every checkpoint of a deleted chat", () => {
+    useCheckpointStore.setState({
+      activeCheckpointId: "a",
+      checkpoints: [checkpoint("a"), checkpoint("b", { threadId: "thread-2" })],
+      pendingTurnCheckpoints: {
+        "thread-1::turn-1": {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          projectPath: "/repo",
+          turnNumber: 0,
+          baseCheckpointRef: "base",
+          checkpointRef: "ref",
+          startedAt: "2026-05-12T00:00:00.000Z",
+        },
+      },
+    })
+
+    useCheckpointStore.getState().clearCheckpointsForThread("thread-1")
+
+    const state = useCheckpointStore.getState()
+    expect(state.checkpoints.map((cp) => cp.id)).toEqual(["b"])
+    expect(state.pendingTurnCheckpoints).toEqual({})
+    expect(state.activeCheckpointId).toBeNull()
   })
 })

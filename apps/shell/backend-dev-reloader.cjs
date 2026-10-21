@@ -57,8 +57,17 @@ function computeBuildDigest(directory, { readdirSync = fs.readdirSync, readFileS
   return hash.digest("hex")
 }
 
+/**
+ * Restarts the backend when the compiled output it runs from changes.
+ *
+ * `directories` lists every build the backend loads at runtime: its own
+ * `dist/` and the workspace packages it requires from theirs
+ * (`@betterc0de/schema`). Watching only the backend missed schema changes,
+ * so a new settings field was rejected as unknown until a full restart.
+ */
 function createBackendDevReloader({
   directory,
+  directories = [directory],
   onReload,
   debounceMs = 300,
   watch = fs.watch,
@@ -73,8 +82,14 @@ function createBackendDevReloader({
   let reloadRunning = false
   let reloadQueued = false
   let closed = false
+  // One digest over every watched build; a directory that cannot be read
+  // makes the whole digest null, which never matches.
+  const digestAll = () => {
+    const parts = directories.map((dir) => digest(dir))
+    return parts.includes(null) ? null : parts.join(":")
+  }
   // Baseline taken at construction: the state Electron just booted from.
-  let lastDigest = digest(directory)
+  let lastDigest = digestAll()
 
   const runReload = async () => {
     timer = null
@@ -87,7 +102,7 @@ function createBackendDevReloader({
     // Only restart when the emitted bundle actually differs. A digest of
     // `null` (directory unreadable) falls through to a reload rather than
     // silently pinning a stale backend.
-    const nextDigest = digest(directory)
+    const nextDigest = digestAll()
     if (nextDigest !== null && lastDigest !== null && nextDigest === lastDigest) {
       onSkip()
       return
@@ -114,15 +129,18 @@ function createBackendDevReloader({
     timer = setTimeout(runReload, debounceMs)
   }
 
-  const watcher = watch(directory, { recursive: true }, scheduleReload)
-  watcher.on?.("error", onError)
+  const watchers = directories.map((dir) => {
+    const watcher = watch(dir, { recursive: true }, scheduleReload)
+    watcher.on?.("error", onError)
+    return watcher
+  })
 
   return {
     close() {
       closed = true
       if (timer) clearTimeout(timer)
       timer = null
-      watcher.close()
+      for (const watcher of watchers) watcher.close()
     },
   }
 }

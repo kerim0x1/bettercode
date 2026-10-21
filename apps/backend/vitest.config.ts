@@ -17,5 +17,14 @@ export default defineConfig({
     // genuine hang still fails, just later.
     testTimeout: 30_000,
     hookTimeout: 30_000,
+    // Opt-in: `npm run test:coverage` (needs @vitest/coverage-v8). No
+    // thresholds yet; the report establishes the baseline to ratchet from.
+    coverage: {
+      provider: "v8",
+      reporter: ["text-summary", "html", "lcov"],
+      reportsDirectory: "coverage",
+      include: ["src/**/*.ts"],
+      exclude: ["src/**/*.test.ts", "src/**/testUtils/**"],
+    },
   },
 })

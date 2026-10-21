@@ -2,24 +2,24 @@
  * Subagents IPC — named prompt templates the user can invoke as
  * lightweight specialist agents. Parses Codex-style `*.toml` agent
  * definitions for the import path.
+ *
+ * The subagents (`subagents/<id>/manifest.json` + `prompt.md` in the runtime
+ * home) belong to the backend: this process reads and writes them only
+ * through `/api/v1/config/subagents` (shared/desktop-config-client.cjs).
  */
 
 const fs = require("fs")
 const path = require("path")
 const { IpcChannel } = require("./shared/ipc-contract.cjs")
 const { safeHandle, rawHandle } = require("./shared/ipc-handlers-factory.cjs")
+const { readText } = require("./shared/json-fs.cjs")
+const { slugify } = require("./shared/runtime-paths.cjs")
 const {
-  readJson,
-  writeJson,
-  readText,
-  writeText,
-} = require("./shared/json-fs.cjs")
-const { assertPathContained } = require("./shared/security-checks.cjs")
-const {
-  getRuntimePaths,
-  ensureDir,
-  slugify,
-} = require("./shared/runtime-paths.cjs")
+  getDirectoryEntry,
+  listDirectory,
+  putDirectoryEntry,
+  removeDirectoryEntry,
+} = require("./shared/desktop-config-client.cjs")
 
 /**
  * Minimal TOML-ish parser tailored to Codex agent files. Pulls out the
@@ -89,56 +89,26 @@ function parseScannedAgent(agent) {
     : parseMarkdownAgent(agent.path, agent.source || "import")
 }
 
-function listSubagentDirs() {
-  const { subagentsDir } = getRuntimePaths()
-  ensureDir(subagentsDir)
-  return fs
-    .readdirSync(subagentsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
+/** The ids (folder names) of the readable subagents. */
+async function listSubagentDirs() {
+  return (await listDirectory("subagents")).map((entry) => entry.id)
 }
 
-function readSubagents() {
-  const { subagentsDir } = getRuntimePaths()
-  return listSubagentDirs()
-    .map((name) => {
-      try {
-        const dir = path.join(subagentsDir, name)
-        const manifest = readJson(path.join(dir, "manifest.json"), null, {
-          warn: "subagents-ipc",
-        })
-        if (!manifest) return null
-        const prompt = readText(path.join(dir, "prompt.md"), "", {
-          warn: "subagents-ipc",
-        })
-        return {
-          ...manifest,
-          enabled: manifest.enabled !== false,
-          prompt,
-        }
-      } catch {
-        return null
-      }
-    })
-    .filter(Boolean)
+async function readSubagents() {
+  return (await listDirectory("subagents")).map(({ manifest, text }) => ({
+    ...manifest,
+    enabled: manifest.enabled !== false,
+    prompt: text,
+  }))
 }
 
 /** Persist a subagent into its per-id directory. Returns `{id}`; the IPC
  *  layer wraps that in the `{ok: true, ...}` envelope. */
-function saveSubagent(data) {
-  const { subagentsDir } = getRuntimePaths()
+async function saveSubagent(data) {
   const id = slugify(data.id || data.name)
   if (!id) throw new Error("Subagent id is required")
-  const dir = path.join(subagentsDir, id)
-  ensureDir(dir)
 
-  const existing = readJson(
-    path.join(dir, "manifest.json"),
-    {},
-    {
-      warn: "subagents-ipc",
-    }
-  )
+  const existing = (await getDirectoryEntry("subagents", id))?.manifest ?? {}
   const now = new Date().toISOString()
   const manifest = {
     id,
@@ -151,23 +121,26 @@ function saveSubagent(data) {
     sourcePath: data.sourcePath || existing.sourcePath,
   }
 
-  writeJson(path.join(dir, "manifest.json"), manifest)
-  writeText(path.join(dir, "prompt.md"), data.prompt || existing.prompt || "")
+  // undefined fields are left out, as the file writer always did.
+  await putDirectoryEntry(
+    "subagents",
+    id,
+    JSON.parse(JSON.stringify(manifest)),
+    data.prompt || existing.prompt || "",
+  )
   return { id }
 }
 
-function deleteSubagent(id) {
-  const { subagentsDir } = getRuntimePaths()
+async function deleteSubagent(id) {
   const safeId = slugify(id)
   if (!safeId) throw new Error("Invalid subagent id")
-  const dir = assertPathContained(subagentsDir, safeId, "Subagent path")
-  if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true })
+  await removeDirectoryEntry("subagents", safeId)
 }
 
-function importScannedAgents(agents) {
+async function importScannedAgents(agents) {
   for (const agent of agents || []) {
     const parsed = parseScannedAgent(agent)
-    saveSubagent({
+    await saveSubagent({
       id: agent.id || parsed?.id || agent.name,
       name: parsed?.name || agent.name,
       description:
@@ -196,7 +169,7 @@ function registerSubagentsHandlers() {
   )
 
   safeHandle(IpcChannel.SubagentDelete, async (_event, { id } = {}) => {
-    deleteSubagent(id)
+    await deleteSubagent(id)
   })
 
   console.log("[subagents-ipc] Handlers registered")

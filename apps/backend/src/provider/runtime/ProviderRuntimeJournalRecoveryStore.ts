@@ -2,7 +2,7 @@ import { isRecord } from "@betterc0de/schema"
 import { randomUUID } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
-import type { ProviderRuntimeEvent } from "../types"
+import type { LegacyProviderEvent } from "../types"
 import type { ProviderRuntimeEvent as CanonicalProviderRuntimeEvent } from "./contracts"
 import {
   journalEntryEventType,
@@ -337,7 +337,7 @@ function parseEnvelope(
       // Passed through whole, not rebuilt from its three fields: the journal
       // serializes what it is given, and a spool record replayed after a
       // commit-then-crash is matched against the committed row by payload bytes.
-      event: event as unknown as ProviderRuntimeEvent,
+      event: event as unknown as LegacyProviderEvent,
     },
   }
 }

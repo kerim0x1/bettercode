@@ -25,7 +25,7 @@ After installation, open **Settings → Providers**, connect a supported provide
 
 Anthropic, OpenAI, and Grok API access supports multiple saved keys with ordered backups. See [providers and API keys](docs/providers.md) for setup, key recovery, and model visibility.
 
-Unsigned Windows and macOS builds do not install updates automatically. Download and run the newer installer from Releases to update them. A successful CI run alone does not publish a download: the tag-triggered Release workflow runs the full release check on every platform and publishes the release only after all of them pass. Beta versions are marked as prereleases. Known problems of each version are listed in the [changelog](CHANGELOG.md).
+Unsigned Windows and macOS builds do not install updates automatically. They check for new versions and show a download link under **Settings → General → Updates**; download and run the newer installer from Releases to update them. The `.deb`, `.rpm` and tarball installs behave the same way, while the AppImage updates itself. A successful CI run alone does not publish a download: the tag-triggered Release workflow runs the full release check on every platform and publishes the release only after all of them pass. Beta versions are marked as prereleases. Known problems of each version are listed in the [changelog](CHANGELOG.md).
 
 ## Use the phone app
 
@@ -109,9 +109,9 @@ Do not use `--ignore-scripts` for a normal development install unless you rebuil
 npm run dev
 ```
 
-This builds the shared schema and backend, starts the backend watcher and Vite, and launches Electron. The app does not require a `.env` file for a basic local start. Optional variables are documented in [.env.example](.env.example).
+This builds the shared schema and backend, starts the schema and backend watchers and Vite, and launches Electron. The app does not require a `.env` file for a basic local start. Optional variables are documented in [.env.example](.env.example).
 
-To disable the development heartbeat and automatic diagnostic reports:
+The usage ping and automatic crash reports are off unless turned on in **Settings → Privacy & Diagnostics**. To force both off whatever that setting says:
 
 ```sh
 BETTERC0DE_DISABLE_PING=1 BETTERC0DE_DISABLE_CRASH_REPORTS=1 npm run dev
@@ -182,7 +182,7 @@ npm run build:mac
 npm run build:linux
 ```
 
-Artifacts are written to `release/`. Packaging rebuilds native modules for Electron. Close BetterC0de and other processes using this checkout before packaging so native files are not locked. macOS installers cannot be built on Windows, and a Mac build packages only the architecture of the Mac it runs on. `npm run release:check` builds the same installers and also tests them.
+Each command builds the app and then runs the `package`, `smoke` and `installers` steps of `npm run release:check`, so the packaged app is launched once before its installers are built. It reuses your `node_modules` and skips the tests and the phone app. Artifacts are written to `release/`. Packaging rebuilds native modules for Electron and restores the Node build afterwards. Close BetterC0de and other processes using this checkout before packaging so native files are not locked. Packaging always targets the machine it runs on: `build:mac` on Windows stops in preflight, and a Mac build packages only the architecture of the Mac it runs on. `npm run release:check` runs the whole gate, including the tests, and can also test the installers.
 
 ## Troubleshooting
 
@@ -244,7 +244,7 @@ The desktop shell waits for the backend to finish loading before it can serve re
 
 If an older checkout fails at exactly `30000ms` and then logs `Node backend ready`, update the checkout and restart with `npm run dev`. This command rebuilds the backend before launching. Installing TypeScript globally does not fix this timeout.
 
-If startup still fails, include the complete startup log and whether the failure mentions the **first heartbeat**, a later heartbeat, or the **hard startup limit** in the bug report. These identify different startup phases. Keep your local data directory intact.
+If startup still fails, include the complete startup log and whether the failure mentions the **first heartbeat**, a later heartbeat, or the **hard startup limit** in the bug report. These identify different startup phases. The app also writes a redacted log to `logs/app.log` in its data directory (`~/.betterc0de/userdata` for installed builds, `~/.betterc0de-dev/userdata` for development); **Settings → Privacy & Diagnostics → Open logs folder** opens it. Keep your local data directory intact.
 
 ### Native module or Node ABI errors
 

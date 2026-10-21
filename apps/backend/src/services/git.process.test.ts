@@ -1,16 +1,16 @@
 import { EventEmitter } from "node:events"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import type { ChildProcessWithoutNullStreams } from "node:child_process"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
-  __setGitAdmissionLimitsForTests,
-  __setGitProcessDependenciesForTests,
-  activeGitProcessCount,
-  beginGitProcessShutdown,
   deleteCheckpointRefs,
-  resumeGitProcessAdmissions,
-  __queuedGitProcessCountForTests,
-  shutdownAllGitProcesses,
+  GitProcessService,
+  setDefaultGitProcessService,
   stageAll,
+  type GitAdmissionLimits,
+  type GitProcessDependencies,
 } from "./git"
 
 interface FakeChild {
@@ -61,6 +61,30 @@ function createFakeChild(pid: number): FakeChild {
   }
 }
 
+/**
+ * Fake spawns stand in for git itself. The executable is reported as the
+ * bare name so a fake can tell git from taskkill, and the repository-helper
+ * probe is answered synchronously so each spawn stays synchronous. Each
+ * test builds its own service and installs it as the one the git helpers
+ * under test run through.
+ */
+let git: GitProcessService
+
+function useFakeGitProcesses(
+  overrides: Partial<GitProcessDependencies>,
+  admissionLimits?: Partial<GitAdmissionLimits>
+): void {
+  git = new GitProcessService({
+    dependencies: {
+      resolveGitExecutable: () => "git",
+      repositoryHelperConfig: () => ({ filterKeys: [], sshCommand: false }),
+      ...overrides,
+    },
+    admissionLimits,
+  })
+  setDefaultGitProcessService(git)
+}
+
 function rejectedValue(promise: Promise<unknown>): Promise<unknown> {
   return promise.then(
     () => {
@@ -73,32 +97,29 @@ function rejectedValue(promise: Promise<unknown>): Promise<unknown> {
 describe("Git child process lifecycle", () => {
   beforeEach(() => {
     vi.useFakeTimers()
-    resumeGitProcessAdmissions()
   })
 
   afterEach(() => {
-    expect(activeGitProcessCount()).toBe(0)
-    expect(__queuedGitProcessCountForTests()).toBe(0)
-    __setGitProcessDependenciesForTests(null)
-    __setGitAdmissionLimitsForTests(null)
-    resumeGitProcessAdmissions()
+    expect(git.activeProcessCount()).toBe(0)
+    expect(git.queuedProcessCount()).toBe(0)
+    setDefaultGitProcessService(null)
     vi.useRealTimers()
   })
 
   it("can close Git admission without spawning or terminating a child", async () => {
     const spawn = vi.fn()
-    __setGitProcessDependenciesForTests({
+    useFakeGitProcesses({
       spawn: spawn as unknown as typeof import("node:child_process").spawn,
     })
 
-    beginGitProcessShutdown()
+    git.beginShutdown()
 
     await expect(stageAll("C:\\repo")).rejects.toMatchObject({
       statusCode: 503,
       code: "GIT_SHUTTING_DOWN",
     })
     expect(spawn).not.toHaveBeenCalled()
-    expect(activeGitProcessCount()).toBe(0)
+    expect(git.activeProcessCount()).toBe(0)
   })
 
   it("bounds active and queued Git processes and drains the queue in order", async () => {
@@ -108,22 +129,24 @@ describe("Git child process lifecycle", () => {
       children.push(child)
       return child.process
     })
-    __setGitProcessDependenciesForTests({
-      platform: "win32",
-      spawn: spawn as unknown as typeof import("node:child_process").spawn,
-    })
-    __setGitAdmissionLimitsForTests({
-      maxConcurrent: 1,
-      maxPerWorkspace: 1,
-      maxQueued: 1,
-      waitMs: 1_000,
-    })
+    useFakeGitProcesses(
+      {
+        platform: "win32",
+        spawn: spawn as unknown as typeof import("node:child_process").spawn,
+      },
+      {
+        maxConcurrent: 1,
+        maxPerWorkspace: 1,
+        maxQueued: 1,
+        waitMs: 1_000,
+      }
+    )
 
     const first = stageAll("C:\\repo")
     const second = stageAll("C:\\repo")
     expect(spawn).toHaveBeenCalledTimes(1)
-    expect(activeGitProcessCount()).toBe(1)
-    expect(__queuedGitProcessCountForTests()).toBe(1)
+    expect(git.activeProcessCount()).toBe(1)
+    expect(git.queuedProcessCount()).toBe(1)
 
     await expect(stageAll("C:\\repo")).rejects.toMatchObject({
       statusCode: 503,
@@ -134,26 +157,28 @@ describe("Git child process lifecycle", () => {
     await first
     await Promise.resolve()
     expect(spawn).toHaveBeenCalledTimes(2)
-    expect(__queuedGitProcessCountForTests()).toBe(0)
+    expect(git.queuedProcessCount()).toBe(0)
 
     children[1]!.close(0)
     await second
-    expect(activeGitProcessCount()).toBe(0)
+    expect(git.activeProcessCount()).toBe(0)
   })
 
   it("times out bounded Git queue waits without spawning another child", async () => {
     const child = createFakeChild(40_100)
     const spawn = vi.fn(() => child.process)
-    __setGitProcessDependenciesForTests({
-      platform: "win32",
-      spawn: spawn as unknown as typeof import("node:child_process").spawn,
-    })
-    __setGitAdmissionLimitsForTests({
-      maxConcurrent: 1,
-      maxPerWorkspace: 1,
-      maxQueued: 1,
-      waitMs: 250,
-    })
+    useFakeGitProcesses(
+      {
+        platform: "win32",
+        spawn: spawn as unknown as typeof import("node:child_process").spawn,
+      },
+      {
+        maxConcurrent: 1,
+        maxPerWorkspace: 1,
+        maxQueued: 1,
+        waitMs: 250,
+      }
+    )
 
     const first = stageAll("C:\\repo")
     const queued = stageAll("C:\\repo")
@@ -161,7 +186,7 @@ describe("Git child process lifecycle", () => {
       statusCode: 503,
       code: "GIT_ADMISSION_TIMEOUT",
     })
-    expect(__queuedGitProcessCountForTests()).toBe(1)
+    expect(git.queuedProcessCount()).toBe(1)
     await vi.advanceTimersByTimeAsync(250)
     await queuedFailure
     expect(spawn).toHaveBeenCalledTimes(1)
@@ -173,16 +198,18 @@ describe("Git child process lifecycle", () => {
   it("rejects queued Git work as soon as shutdown admission closes", async () => {
     const child = createFakeChild(40_200)
     const spawn = vi.fn(() => child.process)
-    __setGitProcessDependenciesForTests({
-      platform: "win32",
-      spawn: spawn as unknown as typeof import("node:child_process").spawn,
-    })
-    __setGitAdmissionLimitsForTests({
-      maxConcurrent: 1,
-      maxPerWorkspace: 1,
-      maxQueued: 2,
-      waitMs: 1_000,
-    })
+    useFakeGitProcesses(
+      {
+        platform: "win32",
+        spawn: spawn as unknown as typeof import("node:child_process").spawn,
+      },
+      {
+        maxConcurrent: 1,
+        maxPerWorkspace: 1,
+        maxQueued: 2,
+        waitMs: 1_000,
+      }
+    )
 
     const first = stageAll("C:\\repo")
     const queued = stageAll("C:\\repo")
@@ -190,10 +217,10 @@ describe("Git child process lifecycle", () => {
       statusCode: 503,
       code: "GIT_SHUTTING_DOWN",
     })
-    expect(__queuedGitProcessCountForTests()).toBe(1)
-    beginGitProcessShutdown()
+    expect(git.queuedProcessCount()).toBe(1)
+    git.beginShutdown()
     await queuedFailure
-    expect(__queuedGitProcessCountForTests()).toBe(0)
+    expect(git.queuedProcessCount()).toBe(0)
 
     child.close(0)
     await first
@@ -211,7 +238,7 @@ describe("Git child process lifecycle", () => {
       queueMicrotask(() => child.close(0))
       return child.process
     })
-    __setGitProcessDependenciesForTests({
+    useFakeGitProcesses({
       platform: "linux",
       spawn: spawn as unknown as typeof import("node:child_process").spawn,
     })
@@ -255,17 +282,17 @@ describe("Git child process lifecycle", () => {
       taskkillChildren.push(taskkill)
       return taskkill.process
     })
-    __setGitProcessDependenciesForTests({
+    useFakeGitProcesses({
       platform: "win32",
       spawn: spawn as unknown as typeof import("node:child_process").spawn,
     })
 
     const gitRun = stageAll("C:\\repo")
     const gitFailure = rejectedValue(gitRun)
-    expect(activeGitProcessCount()).toBe(1)
+    expect(git.activeProcessCount()).toBe(1)
 
     let shutdownSettled = false
-    const shutdown = shutdownAllGitProcesses(5_000).finally(() => {
+    const shutdown = git.shutdownAll(5_000).finally(() => {
       shutdownSettled = true
     })
     expect(taskkillChildren).toHaveLength(1)
@@ -282,7 +309,7 @@ describe("Git child process lifecycle", () => {
       name: "GitCommandError",
       survivor: false,
     })
-    expect(activeGitProcessCount()).toBe(0)
+    expect(git.activeProcessCount()).toBe(0)
   })
 
   it("waits for a timed-out taskkill helper to close after killing it", async () => {
@@ -294,13 +321,13 @@ describe("Git child process lifecycle", () => {
       taskkillChildren.push(taskkill)
       return taskkill.process
     })
-    __setGitProcessDependenciesForTests({
+    useFakeGitProcesses({
       platform: "win32",
       spawn: spawn as unknown as typeof import("node:child_process").spawn,
     })
 
     const gitFailure = rejectedValue(stageAll("C:\\repo"))
-    const shutdown = shutdownAllGitProcesses(5_000)
+    const shutdown = git.shutdownAll(5_000)
 
     await vi.advanceTimersByTimeAsync(750)
     expect(taskkillChildren).toHaveLength(1)
@@ -334,14 +361,14 @@ describe("Git child process lifecycle", () => {
       })
       return taskkill.process
     })
-    __setGitProcessDependenciesForTests({
+    useFakeGitProcesses({
       platform: "win32",
       spawn: spawn as unknown as typeof import("node:child_process").spawn,
     })
 
     const gitRun = stageAll("C:\\repo")
     const gitFailure = rejectedValue(gitRun)
-    const firstShutdown = rejectedValue(shutdownAllGitProcesses(100))
+    const firstShutdown = rejectedValue(git.shutdownAll(100))
     await vi.advanceTimersByTimeAsync(150)
 
     await expect(firstShutdown).resolves.toMatchObject({
@@ -353,11 +380,11 @@ describe("Git child process lifecycle", () => {
       survivor: true,
     })
     expect(gitChild.kill).toHaveBeenCalledWith("SIGKILL")
-    expect(activeGitProcessCount()).toBe(1)
+    expect(git.activeProcessCount()).toBe(1)
 
     taskkillShouldSucceed = true
-    await expect(shutdownAllGitProcesses(100)).resolves.toBe(1)
-    expect(activeGitProcessCount()).toBe(0)
+    await expect(git.shutdownAll(100)).resolves.toBe(1)
+    expect(git.activeProcessCount()).toBe(0)
   })
 
   it("does not silently settle a timed-out command while its tree remains unconfirmed", async () => {
@@ -372,7 +399,7 @@ describe("Git child process lifecycle", () => {
       })
       return taskkill.process
     })
-    __setGitProcessDependenciesForTests({
+    useFakeGitProcesses({
       platform: "win32",
       spawn: spawn as unknown as typeof import("node:child_process").spawn,
     })
@@ -391,10 +418,106 @@ describe("Git child process lifecycle", () => {
     expect((error as Error).message).toMatch(
       /timed out[\s\S]*termination could not be confirmed/i
     )
-    expect(activeGitProcessCount()).toBe(1)
+    expect(git.activeProcessCount()).toBe(1)
 
     taskkillShouldSucceed = true
-    await expect(shutdownAllGitProcesses(100)).resolves.toBe(1)
-    expect(activeGitProcessCount()).toBe(0)
+    await expect(git.shutdownAll(100)).resolves.toBe(1)
+    expect(git.activeProcessCount()).toBe(0)
+  })
+})
+
+describe("repository helper probe", () => {
+  let root: string
+  const isProbe = (args: readonly string[]) => args.includes("--get-regexp")
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-git-probe-"))
+    fs.mkdirSync(path.join(root, ".git"))
+    fs.writeFileSync(path.join(root, ".git", "config"), "[core]\n")
+  })
+
+  afterEach(() => {
+    expect(git.activeProcessCount()).toBe(0)
+    setDefaultGitProcessService(null)
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  function fakeGit(probe: () => { output: string; code: number }) {
+    const calls: Array<{ command: string; args: string[] }> = []
+    const spawn = vi.fn((command: string, args: readonly string[]) => {
+      calls.push({ command, args: [...args] })
+      const child = createFakeChild(47_000 + calls.length)
+      queueMicrotask(() => {
+        if (isProbe(args)) {
+          const result = probe()
+          if (result.output) {
+            child.process.stdout.emit("data", Buffer.from(result.output))
+          }
+          child.close(result.code)
+          return
+        }
+        child.close(0)
+      })
+      return child.process
+    })
+    git = new GitProcessService({
+      dependencies: {
+        // win32 keeps the fake PIDs away from POSIX process-group signals.
+        platform: "win32",
+        spawn: spawn as unknown as typeof import("node:child_process").spawn,
+        resolveGitExecutable: () => "C:\\Program Files\\Git\\cmd\\git.exe",
+      },
+    })
+    setDefaultGitProcessService(git)
+    return calls
+  }
+
+  it("spawns the resolved executable, applies the probe and reuses it until the config changes", async () => {
+    let output = "filter.lfs.clean\0filter.lfs.required\0core.sshcommand\0"
+    const calls = fakeGit(() => ({ output, code: output ? 0 : 1 }))
+
+    await stageAll(root)
+    expect(calls.every((call) => call.command.endsWith("git.exe"))).toBe(true)
+    const probes = () => calls.filter((call) => isProbe(call.args))
+    expect(probes()).toHaveLength(1)
+    expect(probes()[0]!.args).toEqual(
+      expect.arrayContaining(["config", "--local", "--includes", "--null"])
+    )
+    const firstCommand = calls.at(-1)!.args
+    expect(firstCommand).toContain("filter.lfs.clean=")
+    expect(firstCommand).toContain("filter.lfs.required=false")
+    expect(firstCommand).toContain("core.sshCommand=ssh")
+
+    await stageAll(root)
+    expect(probes()).toHaveLength(1)
+    expect(calls.at(-1)!.args).toContain("filter.lfs.clean=")
+
+    output = ""
+    fs.writeFileSync(
+      path.join(root, ".git", "config"),
+      "[core]\n\trepositoryformatversion = 0\n"
+    )
+    await stageAll(root)
+    expect(probes()).toHaveLength(2)
+    expect(calls.at(-1)!.args).not.toContain("filter.lfs.clean=")
+    expect(calls.at(-1)!.args).not.toContain("core.sshCommand=ssh")
+  })
+
+  it("never caches a config that includes other files", async () => {
+    const calls = fakeGit(() => ({
+      output: "include.path\0filter.probe.clean\0",
+      code: 0,
+    }))
+    await stageAll(root)
+    await stageAll(root)
+    expect(calls.filter((call) => isProbe(call.args))).toHaveLength(2)
+    expect(calls.at(-1)!.args).toContain("filter.probe.clean=")
+  })
+
+  it("fails closed when the probe fails unexpectedly", async () => {
+    const calls = fakeGit(() => ({ output: "", code: 2 }))
+    await expect(stageAll(root)).rejects.toMatchObject({ exitCode: 2 })
+    expect(calls).toHaveLength(1)
+    expect(isProbe(calls[0]!.args)).toBe(true)
   })
 })

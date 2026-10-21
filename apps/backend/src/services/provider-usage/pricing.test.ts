@@ -2,7 +2,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { PriceBook, priceModels, type PricedTokens } from "./pricing"
+import { dayCost, PriceBook, priceModels, type PricedTokens } from "./pricing"
 
 function tokens(partial: Partial<PricedTokens> = {}): PricedTokens {
   return {
@@ -102,6 +102,40 @@ describe("priceModels", () => {
       new Map([["some-unreleased-model", tokens({ input: 1_000_000 })]])
     )
     expect(pricing).toBeNull()
+  })
+
+  it("adds up what cache reads saved against the input rate", () => {
+    // Opus 5 input $5, cache read $0.50: a million cached tokens save $4.50.
+    // Opus 5.5 input $4, cache read $0.20: half a million save $1.90.
+    const { pricing } = priceModels(
+      book,
+      new Map([
+        ["claude-opus-5", tokens({ cacheRead: 1_000_000 })],
+        ["claude-opus-5-5", tokens({ cacheRead: 500_000 })],
+        ["some-unreleased-model", tokens({ cacheRead: 9_000_000 })],
+      ])
+    )
+    expect(pricing?.cacheSavings).toBeCloseTo(6.4, 6)
+  })
+})
+
+describe("dayCost", () => {
+  const book = new PriceBook(null)
+
+  it("prices a day's models and skips those without a rate", () => {
+    expect(
+      dayCost(book, [
+        ["claude-opus-5", tokens({ input: 1_000_000 })],
+        ["some-unreleased-model", tokens({ input: 1_000_000 })],
+      ])
+    ).toBe(5)
+  })
+
+  it("leaves a day unpriced when no model on it has a rate", () => {
+    expect(
+      dayCost(book, [["some-unreleased-model", tokens({ input: 1 })]])
+    ).toBeNull()
+    expect(dayCost(book, [])).toBeNull()
   })
 })
 

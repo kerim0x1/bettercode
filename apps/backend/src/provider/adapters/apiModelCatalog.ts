@@ -10,6 +10,7 @@ import {
 } from "@betterc0de/schema"
 import type { ModelDefinition } from "../types"
 import { readApiKeyResponseError } from "../../auth/apiKeyPool"
+import { anthropicThinkingAlwaysOn, isOpenAiSolModel } from "./modelFamilies"
 
 export type ApiCatalogProvider = "anthropic" | "openai" | "grok"
 
@@ -157,7 +158,7 @@ export class ApiModelCatalog {
                 ? { context: anthropicContextLabel(slug) }
                 : {}),
               tier: anthropicModelTier(slug) ?? "Runtime",
-              ...(slug === "claude-opus-5-5"
+              ...(anthropicThinkingAlwaysOn(slug)
                 ? {
                     capabilities: {
                       optionDescriptors: [
@@ -214,7 +215,7 @@ export class ApiModelCatalog {
                 slug,
                 name: slug,
                 tier: "Runtime",
-                ...(slug === "gpt-5.6-sol"
+                ...(isOpenAiSolModel(slug)
                   ? {
                       context: "1.05M",
                       capabilities: {

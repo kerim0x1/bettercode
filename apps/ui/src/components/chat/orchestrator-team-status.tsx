@@ -45,8 +45,12 @@ export function OrchestratorTeamStatus({ threadId }: { threadId: string }) {
   const wantsOrchestration = useChatStore(
     (state) => state.settingsByThread[rootId]?.orchestration?.enabled === true
   )
-  const streaming = useChatStore(
-    (state) => state.streamingByThread[rootId]?.isStreaming === true
+  // Streaming only matters while orchestration is on: it keeps the team
+  // status fresh during a turn. Without it, a start/stop must not refetch.
+  const pollWhileStreaming = useChatStore(
+    (state) =>
+      wantsOrchestration &&
+      state.streamingByThread[rootId]?.isStreaming === true
   )
   const session = snapshot?.threadId === rootId ? snapshot : null
   const [error, setError] = useState<string | null>(null)
@@ -54,8 +58,6 @@ export function OrchestratorTeamStatus({ threadId }: { threadId: string }) {
   const [reload, setReload] = useState(0)
   const revision = useRef(0)
   const mounted = useRef(false)
-  const providers = useProviders(session?.projectPath)
-  const choices = teamModelChoices(providers)
   useEffect(() => {
     if (session) restoreOrchestrationSelection(session)
     if (
@@ -87,7 +89,7 @@ export function OrchestratorTeamStatus({ threadId }: { threadId: string }) {
         setSnapshot(next)
         setError(null)
         if (
-          (wantsOrchestration && streaming) ||
+          pollWhileStreaming ||
           next?.status === "ready" ||
           next?.jobs.some((job) =>
             ["running", "waiting", "cancelling"].includes(job.status)
@@ -112,7 +114,7 @@ export function OrchestratorTeamStatus({ threadId }: { threadId: string }) {
     rootId,
     reload,
     wantsOrchestration,
-    streaming,
+    pollWhileStreaming,
     thread?.parentThreadId,
     threadId,
   ])
@@ -145,7 +147,41 @@ export function OrchestratorTeamStatus({ threadId }: { threadId: string }) {
     }
   }
 
+  // The provider catalog is only needed to label an existing team, so panes
+  // without one never subscribe to it.
   if (!session) return null
+  return (
+    <OrchestratorTeamPanel
+      session={session}
+      threadId={threadId}
+      rootId={rootId}
+      stopping={stopping}
+      error={error}
+      onStop={() => void stop()}
+      onContextChange={() => setReload((value) => value + 1)}
+    />
+  )
+}
+
+function OrchestratorTeamPanel({
+  session,
+  threadId,
+  rootId,
+  stopping,
+  error,
+  onStop,
+  onContextChange,
+}: {
+  session: OrchestratorSession
+  threadId: string
+  rootId: string
+  stopping: boolean
+  error: string | null
+  onStop: () => void
+  onContextChange: () => void
+}) {
+  const providers = useProviders(session.projectPath)
+  const choices = teamModelChoices(providers)
   const main = choices.find(
     (choice) => teamModelKey(choice.value) === teamModelKey(session.team.main)
   )
@@ -179,7 +215,7 @@ export function OrchestratorTeamStatus({ threadId }: { threadId: string }) {
             size="sm"
             variant="ghost"
             disabled={stopping}
-            onClick={() => void stop()}
+            onClick={onStop}
           >
             {stopping ? "Stopping…" : "Stop agents"}
           </Button>
@@ -278,7 +314,7 @@ export function OrchestratorTeamStatus({ threadId }: { threadId: string }) {
       <OrchestratorContext
         key={session.threadId}
         session={session}
-        onChange={() => setReload((value) => value + 1)}
+        onChange={onContextChange}
       />
       {error && (
         <p role="alert" className="px-4 py-3 text-xs text-destructive">

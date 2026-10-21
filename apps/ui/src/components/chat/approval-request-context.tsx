@@ -7,9 +7,10 @@ import {
   failedRequestResponseActivity,
 } from "@/lib/pending-provider-requests"
 import { toast } from "@/lib/toast"
-import { respondToApproval } from "@/services/backend"
+import { respondToApproval } from "@/services/backend/chatApi"
 import type { PendingApproval } from "@/lib/pending-approvals"
 import type { PermissionUpdate } from "@betterc0de/schema"
+import { getElectronApi } from "@/services/ipc-facade"
 
 export interface ApprovalInputView {
   command?: string
@@ -263,12 +264,12 @@ export async function submitApprovalDecision(
   options?: { message?: string; updatedPermissions?: PermissionUpdate[] }
 ): Promise<boolean> {
   try {
-    if (approval.pluginId && window.electronAPI?.pluginSend) {
-      await window.electronAPI.pluginSend(
-        approval.pluginId,
-        "respondToolApproval",
-        { requestId: approval.requestId, approved: decision === "approve" }
-      )
+    const desktopBridge = getElectronApi()
+    if (approval.pluginId && desktopBridge?.pluginSend) {
+      await desktopBridge.pluginSend(approval.pluginId, "respondToolApproval", {
+        requestId: approval.requestId,
+        approved: decision === "approve",
+      })
     } else {
       const response = await respondToApproval(
         threadId,

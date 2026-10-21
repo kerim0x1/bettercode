@@ -2,23 +2,31 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { defaultSettings } from "@betterc0de/schema"
+import { httpContracts } from "@betterc0de/schema/http-contracts"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { AppState } from "../appState"
 import type { ServerConfig } from "../config"
-import { buildApp } from "../http/router"
+import { buildApp as buildAppUnfilled } from "../http/router"
 import { openDatabase } from "../persistence/db"
 import { runMigrations } from "../persistence/migrations"
-import {
-  openTerminalPtySession,
-  readTerminalPtySession,
-  shutdownTerminalPtySessionsForOwner,
-} from "../services/terminalPty"
+import { TerminalPtyService } from "../services/terminalPty"
 import type { RemoteRoutesOptions } from "./http"
 import { RemoteAccessService } from "./service"
-import type { TailscaleRemoteAccess, TailscaleRemoteState } from "./tailscale"
+import {
+  TailscaleCommandError,
+  type TailscaleRemoteAccess,
+  type TailscaleRemoteState,
+} from "./tailscale"
 import { stopAllToolOutputArchiveStores } from "../services/tool-output-archive-store"
+import { routerLifecycleServices } from "../testUtils/routing-services"
+import { withInertStateArgument } from "../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const buildApp = withInertStateArgument(buildAppUnfilled, 1)
 
 const cleanups: Array<() => Promise<void>> = []
+/** The backend's terminals; the routes and the tests share them. */
+const ptys = new TerminalPtyService()
 
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup()
@@ -31,7 +39,11 @@ function fixture(
     trustLoopbackProxyHeaders?: boolean
     tailscaleServe?: boolean
     tailscale?: TailscaleRemoteAccess
+    /** Where the backend listens; Remote Access on the network by default. */
+    host?: string
     remoteTerminals?: RemoteRoutesOptions["remoteTerminals"]
+    /** Where `rules.md` and the rest of the desktop configuration live. */
+    runtimeHome?: string
   } = {}
 ) {
   const directory = fs.mkdtempSync(
@@ -54,7 +66,7 @@ function fixture(
     }),
   }
   const config: ServerConfig = {
-    host: "0.0.0.0",
+    host: options.host ?? "0.0.0.0",
     port: 3773,
     dataDir: directory,
     dbPath: path.join(directory, "test.sqlite"),
@@ -69,6 +81,7 @@ function fixture(
       "events.log"
     ),
     authToken: "desktop-secret",
+    runtimeHome: options.runtimeHome,
     allowInsecureRemoteAccess: options.allowInsecureRemoteAccess,
     trustProxyHeaders: options.trustProxyHeaders,
     trustLoopbackProxyHeaders: options.trustLoopbackProxyHeaders,
@@ -77,11 +90,13 @@ function fixture(
     isEnabled: () => values.remote_access_enabled,
   })
   const state = {
+    ...routerLifecycleServices(),
     config,
     db,
     settings,
     remoteAccess,
     tailscale: options.tailscale,
+    terminalPtys: ptys,
     providerRegistry: { all: () => [] },
     threads: { persistUserMessageForTurn: vi.fn() },
   } as unknown as AppState
@@ -94,7 +109,7 @@ function fixture(
     db.close()
     fs.rmSync(directory, { recursive: true, force: true })
   })
-  return { app, settings, config }
+  return { app, settings, config, remoteAccess }
 }
 
 /** Endpoint ids minus this machine's own LAN interfaces (non-deterministic). */
@@ -137,6 +152,102 @@ describe("remote access HTTP flow", () => {
     expect(tailscale.enableServe).not.toHaveBeenCalled()
     expect(tailscale.disableServe).not.toHaveBeenCalled()
     expect(settings.updatePublic).not.toHaveBeenCalled()
+  })
+
+  // Installed phone apps send these bodies: the shared contracts read them
+  // as the routes always did, and every answer matches its contract.
+  it("reads remote request bodies as before and answers with their contracts", async () => {
+    const tailscale = fakeTailscale()
+    const { app } = fixture({ tailscale })
+
+    // No body at all, or fields of the wrong type: the desktop's defaults.
+    const emptyGrant = await app.request("/api/v1/remote/pairing-links", {
+      method: "POST",
+      headers: desktopHeaders(),
+    })
+    expect(emptyGrant.status).toBe(200)
+    const defaults = httpContracts.remotePairingLinkCreate.response.parse(
+      await emptyGrant.json()
+    )
+    expect(defaults.label).toBe("Pairing link")
+    const loose = await app.request("/api/v1/remote/pairing-links", {
+      method: "POST",
+      headers: desktopHeaders(),
+      body: JSON.stringify({ label: 42, ttlMinutes: "ten" }),
+    })
+    expect(loose.status).toBe(200)
+    const grant = httpContracts.remotePairingLinkCreate.response.parse(
+      await loose.json()
+    )
+    expect(grant.label).toBe("Pairing link")
+
+    // A missing code is a wrong code, not a malformed request.
+    const missing = await app.request("/api/v1/remote/mobile/pair", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: "Pixel" }),
+    })
+    expect(missing.status).toBe(401)
+    expect(await missing.json()).toMatchObject({
+      code: "pairing_code_invalid",
+    })
+
+    // A label longer than 80 characters is left out, not refused.
+    const paired = await app.request("/api/v1/remote/mobile/pair", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        credential: grant.credential,
+        label: "x".repeat(81),
+      }),
+    })
+    expect(paired.status).toBe(200)
+    const session = httpContracts.remoteMobilePair.response.parse(
+      await paired.json()
+    )
+    expect(session.session.label).toBe("Remote browser")
+    const bearer = { Authorization: `Bearer ${session.sessionToken}` }
+
+    const bootstrap = await app.request("/api/v1/remote/bootstrap", {
+      headers: bearer,
+    })
+    expect(
+      httpContracts.remoteBootstrap.response.parse(await bootstrap.json())
+    ).toMatchObject({ authenticated: true, authentication: "remote" })
+    const status = await app.request("/api/v1/remote/status", {
+      headers: bearer,
+    })
+    expect(
+      httpContracts.remoteStatus.response.parse(await status.json())
+    ).toMatchObject({ currentSessionId: session.session.id })
+
+    const sessions = await app.request("/api/v1/remote/sessions", {
+      headers: desktopHeaders(),
+    })
+    expect(
+      httpContracts.remoteSessionList.response.parse(await sessions.json())
+        .sessions
+    ).toEqual([expect.objectContaining({ id: session.session.id })])
+
+    // Serve keeps its own refusal for a value that is not a boolean.
+    const notBoolean = await app.request("/api/v1/remote/tailscale/serve", {
+      method: "POST",
+      headers: desktopHeaders(),
+      body: JSON.stringify({ enabled: "yes" }),
+    })
+    expect(notBoolean.status).toBe(400)
+    expect(await notBoolean.json()).toEqual({
+      error: "enabled must be a boolean",
+    })
+    expect(tailscale.enableServe).not.toHaveBeenCalled()
+
+    const logout = await app.request("/api/v1/remote/logout", {
+      method: "POST",
+      headers: bearer,
+    })
+    expect(
+      httpContracts.remoteLogout.response.parse(await logout.json())
+    ).toEqual({ loggedOut: true })
   })
 
   it("pairs once, authenticates the full API with a cookie, and supports revocation", async () => {
@@ -273,9 +384,9 @@ describe("remote access HTTP flow", () => {
     // The device's terminal: a program that runs until it is ended.
     const ownerId = `remote:${sessionId}`
     cleanups.push(async () => {
-      await shutdownTerminalPtySessionsForOwner(ownerId)
+      await ptys.shutdownForOwner(ownerId)
     })
-    const terminal = openTerminalPtySession({
+    const terminal = ptys.openSession({
       ownerId,
       cwd: os.tmpdir(),
       command: process.execPath,
@@ -294,7 +405,7 @@ describe("remote access HTTP flow", () => {
     )
     expect(fromDevice.status).toBe(403)
     expect(endedOnDesktop).not.toHaveBeenCalled()
-    expect(readTerminalPtySession(terminal.sessionId, 0, ownerId)?.status).toBe(
+    expect(ptys.readSession(terminal.sessionId, 0, ownerId)?.status).toBe(
       "running"
     )
 
@@ -307,7 +418,7 @@ describe("remote access HTTP flow", () => {
     expect(endedOnDesktop).toHaveBeenCalledWith(sessionId)
     // The shutdown drops a terminal only once it exited (one still running
     // fails the request instead), so gone means ended.
-    expect(readTerminalPtySession(terminal.sessionId, 0, ownerId)).toBeNull()
+    expect(ptys.readSession(terminal.sessionId, 0, ownerId)).toBeNull()
     // Only the terminals went: the device stays paired.
     expect(await devices()).toEqual([
       expect.objectContaining({ id: sessionId, terminals: 0 }),
@@ -356,7 +467,113 @@ describe("remote access HTTP flow", () => {
     expect(ordinarySetting.status).toBe(200)
   })
 
-  it("pairs a full session over plain HTTP from a private network, and refuses a public peer", async () => {
+  it("lets only the desktop list and withdraw unredeemed pairing links", async () => {
+    const { app } = fixture()
+    const issue = async (label: string) =>
+      (await (
+        await app.request("/api/v1/remote/pairing-links", {
+          method: "POST",
+          headers: desktopHeaders(),
+          body: JSON.stringify({ label }),
+        })
+      ).json()) as { id: string; credential: string }
+    const redeemed = await issue("Redeemed")
+    const first = await issue("First")
+    await issue("Second")
+    const third = await issue("Third")
+    const pairResponse = await app.request("/api/v1/remote/pair", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ credential: redeemed.credential }),
+    })
+    const cookie = cookieFrom(pairResponse)
+
+    const list = async () => {
+      const response = await app.request("/api/v1/remote/pairing-links", {
+        headers: desktopHeaders(),
+      })
+      expect(response.status).toBe(200)
+      return (await response.json()) as {
+        pairingLinks: Array<Record<string, unknown>>
+      }
+    }
+    const listed = await list()
+    // The redeemed link is gone, and the code itself is never listed again.
+    expect(listed.pairingLinks.map((link) => link.label).sort()).toEqual([
+      "First",
+      "Second",
+      "Third",
+    ])
+    expect(JSON.stringify(listed)).not.toContain(first.credential)
+    for (const link of listed.pairingLinks) {
+      expect(Object.keys(link).sort()).toEqual([
+        "createdAt",
+        "expiresAt",
+        "id",
+        "label",
+      ])
+    }
+
+    // A paired device can neither see nor withdraw links.
+    const remoteHeaders = { Cookie: cookie }
+    expect(
+      (
+        await app.request("/api/v1/remote/pairing-links", {
+          headers: remoteHeaders,
+        })
+      ).status
+    ).toBe(403)
+    expect(
+      (
+        await app.request(`/api/v1/remote/pairing-links/${first.id}`, {
+          method: "DELETE",
+          headers: remoteHeaders,
+        })
+      ).status
+    ).toBe(403)
+    expect(
+      (
+        await app.request("/api/v1/remote/pairing-links", {
+          method: "DELETE",
+          headers: remoteHeaders,
+        })
+      ).status
+    ).toBe(403)
+
+    // Withdrawing one link makes its code useless before anyone redeems it.
+    const withdrawn = await app.request(
+      `/api/v1/remote/pairing-links/${first.id}`,
+      { method: "DELETE", headers: desktopHeaders() }
+    )
+    expect(await withdrawn.json()).toEqual({ revoked: true })
+    const again = await app.request(
+      `/api/v1/remote/pairing-links/${first.id}`,
+      { method: "DELETE", headers: desktopHeaders() }
+    )
+    expect(await again.json()).toEqual({ revoked: false })
+    const lateRedeem = await app.request("/api/v1/remote/mobile/pair", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ credential: first.credential }),
+    })
+    expect(lateRedeem.status).toBe(401)
+
+    // Withdrawing all of them leaves no working code behind.
+    const withdrawAll = await app.request("/api/v1/remote/pairing-links", {
+      method: "DELETE",
+      headers: desktopHeaders(),
+    })
+    expect(await withdrawAll.json()).toEqual({ revoked: 2 })
+    expect((await list()).pairingLinks).toEqual([])
+    const thirdRedeem = await app.request("/api/v1/remote/mobile/pair", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ credential: third.credential }),
+    })
+    expect(thirdRedeem.status).toBe(401)
+  })
+
+  it("pairs only short read-only monitoring over plain HTTP from a private network, and refuses a public peer", async () => {
     const { app } = fixture()
     const grantResponse = await app.request("/api/v1/remote/pairing-links", {
       method: "POST",
@@ -379,8 +596,11 @@ describe("remote access HTTP flow", () => {
       expect(host).toMatch(/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/)
     }
 
-    // A paired phone on the home Wi-Fi receives a full session.
+    // A phone on shared Wi-Fi still pairs, but a private address is not
+    // encryption: anyone on that network can read the bearer, so the session
+    // is read-only monitoring for an hour, and the client is told so.
     const lanPeer = { incoming: { socket: { remoteAddress: "192.168.1.40" } } }
+    const pairedAt = Date.now()
     const paired = await app.request(
       "http://192.168.1.20:3773/api/v1/remote/mobile/pair",
       {
@@ -393,9 +613,23 @@ describe("remote access HTTP flow", () => {
     expect(paired.status).toBe(200)
     const session = (await paired.json()) as {
       sessionToken: string
-      session: { accessLevel: string }
+      session: { accessLevel: string; expiresAt: string }
+      protocol: { capabilities: Record<string, unknown> }
     }
-    expect(session.session.accessLevel).toBe("full")
+    expect(session.session.accessLevel).toBe("read_only")
+    expect(session.protocol.capabilities).toMatchObject({
+      accessLevel: "read_only",
+      terminalGranted: false,
+    })
+    expect(
+      Date.parse(session.session.expiresAt) - pairedAt
+    ).toBeLessThanOrEqual(60 * 60 * 1000 + 1_000)
+    const monitoring = await app.request(
+      "http://192.168.1.20:3773/api/v1/runtime/health",
+      { headers: { Authorization: `Bearer ${session.sessionToken}` } },
+      lanPeer
+    )
+    expect(monitoring.status).toBe(200)
     const mutation = await app.request(
       "http://192.168.1.20:3773/api/v1/settings",
       {
@@ -408,7 +642,18 @@ describe("remote access HTTP flow", () => {
       },
       lanPeer
     )
-    expect(mutation.status).toBe(200)
+    expect(mutation.status).toBe(403)
+    expect(await mutation.json()).toEqual({
+      error: "remote session is restricted to read-only monitoring",
+      code: "remote_read_only",
+    })
+    // The desktop's own bearer never travels over plaintext off this machine.
+    const desktopOverLan = await app.request(
+      "http://192.168.1.20:3773/api/v1/runtime/health",
+      { headers: desktopHeaders() },
+      lanPeer
+    )
+    expect(desktopOverLan.status).toBe(426)
 
     // A port forwarded from the router: plaintext from a public address is
     // still refused, with or without a valid code.
@@ -444,6 +689,173 @@ describe("remote access HTTP flow", () => {
       }
     )
     expect(noPeer.status).toBe(426)
+  })
+
+  it("shows the user's rules to the desktop and a full session, never to a read-only one", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-rules-"))
+    cleanups.push(async () => fs.rmSync(home, { recursive: true, force: true }))
+    fs.writeFileSync(path.join(home, "rules.md"), "Prefer small diffs.\n")
+    const { app } = fixture({ runtimeHome: home })
+    const issueGrant = async () =>
+      (await (
+        await app.request("/api/v1/remote/pairing-links", {
+          method: "POST",
+          headers: desktopHeaders(),
+          body: "{}",
+        })
+      ).json()) as { credential: string }
+
+    const desktop = await app.request("/api/v1/settings/rules", {
+      headers: desktopHeaders(),
+    })
+    expect(desktop.status).toBe(200)
+    expect(await desktop.json()).toEqual({ content: "Prefer small diffs.\n" })
+
+    // A full session (this computer here) reads them, and only reads them:
+    // the desktop configuration itself stays the desktop's.
+    const full = (await (
+      await app.request("/api/v1/remote/mobile/pair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential: (await issueGrant()).credential }),
+      })
+    ).json()) as { sessionToken: string; session: { accessLevel: string } }
+    expect(full.session.accessLevel).toBe("full")
+    const fullHeaders = { Authorization: `Bearer ${full.sessionToken}` }
+    const fullRead = await app.request("/api/v1/settings/rules", {
+      headers: fullHeaders,
+    })
+    expect(fullRead.status).toBe(200)
+    expect(
+      httpContracts.getUserRules.response.parse(await fullRead.json())
+    ).toEqual({ content: "Prefer small diffs.\n" })
+    const configRead = await app.request("/api/v1/config/rules", {
+      headers: fullHeaders,
+    })
+    expect(configRead.status).toBe(403)
+
+    // Plain HTTP on the LAN: read-only monitoring, which configuration is
+    // not part of.
+    const lanPeer = { incoming: { socket: { remoteAddress: "192.168.1.40" } } }
+    const readOnly = (await (
+      await app.request(
+        "http://192.168.1.20:3773/api/v1/remote/mobile/pair",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            credential: (await issueGrant()).credential,
+          }),
+        },
+        lanPeer
+      )
+    ).json()) as { sessionToken: string; session: { accessLevel: string } }
+    expect(readOnly.session.accessLevel).toBe("read_only")
+    const refused = await app.request(
+      "http://192.168.1.20:3773/api/v1/settings/rules",
+      { headers: { Authorization: `Bearer ${readOnly.sessionToken}` } },
+      lanPeer
+    )
+    expect(refused.status).toBe(403)
+    expect(await refused.json()).toMatchObject({ code: "remote_read_only" })
+  })
+
+  it("keeps TLS on a private network full and downgrades a full session replayed over plaintext LAN", async () => {
+    const { app, settings } = fixture()
+    await settings.updatePublic({ remote_access_allow_terminal: true })
+    const issueGrant = async () => {
+      const response = await app.request("/api/v1/remote/pairing-links", {
+        method: "POST",
+        headers: desktopHeaders(),
+        body: "{}",
+      })
+      return ((await response.json()) as { credential: string }).credential
+    }
+
+    // TLS terminated by the backend itself on the LAN: the bearer is
+    // encrypted, so the phone gets the full 30-day session.
+    const tlsLanPeer = {
+      incoming: { socket: { remoteAddress: "192.168.1.40", encrypted: true } },
+    }
+    const paired = await app.request(
+      "https://192.168.1.20:3773/api/v1/remote/mobile/pair",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential: await issueGrant() }),
+      },
+      tlsLanPeer
+    )
+    expect(paired.status).toBe(200)
+    const full = (await paired.json()) as {
+      sessionToken: string
+      session: { accessLevel: string; expiresAt: string }
+      protocol: { capabilities: Record<string, unknown> }
+    }
+    expect(full.session.accessLevel).toBe("full")
+    expect(full.protocol.capabilities).toMatchObject({
+      accessLevel: "full",
+      terminalGranted: true,
+    })
+    expect(Date.parse(full.session.expiresAt) - Date.now()).toBeGreaterThan(
+      20 * 24 * 60 * 60 * 1000
+    )
+    const patch = (url: string, peer: object) =>
+      app.request(
+        url,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${full.sessionToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ patch: { theme: "dark" } }),
+        },
+        peer
+      )
+    expect(
+      (await patch("https://192.168.1.20:3773/api/v1/settings", tlsLanPeer))
+        .status
+    ).toBe(200)
+
+    // The same token presented over plaintext LAN (copied off the wire, or
+    // a client that fell back to http://) can only monitor, and bootstrap
+    // tells the client so — no terminal even though the grant is on.
+    const plaintextLanPeer = {
+      incoming: { socket: { remoteAddress: "192.168.1.40" } },
+    }
+    const replayed = await patch(
+      "http://192.168.1.20:3773/api/v1/settings",
+      plaintextLanPeer
+    )
+    expect(replayed.status).toBe(403)
+    expect(((await replayed.json()) as { code: string }).code).toBe(
+      "remote_read_only"
+    )
+    const bootstrap = await app.request(
+      "http://192.168.1.20:3773/api/v1/remote/bootstrap",
+      { headers: { Authorization: `Bearer ${full.sessionToken}` } },
+      plaintextLanPeer
+    )
+    expect(bootstrap.status).toBe(200)
+    expect(
+      (
+        (await bootstrap.json()) as {
+          protocol: { capabilities: Record<string, unknown> }
+        }
+      ).protocol.capabilities
+    ).toMatchObject({ accessLevel: "read_only", terminalGranted: false })
+
+    // Loopback is unchanged: this computer always pairs a full session.
+    const loopback = await app.request("/api/v1/remote/mobile/pair", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ credential: await issueGrant() }),
+    })
+    expect(
+      ((await loopback.json()) as { session: { accessLevel: string } }).session
+        .accessLevel
+    ).toBe("full")
   })
 
   it("limits explicitly enabled public plaintext sessions to short read-only monitoring", async () => {
@@ -573,12 +985,23 @@ describe("remote access HTTP flow", () => {
     })
     expect(secureProtocol.status).toBe(200)
 
-    // A LAN client the proxy really saw keeps the private-network policy.
+    // A LAN client the proxy really saw keeps the private-network policy:
+    // admitted, but plaintext to that client is read-only monitoring...
     const lan = await pair({ "X-Forwarded-For": "203.0.113.9, 192.168.1.40" })
     expect(lan.status).toBe(200)
     expect(
       ((await lan.json()) as { session: { accessLevel: string } }).session
         .accessLevel
+    ).toBe("read_only")
+    // ...while the proxy terminating TLS for that client is a full session.
+    const lanOverTls = await pair({
+      "X-Forwarded-For": "192.168.1.40",
+      "X-Forwarded-Proto": "https",
+    })
+    expect(lanOverTls.status).toBe(200)
+    expect(
+      ((await lanOverTls.json()) as { session: { accessLevel: string } })
+        .session.accessLevel
     ).toBe("full")
   })
 
@@ -744,6 +1167,8 @@ function fakeTailscale(
   describe: ReturnType<typeof vi.fn>
   enableServe: ReturnType<typeof vi.fn>
   disableServe: ReturnType<typeof vi.fn>
+  waitForServe: ReturnType<typeof vi.fn>
+  releaseServe: ReturnType<typeof vi.fn>
 } {
   const described: TailscaleRemoteState = {
     installed: true,
@@ -752,10 +1177,15 @@ function fakeTailscale(
     tailnetIpv4Addresses: ["100.88.45.82"],
     selfAddresses: ["100.88.45.82", "fd7a:115c:a1e0::be3b:2d52"],
     httpsCertificates: true,
+    serviceRunning: true,
+    magicDnsEnabled: true,
     serveEnabled: true,
     serveActive: true,
     servePort: 443,
     httpsBaseUrl: "https://desk.tail1234.ts.net",
+    serveReachable: null,
+    serveError: null,
+    serveConsentUrl: null,
     ...overrides,
   }
   return {
@@ -765,6 +1195,8 @@ function fakeTailscale(
     describe: vi.fn().mockResolvedValue(described),
     enableServe: vi.fn().mockResolvedValue(undefined),
     disableServe: vi.fn().mockResolvedValue(undefined),
+    waitForServe: vi.fn().mockResolvedValue(true),
+    releaseServe: vi.fn().mockResolvedValue(undefined),
   }
 }
 
@@ -871,7 +1303,7 @@ describe("remote access through Tailscale Serve", () => {
     expect(response.status).toBe(426)
   })
 
-  it("advertises the tailnet HTTPS endpoint only with a live serve mapping", async () => {
+  it("recommends the tailnet HTTPS endpoint only with a live serve mapping", async () => {
     const served = fixture({ tailscaleServe: true, tailscale: fakeTailscale() })
     const status = (await (
       await served.app.request("/api/v1/remote/status", {
@@ -881,16 +1313,19 @@ describe("remote access through Tailscale Serve", () => {
       endpoints: Array<{ id: string; httpBaseUrl: string; isDefault: boolean }>
     }
     expect(stableEndpointIds(status.endpoints)).toEqual([
-      "tailscale-ip",
       "tailscale",
+      "tailscale-ip",
       "loopback",
     ])
     expect(
       status.endpoints.find((endpoint) => endpoint.id === "tailscale")
     ).toMatchObject({
       httpBaseUrl: "https://desk.tail1234.ts.net",
-      isDefault: false,
+      isDefault: true,
     })
+    expect(
+      status.endpoints.filter((endpoint) => endpoint.isDefault)
+    ).toHaveLength(1)
     const grant = (await (
       await served.app.request("/api/v1/remote/pairing-links", {
         method: "POST",
@@ -931,7 +1366,7 @@ describe("remote access through Tailscale Serve", () => {
 
   it("lets only the desktop owner flip serve, and persists after the CLI accepted", async () => {
     const tailscale = fakeTailscale({ serveEnabled: false, serveActive: false })
-    const { app, settings, config } = fixture({ tailscale })
+    const { app, settings, config, remoteAccess } = fixture({ tailscale })
 
     const enable = await app.request("/api/v1/remote/tailscale/serve", {
       method: "POST",
@@ -941,6 +1376,11 @@ describe("remote access through Tailscale Serve", () => {
     expect(enable.status).toBe(200)
     expect(tailscale.enableServe).toHaveBeenCalledWith(config.port)
     expect(settings.get().remote_access_tailscale_serve).toBe(true)
+    // The answer waits for the name to work as this desktop, while
+    // Tailscale issues the certificate.
+    expect(tailscale.waitForServe).toHaveBeenCalledWith({
+      environmentId: remoteAccess.environmentId(),
+    })
 
     // A refusing CLI leaves the setting untouched.
     tailscale.disableServe.mockRejectedValueOnce(new Error("Tailscale refused"))
@@ -1122,7 +1562,8 @@ describe("remote access over the tailnet address", () => {
     expect(viaIspCgnat.status).toBe(426)
 
     // A LAN peer is not the tunnel, but it is private transport in its own
-    // right, so it still pairs — through the LAN rule, not the tailnet one.
+    // right, so it still pairs — through the LAN rule, not the tailnet one,
+    // and therefore only as plaintext read-only monitoring.
     const lanPeer = await app.request(
       pairUrl,
       {
@@ -1140,6 +1581,10 @@ describe("remote access over the tailnet address", () => {
       }
     )
     expect(lanPeer.status).toBe(200)
+    expect(
+      ((await lanPeer.json()) as { session: { accessLevel: string } }).session
+        .accessLevel
+    ).toBe("read_only")
   })
 
   it("is not tailnet transport while Tailscale is not running", async () => {
@@ -1207,7 +1652,7 @@ describe("remote access over the tailnet address", () => {
       /^http:\/\/100\.88\.45\.82:3773\/#token=/
     )
 
-    // Serve on top: both tailnet links, the IP stays the default.
+    // Serve on top: both tailnet links, the HTTPS name becomes the default.
     const both = withTailnet({ serveEnabled: true, serveActive: true })
     await both.settings.updatePublic({ remote_access_tailscale_serve: true })
     const served = (await (
@@ -1216,12 +1661,97 @@ describe("remote access over the tailnet address", () => {
       })
     ).json()) as { endpoints: Array<{ id: string; isDefault: boolean }> }
     expect(stableEndpointIds(served.endpoints)).toEqual([
-      "tailscale-ip",
       "tailscale",
+      "tailscale-ip",
       "loopback",
     ])
     expect(served.endpoints.find((endpoint) => endpoint.isDefault)?.id).toBe(
-      "tailscale-ip"
+      "tailscale"
     )
+  })
+})
+
+describe("remote access through Tailscale Serve alone", () => {
+  it("advertises only the HTTPS name while the backend stays on loopback", async () => {
+    const { app } = fixture({
+      host: "127.0.0.1",
+      tailscaleServe: true,
+      tailscale: fakeTailscale(),
+    })
+    const status = (await (
+      await app.request("/api/v1/remote/status", { headers: desktopHeaders() })
+    ).json()) as {
+      listeningOnNetwork: boolean
+      endpoints: Array<{ id: string; isDefault: boolean }>
+    }
+    // No interface address and no plain tailnet address: nothing listens
+    // there. tailscaled accepts the HTTPS name and proxies to loopback.
+    expect(status.endpoints.map((endpoint) => endpoint.id)).toEqual([
+      "tailscale",
+      "loopback",
+    ])
+    expect(status.endpoints[0]?.isDefault).toBe(true)
+    expect(status.listeningOnNetwork).toBe(true)
+
+    const closed = fixture({ host: "127.0.0.1", tailscale: fakeTailscale() })
+    const closedStatus = (await (
+      await closed.app.request("/api/v1/remote/status", {
+        headers: desktopHeaders(),
+      })
+    ).json()) as {
+      listeningOnNetwork: boolean
+      endpoints: Array<{ id: string }>
+    }
+    expect(closedStatus.endpoints.map((endpoint) => endpoint.id)).toEqual([
+      "loopback",
+    ])
+    expect(closedStatus.listeningOnNetwork).toBe(false)
+  })
+
+  it("hands the owner Tailscale's consent page when Serve is not allowed yet", async () => {
+    const tailscale = fakeTailscale({ serveEnabled: false, serveActive: false })
+    tailscale.enableServe.mockRejectedValueOnce(
+      new TailscaleCommandError("serve", {
+        ok: false,
+        reason: "timeout",
+        consentUrl: "https://login.tailscale.com/f/serve?node=nAbc123CNTRL",
+      })
+    )
+    const { app, settings } = fixture({ tailscale })
+    const response = await app.request("/api/v1/remote/tailscale/serve", {
+      method: "POST",
+      headers: desktopHeaders(),
+      body: JSON.stringify({ enabled: true }),
+    })
+    expect(response.status).toBe(502)
+    expect(await response.json()).toMatchObject({
+      error: expect.stringContaining("not allowed on this tailnet"),
+      consentUrl: "https://login.tailscale.com/f/serve?node=nAbc123CNTRL",
+    })
+    expect(settings.get().remote_access_tailscale_serve).toBe(false)
+    expect(tailscale.waitForServe).not.toHaveBeenCalled()
+  })
+
+  it("checks the HTTPS name for the owner only while Remote Access is on", async () => {
+    const tailscale = fakeTailscale()
+    const { app, remoteAccess, settings } = fixture({
+      tailscaleServe: true,
+      tailscale,
+    })
+    await app.request("/api/v1/remote/tailscale", { headers: desktopHeaders() })
+    expect(tailscale.describe).toHaveBeenLastCalledWith({
+      localPort: 3773,
+      serveEnabled: true,
+      probe: true,
+      environmentId: remoteAccess.environmentId(),
+    })
+    await settings.updatePublic({ remote_access_enabled: false })
+    await app.request("/api/v1/remote/tailscale", { headers: desktopHeaders() })
+    expect(tailscale.describe).toHaveBeenLastCalledWith({
+      localPort: 3773,
+      serveEnabled: true,
+      probe: false,
+      environmentId: null,
+    })
   })
 })

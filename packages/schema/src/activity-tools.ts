@@ -5,13 +5,10 @@
  * step looks the same in both while it runs and after it finished.
  */
 
-import { asRecord } from "./json-read"
+import { asRecord, nonEmptyString, recordOrUndefined } from "./json-read"
+import { providerKindFromDriver } from "./provider-kind"
 import type { ThreadActivity } from "./domain"
 import { extractToolOutputText, isGenericToolName } from "./tool-activity"
-
-function stringFrom(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined
-}
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object"
@@ -83,9 +80,9 @@ export function buildActivityTools(
   for (const activity of [...activities].sort(compareActivities)) {
     const payload = asRecord(activity.payload)
     const explicitToolId =
-      stringFrom(payload.toolId) ??
-      stringFrom(payload.tool_id) ??
-      stringFrom(payload.id) ??
+      nonEmptyString(payload.toolId) ??
+      nonEmptyString(payload.tool_id) ??
+      nonEmptyString(payload.id) ??
       undefined
     const fallbackKey = explicitToolId
       ? undefined
@@ -102,14 +99,15 @@ export function buildActivityTools(
       activeFallbackIds.set(fallbackKey, toolId)
     }
     const toolName =
-      stringFrom(payload.toolName) ??
-      stringFrom(payload.tool_name) ??
-      stringFrom(payload.tool) ??
-      stringFrom(payload.title) ??
+      nonEmptyString(payload.toolName) ??
+      nonEmptyString(payload.tool_name) ??
+      nonEmptyString(payload.tool) ??
+      nonEmptyString(payload.title) ??
       "tool"
-    const title = stringFrom(payload.title)
+    const title = nonEmptyString(payload.title)
     const kind =
-      stringFrom(payload.kind) ?? stringFrom(objectFrom(payload.data)?.kind)
+      nonEmptyString(payload.kind) ??
+      nonEmptyString(recordOrUndefined(payload.data)?.kind)
     const titled = {
       ...(title ? { title } : {}),
       ...(kind ? { kind } : {}),
@@ -155,7 +153,7 @@ export function buildActivityTools(
 
     if (activity.kind === "tool.updated") {
       const delta =
-        stringFrom(payload.output_delta) ?? stringFrom(payload.delta)
+        nonEmptyString(payload.output_delta) ?? nonEmptyString(payload.delta)
       const nextInput = toolInputFromActivityPayload(payload) ?? current.input
       const nextOutput = delta
         ? `${stringPreview(current.output)}${delta}`
@@ -211,25 +209,30 @@ export function buildActivityTools(
 
 export function activityCorrelationFields(payload: Record<string, unknown>) {
   return {
-    sessionId: stringFrom(payload.sessionId) ?? stringFrom(payload.session_id),
-    taskId: stringFrom(payload.taskId) ?? stringFrom(payload.task_id),
+    sessionId:
+      nonEmptyString(payload.sessionId) ?? nonEmptyString(payload.session_id),
+    taskId: nonEmptyString(payload.taskId) ?? nonEmptyString(payload.task_id),
     parentTaskId:
-      stringFrom(payload.parentTaskId) ?? stringFrom(payload.parent_task_id),
-    agentId: stringFrom(payload.agentId) ?? stringFrom(payload.agent_id),
+      nonEmptyString(payload.parentTaskId) ??
+      nonEmptyString(payload.parent_task_id),
+    agentId:
+      nonEmptyString(payload.agentId) ?? nonEmptyString(payload.agent_id),
     parentAgentId:
-      stringFrom(payload.parentAgentId) ?? stringFrom(payload.parent_agent_id),
+      nonEmptyString(payload.parentAgentId) ??
+      nonEmptyString(payload.parent_agent_id),
     parentToolId:
-      stringFrom(payload.parentToolId) ?? stringFrom(payload.parent_tool_id),
+      nonEmptyString(payload.parentToolId) ??
+      nonEmptyString(payload.parent_tool_id),
   }
 }
 
 export function providerKindFromActivityPayload(
   payload: Record<string, unknown>
 ): string | undefined {
-  return normalizeProviderKind(
-    stringFrom(payload.providerKind) ??
-      stringFrom(payload.provider_kind) ??
-      stringFrom(payload.provider)
+  return providerKindFromDriver(
+    nonEmptyString(payload.providerKind) ??
+      nonEmptyString(payload.provider_kind) ??
+      nonEmptyString(payload.provider)
   )
 }
 
@@ -238,9 +241,9 @@ export function providerInstanceIdFromActivityPayload(
   payload: Record<string, unknown>
 ): string | undefined {
   return (
-    stringFrom(payload.providerInstanceId) ??
-    stringFrom(payload.provider_instance_id) ??
-    stringFrom(activity.providerInstanceId)
+    nonEmptyString(payload.providerInstanceId) ??
+    nonEmptyString(payload.provider_instance_id) ??
+    nonEmptyString(activity.providerInstanceId)
   )
 }
 
@@ -258,15 +261,15 @@ export function compareActivities(a: ThreadActivity, b: ThreadActivity) {
 function isPlanBoundaryToolActivity(activity: ThreadActivity): boolean {
   const payload = asRecord(activity.payload)
   const toolName =
-    stringFrom(payload.toolName) ??
-    stringFrom(payload.tool_name) ??
-    stringFrom(payload.tool) ??
-    stringFrom(payload.name)
+    nonEmptyString(payload.toolName) ??
+    nonEmptyString(payload.tool_name) ??
+    nonEmptyString(payload.tool) ??
+    nonEmptyString(payload.name)
   if ((toolName ?? "").toLowerCase() === "exitplanmode") return true
   const detail =
-    stringFrom(payload.detail) ??
-    stringFrom(payload.output_delta) ??
-    stringFrom(payload.delta)
+    nonEmptyString(payload.detail) ??
+    nonEmptyString(payload.output_delta) ??
+    nonEmptyString(payload.delta)
   return Boolean(detail?.startsWith("ExitPlanMode:"))
 }
 
@@ -282,13 +285,13 @@ function fallbackToolLifecycleKey(
     return undefined
   }
   const parts = [
-    stringFrom(payload.itemType) ?? stringFrom(payload.item_type),
-    stringFrom(payload.title),
-    stringFrom(payload.toolName) ??
-      stringFrom(payload.tool_name) ??
-      stringFrom(payload.tool),
-    stringFrom(payload.detail),
-    stringFrom(payload.summary) ?? activity.summary,
+    nonEmptyString(payload.itemType) ?? nonEmptyString(payload.item_type),
+    nonEmptyString(payload.title),
+    nonEmptyString(payload.toolName) ??
+      nonEmptyString(payload.tool_name) ??
+      nonEmptyString(payload.tool),
+    nonEmptyString(payload.detail),
+    nonEmptyString(payload.summary) ?? activity.summary,
   ]
     .map((part) => normalizeLifecycleKeyPart(part))
     .filter((part): part is string => Boolean(part))
@@ -299,9 +302,9 @@ function toolInputFromActivityPayload(
   payload: Record<string, unknown>
 ): unknown | undefined {
   if (payload.input !== undefined) return payload.input
-  const item = objectFrom(payload.item)
+  const item = recordOrUndefined(payload.item)
   if (item?.input !== undefined) return item.input
-  const data = objectFrom(payload.data) ?? objectFrom(item?.data)
+  const data = recordOrUndefined(payload.data) ?? recordOrUndefined(item?.data)
   if (data?.input !== undefined) return data.input
   return undefined
 }
@@ -311,17 +314,6 @@ function normalizeLifecycleKeyPart(
 ): string | undefined {
   const normalized = value?.trim().toLowerCase().replace(/\s+/g, " ")
   return normalized && normalized.length > 0 ? normalized : undefined
-}
-
-function normalizeProviderKind(value: string | undefined): string | undefined {
-  const key = (value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "")
-  if (!key) return undefined
-  if (key === "codex" || key === "codexcli") return "codex"
-  if (key === "claude" || key === "claudeagent" || key === "claudecli") {
-    return "claude"
-  }
-  if (key === "anthropiccli") return "anthropic_cli"
-  return value
 }
 
 function stringPreview(value: unknown): string {
@@ -355,10 +347,4 @@ function toolDurationMs(startedAt: string | undefined, completedAt: string) {
   const end = Date.parse(completedAt)
   if (!Number.isFinite(start) || !Number.isFinite(end)) return undefined
   return Math.max(0, end - start)
-}
-
-function objectFrom(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
 }

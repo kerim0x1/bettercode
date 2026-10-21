@@ -9,6 +9,7 @@ BetterC0de's source, dependency packages, and third-party assets do not all shar
 | File and folder icons | [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme), pinned to 5.38.1 | MIT; the existing [license text](apps/ui/public/file-icons/LICENSE.material-icon-theme.txt) is included beside the icons. |
 | Mechanical keyboard recordings | [Mechvibes](https://github.com/hainguyents13/mechvibes) and [MechVibesPlusPlus](https://github.com/PyroCalzone/MechVibesPlusPlus) | MIT; see the [Mechvibes notice](licenses/mechvibes.MIT.txt) and [MechVibesPlusPlus notice](licenses/mechvibes-plus-plus.MIT.txt). |
 | Mouse recordings | [MechVibesPlusPlus](https://github.com/PyroCalzone/MechVibesPlusPlus) | MIT; see the [included notice](licenses/mechvibes-plus-plus.MIT.txt). |
+| Chart components in `apps/ui/src/components/charts` | [EvilCharts](https://github.com/legions-developer/evilcharts) | MIT; adapted source, see the [EvilCharts notice](licenses/evilcharts.MIT.txt). Each file keeps an attribution header. |
 | Figtree font packages | [Figtree](https://github.com/erikdkennedy/figtree) | SIL Open Font License 1.1, as declared by the installed font packages. The [font license text](licenses/figtree.OFL.txt) is included; also preserve the packages' notices. |
 
 The bundled keyboard and mouse audio files were compared with upstream Git blob hashes during preparation. The upstream references and matching paths are recorded in [audio provenance](docs/development/audio-provenance.json).

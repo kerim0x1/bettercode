@@ -1,6 +1,7 @@
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -34,9 +35,43 @@ import {
   readDictationPreview,
   type DictationDraft,
 } from "@/lib/dictation-preview"
+import {
+  hasMarkdownSource,
+  MARKDOWN_SOURCE as MD,
+  markdownSourceRuns,
+} from "@/lib/markdown-source"
 import { cn } from "@/lib/utils"
 
-/** Native editing stays in the textarea; the mirror adds dictation color and inspectable mentions. */
+/**
+ * Markdown styles for the mirror. Each one keeps glyph advances unchanged so
+ * the textarea's caret and selection stay on the painted text: bold is a
+ * stroke, the bullet is drawn over its hyphen, and italic is synthesized
+ * because Figtree ships no italic face.
+ */
+function mirrorMarkdownClass(flags: number) {
+  if (!flags) return undefined
+  const has = (flag: number) => (flags & flag) !== 0
+  return cn(
+    has(MD.strong | MD.heading) && "markdown-source-strong",
+    has(MD.em) && "italic",
+    has(MD.code | MD.codeBlock) && "markdown-source-code",
+    has(MD.strike) && "line-through",
+    has(MD.link) &&
+      "text-primary underline decoration-primary/50 underline-offset-2",
+    has(
+      MD.marker |
+        MD.linkTarget |
+        MD.quote |
+        MD.quoteMark |
+        MD.listNumber |
+        MD.fence |
+        MD.rule
+    ) && "text-muted-foreground",
+    has(MD.bullet) && "markdown-source-bullet"
+  )
+}
+
+/** Native editing stays in the textarea; the mirror adds Markdown styles, dictation color and inspectable mentions. */
 export function ComposerVoiceTextarea({
   threadId,
   className,
@@ -60,7 +95,12 @@ export function ComposerVoiceTextarea({
   const previousKeys = useRef(new Set<string>())
   const pendingCursor = useRef<{ value: string; cursor: number } | null>(null)
   const ranges = browserMentionRanges(textInput.value, elements)
-  const showMirror = showPreview || ranges.length > 0
+  const markdown = useMemo(
+    () => markdownSourceRuns(textInput.value),
+    [textInput.value]
+  )
+  const showMirror =
+    showPreview || ranges.length > 0 || hasMarkdownSource(markdown)
 
   useLayoutEffect(() => {
     if (!threadId) return
@@ -175,21 +215,34 @@ export function ComposerVoiceTextarea({
 
   const mirroredText: ReactNode[] = []
   const interimStart = showPreview ? preview.interimStart : null
+  let run = 0
   const appendText = (start: number, end: number) => {
-    if (start === end) return
-    const split =
-      interimStart === null ? end : Math.max(start, Math.min(end, interimStart))
-    mirroredText.push(
-      <span key={`text:${start}`} aria-hidden="true">
-        {textInput.value.slice(start, split)}
+    // Markdown runs and the start of interim dictation both split the text.
+    for (let from = start; from < end; ) {
+      while (markdown[run] && markdown[run].end <= from) run++
+      const interim = interimStart !== null && from >= interimStart
+      const to = Math.min(
+        end,
+        markdown[run]?.end ?? end,
+        !interim && interimStart !== null && interimStart > from
+          ? interimStart
+          : end
+      )
+      mirroredText.push(
         <span
-          className="text-muted-foreground"
-          data-dictation-interim={split < end || undefined}
+          key={`text:${from}`}
+          aria-hidden="true"
+          className={cn(
+            mirrorMarkdownClass(markdown[run]?.flags ?? 0),
+            interim && "text-muted-foreground"
+          )}
+          data-dictation-interim={interim || undefined}
         >
-          {textInput.value.slice(split, end)}
+          {textInput.value.slice(from, to)}
         </span>
-      </span>
-    )
+      )
+      from = to
+    }
   }
   let offset = 0
   for (const range of ranges) {

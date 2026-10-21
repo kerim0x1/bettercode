@@ -12,6 +12,7 @@ import {
   encodeThreadActivityCursor,
   type ThreadActivityCursor,
 } from "../persistence/projections"
+import { boundThreadActivity } from "../provider/activity-projection"
 import type { RpcHandler } from "./server"
 import { RemoteTerminalChannel } from "./terminalChannel"
 
@@ -110,8 +111,11 @@ function parseActivityPagination(params: unknown): {
 }
 
 function toThreadActivityWire(
-  activity: ReturnType<AppState["threadActivities"]["listByThread"]>[number]
+  stored: ReturnType<AppState["threadActivities"]["listByThread"]>[number]
 ) {
+  // Rows stored before tool output (and approval input) was bounded at
+  // projection are bounded here.
+  const activity = boundThreadActivity(stored)
   return {
     id: activity.activity_id,
     threadId: activity.thread_id,
@@ -132,7 +136,7 @@ export function createWsRpcHandler(
   terminals?: RemoteTerminalChannel
 ): RpcHandler {
   return async (method, params, principal, connection) => {
-    if (state.taintedRef?.() || state.drainingRef?.()) {
+    if (state.taintedRef() || state.drainingRef()) {
       throw Object.assign(new Error("Backend is shutting down"), {
         statusCode: 503,
         code: "SHUTTING_DOWN",

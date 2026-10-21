@@ -88,7 +88,8 @@ export function EditorRecentFilesList({
     await useEditorStore.getState().openFile(item.filePath, {
       line: item.line,
       column: item.column,
-      preview: true,
+      // Its own tab, like a click in the file tree.
+      preview: false,
     })
     dispatchEditorGotoLine(
       {

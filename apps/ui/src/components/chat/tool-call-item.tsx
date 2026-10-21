@@ -21,7 +21,9 @@ import {
 import { formatProviderActivityLabel } from "@/lib/provider-label"
 import { openSourceTarget } from "@/lib/source-opener"
 import { toolFailureText } from "@/lib/execution-diagnostics"
+import type { ToolFullOutputRef } from "@/lib/tool-full-output"
 import { ExecutionFailure } from "./execution-failure"
+import { ToolOutputNotice, useToolFullOutput } from "./tool-output-notice"
 
 export type ToolCallData = {
   id: string
@@ -40,8 +42,16 @@ export type ToolCallData = {
   error?: string
   outputPreview?: string
   outputTruncated?: boolean
+  /**
+   * The recorded output itself was cut in the middle (RAM-04 bound), not just
+   * shortened for the preview; `outputBytes` is then the whole output's size.
+   * Set by `withActivityOutputBounds` (lib/tool-full-output).
+   */
+  outputBounded?: boolean
   outputBytes?: number
   outputLineCount?: number
+  /** Where the whole output of a bounded step can be read back. */
+  fullOutput?: ToolFullOutputRef
   turnId?: string
   providerInstanceId?: string
   sessionId?: string
@@ -96,6 +106,7 @@ export function ToolCallItem({
   })
   const [expanded, setExpanded] = useState(defaultExpanded)
   const [fullscreen, setFullscreen] = useState(false)
+  const fullOutput = useToolFullOutput(tc.fullOutput)
   const inp = tc.input as Record<string, unknown> | null
   const description = describeProviderToolActivity({
     toolName: tc.name,
@@ -165,10 +176,24 @@ export function ToolCallItem({
     setExpanded(defaultExpanded)
   }, [defaultExpanded])
 
+  // Once requested, the whole output replaces the bounded copy.
   const outputText =
-    typeof tc.outputPreview === "string"
-      ? tc.outputPreview
-      : (extractToolOutputText(tc.output) ?? stringifyPreview(tc.output))
+    fullOutput.state.status === "loaded"
+      ? fullOutput.state.text
+      : typeof tc.outputPreview === "string"
+        ? tc.outputPreview
+        : (extractToolOutputText(tc.output) ?? stringifyPreview(tc.output))
+  const outputNotice = (className: string) => (
+    <ToolOutputNotice
+      outputTruncated={tc.outputTruncated}
+      outputBounded={tc.outputBounded}
+      outputBytes={tc.outputBytes}
+      canLoadFullOutput={Boolean(tc.fullOutput)}
+      fullOutput={fullOutput.state}
+      onLoadFullOutput={fullOutput.load}
+      className={className}
+    />
+  )
   const codeContent = isWrite
     ? String(inp?.content || inp?.contents || "")
     : isEdit
@@ -348,19 +373,18 @@ export function ToolCallItem({
 
             {/* Write / Read / Bash content */}
             {(!isEdit || !oldContent) && (
-              <div className="max-h-[200px] overflow-y-auto">
-                <pre className="px-3 py-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-foreground/80">
-                  {codeContent.slice(0, 5000)}
-                  {tc.outputTruncated && (
-                    <span className="mt-2 block text-muted-foreground">
-                      Output truncated in chat preview.
-                    </span>
-                  )}
-                  {streaming && !isDone && (
-                    <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-primary" />
-                  )}
-                </pre>
-              </div>
+              <>
+                <div className="max-h-[200px] overflow-y-auto">
+                  <pre className="px-3 py-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-foreground/80">
+                    {codeContent.slice(0, 5000)}
+                    {streaming && !isDone && (
+                      <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-primary" />
+                    )}
+                  </pre>
+                </div>
+                {/* Outside the scroll box, so the action stays in view. */}
+                {outputNotice("border-t border-border/30 px-3 py-1.5")}
+              </>
             )}
           </div>
         )}
@@ -443,17 +467,15 @@ export function ToolCallItem({
                 ))}
               </pre>
             ) : (
-              <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap">
-                {codeContent}
-                {tc.outputTruncated && (
-                  <span className="mt-3 block text-muted-foreground">
-                    Output truncated in chat preview.
-                  </span>
-                )}
-                {streaming && !isDone && (
-                  <span className="ml-0.5 inline-block h-4 w-2 animate-pulse bg-primary" />
-                )}
-              </pre>
+              <>
+                <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap">
+                  {codeContent}
+                  {streaming && !isDone && (
+                    <span className="ml-0.5 inline-block h-4 w-2 animate-pulse bg-primary" />
+                  )}
+                </pre>
+                {outputNotice("mt-3 text-xs")}
+              </>
             )}
           </div>
         </div>

@@ -7,14 +7,21 @@ import path from "node:path"
 import { PassThrough } from "node:stream"
 import { test } from "node:test"
 import vm from "node:vm"
+import { installFakeDesktopConfigBackend } from "./fake-desktop-config-backend.mjs"
 
 const modulePath = new URL("../apps/shell/skills-ipc.cjs", import.meta.url)
 const require = createRequire(modulePath)
 const source = fs.readFileSync(modulePath, "utf8")
 
 function importHarness(t, respond) {
-  const skillsDir = fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-skill-import-"))
-  t.after(() => fs.rmSync(skillsDir, { recursive: true, force: true }))
+  // BetterC0de's skills belong to the backend; a fake backend keeps them in
+  // `home` (skills/<id>/manifest.json + content.md) like the real one.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-skill-import-"))
+  const backend = installFakeDesktopConfigBackend(home)
+  t.after(() => {
+    backend.restore()
+    fs.rmSync(home, { recursive: true, force: true })
+  })
   const handlers = new Map()
   const response = new PassThrough()
   response.statusCode = 200
@@ -32,7 +39,6 @@ function importHarness(t, respond) {
         rawHandle() {},
       }
       if (id === "./shared/runtime-paths.cjs") return {
-        getRuntimePaths: () => ({ skillsDir }),
         ensureDir: (directory) => fs.mkdirSync(directory, { recursive: true }),
         slugify: () => "imported-skill",
       }
@@ -65,7 +71,10 @@ function importHarness(t, respond) {
   module.exports.registerSkillsHandlers()
   return {
     run: () => handlers.get("skill:import-url")({}, { url: "https://skills.example/skill.md" }),
-    content: () => fs.readFileSync(path.join(skillsDir, "imported-skill", "content.md"), "utf8"),
+    content: () => fs.readFileSync(path.join(home, "skills", "imported-skill", "content.md"), "utf8"),
+    manifest: () =>
+      JSON.parse(fs.readFileSync(path.join(home, "skills", "imported-skill", "manifest.json"), "utf8")),
+    backend,
     response,
     request: () => request,
   }
@@ -79,6 +88,14 @@ test("skill import preserves UTF-8 characters split across network chunks", asyn
   })
   await harness.run()
   assert.equal(harness.content(), text)
+  assert.equal(harness.manifest().source, "url-import")
+  assert.equal(harness.manifest().sourceUrl, "https://skills.example/skill.md")
+  // Stored through the backend, never written by this process.
+  assert.ok(
+    harness.backend.requests.some(
+      (request) => request.method === "PUT" && request.path === "/config/skills/imported-skill",
+    ),
+  )
 })
 
 test("skill import stops a trickling response at the total request deadline", { timeout: 1000 }, async (t) => {
@@ -106,4 +123,5 @@ test("skill import destroys an oversized response without persisting it", async 
   assert.equal(harness.response.destroyed, true)
   assert.equal(harness.request().destroyed, true)
   assert.throws(harness.content, { code: "ENOENT" })
+  assert.equal(harness.backend.requests.some((request) => request.method === "PUT"), false)
 })

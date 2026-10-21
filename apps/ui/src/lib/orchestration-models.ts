@@ -1,6 +1,7 @@
 import {
   orchestratorModelKey,
   orchestratorReasoningDescriptor,
+  withoutExcludedOrchestratorEffort,
   modelThinkingOptions,
   normalizeThinkingModeValue,
   type ChatOrchestration,
@@ -26,12 +27,15 @@ export function subagentModelChoices(
   return providers.flatMap((provider) => {
     const kind = provider.providerKind
     const instance = provider.providerInstanceId
+    // Mirrors the backend worker catalog, which skips disabled instances; a
+    // disabled provider offered here would fail the next orchestrated send.
     if (
       (kind !== "claude" && kind !== "codex" && kind !== "grok_cli") ||
       kind === mainProvider ||
       !instance ||
       provider.configured === false ||
       provider.availability === "unavailable" ||
+      provider.status === "disabled" ||
       provider.modelsReady === false
     )
       return []
@@ -69,8 +73,9 @@ export function selectedSubagentModels(
   choices: readonly SubagentModelChoice[]
 ): OrchestratorSelectedModel[] {
   if (!selection.enabled) return []
+  // Saved Ultracode efforts read as Auto, so the next edit stores them clean.
   return (
-    selection.models ??
+    selection.models?.map(withoutExcludedOrchestratorEffort) ??
     choices
       .filter((choice) =>
         selection.providers.includes(choice.value.providerKind)
@@ -94,4 +99,19 @@ export function orchestrationWithModels(
         models: unique,
       }
     : { enabled: false }
+}
+
+/**
+ * Auto is a UI-only stop. The orchestration contract stores the provider
+ * default as null, and every explicit effort keeps its advertised ID.
+ */
+export function orchestrationThinkingOptions(
+  choice: SubagentModelChoice
+): { mode: string; label: string }[] {
+  return [
+    { mode: "auto", label: "Auto" },
+    ...choice.reasoningOptions
+      .filter((option) => option.id !== "auto")
+      .map((option) => ({ mode: option.id, label: option.label })),
+  ]
 }

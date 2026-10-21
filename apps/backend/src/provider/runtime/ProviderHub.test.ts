@@ -1423,6 +1423,162 @@ describe("ProviderHub", () => {
     }
   })
 
+  it("re-arms the turn watchdog on provider activity and pauses it for open requests", async () => {
+    vi.useFakeTimers()
+    try {
+      let emitRuntimeEvent!: (event: ProviderRuntimeEvent) => void
+      const interruptTurn = vi.fn(async () => {
+        emitRuntimeEvent({
+          type: "turn.aborted",
+          threadId: "thread-idle",
+          turnId: "provider-turn-idle",
+          eventId: "turn-aborted-idle",
+          at: Date.now(),
+          payload: { reason: "timed out", status: "timed_out" },
+        })
+      })
+      const hub = new ProviderHub({
+        turnTimeoutMs: 100,
+        instances: [
+          {
+            instanceId: "codex",
+            driver: "codex",
+            provider: "codex",
+            enabled: true,
+            adapter: makeAdapter(true, {
+              interruptTurn,
+              onSubscribe: (emit) => {
+                emitRuntimeEvent = emit
+              },
+            }),
+          },
+        ],
+      })
+      const turn = hub.startTurn("codex", {
+        threadId: "thread-idle",
+        message: "long run",
+        modelId: "gpt-live",
+        history: [],
+      })
+      emitRuntimeEvent({
+        type: "turn.started",
+        threadId: "thread-idle",
+        turnId: "provider-turn-idle",
+        eventId: "turn-started-idle",
+        at: Date.now(),
+      })
+      await turn.completion
+
+      // A turn that keeps streaming outlives many idle windows.
+      for (let index = 0; index < 10; index++) {
+        await vi.advanceTimersByTimeAsync(60)
+        emitRuntimeEvent({
+          type: "content.delta",
+          threadId: "thread-idle",
+          turnId: "provider-turn-idle",
+          eventId: `delta-${index}`,
+          at: Date.now(),
+          payload: { streamKind: "assistant_text", delta: "." },
+        })
+      }
+      expect(interruptTurn).not.toHaveBeenCalled()
+
+      // Waiting for the user is not provider inactivity.
+      emitRuntimeEvent({
+        type: "request.opened",
+        threadId: "thread-idle",
+        turnId: "provider-turn-idle",
+        eventId: "request-opened-idle",
+        at: Date.now(),
+        requestId: "approval-1",
+        kind: "user_input",
+      } as ProviderRuntimeEvent)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(interruptTurn).not.toHaveBeenCalled()
+
+      emitRuntimeEvent({
+        type: "request.resolved",
+        threadId: "thread-idle",
+        turnId: "provider-turn-idle",
+        eventId: "request-resolved-idle",
+        at: Date.now(),
+        requestId: "approval-1",
+        decision: "answer",
+      } as ProviderRuntimeEvent)
+      await vi.advanceTimersByTimeAsync(60)
+      expect(interruptTurn).not.toHaveBeenCalled()
+
+      // Silence after the answer still times the turn out.
+      await vi.advanceTimersByTimeAsync(60)
+      expect(interruptTurn).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("interrupts a streaming turn at the absolute turn ceiling", async () => {
+    vi.useFakeTimers()
+    try {
+      let emitRuntimeEvent!: (event: ProviderRuntimeEvent) => void
+      const interruptTurn = vi.fn(async () => {
+        emitRuntimeEvent({
+          type: "turn.aborted",
+          threadId: "thread-ceiling",
+          turnId: "provider-turn-ceiling",
+          eventId: "turn-aborted-ceiling",
+          at: Date.now(),
+          payload: { reason: "ceiling", status: "timed_out" },
+        })
+      })
+      const hub = new ProviderHub({
+        turnTimeoutMs: 100,
+        turnMaxDurationMs: 300,
+        instances: [
+          {
+            instanceId: "codex",
+            driver: "codex",
+            provider: "codex",
+            enabled: true,
+            adapter: makeAdapter(true, {
+              interruptTurn,
+              onSubscribe: (emit) => {
+                emitRuntimeEvent = emit
+              },
+            }),
+          },
+        ],
+      })
+      const turn = hub.startTurn("codex", {
+        threadId: "thread-ceiling",
+        message: "endless",
+        modelId: "gpt-live",
+        history: [],
+      })
+      emitRuntimeEvent({
+        type: "turn.started",
+        threadId: "thread-ceiling",
+        turnId: "provider-turn-ceiling",
+        eventId: "turn-started-ceiling",
+        at: Date.now(),
+      })
+      await turn.completion
+      for (let index = 0; index < 4; index++) {
+        await vi.advanceTimersByTimeAsync(80)
+        emitRuntimeEvent({
+          type: "content.delta",
+          threadId: "thread-ceiling",
+          turnId: "provider-turn-ceiling",
+          eventId: `ceiling-delta-${index}`,
+          at: Date.now(),
+          payload: { streamKind: "assistant_text", delta: "." },
+        })
+      }
+      expect(interruptTurn).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("keeps native turn admission closed until watchdog interrupt completes", async () => {
     vi.useFakeTimers()
     try {
@@ -3518,7 +3674,7 @@ describe("ProviderHub", () => {
             status: "error",
             auth: { status: "unauthenticated" },
             message:
-              "Cursor Agent is not authenticated. Run `agent login` and try again.",
+              "Cursor Agent is not authenticated. Run `cursor-agent login` and try again.",
           }),
         },
       ],
@@ -3533,11 +3689,11 @@ describe("ProviderHub", () => {
       version: "2026.04.08-abcdef",
       status: "error",
       auth: { status: "unauthenticated" },
-      // The adapter's own probe message is actionable ("Run `agent login`") and
+      // The adapter's own probe message is actionable ("Run `cursor-agent login`") and
       // is surfaced verbatim; the generic "authentication is required" string is
       // only a fallback for probes that report a bad status without a message.
       message:
-        "Cursor Agent is not authenticated. Run `agent login` and try again.",
+        "Cursor Agent is not authenticated. Run `cursor-agent login` and try again.",
       models: [],
     })
     expect(availableModels).not.toHaveBeenCalled()

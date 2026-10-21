@@ -1799,6 +1799,50 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE remote_access_sessions ADD COLUMN client_platform TEXT;
     `,
   },
+  {
+    // A chat's own settings (permission level, model selection,
+    // orchestration) as JSON, kept with the chat so they survive a restart
+    // and reach every client. SQL NULL: none set; the chat follows the
+    // client's defaults. No index, no trigger: nothing lists by them, and
+    // changing them must not reorder the sidebar.
+    version: 54,
+    name: "thread_settings",
+    sql: `ALTER TABLE projection_threads ADD COLUMN settings_json TEXT;`,
+  },
+  {
+    // A chat's Autonomous Work run (task list, limits, status) as JSON,
+    // projected from the backend's own `thread.metadata.updated` events
+    // like the goal, so a run survives a renderer reload and a backend
+    // restart (services/chat/autonomy-runtime.ts). SQL NULL: no run. No
+    // index: only startup recovery lists the rows that have one.
+    version: 55,
+    name: "thread_autonomy",
+    sql: `ALTER TABLE projection_threads ADD COLUMN autonomy_json TEXT;`,
+  },
+  {
+    // Where an imported chat came from (the Claude Code or Codex session:
+    // provider, session id, file) as JSON, so a session is imported once
+    // and the transcript can name its origin
+    // (services/conversation-import). SQL NULL: not imported. No index:
+    // only an import lists the rows that have one.
+    version: 56,
+    name: "thread_import_source",
+    sql: `ALTER TABLE projection_threads ADD COLUMN import_source_json TEXT;`,
+  },
+  {
+    // A chat that a usage or rate limit (or a restart) stopped and that may
+    // continue by itself (services/chat/resume-runtime.ts). `resume_json` is
+    // what every client shows (`ChatThread.resume`); `resume_turn_json` is
+    // the backend's own part: the settings to resume the chat with and the
+    // turn that was running. SQL NULL: nothing to resume. No index: only
+    // startup recovery lists the rows that have one.
+    version: 57,
+    name: "thread_resume",
+    sql: `
+      ALTER TABLE projection_threads ADD COLUMN resume_json TEXT;
+      ALTER TABLE projection_threads ADD COLUMN resume_turn_json TEXT;
+    `,
+  },
 ]
 
 /** Any statement that adds or removes an index, `CREATE UNIQUE INDEX` included. */

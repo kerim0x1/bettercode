@@ -4,7 +4,13 @@ import {
 } from "@betterc0de/schema/chat-controls"
 import { copyText } from "@/lib/clipboard"
 import React from "react"
-import { ClockIcon, CopyIcon, RefreshCwIcon, UndoIcon } from "lucide-react"
+import {
+  ClockIcon,
+  CopyIcon,
+  GitForkIcon,
+  RefreshCwIcon,
+  UndoIcon,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { MessageAttachments } from "@/components/chat/message-attachments"
 import { readBrowserElementAttachment } from "@betterc0de/schema"
@@ -47,16 +53,23 @@ import {
 } from "@/lib/checkpoint-store"
 import {
   revertThreadCheckpoint,
-  rollbackProviderConversation,
   truncateThreadMessages,
-} from "@/services/backend"
+} from "@/services/backend/coreApi"
+import { rollbackProviderConversation } from "@/services/backend/providersApi"
 import {
   ToolCallGroup,
   type ToolCallGroupWorkEntry,
 } from "@/components/chat/tool-call-group"
 import { InlineEditMessageCard } from "@/components/chat/inline-edit-message-card"
+import {
+  InlineMessageEditor,
+  UserMessageActions,
+} from "@/components/chat/message-edit-resend"
+import { forkFromMessage } from "@/lib/thread-branching"
+import type { ChatSubmitPayload } from "@/lib/chat/types"
 import { AnsweredQuestionsSummary } from "@/components/chat/answered-questions-summary"
 import { PlanImplementationCard } from "@/components/chat/plan-implementation-card"
+import { WorkspaceTrustAction } from "@/components/chat/workspace-trust-action"
 import type { ConfirmAction } from "@/components/dialogs/confirm-action-dialog"
 import type { ProviderSkill } from "@betterc0de/schema"
 import type { SetPlanModalContent } from "@/lib/plan-modal"
@@ -66,6 +79,7 @@ import {
   type ToolCallData,
 } from "@/components/chat/tool-call-item"
 import { handleError } from "@/lib/errors"
+import { getElectronApi } from "@/services/ipc-facade"
 
 function countAssistantTurnsAfter(
   messages: readonly ChatMessage[],
@@ -132,12 +146,41 @@ function replaceThreadMessages(
         ? {
             ...t,
             messages: keep,
-            messageCount: keep.length,
+            // Older pages may not be loaded, so count what was removed
+            // rather than what is left in memory.
+            messageCount:
+              t.messageCount === undefined
+                ? keep.length
+                : Math.max(
+                    keep.length,
+                    t.messageCount -
+                      Math.max(0, t.messages.length - keep.length)
+                  ),
             updatedAt: new Date().toISOString(),
           }
         : t
     ),
   }))
+}
+
+/**
+ * The transcript as it is when the user clicks. The memoized item can hold a
+ * stale `messages`/`idx` pair (new replies, or older pages prepended above),
+ * so actions re-read the store and locate this message by id.
+ */
+function freshTranscript(
+  threadId: string | null,
+  messageId: string,
+  fallback: readonly ChatMessage[],
+  fallbackIndex: number
+): { messages: readonly ChatMessage[]; index: number } {
+  const current = threadId
+    ? useChatStore.getState().threads.find((t) => t.id === threadId)?.messages
+    : undefined
+  const index = current?.findIndex((message) => message.id === messageId) ?? -1
+  return current && index >= 0
+    ? { messages: current, index }
+    : { messages: fallback, index: fallbackIndex }
 }
 
 function pruneCheckpointsAfter(
@@ -162,8 +205,10 @@ function pruneCheckpointsAfter(
  * reads the same top-to-bottom:
  *
  *   user:      meta (model · time · task badge) → bubble
+ *              → hover actions (edit and resend, copy); editing swaps the
+ *                bubble for the inline editor
  *   assistant: thinking → tool steps → diffs → body
- *              → hover toolbar (copy / retry / revert · duration)
+ *              → toolbar (copy / retry / fork / revert · duration)
  *
  * The turn is headed by exactly one meta row, above the user bubble, carrying
  * the model that answers it — the assistant block has no meta row of its own
@@ -185,9 +230,10 @@ function pruneCheckpointsAfter(
  *
  * [PERF] Exported via `React.memo` with a custom comparator so streaming
  * deltas on a fresh assistant message don't cause the entire history to
- * re-render. The comparator intentionally ignores `messages` reference
- * changes — handler closures read the array at click-time, which is also
- * the point at which retry/revert want the freshest slice.
+ * re-render. The comparator ignores `messages` reference changes. What the
+ * render reads from the list arrives as primitive props instead
+ * (`isLastMessage`, `turnDuration`), and the action handlers re-read the
+ * store at click time through `freshTranscript`.
  */
 function ChatMessageItemInner({
   msg,
@@ -195,6 +241,7 @@ function ChatMessageItemInner({
   messages,
   activeThreadId,
   onRetry,
+  onResend,
   onOpenConfirm,
   onOpenPlanModal,
   providerSkills = [],
@@ -212,12 +259,20 @@ function ChatMessageItemInner({
   editToolPartsExpanded = false,
   showGenericToolOutput = false,
   concealCodeBlocks = false,
+  isLastMessage,
+  turnDuration,
 }: {
   msg: ChatMessage
   idx: number
   messages: ChatMessage[]
+  /** Whether this is the newest message; derived from `messages` when omitted. */
+  isLastMessage?: boolean
+  /** Turn time in ms (null: not measurable); derived from `messages` when omitted. */
+  turnDuration?: number | null
   activeThreadId: string | null
   onRetry: (content: string) => void
+  /** Sends an edited user message after the rewind; without it, no Edit. */
+  onResend?: (payload: ChatSubmitPayload) => unknown
   onOpenConfirm: (action: ConfirmAction) => void
   onOpenPlanModal: SetPlanModalContent
   providerSkills?: ReadonlyArray<Pick<ProviderSkill, "name" | "displayName">>
@@ -247,6 +302,11 @@ function ChatMessageItemInner({
     const element = readBrowserElementAttachment(attachment)
     return element ? [element] : []
   })
+  // Light transcript pages leave diff text and large attachments out; this
+  // is where the full copy is read from when one of them is shown.
+  const payloadSource = activeThreadId
+    ? { threadId: activeThreadId, messageId: msg.id }
+    : null
   const visibleAttachments = msg.attachments?.filter((attachment) => {
     const element = readBrowserElementAttachment(attachment)
     return !element || !browserMentionRanges(msg.content, [element]).length
@@ -270,6 +330,15 @@ function ChatMessageItemInner({
       ? activityTools
       : (msg.toolCalls ?? [])
   const renderedWork = hideToolCalls ? [] : activityWork
+  // Resends the user message this assistant reply answered.
+  const retryPreviousUserMessage = () => {
+    const fresh = freshTranscript(activeThreadId, msg.id, messages, idx)
+    const prevUser = previousVisibleUserMessage(fresh.messages, fresh.index)
+    if (prevUser?.role === "user") onRetry(prevUser.content)
+  }
+  // Edit and resend: the inline editor replaces the user's bubble.
+  const [editing, setEditing] = React.useState(false)
+  const canEdit = msg.role === "user" && Boolean(activeThreadId && onResend)
 
   return (
     <React.Fragment>
@@ -316,9 +385,17 @@ function ChatMessageItemInner({
           </span>
         )}
 
-        <MessageContent className={compact ? "text-xs" : undefined}>
+        <MessageContent
+          className={cn(
+            compact && "text-[length:calc(var(--message-font-size)_-_1px)]",
+            editing && canEdit && "hidden"
+          )}
+        >
           {visibleAttachments?.length ? (
-            <MessageAttachments attachments={visibleAttachments} />
+            <MessageAttachments
+              attachments={visibleAttachments}
+              source={payloadSource}
+            />
           ) : null}
 
           {msg.role === "assistant" && msg.transcriptTruncated ? (
@@ -383,20 +460,27 @@ function ChatMessageItemInner({
           ) : null}
 
           {msg.diffs && msg.diffs.length > 0 && (
-            <ChatFileChanges diffs={msg.diffs} workspaceRoot={workspaceRoot} />
+            <ChatFileChanges
+              diffs={msg.diffs}
+              workspaceRoot={workspaceRoot}
+              source={payloadSource}
+            />
           )}
 
           {msg.role === "assistant" &&
           isStructuredPlanMarkdown(msg.content) ? null : msg.role ===
             "assistant" ? (
-            <MessageResponse
-              concealCodeBlocks={concealCodeBlocks}
-              workspaceRoot={workspaceRoot}
-            >
-              {msg.questions?.length
-                ? stripQuestionLines(msg.content, msg.questions)
-                : msg.content}
-            </MessageResponse>
+            // `contents`: no box of its own; find in chat reads its text.
+            <div className="contents" data-chat-find-text="true">
+              <MessageResponse
+                concealCodeBlocks={concealCodeBlocks}
+                workspaceRoot={workspaceRoot}
+              >
+                {msg.questions?.length
+                  ? stripQuestionLines(msg.content, msg.questions)
+                  : msg.content}
+              </MessageResponse>
+            </div>
           ) : msg.answeredQuestions?.length ? (
             <AnsweredQuestionsSummary questions={msg.answeredQuestions} />
           ) : (
@@ -409,15 +493,37 @@ function ChatMessageItemInner({
                   instruction={inlineEdit.instruction}
                 />
               ) : (
-                <BrowserElementMessage
-                  content={msg.content}
-                  elements={browserElements}
-                  skills={providerSkills}
-                />
+                <div className="contents" data-chat-find-text="true">
+                  <BrowserElementMessage
+                    content={msg.content}
+                    elements={browserElements}
+                    skills={providerSkills}
+                  />
+                </div>
               )
             })()
           )}
+          {msg.role === "assistant" && (
+            <WorkspaceTrustAction
+              messageId={msg.id}
+              onRetry={retryPreviousUserMessage}
+            />
+          )}
         </MessageContent>
+
+        {canEdit && activeThreadId && onResend ? (
+          editing ? (
+            <InlineMessageEditor
+              threadId={activeThreadId}
+              message={msg}
+              workspaceRoot={workspaceRoot}
+              onCancel={() => setEditing(false)}
+              onResend={onResend}
+            />
+          ) : (
+            <UserMessageActions message={msg} onEdit={() => setEditing(true)} />
+          )
+        ) : null}
 
         {msg.role === "assistant" &&
           !hidePlanCard &&
@@ -429,51 +535,61 @@ function ChatMessageItemInner({
             />
           )}
 
-        {/* The turn duration stays visible; only the actions fade in on hover.
-            It used to live inside the hidden toolbar, so how long an answer
-            took was only discoverable by hovering over it.
-
-            It also has to come FIRST. `opacity-0` hides the actions but keeps
-            their layout box, so with the duration after them it was indented by
-            the width of buttons nobody could see. */}
+        {/* The turn duration and the actions are always visible, at full
+            muted contrast: hover-only actions were easy to miss and invisible
+            on touch screens. The duration comes first so it lines up with the
+            message text. */}
         {msg.role === "assistant" && (
           <MessageToolbar className="mt-1 justify-start gap-2">
             {(() => {
-              const ms = turnDurationMs(messages, idx)
+              const ms =
+                turnDuration !== undefined
+                  ? turnDuration
+                  : turnDurationMs(messages, idx)
               if (ms === null) return null
               return (
                 <span
                   title="Total time for this turn"
-                  className="flex shrink-0 items-center gap-1 text-[10.5px] text-muted-foreground/60 tabular-nums"
+                  className="flex shrink-0 items-center gap-1 text-[10.5px] text-muted-foreground tabular-nums"
                 >
                   <ClockIcon className="size-3 shrink-0" aria-hidden="true" />
                   {formatDuration(ms)}
                 </span>
               )
             })()}
-            <MessageActions className="opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
+            <MessageActions>
               <MessageAction
                 tooltip="Copy"
-                className="text-muted-foreground/70 hover:text-foreground"
+                className="text-muted-foreground hover:text-foreground"
                 onClick={() => copyText(msg.content)}
               >
                 <CopyIcon className="size-3.5" />
               </MessageAction>
               <MessageAction
                 tooltip="Retry"
-                className="text-muted-foreground/70 hover:text-foreground"
-                onClick={() => {
-                  const prevUser = previousVisibleUserMessage(messages, idx)
-                  if (prevUser?.role === "user") {
-                    onRetry(prevUser.content)
-                  }
-                }}
+                className="text-muted-foreground hover:text-foreground"
+                onClick={retryPreviousUserMessage}
               >
                 <RefreshCwIcon className="size-3.5" />
               </MessageAction>
               <MessageAction
+                tooltip="Fork from here"
+                className="text-muted-foreground hover:text-foreground"
+                disabled={!activeThreadId}
+                onClick={() => {
+                  if (!activeThreadId) return
+                  // A new chat with the history up to this answer; it opens
+                  // and folds under this one in the sidebar.
+                  void forkFromMessage(activeThreadId, msg.id).catch((error) =>
+                    handleError(error, { source: "message-fork" })
+                  )
+                }}
+              >
+                <GitForkIcon className="size-3.5" />
+              </MessageAction>
+              <MessageAction
                 tooltip="Revert to here"
-                className="text-muted-foreground/70 hover:text-foreground"
+                className="text-muted-foreground hover:text-foreground"
                 onClick={() =>
                   onOpenConfirm({
                     title: "Revert to here?",
@@ -481,14 +597,24 @@ function ChatMessageItemInner({
                       "All messages after this point will be permanently deleted.",
                     action: async () => {
                       try {
-                        await rollbackProviderConversationAfter(
+                        const fresh = freshTranscript(
                           activeThreadId,
+                          msg.id,
                           messages,
                           idx
                         )
-                        const keep = messages.slice(0, idx + 1)
+                        await rollbackProviderConversationAfter(
+                          activeThreadId,
+                          fresh.messages,
+                          fresh.index
+                        )
+                        const keep = fresh.messages.slice(0, fresh.index + 1)
                         await persistThreadTruncation(activeThreadId, msg.id)
-                        pruneCheckpointsAfter(activeThreadId, messages, idx)
+                        pruneCheckpointsAfter(
+                          activeThreadId,
+                          fresh.messages,
+                          fresh.index
+                        )
                         replaceThreadMessages(activeThreadId, keep)
                       } catch (error) {
                         handleError(error, { source: "message-revert" })
@@ -504,117 +630,126 @@ function ChatMessageItemInner({
         )}
       </Message>
 
-      {msg.role === "assistant" && idx < messages.length - 1 && (
-        <Checkpoint>
-          <CheckpointIcon />
-          <CheckpointTrigger
-            tooltip="Restore to this point (messages + files)"
-            onClick={() =>
-              onOpenConfirm({
-                title: CHECKPOINT_RESTORE_TITLE,
-                // Say what this actually does. `restoreCheckpoint` runs
-                // `git restore --worktree --staged -- .` followed by
-                // `git clean -fd -- .` across the WHOLE worktree: it reverts
-                // every tracked file (not only the ones the agent touched, so
-                // edits you made by hand while it ran are discarded too) and
-                // deletes every untracked file created since this point.
-                // BetterC0de snapshots the current worktree first so the
-                // operation can be undone, but the old wording ("file changes
-                // will be reverted") did not describe deletion at all.
-                description: CHECKPOINT_RESTORE_BODY,
-                action: async () => {
-                  try {
-                    // 1. Find the user message before this assistant message (for SDK rewindFiles)
-                    const userMsgBefore = previousVisibleUserMessage(
-                      messages,
-                      idx
-                    )
-
-                    // 2. Try checkpoint-store first, then SDK plugin
-                    const cpStore = useCheckpointStore.getState()
-                    const msgCheckpoints = cpStore.getCheckpointsForThread(
-                      activeThreadId || ""
-                    )
-                    const matchingCp =
-                      msgCheckpoints.find(
-                        (cp) => cp.messageId === msg.id && cp.checkpointRef
-                      ) ?? msgCheckpoints.find((cp) => cp.messageId === msg.id)
-                    let serverReverted = false
-                    if (
-                      activeThreadId &&
-                      matchingCp?.checkpointRef &&
-                      typeof matchingCp.turnNumber === "number"
-                    ) {
-                      const result = await revertThreadCheckpoint(
+      {msg.role === "assistant" &&
+        !(isLastMessage ?? idx >= messages.length - 1) && (
+          <Checkpoint>
+            <CheckpointIcon />
+            <CheckpointTrigger
+              tooltip="Restore to this point (messages + files)"
+              onClick={() =>
+                onOpenConfirm({
+                  title: CHECKPOINT_RESTORE_TITLE,
+                  // Say what this actually does. `restoreCheckpoint` runs
+                  // `git restore --worktree --staged -- .` followed by
+                  // `git clean -fd -- .` across the WHOLE worktree: it reverts
+                  // every tracked file (not only the ones the agent touched, so
+                  // edits you made by hand while it ran are discarded too) and
+                  // deletes every untracked file created since this point.
+                  // BetterC0de snapshots the current worktree first so the
+                  // operation can be undone, but the old wording ("file changes
+                  // will be reverted") did not describe deletion at all.
+                  description: CHECKPOINT_RESTORE_BODY,
+                  action: async () => {
+                    try {
+                      const fresh = freshTranscript(
                         activeThreadId,
-                        matchingCp.turnNumber
-                      )
-                      if (!result.reverted) {
-                        throw new Error(
-                          result.reason ??
-                            `Checkpoint turn ${matchingCp.turnNumber} could not be restored.`
-                        )
-                      }
-                      serverReverted = true
-                    }
-
-                    if (!serverReverted) {
-                      if (matchingCp?.checkpointRef) {
-                        throw new Error(
-                          "This Git checkpoint has no server turn boundary and cannot be restored safely."
-                        )
-                      } else if (matchingCp) {
-                        await cpStore.restoreCheckpoint(matchingCp.id)
-                      } else if (
-                        userMsgBefore &&
-                        activeThreadId &&
-                        window.electronAPI?.rewindFiles
-                      ) {
-                        await window.electronAPI.rewindFiles(
-                          "claude",
-                          activeThreadId,
-                          userMsgBefore.id
-                        )
-                      } else {
-                        throw new Error(
-                          "No restorable filesystem checkpoint is available for this message."
-                        )
-                      }
-                    }
-
-                    if (!serverReverted) {
-                      await rollbackProviderConversationAfter(
-                        activeThreadId,
+                        msg.id,
                         messages,
-                        idx,
-                        msgCheckpoints,
+                        idx
+                      )
+                      // 1. Find the user message before this assistant message (for SDK rewindFiles)
+                      const userMsgBefore = previousVisibleUserMessage(
+                        fresh.messages,
+                        fresh.index
+                      )
+
+                      // 2. Try checkpoint-store first, then SDK plugin
+                      const cpStore = useCheckpointStore.getState()
+                      const msgCheckpoints = cpStore.getCheckpointsForThread(
+                        activeThreadId || ""
+                      )
+                      const matchingCp =
+                        msgCheckpoints.find(
+                          (cp) => cp.messageId === msg.id && cp.checkpointRef
+                        ) ??
+                        msgCheckpoints.find((cp) => cp.messageId === msg.id)
+                      let serverReverted = false
+                      if (
+                        activeThreadId &&
+                        matchingCp?.checkpointRef &&
+                        typeof matchingCp.turnNumber === "number"
+                      ) {
+                        const result = await revertThreadCheckpoint(
+                          activeThreadId,
+                          matchingCp.turnNumber
+                        )
+                        if (!result.reverted) {
+                          throw new Error(
+                            result.reason ??
+                              `Checkpoint turn ${matchingCp.turnNumber} could not be restored.`
+                          )
+                        }
+                        serverReverted = true
+                      }
+
+                      if (!serverReverted) {
+                        const desktopBridge = getElectronApi()
+                        if (matchingCp?.checkpointRef) {
+                          throw new Error(
+                            "This Git checkpoint has no server turn boundary and cannot be restored safely."
+                          )
+                        } else if (matchingCp) {
+                          await cpStore.restoreCheckpoint(matchingCp.id)
+                        } else if (
+                          userMsgBefore &&
+                          activeThreadId &&
+                          desktopBridge?.rewindFiles
+                        ) {
+                          await desktopBridge.rewindFiles(
+                            "claude",
+                            activeThreadId,
+                            userMsgBefore.id
+                          )
+                        } else {
+                          throw new Error(
+                            "No restorable filesystem checkpoint is available for this message."
+                          )
+                        }
+                      }
+
+                      if (!serverReverted) {
+                        await rollbackProviderConversationAfter(
+                          activeThreadId,
+                          fresh.messages,
+                          fresh.index,
+                          msgCheckpoints,
+                          matchingCp?.turnNumber
+                        )
+                      }
+
+                      // 3. Remove messages after checkpoint
+                      const keep = fresh.messages.slice(0, fresh.index + 1)
+                      if (!serverReverted) {
+                        await persistThreadTruncation(activeThreadId, msg.id)
+                      }
+                      pruneCheckpointsAfter(
+                        activeThreadId,
+                        fresh.messages,
+                        fresh.index,
                         matchingCp?.turnNumber
                       )
+                      replaceThreadMessages(activeThreadId, keep)
+                    } catch (error) {
+                      handleError(error, { source: "checkpoint-revert" })
                     }
-
-                    // 3. Remove messages after checkpoint
-                    const keep = messages.slice(0, idx + 1)
-                    if (!serverReverted) {
-                      await persistThreadTruncation(activeThreadId, msg.id)
-                    }
-                    pruneCheckpointsAfter(
-                      activeThreadId,
-                      messages,
-                      idx,
-                      matchingCp?.turnNumber
-                    )
-                    replaceThreadMessages(activeThreadId, keep)
-                  } catch (error) {
-                    handleError(error, { source: "checkpoint-revert" })
-                  }
-                },
-              })
-            }
-          >
-            Restore checkpoint
-          </CheckpointTrigger>
-        </Checkpoint>
-      )}
+                  },
+                })
+              }
+            >
+              Restore checkpoint
+            </CheckpointTrigger>
+          </Checkpoint>
+        )}
     </React.Fragment>
   )
 }
@@ -665,36 +800,54 @@ function sameActivityWork(
   return true
 }
 
+type ChatMessageItemProps = React.ComponentProps<typeof ChatMessageItemInner>
+
+/** Memo comparator for {@link ChatMessageItem}; exported for tests. */
+export function chatMessageItemPropsEqual(
+  prev: ChatMessageItemProps,
+  next: ChatMessageItemProps
+): boolean {
+  // Re-render only when this message's own content changes or the surrounding
+  // context (index in list, active thread, last-message flag, turn time)
+  // shifts. Ignoring `messages` and the three callback props is intentional
+  // — see component docblock — as long as the caller supplies the values the
+  // render would otherwise read from `messages`.
+  if (prev.msg !== next.msg) return false
+  if (prev.idx !== next.idx) return false
+  if (prev.isLastMessage !== next.isLastMessage) return false
+  if (prev.turnDuration !== next.turnDuration) return false
+  if (
+    (next.isLastMessage === undefined || next.turnDuration === undefined) &&
+    prev.messages !== next.messages
+  ) {
+    return false
+  }
+  if (prev.activeThreadId !== next.activeThreadId) return false
+  if (prev.providerSkills !== next.providerSkills) return false
+  if (prev.providerInstanceId !== next.providerInstanceId) return false
+  if (prev.workspaceRoot !== next.workspaceRoot) return false
+  if (!sameActivityTools(prev.activityTools, next.activityTools)) return false
+  if (!sameActivityWork(prev.activityWork, next.activityWork)) return false
+  if (prev.hideToolCalls !== next.hideToolCalls) return false
+  if (prev.hidePlanCard !== next.hidePlanCard) return false
+  if (prev.showTimestamp !== next.showTimestamp) return false
+  if (prev.showThinking !== next.showThinking) return false
+  if (prev.showReasoningSummaries !== next.showReasoningSummaries) {
+    return false
+  }
+  if (prev.showToolDetails !== next.showToolDetails) return false
+  if (prev.shellToolPartsExpanded !== next.shellToolPartsExpanded) {
+    return false
+  }
+  if (prev.editToolPartsExpanded !== next.editToolPartsExpanded) {
+    return false
+  }
+  if (prev.showGenericToolOutput !== next.showGenericToolOutput) return false
+  if (prev.concealCodeBlocks !== next.concealCodeBlocks) return false
+  return true
+}
+
 export const ChatMessageItem = React.memo(
   ChatMessageItemInner,
-  (prev, next) => {
-    // Re-render only when this message's own content changes or the surrounding
-    // context (index in list, active thread) shifts. Ignoring `messages` and the
-    // three callback props is intentional — see component docblock.
-    if (prev.msg !== next.msg) return false
-    if (prev.idx !== next.idx) return false
-    if (prev.activeThreadId !== next.activeThreadId) return false
-    if (prev.providerSkills !== next.providerSkills) return false
-    if (prev.providerInstanceId !== next.providerInstanceId) return false
-    if (prev.workspaceRoot !== next.workspaceRoot) return false
-    if (!sameActivityTools(prev.activityTools, next.activityTools)) return false
-    if (!sameActivityWork(prev.activityWork, next.activityWork)) return false
-    if (prev.hideToolCalls !== next.hideToolCalls) return false
-    if (prev.hidePlanCard !== next.hidePlanCard) return false
-    if (prev.showTimestamp !== next.showTimestamp) return false
-    if (prev.showThinking !== next.showThinking) return false
-    if (prev.showReasoningSummaries !== next.showReasoningSummaries) {
-      return false
-    }
-    if (prev.showToolDetails !== next.showToolDetails) return false
-    if (prev.shellToolPartsExpanded !== next.shellToolPartsExpanded) {
-      return false
-    }
-    if (prev.editToolPartsExpanded !== next.editToolPartsExpanded) {
-      return false
-    }
-    if (prev.showGenericToolOutput !== next.showGenericToolOutput) return false
-    if (prev.concealCodeBlocks !== next.concealCodeBlocks) return false
-    return true
-  }
+  chatMessageItemPropsEqual
 )

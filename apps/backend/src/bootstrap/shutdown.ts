@@ -10,29 +10,6 @@ import {
   runWithShutdownDeadline,
   type ShutdownStep,
 } from "../shutdown"
-import {
-  activeShellSessionCount,
-  beginShellShutdown,
-  closeAllShellSessions,
-} from "../services/shell"
-import {
-  activeTerminalPtySessionCount,
-  beginTerminalPtyShutdown,
-  shutdownAllTerminalPtySessions,
-} from "../services/terminalPty"
-import { activeGitProcessCount } from "../services/git"
-import {
-  activeImageGenerationCount,
-  beginImageGenerationShutdown,
-} from "../services/image-generation"
-import {
-  activeNativeTextGenerationResourceCount,
-  beginNativeTextGenerationShutdown,
-} from "../services/native-text-generation"
-import {
-  activeWorkspaceProcessCount,
-  beginWorkspaceProcessShutdown,
-} from "../services/workspace"
 import { stopAllToolOutputArchiveStores } from "../services/tool-output-archive-store"
 import type { WsHub } from "../ws/server"
 import type {
@@ -46,7 +23,10 @@ import type {
 } from "./context"
 import { beginResourceManagerShutdowns } from "./lifecycle"
 import { threadGoals } from "../services/chat/goal-registry"
-import { configureAgentPermissionRuntime } from "../provider/agent-permission-runtime"
+import { threadAutonomyRuns } from "../services/chat/autonomy-registry"
+import { chatResumes } from "../services/chat/resume-registry"
+import { automationServices } from "../services/automations/registry"
+import { releaseAgentPermissionRuntime } from "../provider/agent-permission-runtime"
 
 /**
  * Everything the graceful shutdown closes over: the phase contexts built by
@@ -117,7 +97,17 @@ export async function runGracefulShutdown(deps: ShutdownDeps): Promise<void> {
     httpServer: server,
     httpRuntimeErrorListener: candidateRuntimeErrorListener,
   } = deps
-  const { options, requestAdmission, onStartupAbort } = root
+  const {
+    options,
+    requestAdmission,
+    onStartupAbort,
+    terminalPtys,
+    shellSessions,
+    gitProcesses,
+    imageGenerations,
+    nativeTextGenerations,
+    workspaceProcesses,
+  } = root
   const {
     git: requestGitProcessShutdown,
     imageGeneration: requestImageGenerationShutdown,
@@ -128,6 +118,7 @@ export async function runGracefulShutdown(deps: ShutdownDeps): Promise<void> {
   const {
     settings,
     remoteAccess,
+    tailscale,
     remoteProviderTurns,
     unsubscribeRemoteOwnerCleanup,
     transcriptRecoveryStore,
@@ -144,12 +135,17 @@ export async function runGracefulShutdown(deps: ShutdownDeps): Promise<void> {
   } = providersCtx
   const { providerRuntimeIngestion } = recovery
   const { threadRetention } = retention
-  const { transcriptRecoveryTimer, providerSessionReaper, vacuumTimer } = timers
+  const {
+    transcriptRecoveryTimer,
+    providerSessionReaper,
+    vacuumTimer,
+    pullRequestWatcher,
+  } = timers
   logger.info("Graceful shutdown initiated")
   requestAdmission.beginDrain()
   let orchestratorShutdownFailure: unknown = null
   const orchestratorShutdown = Promise.allSettled([
-    providersCtx.state.orchestrator?.close(),
+    providersCtx.state.orchestrator.close(),
     providersCtx.orchestratorHarness.close(),
   ]).then((results) => {
     const failures = results.filter((result) => result.status === "rejected")
@@ -164,13 +160,21 @@ export async function runGracefulShutdown(deps: ShutdownDeps): Promise<void> {
     codeSearchShutdownFailure = error
   })
   threadGoals.get(providersCtx.state)?.dispose()
+  threadAutonomyRuns.get(providersCtx.state)?.dispose()
+  // Before any turn is interrupted: the turns this shutdown cuts off keep
+  // their markers, so the next start can continue them.
+  chatResumes.get(providersCtx.state)?.beginShutdown()
+  // No scheduled run may start once the drain began; pending history is written.
+  automationServices.get(providersCtx.state)?.dispose()
+  // Its timer would otherwise outlive the backend and poll a closed database.
+  pullRequestWatcher.stop()
   providers.beginShutdown()
   providerHub.beginShutdown()
-  beginShellShutdown()
-  beginTerminalPtyShutdown()
-  beginImageGenerationShutdown()
-  beginNativeTextGenerationShutdown()
-  beginWorkspaceProcessShutdown()
+  shellSessions.beginShutdown()
+  terminalPtys.beginShutdown()
+  imageGenerations.beginShutdown()
+  nativeTextGenerations.beginShutdown()
+  workspaceProcesses.beginShutdown()
   hub.beginShutdown()
 
   // (a) Stop accepting new HTTP requests immediately, but retain a
@@ -193,6 +197,10 @@ export async function runGracefulShutdown(deps: ShutdownDeps): Promise<void> {
       applicationDrainFailure = error
     })
   logger.info("HTTP listener closing — no new requests accepted")
+  // The tailnet name stops pointing at this backend once it is gone: a paired
+  // device then sees the desktop offline instead of a proxy error. Best
+  // effort and bounded; the next start re-applies the mapping.
+  const tailscaleRelease = tailscale.releaseServe()
 
   let retentionFailure: unknown = null
   const retentionShutdown = threadRetention.stop().catch((error) => {
@@ -236,11 +244,11 @@ export async function runGracefulShutdown(deps: ShutdownDeps): Promise<void> {
   let imageGenerationShutdownFailure: unknown = null
   let nativeTextGenerationShutdownFailure: unknown = null
   let workspaceProcessShutdownFailure: unknown = null
-  const shellShutdown = closeAllShellSessions().catch((error) => {
+  const shellShutdown = shellSessions.closeAllSessions().catch((error) => {
     shellShutdownFailure = error
     return 0
   })
-  const terminalShutdown = shutdownAllTerminalPtySessions().catch((error) => {
+  const terminalShutdown = terminalPtys.shutdownAll().catch((error) => {
     terminalShutdownFailure = error
     return 0
   })
@@ -283,11 +291,11 @@ export async function runGracefulShutdown(deps: ShutdownDeps): Promise<void> {
     orchestratorShutdown,
   ])
   const [lateShellSessions, lateTerminalSessions] = await Promise.all([
-    closeAllShellSessions().catch((error) => {
+    shellSessions.closeAllSessions().catch((error) => {
       shellShutdownFailure ??= error
       return 0
     }),
-    shutdownAllTerminalPtySessions().catch((error) => {
+    terminalPtys.shutdownAll().catch((error) => {
       terminalShutdownFailure ??= error
       return 0
     }),
@@ -320,7 +328,7 @@ export async function runGracefulShutdown(deps: ShutdownDeps): Promise<void> {
   //     to settle (abort controllers fire → finally blocks run).
   // M6: log instead of silently mapping every error to 0 — diagnostic
   // info about a stuck interrupt mattered exactly once and we lost it.
-  await Promise.all([httpDrain, wsDrain, applicationDrain])
+  await Promise.all([httpDrain, wsDrain, applicationDrain, tailscaleRelease])
   await Promise.all([retentionShutdown, providerReaperShutdown])
   // The hub stops before the reactor and before ingestion, in that order.
   // `stopAll` emits the hub's own terminals for anything still open — a
@@ -373,43 +381,49 @@ export async function runGracefulShutdown(deps: ShutdownDeps): Promise<void> {
     )
   })
 
-  if (activeShellSessionCount() > 0 && shellShutdownFailure === null) {
+  if (shellSessions.activeSessionCount() > 0 && shellShutdownFailure === null) {
     shellShutdownFailure = new Error(
-      `${activeShellSessionCount()} shell session(s) remain active`
-    )
-  }
-  if (activeTerminalPtySessionCount() > 0 && terminalShutdownFailure === null) {
-    terminalShutdownFailure = new Error(
-      `${activeTerminalPtySessionCount()} terminal session(s) remain active`
-    )
-  }
-  if (activeGitProcessCount() > 0 && gitProcessShutdownFailure === null) {
-    gitProcessShutdownFailure = new Error(
-      `${activeGitProcessCount()} Git process(es) remain active`
+      `${shellSessions.activeSessionCount()} shell session(s) remain active`
     )
   }
   if (
-    activeImageGenerationCount() > 0 &&
+    terminalPtys.activeSessionCount() > 0 &&
+    terminalShutdownFailure === null
+  ) {
+    terminalShutdownFailure = new Error(
+      `${terminalPtys.activeSessionCount()} terminal session(s) remain active`
+    )
+  }
+  if (
+    gitProcesses.activeProcessCount() > 0 &&
+    gitProcessShutdownFailure === null
+  ) {
+    gitProcessShutdownFailure = new Error(
+      `${gitProcesses.activeProcessCount()} Git process(es) remain active`
+    )
+  }
+  if (
+    imageGenerations.activeGenerationCount() > 0 &&
     imageGenerationShutdownFailure === null
   ) {
     imageGenerationShutdownFailure = new Error(
-      `${activeImageGenerationCount()} image generation process tree(s) remain active`
+      `${imageGenerations.activeGenerationCount()} image generation process tree(s) remain active`
     )
   }
   if (
-    activeNativeTextGenerationResourceCount() > 0 &&
+    nativeTextGenerations.activeResourceCount() > 0 &&
     nativeTextGenerationShutdownFailure === null
   ) {
     nativeTextGenerationShutdownFailure = new Error(
-      `${activeNativeTextGenerationResourceCount()} native text-generation resource(s) remain active`
+      `${nativeTextGenerations.activeResourceCount()} native text-generation resource(s) remain active`
     )
   }
   if (
-    activeWorkspaceProcessCount() > 0 &&
+    workspaceProcesses.activeProcessCount() > 0 &&
     workspaceProcessShutdownFailure === null
   ) {
     workspaceProcessShutdownFailure = new Error(
-      `${activeWorkspaceProcessCount()} workspace formatter/config process(es) remain active`
+      `${workspaceProcesses.activeProcessCount()} workspace formatter/config process(es) remain active`
     )
   }
   if (
@@ -633,7 +647,7 @@ export async function runGracefulShutdown(deps: ShutdownDeps): Promise<void> {
       name: "agent permission runtime",
       // Retain policy through every provider callback and durability drain;
       // release its DB reference and thread contexts only after they settle.
-      run: () => configureAgentPermissionRuntime(null),
+      run: () => releaseAgentPermissionRuntime(root.agentPermissionRuntime),
     },
     {
       name: "SQLite database",
@@ -666,7 +680,7 @@ export async function unwindStartup(root: BootRoot): Promise<void> {
     workspace: requestWorkspaceProcessShutdown,
   } = root.resourceShutdowns
   requestAdmission.beginDrain()
-  beginResourceManagerShutdowns()
+  beginResourceManagerShutdowns(root)
   // Start child termination before any potentially slow scheduler/service
   // cleanup. The bounded unwind below still awaits the shared promise.
   void requestGitProcessShutdown().catch((shutdownError) => {

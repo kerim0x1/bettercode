@@ -54,7 +54,7 @@ describe("provider child process-tree termination", () => {
     await Promise.resolve()
 
     expect(spawnTaskkill).toHaveBeenCalledWith(
-      "taskkill.exe",
+      expect.stringMatching(/^[a-z]:\\.*\\System32\\taskkill\.exe$/i),
       ["/pid", "6101", "/T", "/F"],
       expect.objectContaining({
         stdio: "ignore",
@@ -340,7 +340,9 @@ describe("Windows process queries", () => {
     const listing = listWindowsChildProcesses(4_242, { spawnPowerShell })
 
     expect(spawnPowerShell).toHaveBeenCalledWith(
-      "powershell.exe",
+      expect.stringMatching(
+        /\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/i
+      ),
       expect.arrayContaining(["-NoProfile", "-NonInteractive"]),
       expect.objectContaining({
         windowsHide: true,

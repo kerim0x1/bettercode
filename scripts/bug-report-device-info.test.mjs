@@ -51,12 +51,39 @@ test("converts Electron KiB metrics to bytes and labels the sum of process worki
   assert.deepEqual(info.appMemory, {
     scope: "electron-processes", processCount: 2,
     workingSetBytesSum: 300 * 1024 ** 2, privateBytesSum: 150 * 1024 ** 2,
+    byType: [
+      { type: "Tab", processCount: 1, workingSetBytes: 200 * 1024 ** 2, privateBytes: 100 * 1024 ** 2 },
+      { type: "Browser", processCount: 1, workingSetBytes: 100 * 1024 ** 2, privateBytes: 50 * 1024 ** 2 },
+    ],
+    largestProcesses: [
+      { type: "Tab", name: null, workingSetBytes: 200 * 1024 ** 2, privateBytes: 100 * 1024 ** 2 },
+      { type: "Browser", name: null, workingSetBytes: 100 * 1024 ** 2, privateBytes: 50 * 1024 ** 2 },
+    ],
   })
   const readable = formatBugReportDeviceInfo(info)
   assert.match(readable, /Windows 11 Pro; release\/build: 10.0.26100/)
   assert.match(readable, /12.00 GiB used \/ 32.00 GiB total \(37.5%\)/)
   assert.match(readable, /300.0 MiB working set sum; 150.0 MiB private/)
+  assert.match(readable, /App RAM by process type: Tab ×1: 200.0 MiB working set, 100.0 MiB private; Browser ×1/)
+  assert.match(readable, /Largest processes: Tab 200.0 MiB; Browser 100.0 MiB/)
   assert.match(readable, /NVIDIA GeForce RTX 4080.*driver: NVIDIA 32.0.15.8000/)
+})
+
+test("groups many renderer and utility processes so a leaking type stands out", async () => {
+  const metrics = [
+    { type: "Browser", memory: { workingSetSize: 100 * 1024, privateBytes: 80 * 1024 } },
+    ...Array.from({ length: 6 }, () => ({ type: "Tab", memory: { workingSetSize: 300 * 1024, privateBytes: 250 * 1024 } })),
+    { type: "Utility", serviceName: "network.mojom.NetworkService", memory: { workingSetSize: 50 * 1024 } },
+  ]
+  const info = await collect({ app: { ...app, getAppMetrics: () => metrics } })
+  assert.equal(info.appMemory.byType[0].type, "Tab")
+  assert.equal(info.appMemory.byType[0].processCount, 6)
+  assert.equal(info.appMemory.byType[0].workingSetBytes, 1800 * 1024 ** 2)
+  assert.equal(info.appMemory.largestProcesses.length, 5)
+  assert.ok(info.appMemory.largestProcesses.every((entry) => entry.type === "Tab"))
+  const utility = info.appMemory.byType.find((group) => group.type === "Utility")
+  assert.equal(utility.privateBytes, null)
+  assert.doesNotMatch(formatBugReportDeviceInfo(info), /NaN|Infinity/)
 })
 
 test("takes a new RAM snapshot on each report", async () => {

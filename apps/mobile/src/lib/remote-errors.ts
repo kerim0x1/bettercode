@@ -66,7 +66,7 @@ export function describeRemoteError(error: unknown): RemoteErrorDescription {
       return {
         title: "This phone can only watch",
         message:
-          "It paired over plain HTTP from outside your network. Pair it again over your Wi-Fi, Tailscale or HTTPS to work with the desktop.",
+          "It is connected over plain HTTP, which is not encrypted. Pair it again over Tailscale or HTTPS to work with the desktop.",
         action: "pair_again",
       }
     case "desktop_only":
@@ -80,6 +80,13 @@ export function describeRemoteError(error: unknown): RemoteErrorDescription {
         title: "Terminal is off",
         message:
           "On the desktop, turn on Settings → Remote Access → Allow terminal from remote devices.",
+      }
+    case "remote_bypass_disabled":
+      // Bypass hands the agent a shell, so it follows the terminal grant.
+      return {
+        title: "Bypass is off for this phone",
+        message:
+          "On the desktop, turn on Settings → Remote Access → Allow terminal from remote devices to use Bypass from this phone.",
       }
     case "workspace_not_registered":
       return {

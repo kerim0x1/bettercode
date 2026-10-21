@@ -17,7 +17,10 @@ import {
 } from "../persistence/projections"
 import type { SettingsService } from "../settings/service"
 import { AgentPermissionPolicy } from "../provider/agent-permission-policy"
-import { configureAgentPermissionRuntime } from "../provider/agent-permission-runtime"
+import {
+  releaseAgentPermissionRuntime,
+  setDefaultAgentPermissionRuntime,
+} from "../provider/agent-permission-runtime"
 import {
   ProviderSessionBindingStore,
   ProviderRuntimeJournalRecoveryStore,
@@ -115,10 +118,14 @@ export function openPersistence(root: BootRoot): PersistenceContext {
     autoTrustWorkspaces: () =>
       settingsForTrust?.get().auto_trust_workspaces === true,
   })
-  configureAgentPermissionRuntime(agentPermissions)
+  // Provider callbacks consult this backend's runtime (its notices go to
+  // `root.eventBus`) through the installed default.
+  const { agentPermissionRuntime } = root
+  agentPermissionRuntime.setPolicy(agentPermissions)
+  setDefaultAgentPermissionRuntime(agentPermissionRuntime)
   startupCleanup.push({
     name: "agent permission runtime",
-    run: () => configureAgentPermissionRuntime(null),
+    run: () => releaseAgentPermissionRuntime(agentPermissionRuntime),
   })
   return {
     db,

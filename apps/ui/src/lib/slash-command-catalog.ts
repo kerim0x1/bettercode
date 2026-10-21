@@ -263,7 +263,17 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
     id: "fork",
     name: "/fork",
     aliases: ["/session.fork"],
-    description: "Fork this chat into an independent session",
+    description:
+      "Fork this chat into an independent session · /fork <message number> forks up to that message",
+    category: "builtin",
+    action: "execute",
+  },
+  {
+    id: "merge-back",
+    name: "/merge-back",
+    aliases: ["/session.merge_back", "/session-merge-back"],
+    description:
+      "Send this fork's last answer and changed files to its parent chat",
     category: "builtin",
     action: "execute",
   },

@@ -5,13 +5,16 @@ import { useChatStop } from "./use-chat-stop"
 import { useChatStreamingState } from "./use-chat-streaming-state"
 import { applyPermissionModeLive } from "@/lib/permission-mode-live"
 import { emptyStreamState, useChatStore } from "@/lib/chat-store"
-import { interruptTurn, setChatPermissionMode } from "@/services/backend"
+import { interruptTurn } from "@/lib/chat/send-message"
+import { setChatPermissionMode } from "@/services/backend/chatApi"
 import { toast } from "sonner"
 
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), error: vi.fn() } }))
 
-vi.mock("@/services/backend", () => ({
+vi.mock("@/lib/chat/send-message", () => ({
   interruptTurn: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock("@/services/backend/chatApi", () => ({
   setChatPermissionMode: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock("@/lib/chat-store", async (original) => {
@@ -165,14 +168,28 @@ describe("chat pane actions", () => {
     expect(html).not.toContain("foreign")
   })
 
-  it("binds an autonomous run to its starting thread until reset", () => {
+  it("keeps an autonomous run with its chat whichever chat is active", () => {
+    const run = {
+      id: "run",
+      status: "working" as const,
+      tasks: [],
+      iterations: 2,
+      maxIterations: 50,
+      timeBudgetMin: 90,
+      startedAt: 1,
+      updatedAt: 5,
+      stopReason: null,
+    }
     useChatStore.setState({ activeThreadId: "owner" })
-    useChatStore.getState().setAutonomousMode(true)
+    useChatStore.getState().setThreadAutonomy("owner", run)
     useChatStore.setState({ activeThreadId: "other" })
-    useChatStore.getState().setAutonomousStatus("paused")
-    useChatStore.getState().setAutonomousStatus("working")
-    expect(useChatStore.getState().autonomousThreadId).toBe("owner")
-    useChatStore.getState().resetAutonomous()
-    expect(useChatStore.getState().autonomousThreadId).toBeNull()
+    expect(useChatStore.getState().autonomyByThread).toEqual({ owner: run })
+    // A control's late answer never replaces a newer push of the same run.
+    useChatStore
+      .getState()
+      .setThreadAutonomy("owner", { ...run, iterations: 1, updatedAt: 4 })
+    expect(useChatStore.getState().autonomyByThread.owner?.iterations).toBe(2)
+    useChatStore.getState().setThreadAutonomy("owner", null)
+    expect(useChatStore.getState().autonomyByThread).toEqual({})
   })
 })

@@ -15,6 +15,7 @@ export const STEPS = [
   "Marketplace",
   "Import",
   "CLI Tools",
+  "Conversations",
   "Done",
 ]
 

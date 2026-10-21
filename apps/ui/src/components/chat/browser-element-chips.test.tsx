@@ -84,4 +84,19 @@ describe("browser element chips", () => {
     expect(html.indexOf("</button>")).toBeLessThan(html.indexOf(" please"))
     expect(html).not.toContain("Remove mention")
   })
+  it("styles Markdown in a sent message and hides only the styling syntax", () => {
+    const html = renderToStaticMarkup(
+      <BrowserElementMessage
+        content={"- **Fix** `npm test` in [docs](https://x.dev)\n# Plan"}
+        elements={[]}
+      />
+    )
+    expect(html).toContain("•")
+    expect(html).toMatch(/<strong[^>]*>Fix<\/strong>/)
+    expect(html).toMatch(/<code[^>]*>npm test<\/code>/)
+    expect(html).not.toContain("**")
+    expect(html).not.toContain("`")
+    expect(html).not.toContain("# Plan")
+    expect(html).toContain("](https://x.dev)")
+  })
 })

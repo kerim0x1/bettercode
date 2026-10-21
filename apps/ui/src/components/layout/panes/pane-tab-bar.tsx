@@ -21,7 +21,9 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { PANE_TAB_DRAG_TYPE } from "@/components/layout/panes/pane-drop-zone"
 import { AttentionBadge } from "@/components/attention/attention-badge"
+import { CompareSwitcher } from "@/components/chat/compare-group"
 import { PaneRunningDot } from "@/components/layout/panes/pane-running-dot"
+import { ThreadPullRequestChip } from "@/components/pull-requests/thread-pull-request-chip"
 import { useChatStore } from "@/lib/chat-store"
 import { usePreferencesStore } from "@/lib/preferences-store"
 import { deriveThreadTitle } from "@/lib/thread-title"
@@ -157,6 +159,13 @@ export function PaneTabBar({
 
         {/* Pane controls */}
         <div className="flex shrink-0 items-center self-center">
+          {/* The chats one prompt started with several models. */}
+          <CompareSwitcher threadId={soloChatTab.threadId} className="mr-1" />
+          {/* The branch's pull request, or a create button. */}
+          <ThreadPullRequestChip
+            threadId={soloChatTab.threadId}
+            className="mr-0.5"
+          />
           {isActive && <PaneWorkspaceToggle />}
           {canClose && (
             <Button
@@ -255,6 +264,14 @@ export function PaneTabBar({
 
       {/* Pane controls */}
       <div className="flex shrink-0 items-center self-center">
+        <CompareSwitcher
+          threadId={
+            pane.tabs.find(
+              (tab) => tab.id === pane.activeTabId && tab.kind === "chat"
+            )?.threadId
+          }
+          className="mr-1"
+        />
         {isActive && <PaneWorkspaceToggle />}
         {canClose && (
           <Button

@@ -4,6 +4,7 @@ import {
   isNoSuchProcessError,
   runWindowsTaskkill,
   runWindowsTaskkillDetailed,
+  taskkillChildProcessTree,
 } from "./process-termination"
 
 function fakeKiller() {
@@ -33,7 +34,7 @@ describe("runWindowsTaskkill", () => {
 
     expect(settled).toBe(false)
     expect(spawnProcess).toHaveBeenCalledWith(
-      "taskkill.exe",
+      expect.stringMatching(/^[a-z]:\\.*\\System32\\taskkill\.exe$/i),
       ["/pid", "4242", "/T", "/F"],
       expect.objectContaining({
         stdio: "ignore",
@@ -52,7 +53,7 @@ describe("runWindowsTaskkill", () => {
     const spawnProcess = vi.fn(() => killer as never)
     const termination = runWindowsTaskkill(7, false, { spawnProcess })
     expect(spawnProcess).toHaveBeenCalledWith(
-      "taskkill.exe",
+      expect.stringMatching(/^[a-z]:\\.*\\System32\\taskkill\.exe$/i),
       ["/pid", "7", "/T"],
       expect.anything()
     )
@@ -138,6 +139,38 @@ describe("runWindowsTaskkill", () => {
         },
       })
     ).resolves.toEqual({ status: "error", message: "spawn EPERM" })
+  })
+})
+
+describe("taskkillChildProcessTree", () => {
+  it("force-kills the tree of a root that is still running", async () => {
+    const killer = fakeKiller()
+    const spawnProcess = vi.fn(() => killer as never)
+    const termination = taskkillChildProcessTree(
+      { pid: 5150, exitCode: null, signalCode: null },
+      { spawnProcess, timeoutMs: 1_000 }
+    )
+    expect(spawnProcess).toHaveBeenCalledWith(
+      expect.stringMatching(/\\System32\\taskkill\.exe$/i),
+      ["/pid", "5150", "/T", "/F"],
+      expect.anything()
+    )
+    killer.emit("close", 0, null)
+    await expect(termination).resolves.toBeUndefined()
+  })
+
+  it("never targets the PID of a root that already exited", async () => {
+    const spawnProcess = vi.fn()
+    for (const child of [
+      { pid: 5151, exitCode: 0, signalCode: null },
+      { pid: 5152, exitCode: null, signalCode: "SIGTERM" as const },
+      { pid: undefined, exitCode: null, signalCode: null },
+    ]) {
+      await expect(
+        taskkillChildProcessTree(child, { spawnProcess: spawnProcess as never })
+      ).rejects.toMatchObject({ code: "TASKKILL_ROOT_EXITED" })
+    }
+    expect(spawnProcess).not.toHaveBeenCalled()
   })
 })
 

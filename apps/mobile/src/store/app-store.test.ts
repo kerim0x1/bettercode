@@ -319,6 +319,150 @@ describe("mobile app runtime state", () => {
     expect(pendingRequestsFromActivities([requested, resolved])).toEqual([])
   })
 
+  // A provider can open a plan approval without the plan (Claude after a
+  // session resume); the plan was streamed in the same turn.
+  it("shows the plan proposed in the request's turn, without its wrapper", () => {
+    const proposed = activity(
+      "turn.proposed.completed",
+      {
+        turn_id: "turn-1",
+        planMarkdown:
+          "Here is the plan.\n<proposed_plan>\n## Plan\n\n- Step\n</proposed_plan>",
+      },
+      1
+    )
+    const requested = activity(
+      "plan-approval.requested",
+      { requestId: "plan-2", providerKind: "claude", turn_id: "turn-1" },
+      2
+    )
+    expect(pendingRequestsFromActivities([proposed, requested])).toMatchObject([
+      { id: "plan-2", kind: "plan", detail: "## Plan\n\n- Step" },
+    ])
+  })
+
+  it("fills an open plan card when its plan arrives after the request", () => {
+    const requested = activity(
+      "plan-approval.requested",
+      { requestId: "plan-3", providerKind: "claude", turn_id: "turn-3" },
+      1
+    )
+    useAppStore.setState({
+      activitiesByThread: { "thread-1": [requested] },
+      requestsByThread: {
+        "thread-1": pendingRequestsFromActivities([requested]),
+      },
+    })
+    expect(
+      useAppStore.getState().requestsByThread["thread-1"]?.[0]?.detail
+    ).toBe("plan-approval.requested")
+
+    useAppStore.getState().applyFrame({
+      channel: "thread.activity",
+      data: activity(
+        "turn.proposed.completed",
+        {
+          turn_id: "turn-3",
+          planMarkdown: "<proposed_plan>\n## Late plan\n</proposed_plan>",
+        },
+        2
+      ),
+    })
+    expect(useAppStore.getState().requestsByThread["thread-1"]).toMatchObject([
+      { id: "plan-3", kind: "plan", detail: "## Late plan" },
+    ])
+  })
+
+  // The desktop derives open requests in the same place
+  // (`@betterc0de/schema/pending-requests`); these pin the rules where the
+  // phone used to differ.
+  it("lists unsequenced requests first, as the desktop does", () => {
+    const sequenced = activity(
+      "approval.requested",
+      { requestId: "sequenced", providerKind: "claude" },
+      0
+    )
+    const unsequenced = {
+      ...activity(
+        "approval.requested",
+        { requestId: "unsequenced", providerKind: "claude" },
+        9
+      ),
+      sequence: null,
+    }
+    expect(
+      pendingRequestsFromActivities([sequenced, unsequenced]).map(
+        (request) => request.id
+      )
+    ).toEqual(["unsequenced", "sequenced"])
+  })
+
+  it("reads a nested request id and folds the provider kind", () => {
+    expect(
+      pendingRequestsFromActivities([
+        activity(
+          "approval.requested",
+          {
+            data: { requestId: "nested" },
+            providerKind: "claudeAgent",
+            toolName: "Bash",
+          },
+          1
+        ),
+      ])
+    ).toMatchObject([
+      {
+        id: "nested",
+        kind: "approval",
+        providerKind: "claude",
+        toolName: "Bash",
+      },
+    ])
+  })
+
+  it("keeps the kind the activity names", () => {
+    expect(
+      pendingRequestsFromActivities([
+        activity(
+          "approval.requested",
+          {
+            requestId: "review",
+            providerKind: "claude",
+            requestType: "plan_review",
+            toolName: "Bash",
+          },
+          1
+        ),
+      ])
+    ).toMatchObject([{ id: "review", kind: "approval", toolName: "Bash" }])
+  })
+
+  it("settles a request only when its failed answer says it is stale", () => {
+    const requested = activity(
+      "approval.requested",
+      { requestId: "r1", providerKind: "claude" },
+      1
+    )
+    const failed = (detail: string) =>
+      activity(
+        "provider.approval.respond.failed",
+        { requestId: "r1", detail },
+        2
+      )
+    expect(
+      pendingRequestsFromActivities([
+        requested,
+        failed("Unknown pending request r1"),
+      ]).map((request) => request.id)
+    ).toEqual(["r1"])
+    expect(
+      pendingRequestsFromActivities([
+        requested,
+        failed("Stale pending approval request: r1."),
+      ])
+    ).toEqual([])
+  })
+
   it("applies native goal accounting and clears without creating a running stream", () => {
     useAppStore.setState({ threads: [goalThread()] })
     useAppStore.getState().applyFrame(

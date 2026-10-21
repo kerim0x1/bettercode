@@ -5,6 +5,13 @@ import {
   type ProviderKind,
 } from "./contracts"
 
+/**
+ * Runtime mode for a session that never stated one. In this vocabulary
+ * "full-access" means bypass, so a binding without an explicit mode fails
+ * closed to asking for approval instead.
+ */
+const DEFAULT_RUNTIME_MODE = "approval-required"
+
 export type ProviderSessionLifecycleStatus =
   | "starting"
   | "ready"
@@ -344,7 +351,7 @@ export class ProviderSessionBindingStore {
       input.lastError !== undefined
         ? input.lastError
         : (existing?.lastError ?? null),
-      input.runtimeMode ?? existing?.runtimeMode ?? "full-access",
+      input.runtimeMode ?? existing?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
       cwd,
       modelSelection == null ? null : JSON.stringify(modelSelection),
       generation,
@@ -422,7 +429,8 @@ export class ProviderSessionBindingStore {
         input.lastError !== undefined
           ? input.lastError
           : (existing?.lastError ?? null),
-      runtimeMode: input.runtimeMode ?? existing?.runtimeMode ?? "full-access",
+      runtimeMode:
+        input.runtimeMode ?? existing?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
     })
   }
 
@@ -445,7 +453,8 @@ export class ProviderSessionBindingStore {
       status: existing?.status ?? "ready",
       activeTurnId: existing?.activeTurnId ?? null,
       lastError: existing?.lastError ?? null,
-      runtimeMode: input.runtimeMode ?? existing?.runtimeMode ?? "full-access",
+      runtimeMode:
+        input.runtimeMode ?? existing?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
       cwd: input.cwd !== undefined ? input.cwd : (existing?.cwd ?? null),
       modelSelection:
         input.modelSelection !== undefined
@@ -502,7 +511,7 @@ function bindingFromRow(row: BindingRow): ProviderSessionBinding {
     status: parseStatus(row.status),
     activeTurnId: row.active_turn_id,
     lastError: row.last_error,
-    runtimeMode: row.runtime_mode ?? "full-access",
+    runtimeMode: row.runtime_mode ?? DEFAULT_RUNTIME_MODE,
     cwd: normalizeCwd(row.cwd),
     modelSelection: parseModelSelection(row.model_selection_json),
     generation:

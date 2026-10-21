@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest"
 import type { AppState } from "../appState"
 import type { ServerConfig } from "../config"
-import { buildApp } from "./router"
+import { buildApp as buildAppUnfilled } from "./router"
+import { routerLifecycleServices } from "../testUtils/routing-services"
+import { withInertStateArgument } from "../testUtils/inert-app-state"
+
+// Doubles name only what a test exercises; the rest is filled in inert.
+const buildApp = withInertStateArgument(buildAppUnfilled, 1)
 
 function makeConfig(): ServerConfig {
   return {
@@ -20,6 +25,7 @@ function makeConfig(): ServerConfig {
 
 function makeState(): AppState {
   return {
+    ...routerLifecycleServices(),
     providerRegistry: { all: () => [] },
     db: { prepare: () => ({ get: () => ({ ok: 1 }) }) },
     projectProjections: {

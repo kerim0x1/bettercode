@@ -5,7 +5,8 @@ import path from "node:path"
 import { createRequire } from "node:module"
 import test from "node:test"
 
-const { getOrCreateInstallId, startAppPing } = createRequire(import.meta.url)("../apps/shell/shared/app-ping.cjs")
+const { forgetInstallId, getOrCreateInstallId, readInstallId, startAppPing } =
+  createRequire(import.meta.url)("../apps/shell/shared/app-ping.cjs")
 
 function profile(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-ping-test-"))
@@ -19,19 +20,19 @@ function profile(t) {
 
 function setup(t, overrides = {}) {
   const dataDir = profile(t)
-  let tick
-  let interval
+  let fire
+  let delay
   let cleared = false
   const calls = []
   const stop = startAppPing({
     dataDir, appVersion: "0.1.0-beta.1", os: "win32", arch: "x64",
-    setIntervalImpl: (callback, delay) => { tick = callback; interval = delay; return { unref() {} } },
-    clearIntervalImpl: () => { cleared = true },
+    setTimeoutImpl: (callback, ms) => { fire = callback; delay = ms; return { unref() {} } },
+    clearTimeoutImpl: () => { cleared = true },
     fetchImpl: async (...args) => { calls.push(args); return new Response(null, { status: 204 }) },
     ...overrides,
   })
   t.after(stop)
-  return { dataDir, tick: () => tick(), interval, calls, stop, cleared: () => cleared }
+  return { dataDir, fire: () => fire(), delay, calls, stop, cleared: () => cleared }
 }
 
 test("creates a persistent random installation ID and reuses it across startups", (t) => {
@@ -39,8 +40,23 @@ test("creates a persistent random installation ID and reuses it across startups"
   const id = getOrCreateInstallId(dir)
   assert.match(id, /^[0-9a-f-]{36}$/)
   assert.equal(getOrCreateInstallId(dir), id)
+  assert.equal(readInstallId(dir), id)
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, "installation.json"), "utf8")), { id })
   assert.notEqual(getOrCreateInstallId(profile(t)), id)
+})
+
+test("reading never creates an identity", (t) => {
+  const dir = profile(t)
+  assert.equal(readInstallId(dir), null)
+  assert.equal(fs.existsSync(path.join(dir, "installation.json")), false)
+})
+
+test("forgetting removes a previously created identity", (t) => {
+  const dir = profile(t)
+  getOrCreateInstallId(dir)
+  assert.equal(forgetInstallId(dir), true)
+  assert.equal(readInstallId(dir), null)
+  assert.equal(forgetInstallId(dir), true)
 })
 
 test("repairs invalid saved identity once and then keeps the replacement", (t) => {
@@ -51,68 +67,64 @@ test("repairs invalid saved identity once and then keeps the replacement", (t) =
   assert.equal(getOrCreateInstallId(dir), id)
 })
 
-test("sends exactly the requested payload every 25 seconds, with no startup ping", async (t) => {
+test("sends exactly one ping per start, after a delay, with the requested payload", async (t) => {
   const ping = setup(t)
-  assert.equal(ping.interval, 25_000)
+  assert.equal(ping.delay, 30_000)
   assert.equal(ping.calls.length, 0)
-  await ping.tick()
-  await ping.tick()
-  assert.equal(ping.calls.length, 2)
+  // Nothing is written before the ping is actually due.
+  assert.equal(fs.existsSync(path.join(ping.dataDir, "installation.json")), false)
+  await ping.fire()
+  assert.equal(ping.calls.length, 1)
   const [url, options] = ping.calls[0]
   assert.equal(url, "https://betterc0de.com/api/ping")
   assert.equal(options.method, "POST")
   assert.deepEqual(options.headers, { "Content-Type": "application/json" })
   assert.deepEqual(JSON.parse(options.body), {
-    id: getOrCreateInstallId(ping.dataDir), appVersion: "0.1.0-beta.1", os: "win32", arch: "x64",
+    id: readInstallId(ping.dataDir), appVersion: "0.1.0-beta.1", os: "win32", arch: "x64",
   })
-  assert.equal(options.body, ping.calls[1][1].body)
   assert.equal(options.redirect, "error")
 })
 
-test("offline failures are swallowed and the following interval tries again", async (t) => {
+test("offline failures are swallowed and not retried", async (t) => {
   let calls = 0
   const ping = setup(t, { fetchImpl: async () => { calls += 1; throw new Error("offline") } })
-  await assert.doesNotReject(ping.tick())
-  await assert.doesNotReject(ping.tick())
-  assert.equal(calls, 2)
+  await assert.doesNotReject(ping.fire())
+  assert.equal(calls, 1)
 })
 
-test("does not overlap requests and aborts an in-flight ping on shutdown", async (t) => {
-  let calls = 0
+test("stopping cancels a pending ping and aborts an in-flight one", async (t) => {
   let signal
   const ping = setup(t, { fetchImpl: (_url, options) => {
-    calls += 1
     signal = options.signal
     return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }))
   } })
-  const first = ping.tick()
-  await ping.tick()
-  assert.equal(calls, 1)
+  const inFlight = ping.fire()
   ping.stop()
-  await first
+  await inFlight
   assert.equal(signal.aborted, true)
   assert.equal(ping.cleared(), true)
-  await ping.tick()
-  assert.equal(calls, 1)
+
+  const cancelled = setup(t)
+  cancelled.stop()
+  await cancelled.fire()
+  assert.equal(cancelled.calls.length, 0)
 })
 
-test("times out a stalled request and permits a later tick", async (t) => {
-  let calls = 0
-  const ping = setup(t, { timeoutMs: 5, fetchImpl: (_url, { signal }) => {
-    calls += 1
-    return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }))
-  } })
-  await ping.tick()
-  await ping.tick()
-  assert.equal(calls, 2)
+test("times out a stalled request", async (t) => {
+  let aborted = false
+  const ping = setup(t, { timeoutMs: 5, fetchImpl: (_url, { signal }) => new Promise((_resolve, reject) => {
+    signal.addEventListener("abort", () => { aborted = true; reject(signal.reason) }, { once: true })
+  }) })
+  await ping.fire()
+  assert.equal(aborted, true)
 })
 
-test("an unwritable identity location does not prevent startup or schedule a timer", (t) => {
+test("an unwritable identity location sends nothing", async (t) => {
   const dir = profile(t)
   const file = path.join(dir, "file-not-directory")
   fs.writeFileSync(file, "test")
-  let scheduled = false
-  const stop = startAppPing({ dataDir: file, appVersion: "test", setIntervalImpl: () => { scheduled = true } })
-  assert.equal(scheduled, false)
-  assert.doesNotThrow(stop)
+  let calls = 0
+  const ping = setup(t, { dataDir: file, fetchImpl: async () => { calls += 1; return new Response(null) } })
+  await ping.fire()
+  assert.equal(calls, 0)
 })

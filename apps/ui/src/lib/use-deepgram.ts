@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useVoiceStore, getEffectiveApiKey } from "./voice-store"
-import { createDeepgramAccessToken } from "@/services/backend"
+import { createDeepgramAccessToken } from "@/services/backend/coreApi"
 import {
   DeepgramSession,
   type DeepgramCallbacks,

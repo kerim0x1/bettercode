@@ -22,7 +22,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
-import { pickFolder } from "@/services/backend"
+import { pickFolder } from "@/services/backend/runtime"
 import { useChatStore } from "@/lib/chat-store"
 
 /**
@@ -52,7 +52,7 @@ export function EditorModeDialog({
   editorModalPath: string
   setEditorModalPath: (path: string) => void
   minimalChat: boolean
-  setAppMode: (mode: string) => void
+  setAppMode: (mode: "agent" | "editor" | "design") => void
   setFileTreeOpen: (open: boolean) => void
 }) {
   const folderName =

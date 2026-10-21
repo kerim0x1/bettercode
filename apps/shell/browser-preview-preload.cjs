@@ -7,6 +7,7 @@
 const { ipcRenderer, contextBridge, webFrame } = require("electron");
 
 const IS_MAC = process.platform === "darwin";
+const MODIFIER_KEYS = new Set(["Control", "Meta", "Alt"]);
 
 // Set by the main process's webview policy, never by page JavaScript. Capture
 // pinch/Ctrl-wheel before Chromium or the page can zoom the embedded document.
@@ -46,11 +47,55 @@ const ALLOWED_CHANNELS = [
   "highlight-result",
 ];
 
+// Messages that put page content into the app's chat context. The page can
+// call the bridge itself, so these only go out when the main process confirms
+// real user input to this guest or its window moments ago (and has not seen
+// too many already); see apps/shell/shared/user-input-gate.cjs.
+const GATED_CHANNELS = new Set(["element-selected", "element-picked"]);
+const GATE_CHANNEL = "preview-guest:gate";
+
+// Per-channel ceilings (messages per second). The page drives these, and
+// each one is an IPC hop plus a host re-render; a busy or hostile page must
+// not flood the app.
+const RATE_WINDOW_MS = 1000;
+const RATE_LIMITS = {
+  "console-entry": 50,
+  "console-batch": 50,
+  "dom-tree": 10,
+  "element-selected": 4,
+  "element-picked": 4,
+};
+const DEFAULT_RATE_LIMIT = 20;
+const rateWindows = new Map();
+
+function withinRate(channel) {
+  const limit = RATE_LIMITS[channel] ?? DEFAULT_RATE_LIMIT;
+  const now = Date.now();
+  const slot = rateWindows.get(channel);
+  if (!slot || now - slot.start >= RATE_WINDOW_MS) {
+    rateWindows.set(channel, { start: now, count: 1 });
+    return true;
+  }
+  if (slot.count >= limit) return false;
+  slot.count += 1;
+  return true;
+}
+
 const bridge = {
   send: (channel, ...args) => {
-    if (ALLOWED_CHANNELS.includes(channel)) {
+    if (!ALLOWED_CHANNELS.includes(channel) || !withinRate(channel)) return;
+    if (!GATED_CHANNELS.has(channel)) {
       ipcRenderer.sendToHost(channel, ...args);
+      return;
     }
+    ipcRenderer
+      .invoke(GATE_CHANNEL, channel)
+      .then((allowed) => {
+        if (allowed === true) ipcRenderer.sendToHost(channel, ...args);
+      })
+      .catch(() => {
+        // Refused or the guest is going away; the message is dropped.
+      });
   },
 };
 
@@ -234,9 +279,12 @@ document.addEventListener("keydown", (e) => {
     ipcRenderer.sendToHost("keyboard-shortcut", { shortcut });
   }
 
-  // Forward all keydown events for host to track
-  ipcRenderer.sendToHost("did-keydown", {
-    key: e.key, keyCode: e.keyCode, code: e.code,
-    shiftKey: e.shiftKey, altKey: e.altKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, repeat: e.repeat,
-  });
+  // The host only needs modifier presses (canvas zoom/pan gestures). Other
+  // keys, including whatever is typed into the page's fields, stay in the guest.
+  if (MODIFIER_KEYS.has(e.key)) {
+    ipcRenderer.sendToHost("did-keydown", {
+      key: e.key,
+      shiftKey: e.shiftKey, altKey: e.altKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, repeat: e.repeat,
+    });
+  }
 }, true);

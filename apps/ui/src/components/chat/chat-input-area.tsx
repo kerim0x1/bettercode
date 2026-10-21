@@ -10,6 +10,7 @@ import {
 import { PendingQuestionsPanel } from "@/components/chat/pending-questions-panel"
 import { AutonomousStatusBar } from "@/components/chat/autonomous-status-bar"
 import { ThreadGoalCard } from "@/components/chat/thread-goal-card"
+import { ChatResumeCard } from "@/components/chat/chat-resume-card"
 import { ChatComposer } from "@/components/chat/chat-composer"
 import { chatContentWidth } from "./chat-layout"
 import type { ComposerPlanFollowUp } from "@/components/chat/composer-plan-follow-up-banner"
@@ -21,6 +22,52 @@ import { useAppearanceStore } from "@/lib/appearance-store"
 import type { ChatSubmitPayload } from "@/hooks/use-chat-submit"
 import { findComposerTextarea, setComposerInput } from "@/lib/composer-input"
 import { useChatStore } from "@/lib/chat-store"
+import { useComposerMenuStore } from "@/lib/composer-menu-store"
+import type { Ref } from "react"
+import type { ChatComposerProps } from "@/components/chat/chat-composer-types"
+import type { UiProvider } from "@/lib/provider-types"
+import type { PermissionLevel } from "@/lib/preferences-store"
+import type { SetPlanModalContent } from "@/lib/plan-modal"
+import {
+  AUTONOMOUS_DEFAULT_TIME_BUDGET_MIN,
+  AUTONOMOUS_MAX_ITERATIONS,
+  type AutonomousStatus,
+} from "@/lib/chat/types"
+import { resumeAutonomousRun } from "@/lib/chat/autonomy-controls"
+
+/**
+ * The composer bag a chat column hands over. The input area adds the
+ * thread wiring (thread, focus, autonomous ownership, plan follow-up).
+ */
+export type ChatInputComposerProps = Omit<
+  ChatComposerProps,
+  | "threadId"
+  | "isActive"
+  | "autonomousMode"
+  | "autonomousStatus"
+  | "activeProjectPath"
+  | "planFollowUpActive"
+>
+
+export interface ChatInputAreaProps {
+  innerRef?: Ref<HTMLDivElement>
+  isActive?: boolean
+  minimalChat: boolean
+  activeThreadId: string | null
+  activeProjectPath?: string | null
+  selectedModel: string
+  thinkingMode: string | null
+  selectedProvider: UiProvider | undefined
+  chatMode: string
+  specialMode: string | null
+  permissionLevel: PermissionLevel
+  contextWindow?: string | null
+  activeProposedPlan: ComposerPlanFollowUp | null
+  /** Plan modal opener bound to this column's thread. */
+  setPlanModalContent?: SetPlanModalContent
+  deepgram: { error: string | null; clearError: () => void }
+  composerProps: ChatInputComposerProps
+}
 
 /**
  * Bottom-of-chat input area that bundles every accessory above the actual
@@ -38,9 +85,12 @@ import { useChatStore } from "@/lib/chat-store"
  * single prop bag through. Yes, the prop count is large — that's the
  * cost of this being the single integration point between the composer
  * chrome and every feature layered on top of it.
+ *
+ * The `/` and `@` menus read their state from the composer menu store here,
+ * and only in the active column, so typing a command re-renders this area
+ * instead of the app shell.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function ChatInputArea(props: any) {
+export function ChatInputArea(props: ChatInputAreaProps) {
   const {
     innerRef,
     isActive = true,
@@ -54,38 +104,53 @@ export function ChatInputArea(props: any) {
     specialMode,
     permissionLevel,
     contextWindow,
-    mentionQuery,
-    mentionActive,
-    slashActive,
-    slashQuery,
-    slashTrigger,
-    slashRange,
     activeProposedPlan,
-    closeMention,
-    closeSlash,
-    autonomousMode,
-    autonomousStatus,
-    autonomousIterations,
-    autonomousMaxIterations,
-    autonomousTask,
-    autonomousTaskList,
-    autonomousTimeBudgetMin,
-    autonomousStartedAt,
-    autonomousStopReason,
     deepgram,
     composerProps,
   } = props
   const fileContextEnabled = useAppearanceStore((s) => s.fileContextEnabled)
-  const ownsAutonomousRun = useChatStore((s) =>
-    Boolean(activeThreadId && s.autonomousThreadId === activeThreadId)
+  // Inactive columns select constants, so typing elsewhere never re-renders
+  // them.
+  const mentionActive = useComposerMenuStore((s) => isActive && s.mentionActive)
+  const mentionQuery = useComposerMenuStore((s) =>
+    isActive ? s.mentionQuery : ""
   )
+  const slashActive = useComposerMenuStore((s) => isActive && s.slashActive)
+  const slashQuery = useComposerMenuStore((s) => (isActive ? s.slashQuery : ""))
+  const slashTrigger = useComposerMenuStore((s) =>
+    isActive ? s.slashTrigger : "/"
+  )
+  const slashRange = useComposerMenuStore((s) =>
+    isActive ? s.slashRange : null
+  )
+  const closeMention = useComposerMenuStore((s) => s.closeMention)
+  const closeSlash = useComposerMenuStore((s) => s.closeSlash)
+  // This chat's Autonomous Work run, as the backend reports it.
+  const autonomousRun = useChatStore((s) =>
+    activeThreadId ? s.autonomyByThread[activeThreadId] : undefined
+  )
+  const autonomousStatus: AutonomousStatus = autonomousRun?.status ?? "idle"
+  const resumeAutonomousWork = () =>
+    activeThreadId
+      ? resumeAutonomousRun(activeThreadId, {
+          provider: selectedProvider,
+          modelId: selectedModel,
+          thinkingMode,
+          chatMode,
+          specialMode,
+          permissionLevel,
+          contextWindow,
+          projectPath: activeProjectPath,
+          appMode: composerProps.appMode,
+        })
+      : Promise.resolve()
 
   const composerSubmit = (payload: ChatSubmitPayload) => {
     payload = { ...payload, threadId: activeThreadId ?? null }
     // Goal controls must stay immediate, including while a plan is awaiting approval.
     if (/^\/goal(?:\s|$)/i.test(payload.text.trim()))
       return composerProps.handleSubmit(payload)
-    const plan = activeProposedPlan as ComposerPlanFollowUp | null
+    const plan = activeProposedPlan
     if (plan && !plan.implemented && payload.files.length === 0) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: payload.text,
@@ -149,7 +214,10 @@ export function ChatInputArea(props: any) {
       {permissionLevel !== "bypass" && (
         <FileChangesBar threadId={activeThreadId ?? null} />
       )}
-      <QueuedMessages threadId={activeThreadId ?? null} />
+      <QueuedMessages
+        threadId={activeThreadId ?? null}
+        selectedProvider={selectedProvider}
+      />
       <PendingQuestionsPanel
         key={activeThreadId ?? "new-chat"}
         threadId={activeThreadId}
@@ -241,16 +309,23 @@ export function ChatInputArea(props: any) {
         }}
       />
       <AutonomousStatusBar
-        autonomousMode={ownsAutonomousRun && autonomousMode}
+        threadId={activeThreadId}
+        onResume={resumeAutonomousWork}
+        autonomousMode={autonomousRun !== undefined}
         autonomousStatus={autonomousStatus}
-        autonomousIterations={autonomousIterations}
-        autonomousMaxIterations={autonomousMaxIterations}
-        autonomousTask={autonomousTask}
-        autonomousTaskList={autonomousTaskList}
-        autonomousTimeBudgetMin={autonomousTimeBudgetMin}
-        autonomousStartedAt={autonomousStartedAt}
-        autonomousStopReason={autonomousStopReason}
+        autonomousIterations={autonomousRun?.iterations ?? 0}
+        autonomousMaxIterations={
+          autonomousRun?.maxIterations ?? AUTONOMOUS_MAX_ITERATIONS
+        }
+        autonomousTask={autonomousRun?.tasks[0]?.text ?? null}
+        autonomousTaskList={autonomousRun?.tasks ?? null}
+        autonomousTimeBudgetMin={
+          autonomousRun?.timeBudgetMin ?? AUTONOMOUS_DEFAULT_TIME_BUDGET_MIN
+        }
+        autonomousStartedAt={autonomousRun?.startedAt ?? null}
+        autonomousStopReason={autonomousRun?.stopReason ?? null}
       />
+      <ChatResumeCard threadId={activeThreadId} />
       <ThreadGoalCard
         threadId={activeThreadId}
         handleSubmit={composerProps.handleSubmit}
@@ -259,13 +334,12 @@ export function ChatInputArea(props: any) {
         {...composerProps}
         threadId={activeThreadId ?? null}
         isActive={isActive}
-        autonomousMode={ownsAutonomousRun && autonomousMode}
-        autonomousStatus={ownsAutonomousRun ? autonomousStatus : "idle"}
+        autonomousMode={autonomousRun !== undefined}
+        autonomousStatus={autonomousStatus}
         activeProjectPath={activeProjectPath}
         handleSubmit={composerSubmit}
         planFollowUpActive={Boolean(
-          activeProposedPlan &&
-          !(activeProposedPlan as ComposerPlanFollowUp).implemented
+          activeProposedPlan && !activeProposedPlan.implemented
         )}
       />
 

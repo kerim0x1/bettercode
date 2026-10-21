@@ -3,12 +3,7 @@ import path from "node:path"
 import { Readable } from "node:stream"
 import type { AppState } from "../../appState"
 import type { ServerConfig } from "../../config"
-import {
-  abortShellSession,
-  detectShells,
-  runShellCommand,
-  type RunShellOutput,
-} from "../../services/shell"
+import { detectShells, type RunShellOutput } from "../../services/shell"
 import {
   getProjectShell,
   getProjectToolOutputLimits,
@@ -45,15 +40,6 @@ import {
 import type { RemoteAccessService } from "../../remote/service"
 import { remoteTerminalRefusal } from "../remoteTerminalPolicy"
 import {
-  closeTerminalPtySession,
-  openTerminalPtySession,
-  readTerminalPtySession,
-  resizeTerminalPtySession,
-  shutdownTerminalPtySessionsForOwner,
-  terminalPtySessionCwd,
-  writeTerminalPtySession,
-} from "../../services/terminalPty"
-import {
   ToolOutputArchiveStore,
   type ToolOutputArchiveReservation,
 } from "../../services/tool-output-archive-store"
@@ -61,12 +47,22 @@ import { logger } from "../../observability/logger"
 import {
   acquireCheckpointRecoveryMutationLease,
   withCheckpointRecoveryMutation,
+  type CheckpointRecoveryFenceState,
 } from "../checkpointRecoveryFence"
-import {
-  workspaceRecoveryGate,
-  type WorkspaceRecoveryLease,
-} from "../../services/workspace-recovery-gate"
+import type { WorkspaceRecoveryLease } from "../../services/workspace-recovery-gate"
+import type { WorkspaceRegistryState } from "../../services/workspace/authorization"
+import { contractJson, contractResult } from "../contracts"
 import { resolveApprovedWorkspaceRoot } from "./workspace"
+
+/**
+ * What the shell routes need from the backend: the registry that approves a
+ * command's or a terminal's workspace, the recovery fence a mutation holds,
+ * the terminal grant for paired devices, the terminals and shell commands
+ * themselves and the taint a process tree that cannot be ended raises.
+ */
+export type ShellRouteState = WorkspaceRegistryState &
+  CheckpointRecoveryFenceState &
+  Pick<AppState, "taintBackend" | "settings" | "terminalPtys" | "shellSessions">
 
 /**
  * Per-session token-bucket limiter for shell endpoints. Each session can
@@ -74,24 +70,29 @@ import { resolveApprovedWorkspaceRoot } from "./workspace"
  * no sessionId shares the `anonymous` bucket — sufficient for genuine
  * one-off probes (e.g. /shell/detect's first call) and tight enough that a
  * compromised renderer can't loop /shell/run unbounded.
+ *
+ * Every JSON answer is checked against its shared contract
+ * (`@betterc0de/schema/http-contracts`, `shell-contracts.ts`). Requests are
+ * parsed here, with the contracts' schemas, because the order of the checks
+ * (identity, rate limit, workspace, capability) is part of the security.
  */
 export function registerShellRoutes(
   api: Hono,
   config: ServerConfig,
-  remoteAccess?: RemoteAccessService,
-  recoveryState?: Pick<
-    AppState,
-    | "checkpointReverts"
-    | "taintBackend"
-    | "projectProjections"
-    | "threads"
-    | "worktreeRegistry"
-  > &
-    Partial<Pick<AppState, "settings">>
+  remoteAccess: RemoteAccessService | undefined,
+  state: ShellRouteState
 ): void {
   const shellRateLimiter = createRateLimiter({
     capacity: 10,
     refillPerSecond: 10,
+  })
+  // Input to a terminal the caller already owns: every keystroke (coalesced
+  // while one is on its way) needs its own `pty-write` capability, so typing
+  // has a bucket of its own instead of draining the one that guards running
+  // commands and opening terminals.
+  const terminalInputRateLimiter = createRateLimiter({
+    capacity: 64,
+    refillPerSecond: 32,
   })
   const capabilityIssuer = new ShellCapabilityIssuer()
   const archiveStore = new ToolOutputArchiveStore({
@@ -100,22 +101,12 @@ export function registerShellRoutes(
   const acquireWorkspaceMutationLease = (
     cwd: string
   ): Promise<WorkspaceRecoveryLease | null> =>
-    recoveryState
-      ? acquireCheckpointRecoveryMutationLease(recoveryState, {
-          workspaces: [cwd],
-        })
-      : workspaceRecoveryGate.acquireShared(cwd)
+    acquireCheckpointRecoveryMutationLease(state, { workspaces: [cwd] })
   const withWorkspaceMutation = <T>(
     cwd: string,
     operation: () => Promise<T> | T
   ): Promise<T> =>
-    recoveryState
-      ? withCheckpointRecoveryMutation(
-          recoveryState,
-          { workspaces: [cwd] },
-          operation
-        )
-      : workspaceRecoveryGate.withShared(cwd, operation)
+    withCheckpointRecoveryMutation(state, { workspaces: [cwd] }, operation)
   void archiveStore.start().catch((error) => {
     logger.error({ err: error }, "tool output archive store failed to start")
   })
@@ -141,12 +132,7 @@ export function registerShellRoutes(
     identity: RemoteRequestIdentity | null,
     extra: Record<string, unknown> = {}
   ): Response | null => {
-    const refusal = remoteTerminalRefusal(
-      c,
-      config,
-      identity,
-      recoveryState?.settings
-    )
+    const refusal = remoteTerminalRefusal(c, config, identity, state.settings)
     return refusal ? c.json({ ...refusal, ...extra }, 403) : null
   }
   // Every workspace/route failure goes through sanitizeError so the shape
@@ -199,7 +185,11 @@ export function registerShellRoutes(
     if (!result.success) {
       return c.json({ error: result.error.message }, 400)
     }
-    const limit = shellRateLimiter.consume(
+    const limiter =
+      result.data.operation === "pty-write"
+        ? terminalInputRateLimiter
+        : shellRateLimiter
+    const limit = limiter.consume(
       shellRateLimitKey(c, config, remoteAccess, identity)
     )
     if (!limit.allowed) {
@@ -219,16 +209,13 @@ export function registerShellRoutes(
       try {
         capabilityRequest = {
           ...capabilityRequest,
-          cwd: await resolveApprovedWorkspaceRoot(
-            recoveryState as AppState,
-            capabilityRequest.cwd
-          ),
+          cwd: await resolveApprovedWorkspaceRoot(state, capabilityRequest.cwd),
         }
       } catch (err) {
         return errorResponse(c, err, "shell capability")
       }
     }
-    return c.json({
+    return contractResult(c, "shellCapability", {
       capability: capabilityIssuer.issue(
         capabilityRequest,
         capabilityIdentityOf(identity)
@@ -298,10 +285,7 @@ export function registerShellRoutes(
 
     let cwd: string
     try {
-      cwd = await resolveApprovedWorkspaceRoot(
-        recoveryState as AppState,
-        body.cwd
-      )
+      cwd = await resolveApprovedWorkspaceRoot(state, body.cwd)
     } catch (err) {
       return errorResponse(c, err, "shell run")
     }
@@ -334,6 +318,7 @@ export function registerShellRoutes(
           operation: "run",
           command: body.command,
           cwd,
+          launch: { shell: body.shell, env: body.env },
         },
         capabilityIdentityOf(identity)
       )
@@ -410,7 +395,7 @@ export function registerShellRoutes(
     try {
       return await withWorkspaceMutation(cwd, async () => {
         archiveReservation = await archiveStore.reserve(ownerId)
-        const out = await runShellCommand({
+        const out = await state.shellSessions.runCommand({
           command: body.command,
           cwd,
           shell: await resolveProjectShell(cwd, body.shell),
@@ -420,10 +405,13 @@ export function registerShellRoutes(
           ownerId,
           ownerExpiresAt: owner.expiresAt,
           isOwnerActive: owner.isActive,
+          clientInstanceId: clientInstanceIdOf(c),
           archivePath: archiveReservation.filePath,
           maxArchiveBytes: archiveStore.maxArchiveBytes,
         })
-        return c.json(
+        return contractResult(
+          c,
+          "shellRun",
           await applyProjectToolOutputLimits(
             out,
             cwd,
@@ -471,8 +459,13 @@ export function registerShellRoutes(
       )
     }
 
-    const found = abortShellSession(sessionId, ownerId)
-    return c.json({ aborted: found }, found ? 200 : 404)
+    const found = state.shellSessions.abortSession(sessionId, ownerId)
+    return contractResult(
+      c,
+      "shellAbort",
+      { aborted: found },
+      found ? 200 : 404
+    )
   })
 
   api.get("/shell/detect", async (c) => {
@@ -488,7 +481,8 @@ export function registerShellRoutes(
         429
       )
     }
-    return c.json(await detectShells())
+    // The detector builds plain records; the contract checks them.
+    return contractJson(c, "shellDetect", await detectShells())
   })
 
   api.post("/shell/pty/open", async (c) => {
@@ -523,10 +517,7 @@ export function registerShellRoutes(
 
     let cwd: string
     try {
-      cwd = await resolveApprovedWorkspaceRoot(
-        recoveryState as AppState,
-        body.cwd
-      )
+      cwd = await resolveApprovedWorkspaceRoot(state, body.cwd)
     } catch (err) {
       return errorResponse(c, err, "terminal open")
     }
@@ -542,6 +533,7 @@ export function registerShellRoutes(
           cwd,
           sessionId: body.sessionId,
           command: body.command,
+          launch: { shell: body.shell, args: body.args, env: body.env },
         },
         capabilityIdentityOf(identity)
       )
@@ -561,10 +553,12 @@ export function registerShellRoutes(
     let leaseTransferred = false
     try {
       workspaceLease = await acquireWorkspaceMutationLease(cwd)
-      const snapshot = openTerminalPtySession({
+      const snapshot = state.terminalPtys.openSession({
         sessionId: body.sessionId,
         ownerId,
+        ...(ownerId === DESKTOP_SHELL_OWNER ? { ownerIsDesktop: true } : {}),
         ownerExpiresAt: owner.expiresAt,
+        clientInstanceId: clientInstanceIdOf(c),
         cwd,
         shell: await resolveProjectShell(cwd, body.shell),
         command: body.command,
@@ -574,11 +568,11 @@ export function registerShellRoutes(
         rows: body.rows,
         onProcessExit: () => workspaceLease?.release(),
         onProcessTreeFailure: (error) =>
-          recoveryState?.taintBackend?.(error, "terminal pty process tree"),
+          state.taintBackend(error, "terminal pty process tree"),
       })
       leaseTransferred = true
       if (owner.isActive && !owner.isActive()) {
-        await shutdownTerminalPtySessionsForOwner(ownerId)
+        await state.terminalPtys.shutdownForOwner(ownerId)
         throw Object.assign(
           new Error("Terminal session owner is no longer active."),
           {
@@ -587,7 +581,7 @@ export function registerShellRoutes(
           }
         )
       }
-      return c.json(snapshot)
+      return contractResult(c, "terminalOpen", snapshot)
     } catch (err) {
       const { message, statusCode } = sanitizeError(err, "terminal open", {
         path: "/shell/pty/open",
@@ -615,13 +609,13 @@ export function registerShellRoutes(
     const refused = refuseRemoteTerminal(c, identity)
     if (refused) return refused
     const ownerId = shellRateLimitKey(c, config, remoteAccess, identity)
-    const snapshot = readTerminalPtySession(
+    const snapshot = state.terminalPtys.readSession(
       body.sessionId,
       body.cursor ?? 0,
       ownerId
     )
     if (!snapshot) return c.json({ error: "Terminal session not found." }, 404)
-    return c.json(snapshot)
+    return contractResult(c, "terminalRead", snapshot)
   })
 
   api.post("/shell/pty/write", async (c) => {
@@ -641,7 +635,7 @@ export function registerShellRoutes(
     })
     if (refused) return refused
     const ownerId = shellRateLimitKey(c, config, remoteAccess, identity)
-    const sessionCwd = terminalPtySessionCwd(body.sessionId, ownerId)
+    const sessionCwd = state.terminalPtys.sessionCwd(body.sessionId, ownerId)
     if (!sessionCwd) {
       return c.json({ error: "Terminal session not found." }, 404)
     }
@@ -670,8 +664,12 @@ export function registerShellRoutes(
           403
         )
       }
-      const ok = writeTerminalPtySession(body.sessionId, body.data, ownerId)
-      return c.json({ ok }, ok ? 200 : 404)
+      const ok = state.terminalPtys.writeSession(
+        body.sessionId,
+        body.data,
+        ownerId
+      )
+      return contractResult(c, "terminalWrite", { ok }, ok ? 200 : 404)
     })
   })
 
@@ -686,13 +684,13 @@ export function registerShellRoutes(
     const refused = refuseRemoteTerminal(c, identity)
     if (refused) return refused
     const ownerId = shellRateLimitKey(c, config, remoteAccess, identity)
-    const ok = resizeTerminalPtySession(
+    const ok = state.terminalPtys.resizeSession(
       body.sessionId,
       body.cols,
       body.rows,
       ownerId
     )
-    return c.json({ ok }, ok ? 200 : 404)
+    return contractResult(c, "terminalResize", { ok }, ok ? 200 : 404)
   })
 
   api.post("/shell/pty/close", async (c) => {
@@ -706,12 +704,83 @@ export function registerShellRoutes(
     const identity = identityOf(c)
     const refused = refuseRemoteTerminal(c, identity)
     if (refused) return refused
-    const ok = closeTerminalPtySession(
+    const ok = state.terminalPtys.closeSession(
       result.data.sessionId,
       shellRateLimitKey(c, config, remoteAccess, identity)
     )
-    return c.json({ ok }, ok ? 200 : 404)
+    return contractResult(c, "terminalClose", { ok }, ok ? 200 : 404)
   })
+
+  /**
+   * End every terminal and shell run one renderer instance started. The
+   * desktop owner is a single shared principal, so without this a renderer
+   * that crashed or reloaded left its PTYs (a dev server, say) running with
+   * nothing attached, still counted against the per-owner limit. A renderer
+   * identifies itself with the `X-BetterC0de-Client-Instance` header on the
+   * requests that start them; its host releases that id when the renderer is
+   * gone. Only the owner's own resources are touched.
+   */
+  api.post("/shell/client/release", async (c) => {
+    const raw = await c.req.json().catch(() => ({}))
+    const clientInstanceId =
+      raw && typeof raw === "object" && !Array.isArray(raw)
+        ? normalizeClientInstanceId(
+            (raw as { clientInstanceId?: unknown }).clientInstanceId
+          )
+        : null
+    if (!clientInstanceId) {
+      return c.json({ error: "A valid clientInstanceId is required." }, 400)
+    }
+    const identity = identityOf(c)
+    const ownerId = shellRateLimitKey(c, config, remoteAccess, identity)
+    const limit = shellRateLimiter.consume(ownerId)
+    if (!limit.allowed) {
+      return c.json(
+        {
+          error: "Too many shell requests — rate limit exceeded.",
+          retryAfterMs: limit.retryAfterMs,
+        },
+        429
+      )
+    }
+    const [terminals, runs] = await Promise.allSettled([
+      state.terminalPtys.shutdownForClientInstance(ownerId, clientInstanceId),
+      state.shellSessions.closeSessionsForClientInstance(
+        ownerId,
+        clientInstanceId
+      ),
+    ])
+    for (const outcome of [terminals, runs]) {
+      if (outcome.status === "rejected") {
+        logger.warn(
+          { err: outcome.reason, clientInstanceId },
+          "releasing a renderer's shell resources was incomplete"
+        )
+      }
+    }
+    return contractResult(c, "shellClientRelease", {
+      terminals: terminals.status === "fulfilled" ? terminals.value : 0,
+      runs: runs.status === "fulfilled" ? runs.value : 0,
+      complete: terminals.status === "fulfilled" && runs.status === "fulfilled",
+    })
+  })
+}
+
+const CLIENT_INSTANCE_HEADER = "X-BetterC0de-Client-Instance"
+
+/** The owner of everything the desktop app itself starts (bearer or capability). */
+const DESKTOP_SHELL_OWNER = "local-owner"
+
+function normalizeClientInstanceId(value: unknown): string | null {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{8,128}$/.test(value)
+    ? value
+    : null
+}
+
+function clientInstanceIdOf(c: Context): string | undefined {
+  return (
+    normalizeClientInstanceId(c.req.header(CLIENT_INSTANCE_HEADER)) ?? undefined
+  )
 }
 
 async function applyProjectToolOutputLimits(
@@ -951,6 +1020,6 @@ function shellOwnerContext(
   }
   return {
     ownerId:
-      knownIdentity?.kind === "local" ? "local-owner" : "unauthenticated",
+      knownIdentity?.kind === "local" ? DESKTOP_SHELL_OWNER : "unauthenticated",
   }
 }

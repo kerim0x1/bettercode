@@ -10,7 +10,12 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { useChatStore } from "@/lib/chat-store"
+import { handleError } from "@/lib/errors/handle"
+import {
+  pauseAutonomousRun,
+  setAutonomousTaskDone,
+  stopAutonomousRun,
+} from "@/lib/chat/autonomy-controls"
 import { useVisibilityInterval } from "@/hooks/use-visibility-interval"
 import type {
   AutonomousStatus,
@@ -29,11 +34,19 @@ import type {
  *  - Task list with click-to-toggle checkboxes so the user can manually
  *    tick items if the model forgets a `[TASK_DONE:<id>]` marker
  *  - Stop reason badge once the run ends
- *  - Pause / Resume / Stop controls (Stop records reason = "user")
+ *  - Pause / Resume / Stop controls (Stop ends the run)
  *
- * Controls mutate the chat store directly — the parent threads in props only
- * for reactive values, not setters.
+ * The backend owns the run: the controls ask it (`@/lib/chat/autonomy-
+ * controls`) and the bar shows what it reports. Resume comes from the
+ * parent, which knows the chat's composer selection the run continues with.
  */
+
+/** A control's failure is shown; the bar keeps the backend's last state. */
+function runControl(action: () => Promise<void>): void {
+  void action().catch((error: unknown) =>
+    handleError(error, { source: "autonomous-work" })
+  )
+}
 
 function formatStopReason(reason: AutonomousStopReason): string {
   switch (reason) {
@@ -61,6 +74,8 @@ function formatElapsed(ms: number): string {
 }
 
 export function AutonomousStatusBar({
+  threadId,
+  onResume,
   autonomousMode,
   autonomousStatus,
   autonomousIterations,
@@ -71,6 +86,10 @@ export function AutonomousStatusBar({
   autonomousStartedAt,
   autonomousStopReason,
 }: {
+  /** The chat whose run this is. */
+  threadId: string | null
+  /** Continues the paused run with the chat's composer selection. */
+  onResume: () => Promise<void>
   autonomousMode: boolean
   autonomousStatus: AutonomousStatus
   autonomousIterations: number
@@ -91,7 +110,8 @@ export function AutonomousStatusBar({
     runOnVisible: true,
   })
 
-  if (!autonomousMode || autonomousStatus === "idle") return null
+  if (!threadId || !autonomousMode || autonomousStatus === "idle") return null
+  const runThreadId: string = threadId
 
   const doneCount = autonomousTaskList
     ? autonomousTaskList.filter((t) => t.done).length
@@ -175,9 +195,7 @@ export function AutonomousStatusBar({
               variant="outline"
               size="sm"
               className="h-5 px-1.5 text-[10px]"
-              onClick={() =>
-                useChatStore.getState().setAutonomousStatus("paused")
-              }
+              onClick={() => runControl(() => pauseAutonomousRun(runThreadId))}
             >
               <PauseIcon className="mr-0.5 size-3" /> Pause
             </Button>
@@ -187,9 +205,7 @@ export function AutonomousStatusBar({
               variant="outline"
               size="sm"
               className="h-5 px-1.5 text-[10px]"
-              onClick={() =>
-                useChatStore.getState().setAutonomousStatus("working")
-              }
+              onClick={() => runControl(onResume)}
             >
               <PlayIcon className="mr-0.5 size-3" /> Resume
             </Button>
@@ -198,11 +214,7 @@ export function AutonomousStatusBar({
             variant="outline"
             size="sm"
             className="h-5 px-1.5 text-[10px] text-destructive hover:text-destructive"
-            onClick={() => {
-              const s = useChatStore.getState()
-              s.setAutonomousStopReason("user")
-              s.resetAutonomous()
-            }}
+            onClick={() => runControl(() => stopAutonomousRun(runThreadId))}
           >
             <SquareIcon className="mr-0.5 size-3" /> Stop
           </Button>
@@ -216,9 +228,9 @@ export function AutonomousStatusBar({
               <Checkbox
                 checked={t.done}
                 onCheckedChange={(checked) =>
-                  useChatStore
-                    .getState()
-                    .markAutonomousTaskDone(t.id, checked === true)
+                  runControl(() =>
+                    setAutonomousTaskDone(runThreadId, t.id, checked === true)
+                  )
                 }
                 className="size-3.5 shrink-0"
                 aria-label={`Toggle task ${t.text}`}

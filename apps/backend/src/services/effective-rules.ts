@@ -10,9 +10,10 @@ import {
   type WorkspaceEffectiveRulesResult,
 } from "@betterc0de/schema"
 import type { AppState } from "../appState"
+import type { ServerConfig } from "../config"
 import { logger } from "../observability/logger"
 import { compileBoundedGlob } from "./bounded-glob"
-import { desktopRuntimeHome } from "./desktop-runtime-home"
+import { desktopConfigPaths, runtimeHomeOf } from "./desktop-config/paths"
 import {
   listProjectInstructions,
   type ProjectInstructionTemplate,
@@ -292,17 +293,21 @@ export async function resolveAppEffectiveRules(
   },
   dependencies: EffectiveRulesDependencies = {}
 ): Promise<WorkspaceEffectiveRulesResult> {
+  // The user's rules are `rules.md` in the runtime home. `custom_rules`
+  // is a legacy settings key: the desktop-config migration moves it into
+  // `rules.md` and removes it, so it is read only while that has not
+  // happened (settings.json could not be written).
   const settings = state.settings.get() as unknown as {
     custom_rules?: unknown
   }
-  const runtimeRulesFile = runtimeRulesFileForDataDir(state.config.dataDir)
+  const userRulesFile = runtimeRulesFile(state.config)
   return resolveEffectiveRules(
     {
       workspaceRoot: input.workspaceRoot,
       targetPath: input.targetPath,
       globalRules:
         typeof settings.custom_rules === "string" ? settings.custom_rules : "",
-      globalRuleFiles: runtimeRulesFile ? [runtimeRulesFile] : [],
+      globalRuleFiles: userRulesFile ? [userRulesFile] : [],
     },
     dependencies
   )
@@ -375,9 +380,12 @@ export function mergeEffectiveRulesIntoSystemInstruction(
   return `${base}\n\n${appended}`
 }
 
-export function runtimeRulesFileForDataDir(dataDir: string): string | null {
-  const home = desktopRuntimeHome(dataDir)
-  return home ? path.join(home, "rules.md") : null
+/** The user's `rules.md` in the runtime home of `config`, if it has one. */
+export function runtimeRulesFile(
+  config: Pick<ServerConfig, "dataDir" | "runtimeHome">
+): string | null {
+  const home = runtimeHomeOf(config)
+  return home ? desktopConfigPaths(home).rulesFile : null
 }
 
 function addCandidate(

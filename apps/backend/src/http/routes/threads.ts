@@ -1,4 +1,5 @@
 import type { Context, Hono, Next } from "hono"
+import { CHAT_FIND_QUERY_MAX_LENGTH } from "@betterc0de/schema"
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { AppState } from "../../appState"
@@ -7,14 +8,19 @@ import {
   decodeThreadActivityCursor,
   encodeThreadActivityCursor,
 } from "../../persistence/projections"
+import { boundThreadActivity } from "../../provider/activity-projection"
+import { readThreadActivityFullOutput } from "../../provider/activity-projection/full-output"
 import {
   cancelPendingApprovals,
-  sessionPermissions,
+  forgetSessionPermission,
 } from "../../provider/permissions"
 import { clearSessionRules } from "../../provider/session-permission-rules"
 import * as git from "../../services/git"
 import { deleteThreadCheckpointRefs } from "../../services/git"
 import { threadGoals } from "../../services/chat/goal-registry"
+import { threadAutonomyRuns } from "../../services/chat/autonomy-registry"
+import { chatResumes } from "../../services/chat/resume-registry"
+import { assertThreadSettingsPatchAllowed } from "../../services/chat/thread-settings"
 import {
   parseThreadMessageUpsertRequest,
   parseThreadMetaUpsertRequest,
@@ -28,23 +34,18 @@ import {
   withCheckpointRecoveryMutation,
 } from "../checkpointRecoveryFence"
 import { requestIdentity } from "../../remote/http"
-import { contractJson, handleHttpContract } from "../contracts"
+import { contractJson, contractResult, handleHttpContract } from "../contracts"
 import { HttpError } from "../errors"
-import { broadcastThreadMetadata } from "../../ws/threadActivityBroadcast"
-import { parseAndHandle } from "../routeHelpers"
 import {
-  threadCheckpointRecoveryResolveSchema,
-  threadCheckpointRevertSchema,
-  threadModelSwitchActivitySchema,
-  threadTruncateSchema,
-  threadWorktreeCreateSchema,
-  threadWorktreeRemoveSchema,
-  threadWorktreeResetSchema,
-} from "../validation"
+  broadcastThreadMetadata,
+  broadcastThreadSettings,
+} from "../../ws/threadActivityBroadcast"
 import {
+  latestCheckpointTurnCount,
   revertThreadCheckpoint,
   withCheckpointMaintenance,
 } from "../../services/checkpoint-revert-saga"
+import { permissionAccess } from "./chat"
 import { resolveApprovedWorkspaceRoot } from "./workspace"
 
 async function resolveThreadWorktreeMutationRoots(
@@ -52,8 +53,8 @@ async function resolveThreadWorktreeMutationRoots(
   threadId: string
 ): Promise<string[]> {
   const entry =
-    state.worktrees?.findForThread?.(threadId) ??
-    state.worktreeRegistry?.findByThread?.(threadId) ??
+    state.worktrees.findForThread(threadId) ??
+    state.worktreeRegistry.findByThread(threadId) ??
     null
   if (!entry) return []
 
@@ -95,7 +96,7 @@ function assertWorktreeMutationTrusted(
 
 function shouldAutoSaveConversations(state: AppState): boolean {
   try {
-    return state.settings?.get?.().auto_save_conversations !== false
+    return state.settings.get().auto_save_conversations !== false
   } catch (error) {
     logger.warn(
       { error },
@@ -155,7 +156,9 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
       rawDays === undefined || rawDays.trim() === ""
         ? undefined
         : Number(rawDays)
-    return c.json(
+    return contractResult(
+      c,
+      "threadStats",
       state.threads.stats({
         // Whole days in [1, 3650]: the window is a SQL date comparison and
         // a cache key, so 0, negatives, fractions and huge values are noise.
@@ -228,6 +231,25 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
       "updateThread",
       async (parsed, ctx) => {
         const threadId = ctx.req.param("id")!
+        // `{ settings }` alone: the chat's own settings, nothing else. A
+        // paired device keeps the limits it has for a turn.
+        if ("settings" in parsed) {
+          assertThreadSettingsPatchAllowed(
+            parsed.settings,
+            permissionAccess(state, ctx)
+          )
+          const settings = await withCheckpointRecoveryMutation(
+            state,
+            {
+              threadIds: [threadId],
+              workspaces: recoveryWorkspacesForThread(state, threadId),
+            },
+            () => state.threads.updateThreadSettings(threadId, parsed.settings)
+          )
+          // Every other open client follows the change at once.
+          broadcastThreadSettings({ threadId, settings })
+          return undefined
+        }
         const req = parseThreadMetaUpsertRequest(threadId, parsed)
         await withCheckpointRecoveryMutation(
           state,
@@ -274,6 +296,36 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
     )
   )
 
+  // Find in chat over the stored messages, for the part of a long chat the
+  // renderer has not loaded (`?beforeSequence=`). Read-only, so a paired
+  // device may search any chat it can read. Registered before
+  // `/messages/:messageId`, which would otherwise take "search" as an id.
+  api.get("/threads/:id/messages/search", (c) => {
+    const query = c.req.query("q") ?? ""
+    if (!query.trim() || query.length > CHAT_FIND_QUERY_MAX_LENGTH) {
+      return c.json(
+        {
+          error: `q must be 1 to ${CHAT_FIND_QUERY_MAX_LENGTH} characters`,
+          code: "invalid_search_query",
+        },
+        400
+      )
+    }
+    return contractResult(
+      c,
+      "searchThreadMessages",
+      state.threads.searchMessages(c.req.param("id"), {
+        query,
+        caseSensitive: queryFlag(c.req.query("caseSensitive")),
+        beforeSequence: optionalQueryInteger(c.req.query("beforeSequence")),
+        limit: optionalQueryInteger(c.req.query("limit")),
+      })
+    )
+  })
+
+  // `light=1` leaves out diff text and inline `data:` attachment payloads
+  // (flagged `textOmitted` / `dataOmitted`); the route below returns one
+  // message in full when the renderer actually shows one of them.
   api.get("/threads/:id/messages", (c) =>
     contractJson(
       c,
@@ -281,18 +333,33 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
       state.threads.listMessages(c.req.param("id"), {
         limit: optionalQueryInteger(c.req.query("limit")),
         beforeSequence: optionalQueryInteger(c.req.query("beforeSequence")),
+        ...(queryFlag(c.req.query("light")) ? { light: true } : {}),
       })
     )
   )
 
+  api.get("/threads/:id/messages/:messageId", (c) => {
+    const message = state.threads.getMessageView(
+      c.req.param("id"),
+      c.req.param("messageId")
+    )
+    if (!message) {
+      return c.json(
+        { error: "message not found", code: "message_not_found" },
+        404
+      )
+    }
+    return contractJson(c, "getMessage", message)
+  })
+
   api.post("/threads/:id/activities/model-switch", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      threadModelSwitchActivitySchema,
+      "saveModelSwitchActivity",
       async (body, context) => {
         if (body.activityId.startsWith("orchestrator:"))
           throw new HttpError(400, "Reserved activity ID.")
-        const threadId = context.req.param("id")
+        const threadId = context.req.param("id")!
         // The activity id is client-chosen and the store upserts by id: an
         // id that already belongs to another thread must not be moved here.
         const owner = activityThreadOwner(state, body.activityId)
@@ -382,7 +449,10 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
     return contractJson(
       c,
       "listActivities",
-      page.items.map((activity) => ({
+      // Rows stored before tool output (and approval input) was bounded at
+      // projection are bounded on the way out; current rows are already
+      // within budget.
+      page.items.map(boundThreadActivity).map((activity) => ({
         id: activity.activity_id,
         threadId: activity.thread_id,
         turnId: activity.turn_id,
@@ -397,37 +467,106 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
     )
   })
 
+  // The whole output of a tool activity whose payload carries a cut copy
+  // (`outputTruncated`), read back from the provider runtime journal while
+  // the journal still retains the event. `truncated` means the journal had
+  // to bound the event itself, so even this copy is incomplete.
+  api.get("/threads/:id/activities/:activityId/output", (c) => {
+    const result = readThreadActivityFullOutput(
+      { activities: state.threadActivities, events: state.eventStore },
+      c.req.param("id"),
+      c.req.param("activityId")
+    )
+    switch (result.status) {
+      case "found":
+        return contractResult(c, "threadActivityOutput", {
+          activityId: result.activityId,
+          output: result.output,
+          truncated: result.truncated,
+          bytes: result.bytes,
+        })
+      case "not_found":
+        return c.json(
+          { error: "activity not found", code: "activity_not_found" },
+          404
+        )
+      case "no_output":
+        return c.json(
+          {
+            error: "This activity has no tool output.",
+            code: "activity_output_not_found",
+          },
+          404
+        )
+      case "not_retained":
+        return c.json(
+          {
+            error: "The full output of this tool call is no longer retained.",
+            code: "activity_output_not_retained",
+          },
+          404
+        )
+    }
+  })
+
   api.get("/threads/:id/diffs", (c) => {
     const threadId = c.req.param("id")
-    const limit = optionalQueryInteger(c.req.query("limit"))
-    return c.json({
-      turnDiffs: state.checkpointDiffs
-        .listTurnDiffsByThread(threadId, {
-          limit,
-          beforeTurnIndex: optionalQueryInteger(c.req.query("beforeTurnIndex")),
-        })
-        .map((diff) => ({
-          threadId: diff.thread_id,
-          turnIndex: diff.turn_index,
-          diffText: diff.diff_text,
-          filesChanged: diff.files_changed,
-          insertions: diff.insertions,
-          deletions: diff.deletions,
-          createdAt: diff.created_at,
-        })),
-      checkpointDiffs: state.checkpointDiffs
-        .listCheckpointDiffsByThread(threadId, {
-          limit,
-          beforeId: optionalQueryInteger(c.req.query("beforeCheckpointId")),
-        })
-        .map((diff) => ({
-          id: diff.id,
-          threadId: diff.thread_id,
-          turnId: diff.turn_id,
-          checkpointRef: diff.checkpoint_ref,
-          diffContent: diff.diff_content,
-          createdAt: diff.created_at,
-        })),
+    // `summary=1` answers "how far can this thread be restored?" from the
+    // checkpoint refs and turn index alone, without materialising any diff
+    // body. `/undo` and other counters use it instead of the full pages.
+    if (c.req.query("summary") === "1") {
+      return contractResult(c, "threadCheckpointSummary", {
+        threadId,
+        currentTurnCount: latestCheckpointTurnCount(state, threadId),
+      })
+    }
+    const pageSize = Math.min(
+      MAX_DIFF_PAGE_LIMIT,
+      Math.max(
+        1,
+        optionalQueryInteger(c.req.query("limit")) ?? MAX_DIFF_PAGE_LIMIT
+      )
+    )
+    const turnDiffs = state.checkpointDiffs.listTurnDiffsByThread(threadId, {
+      limit: pageSize,
+      beforeTurnIndex: optionalQueryInteger(c.req.query("beforeTurnIndex")),
+    })
+    const checkpointDiffs = state.checkpointDiffs.listCheckpointDiffsByThread(
+      threadId,
+      {
+        limit: pageSize,
+        beforeId: optionalQueryInteger(c.req.query("beforeCheckpointId")),
+      }
+    )
+    // Pages are returned oldest-first; a full page means older rows may
+    // remain, so hand back the cursor for the next (older) page.
+    const fullPage = (count: number) => count >= pageSize
+    return contractResult(c, "threadDiffs", {
+      turnDiffs: turnDiffs.map((diff) => ({
+        threadId: diff.thread_id,
+        turnIndex: diff.turn_index,
+        diffText: diff.diff_text,
+        filesChanged: diff.files_changed,
+        insertions: diff.insertions,
+        deletions: diff.deletions,
+        createdAt: diff.created_at,
+      })),
+      checkpointDiffs: checkpointDiffs.map((diff) => ({
+        id: diff.id,
+        threadId: diff.thread_id,
+        turnId: diff.turn_id,
+        checkpointRef: diff.checkpoint_ref,
+        diffContent: diff.diff_content,
+        createdAt: diff.created_at,
+      })),
+      nextBeforeTurnIndex:
+        turnDiffs.length > 0 && fullPage(turnDiffs.length)
+          ? turnDiffs[0]!.turn_index
+          : null,
+      nextBeforeCheckpointId:
+        checkpointDiffs.length > 0 && fullPage(checkpointDiffs.length)
+          ? checkpointDiffs[0]!.id
+          : null,
     })
   })
 
@@ -435,7 +574,7 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
     const threadId = c.req.param("id")
     const store = state.checkpointReverts
     const pending = store?.get(threadId) ?? null
-    return c.json({
+    return contractResult(c, "threadCheckpointRecovery", {
       recoveryRequired:
         store && typeof store.hasRecoveryRequired === "function"
           ? store.hasRecoveryRequired(threadId)
@@ -449,16 +588,16 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
   })
 
   api.post("/threads/:id/checkpoint-recovery/resolve", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      threadCheckpointRecoveryResolveSchema,
+      "resolveThreadCheckpointRecovery",
       async (_parsed, ctx) => {
         const threadId = ctx.req.param("id")!
         const store = state.checkpointReverts
         if (store && typeof store.resolveQuarantine === "function") {
           store.resolveQuarantine(threadId)
         }
-        return ctx.json({ ok: true })
+        return { ok: true as const }
       },
       { operation: "checkpoint recovery quarantine resolve" }
     )
@@ -490,9 +629,9 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/threads/:id/truncate", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      threadTruncateSchema,
+      "truncateThread",
       async (parsed) => {
         const threadId = c.req.param("id")
         const req = parseThreadTruncateRequest(threadId, parsed)
@@ -513,9 +652,9 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/threads/:id/checkpoint/revert", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      threadCheckpointRevertSchema,
+      "revertThreadCheckpoint",
       async (parsed) => {
         const threadId = c.req.param("id")
         return withCheckpointMaintenance(state, threadId, () =>
@@ -533,9 +672,9 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/threads/:id/worktree", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      threadWorktreeCreateSchema,
+      "createThreadWorktree",
       async (parsed) => {
         const threadId = c.req.param("id")
         const baseRepoPath = await resolveApprovedWorkspaceRoot(
@@ -580,9 +719,9 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
   )
 
   api.post("/threads/:id/worktree/remove", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      threadWorktreeRemoveSchema,
+      "removeThreadWorktree",
       async (parsed) => {
         const threadId = c.req.param("id")
         const workspaceRoots = await resolveThreadWorktreeMutationRoots(
@@ -608,16 +747,16 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
               })
           )
         )
-        return { ok: true }
+        return { ok: true as const }
       },
       { operation: "thread worktree remove" }
     )
   )
 
   api.post("/threads/:id/worktree/reset", (c) =>
-    parseAndHandle(
+    handleHttpContract(
       c,
-      threadWorktreeResetSchema,
+      "resetThreadWorktree",
       async (parsed) => {
         const threadId = c.req.param("id")
         const workspaceRoots = await resolveThreadWorktreeMutationRoots(
@@ -658,25 +797,27 @@ export function registerThreadsRoutes(api: Hono, state: AppState): void {
           workspaces: recoveryWorkspacesForThread(state, threadId),
         },
         async () => {
-          await state.checkpointReactor?.forgetThread(threadId)
+          await state.checkpointReactor.forgetThread(threadId)
           const projectPath = state.threads.getThreadProjectPath?.(threadId)
           if (projectPath) {
             await deleteThreadCheckpointRefs(projectPath, threadId)
           }
           await state.worktrees.removeForThread(threadId, { force: true })
           await Promise.all(
-            (state.providerEventLoggers ?? []).map((eventLogger) =>
+            state.providerEventLoggers.map((eventLogger) =>
               eventLogger.removeThread(threadId)
             )
           )
-          state.transcriptRecoveryStore?.removeThread(threadId)
+          state.transcriptRecoveryStore.removeThread(threadId)
           cancelPendingApprovals(threadId)
-          sessionPermissions.delete(threadId)
+          forgetSessionPermission(threadId)
           clearSessionRules(threadId)
           state.providers.forgetThread(threadId)
           threadGoals.get(state)?.forgetThread(threadId)
+          threadAutonomyRuns.get(state)?.forgetThread(threadId)
+          chatResumes.get(state)?.forgetThread(threadId)
           state.threads.delete(threadId)
-          state.orchestrator?.forgetThread(threadId)
+          state.orchestrator.forgetThread(threadId)
         }
       )
     )
@@ -705,6 +846,19 @@ function activityThreadOwner(
     )
     .get(activityId) as { thread_id?: unknown } | undefined
   return typeof row?.thread_id === "string" ? row.thread_id : null
+}
+
+/**
+ * Upper bound (and default) for one `/threads/:id/diffs` page per list. Each
+ * row can carry a large diff body, so callers that only need counts use the
+ * `summary=1` view and callers that need history page with the cursors.
+ */
+const MAX_DIFF_PAGE_LIMIT = 500
+
+/** `1` / `true` turn a boolean query flag on; anything else leaves it off. */
+function queryFlag(raw: string | undefined): boolean {
+  const value = raw?.trim().toLowerCase()
+  return value === "1" || value === "true"
 }
 
 function optionalQueryInteger(raw: string | undefined): number | undefined {
@@ -771,18 +925,12 @@ async function withThreadTeardown<T>(
   threadId: string,
   operation: () => Promise<T>
 ): Promise<T> {
-  await state.orchestrator?.quiesceThread(threadId)
-  const withHubTeardown = state.providerHub?.withThreadTeardown?.bind(
-    state.providerHub
+  await state.orchestrator.quiesceThread(threadId)
+  // Outermost first: the cross-provider thread token, then the hub, then the
+  // direct-API service, each refusing new work on the thread while it runs.
+  return state.threadTurnCoordinator.withTeardown(threadId, () =>
+    state.providerHub.withThreadTeardown(threadId, () =>
+      state.providers.withThreadTeardown(threadId, operation)
+    )
   )
-  const withLegacyTeardown = state.providers?.withThreadTeardown?.bind(
-    state.providers
-  )
-  const runLegacy = () =>
-    withLegacyTeardown ? withLegacyTeardown(threadId, operation) : operation()
-  const runProviders = () =>
-    withHubTeardown ? withHubTeardown(threadId, runLegacy) : runLegacy()
-  return state.threadTurnCoordinator
-    ? state.threadTurnCoordinator.withTeardown(threadId, runProviders)
-    : runProviders()
 }

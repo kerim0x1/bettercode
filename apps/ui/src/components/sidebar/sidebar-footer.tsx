@@ -1,9 +1,8 @@
-import { useState, type MouseEvent } from "react"
+import { type MouseEvent } from "react"
 import {
   CheckIcon,
   ChartNoAxesCombinedIcon,
-  ChevronDownIcon,
-  CodeIcon,
+  GaugeIcon,
   SettingsIcon as FileSettingsIcon,
   Volume2Icon,
 } from "lucide-react"
@@ -12,7 +11,6 @@ import {
   FlashOffIcon as FlashOffHugeIcon,
   PaintBoardIcon,
   PaintBrush04Icon,
-  Robot01Icon,
 } from "@hugeicons/core-free-icons"
 import { cn } from "@/lib/utils"
 import { useChatStore } from "@/lib/chat-store"
@@ -20,12 +18,7 @@ import { resolveThreadRuntimePath } from "@/lib/thread-context"
 import { openAppWindow } from "@/lib/open-app-window"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Switch } from "@/components/ui/switch"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import { SidebarModeSwitch } from "@/components/sidebar/sidebar-mode-switch"
 import {
   Tooltip,
   TooltipContent,
@@ -41,6 +34,7 @@ import {
   SELECTABLE_THEME_TEMPLATES,
   useAppearanceStore,
 } from "@/lib/appearance-store"
+import { getElectronApi } from "@/services/ipc-facade"
 
 /**
  * Persistent bottom row of the left sidebar.
@@ -48,18 +42,15 @@ import {
  * Contents (left → right):
  *  - User avatar + name (sourced from the local git config; falls back
  *    to the GitHub avatar URL when the user has a `github.user` config).
- *  - Agent/Editor/Canvas mode switcher. If no workspace is attached, it opens the
- *    shared system browser in editor-open-folder mode.
+ *  - Agent/Editor/Canvas switch (`SidebarModeSwitch`), one click per mode.
+ *    If no workspace is attached, Editor opens the shared system browser in
+ *    editor-open-folder mode.
  *  - Appearance menu: Simple/Extended UI toggle, sound effects toggle,
  *    theme picker, and a link out to full appearance settings.
+ *  - Usage and Limits buttons, which open those pages in the main area.
  *  - Gear button for full settings.
- *
- * Uses `<SimpleDropdown>` for the mode switcher in Simple UI mode and the
- * native `<DropdownMenu>` in Extended mode — matching the rest of the UI
- * chrome.
  */
 export function SidebarFooter({
-  minimalChat,
   appMode,
   setAppMode,
   gitHubUser,
@@ -72,7 +63,6 @@ export function SidebarFooter({
   setSettingsTab,
   setSettingsOpen,
 }: {
-  minimalChat: boolean
   appMode: "agent" | "editor" | "design"
   setAppMode: (mode: "agent" | "editor" | "design") => void
   gitHubUser: string
@@ -87,9 +77,7 @@ export function SidebarFooter({
   setSettingsTab: (tab: string) => void
   setSettingsOpen: (open: boolean) => void
 }) {
-  const [modeMenuOpen, setModeMenuOpen] = useState(false)
-  const canOpenWindow =
-    typeof window !== "undefined" && Boolean(window.electronAPI?.windowOpenWith)
+  const canOpenWindow = Boolean(getElectronApi()?.windowOpenWith)
   const windowHint = canOpenWindow
     ? "Right-click to open in a new window"
     : undefined
@@ -100,23 +88,6 @@ export function SidebarFooter({
   const lastInitial =
     nameParts.length > 1 ? nameParts.at(-1)?.charAt(0) || "" : ""
   const initials = `${firstInitial}${lastInitial}`.toUpperCase()
-
-  const modeLabel =
-    appMode === "agent"
-      ? "Agent Mode"
-      : appMode === "design"
-        ? "Canvas Mode"
-        : "Editor Mode"
-  const modeIcon =
-    appMode === "editor" ? (
-      <CodeIcon className="size-3.5" />
-    ) : (
-      <HugeiconsIcon
-        icon={appMode === "design" ? PaintBoardIcon : Robot01Icon}
-        strokeWidth={2}
-        className="size-3.5"
-      />
-    )
 
   const openEditorMode = () => {
     if (
@@ -143,16 +114,19 @@ export function SidebarFooter({
     event: MouseEvent,
     mode: "agent" | "editor" | "design"
   ) => {
-    if (!window.electronAPI?.windowOpenWith) return
+    if (!getElectronApi()?.windowOpenWith) return
     event.preventDefault()
     event.stopPropagation()
-    setModeMenuOpen(false)
     void openAppWindow(mode, activeProjectPath)
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-1.5 px-2 py-3">
-      <div className="flex min-w-0 flex-1 items-center gap-2.5">
+    // The size container. Narrower, the footer gives up the mode's name
+    // (below 400px), then the account name (below 340px), then the avatar
+    // and some spacing (below 262px), so nothing overlaps or clips down to
+    // the sidebar's 220px minimum.
+    <div className="@container flex shrink-0 items-center gap-1.5 px-2 py-3 @max-[262px]:gap-1">
+      <div className="flex min-w-0 flex-1 items-center gap-2.5 @max-[262px]:hidden">
         <Avatar size="sm">
           {gitHubUser ? (
             <AvatarImage
@@ -164,7 +138,7 @@ export function SidebarFooter({
             {initials}
           </AvatarFallback>
         </Avatar>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 @max-[340px]:hidden">
           <p className="truncate text-[11px] font-medium text-sidebar-foreground">
             {displayName}
           </p>
@@ -172,132 +146,17 @@ export function SidebarFooter({
       </div>
 
       {/* The same mode switcher stays available on every surface. */}
-      {minimalChat ? (
-        <SimpleDropdown
-          open={modeMenuOpen}
-          onOpenChange={setModeMenuOpen}
-          align="end"
-          side="top"
-          className="min-w-[140px]"
-          trigger={
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={modeLabel}
-                  className="flex shrink-0 items-center gap-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
-                >
-                  {modeIcon}
-                  <ChevronDownIcon className="size-3 text-muted-foreground/60" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top">{modeLabel}</TooltipContent>
-            </Tooltip>
-          }
-        >
-          <SimpleDropdownItem
-            onClick={() => setAppMode("agent")}
-            onContextMenu={(event) => openModeWindow(event, "agent")}
-            tooltip={windowHint}
-          >
-            <HugeiconsIcon
-              icon={Robot01Icon}
-              strokeWidth={2}
-              className="size-4"
-            />
-            <span className="flex-1">Agent</span>
-            {appMode === "agent" && (
-              <CheckIcon className="size-3.5 text-primary" />
-            )}
-          </SimpleDropdownItem>
-          <SimpleDropdownItem
-            onClick={openEditorMode}
-            onContextMenu={(event) => openModeWindow(event, "editor")}
-            tooltip={windowHint}
-          >
-            <CodeIcon className="size-3.5" />
-            <span className="flex-1">Editor</span>
-            {appMode === "editor" && (
-              <CheckIcon className="size-3.5 text-primary" />
-            )}
-          </SimpleDropdownItem>
-          <SimpleDropdownItem
-            onClick={openDesignMode}
-            onContextMenu={(event) => openModeWindow(event, "design")}
-            tooltip={windowHint}
-          >
-            <HugeiconsIcon
-              icon={PaintBoardIcon}
-              strokeWidth={2}
-              className="size-4"
-            />
-            <span className="flex-1">Canvas</span>
-            {appMode === "design" && (
-              <CheckIcon className="size-3.5 text-primary" />
-            )}
-          </SimpleDropdownItem>
-        </SimpleDropdown>
-      ) : (
-        <DropdownMenu open={modeMenuOpen} onOpenChange={setModeMenuOpen}>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label={modeLabel}
-              title={modeLabel}
-              className="flex shrink-0 items-center gap-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
-            >
-              {modeIcon}
-              <ChevronDownIcon className="size-3 text-muted-foreground/60" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side="top" className="min-w-[140px]">
-            <DropdownMenuItem
-              onClick={() => setAppMode("agent")}
-              onContextMenu={(event) => openModeWindow(event, "agent")}
-              title={windowHint}
-              className={cn(appMode === "agent" && "bg-accent")}
-            >
-              <HugeiconsIcon
-                icon={Robot01Icon}
-                strokeWidth={2}
-                className="size-4"
-              />
-              Agent
-              {appMode === "agent" && (
-                <CheckIcon className="ml-auto size-3.5" />
-              )}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={openEditorMode}
-              onContextMenu={(event) => openModeWindow(event, "editor")}
-              title={windowHint}
-              className={cn(appMode === "editor" && "bg-accent")}
-            >
-              <CodeIcon className="size-3.5" />
-              Editor
-              {appMode === "editor" && (
-                <CheckIcon className="ml-auto size-3.5" />
-              )}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={openDesignMode}
-              onContextMenu={(event) => openModeWindow(event, "design")}
-              title={windowHint}
-              className={cn(appMode === "design" && "bg-accent")}
-            >
-              <HugeiconsIcon
-                icon={PaintBoardIcon}
-                strokeWidth={2}
-                className="size-4"
-              />
-              Canvas
-              {appMode === "design" && (
-                <CheckIcon className="ml-auto size-3.5" />
-              )}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
+      <SidebarModeSwitch
+        mode={appMode}
+        onSelect={(mode) => {
+          if (mode === "editor") openEditorMode()
+          else if (mode === "design") openDesignMode()
+          else setAppMode("agent")
+        }}
+        onOpenWindow={canOpenWindow ? openModeWindow : undefined}
+        windowHint={windowHint}
+        className="@max-[262px]:mr-auto"
+      />
 
       {/* Appearance */}
       <SimpleDropdown
@@ -310,7 +169,7 @@ export function SidebarFooter({
               <button
                 type="button"
                 aria-label="Appearance"
-                className="flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                className="flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground @max-[262px]:p-1"
               >
                 <HugeiconsIcon
                   icon={PaintBrush04Icon}
@@ -422,7 +281,7 @@ export function SidebarFooter({
           <button
             type="button"
             aria-label="Usage"
-            className="flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            className="flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground @max-[262px]:p-1"
             onClick={() =>
               window.dispatchEvent(new CustomEvent("betterc0de:open-usage"))
             }
@@ -437,8 +296,24 @@ export function SidebarFooter({
         <TooltipTrigger asChild>
           <button
             type="button"
+            aria-label="Limits"
+            className="flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground @max-[262px]:p-1"
+            onClick={() =>
+              window.dispatchEvent(new CustomEvent("betterc0de:open-limits"))
+            }
+          >
+            <GaugeIcon className="size-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top">Limits</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
             aria-label="Settings"
-            className="flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            className="flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground @max-[262px]:p-1"
             onClick={() => setSettingsOpen(true)}
           >
             <FileSettingsIcon className="size-3.5" />

@@ -1,49 +1,32 @@
 /// <reference types="node" />
+/**
+ * The IPC channel registry (`apps/shell/shared/ipc-contract.cjs`) is the one
+ * source of truth for the bridge. These checks hold the two sides to it: the
+ * preload exposes a method for every channel and event, and the main process
+ * registers every channel exactly once. (A TypeScript twin of the registry
+ * used to be kept in sync by a parity test; nothing imported it, so it was
+ * removed.)
+ */
 import { describe, it, expect, vi } from "vitest"
 import { createRequire } from "node:module"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { runInNewContext } from "node:vm"
-import { IpcChannel, IpcEvent } from "../../../shell/shared/ipc-contract"
 
 const requireCjs = createRequire(import.meta.url)
-const cjs = requireCjs("../../../shell/shared/ipc-contract.cjs") as {
+const { IpcChannel, IpcEvent } = requireCjs(
+  "../../../shell/shared/ipc-contract.cjs"
+) as {
   IpcChannel: Record<string, string>
   IpcEvent: Record<string, string>
 }
 
-describe("IPC contract parity between .ts and .cjs", () => {
-  it("IpcChannel keys match", () => {
-    expect(Object.keys(cjs.IpcChannel).sort()).toEqual(
-      Object.keys(IpcChannel).sort()
-    )
-  })
-
-  it("IpcChannel values match", () => {
-    expect(Object.values(cjs.IpcChannel).sort()).toEqual(
-      Object.values(IpcChannel).sort()
-    )
-  })
-
-  it("IpcEvent keys match", () => {
-    expect(Object.keys(cjs.IpcEvent).sort()).toEqual(
-      Object.keys(IpcEvent).sort()
-    )
-  })
-
-  it("IpcEvent values match", () => {
-    expect(Object.values(cjs.IpcEvent).sort()).toEqual(
-      Object.values(IpcEvent).sort()
-    )
-  })
-
-  it("every channel value matches its key by identity", () => {
-    for (const [tsKey, tsValue] of Object.entries(IpcChannel)) {
-      expect(cjs.IpcChannel[tsKey]).toBe(tsValue)
-    }
-    for (const [tsKey, tsValue] of Object.entries(IpcEvent)) {
-      expect(cjs.IpcEvent[tsKey]).toBe(tsValue)
-    }
+describe("IPC contract registry", () => {
+  it("has unique channel and event names", () => {
+    const channels = Object.values(IpcChannel)
+    expect(new Set(channels).size).toBe(channels.length)
+    const events = Object.values(IpcEvent)
+    expect(new Set(events).size).toBe(events.length)
   })
 
   it("executes every preload method against the channel registry and removes only its own listeners", async () => {
@@ -156,10 +139,14 @@ describe("IPC contract parity between .ts and .cjs", () => {
     }
     const executable = new Set([
       "main.cjs",
+      // main.cjs registers the app-level handlers through it at load.
+      "shared/app-ipc.cjs",
       ...Object.keys(registrations),
       "shared/ipc-contract.cjs",
       "shared/ipc-envelope.cjs",
       "shared/ipc-handlers-factory.cjs",
+      // Every registration goes through it, so it must run for real.
+      "shared/trusted-ipc.cjs",
       "shared/backend-endpoint.cjs",
     ])
     function load(relative: string): Record<string, unknown> {
@@ -197,8 +184,6 @@ describe("IPC contract parity between .ts and .cjs", () => {
                   async loadAllEnabled() {}
                 },
               }
-            if (resolved === "shared/persist-adapter.cjs")
-              return { createArrayPersistAdapter: () => ({}) }
             // Registration must not perform I/O; handlers' dependencies are inert.
             return {}
           },

@@ -275,6 +275,8 @@ export function normalizeUsageSnapshot(
       : raw
   if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null
   const record = usage as Record<string, unknown>
+  const breakdown = normalizeUsageBreakdown(record)
+  if (breakdown !== undefined) return breakdown
   const inputTokens = readNumberFromRecord(
     record,
     "inputTokens",
@@ -335,6 +337,67 @@ export function normalizeUsageSnapshot(
   if (typeof compactsAutomatically === "boolean")
     out.compactsAutomatically = compactsAutomatically
   return out
+}
+
+/**
+ * The app-server's `ThreadTokenUsage`: `{ total, last, modelContextWindow }`.
+ * `last` is the latest request, so its total is what fills the window now;
+ * `total` is everything the thread has processed. Codex compacts its own
+ * context near the limit. Returns `undefined` for any other shape.
+ */
+function normalizeUsageBreakdown(
+  record: Record<string, unknown>
+): Record<string, unknown> | null | undefined {
+  const last = usageRecord(record.last ?? record.last_token_usage)
+  const total = usageRecord(record.total ?? record.total_token_usage)
+  if (!last && !total) return undefined
+  const lastTokens = last
+    ? readNumberFromRecord(last, "totalTokens", "total_tokens")
+    : undefined
+  const totalTokens = total
+    ? readNumberFromRecord(total, "totalTokens", "total_tokens")
+    : undefined
+  const usedTokens = lastTokens ?? totalTokens
+  if (usedTokens === undefined || usedTokens <= 0) return null
+  const out: Record<string, unknown> = {
+    usedTokens,
+    compactsAutomatically: true,
+  }
+  if (totalTokens !== undefined) out.totalProcessedTokens = totalTokens
+  const maxTokens = readNumberFromRecord(
+    record,
+    "modelContextWindow",
+    "model_context_window"
+  )
+  if (maxTokens !== undefined && maxTokens > 0) out.maxTokens = maxTokens
+  const fields: Array<[string, string, string]> = [
+    ["InputTokens", "inputTokens", "input_tokens"],
+    ["CachedInputTokens", "cachedInputTokens", "cached_input_tokens"],
+    ["OutputTokens", "outputTokens", "output_tokens"],
+    [
+      "ReasoningOutputTokens",
+      "reasoningOutputTokens",
+      "reasoning_output_tokens",
+    ],
+  ]
+  for (const [suffix, camel, snake] of fields) {
+    const totalValue = total
+      ? readNumberFromRecord(total, camel, snake)
+      : undefined
+    if (totalValue !== undefined) out[camel] = totalValue
+    const lastValue = last
+      ? readNumberFromRecord(last, camel, snake)
+      : undefined
+    if (lastValue !== undefined) out[`last${suffix}`] = lastValue
+  }
+  if (lastTokens !== undefined) out.lastUsedTokens = lastTokens
+  return out
+}
+
+function usageRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
 }
 
 export function normalizePlanSteps(

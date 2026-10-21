@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest"
 import type { ThreadActivity } from "@/lib/chat-store"
-import { derivePendingPlanApprovals } from "@/lib/pending-approvals"
+import {
+  derivePendingApprovals,
+  derivePendingPlanApprovals,
+} from "@/lib/pending-approvals"
 
 function activity(partial: Partial<ThreadActivity>): ThreadActivity {
   return {
@@ -133,5 +136,97 @@ describe("derivePendingPlanApprovals", () => {
       }),
     ]
     expect(derivePendingPlanApprovals(activities)).toHaveLength(0)
+  })
+
+  it("drops a plan approval whatever kind of resolution names it", () => {
+    const activities = [
+      activity({
+        id: "1",
+        sequence: 2,
+        kind: "plan-approval.requested",
+        payload: { requestId: "req-1", planMarkdown: "# Plan" },
+      }),
+      // Sorted before the request, and reported as a tool approval.
+      activity({
+        id: "2",
+        sequence: 1,
+        kind: "approval.resolved",
+        payload: { requestId: "req-1", decision: "approve" },
+      }),
+    ]
+    expect(derivePendingPlanApprovals(activities)).toEqual([])
+  })
+})
+
+describe("derivePendingApprovals", () => {
+  it("maps the request's context and folds the provider kind", () => {
+    const [approval] = derivePendingApprovals([
+      activity({
+        id: "1",
+        sequence: 1,
+        turnId: "turn-1",
+        providerInstanceId: "claude-main",
+        kind: "approval.requested",
+        payload: {
+          requestId: "req-1",
+          providerKind: "claude_cli",
+          tool_name: "Bash",
+          requestKind: "command",
+          input: { command: "npm test" },
+          decision_reason: "Runs a command",
+          blocked_path: "/repo",
+          suggestions: [],
+        },
+      }),
+    ])
+    expect(approval).toEqual({
+      requestId: "req-1",
+      providerKind: "claude",
+      providerInstanceId: "claude-main",
+      toolName: "Bash",
+      requestKind: "command",
+      input: { command: "npm test" },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      turnId: "turn-1",
+      decisionReason: "Runs a command",
+      blockedPath: "/repo",
+    })
+  })
+
+  it("lists unsequenced requests first and settles stale ones", () => {
+    const approvals = derivePendingApprovals([
+      activity({
+        id: "1",
+        sequence: 5,
+        kind: "approval.requested",
+        payload: { requestId: "sequenced" },
+      }),
+      activity({
+        id: "2",
+        sequence: null,
+        createdAt: "2026-01-01T00:05:00.000Z",
+        kind: "approval.requested",
+        payload: { requestId: "unsequenced" },
+      }),
+      activity({
+        id: "3",
+        sequence: 6,
+        kind: "approval.requested",
+        payload: { requestId: "stale" },
+      }),
+      activity({
+        id: "4",
+        sequence: 7,
+        kind: "provider.approval.respond.failed",
+        payload: {
+          requestId: "stale",
+          detail: "Stale pending approval request: stale.",
+        },
+      }),
+    ])
+    expect(approvals.map((approval) => approval.requestId)).toEqual([
+      "unsequenced",
+      "sequenced",
+    ])
   })
 })

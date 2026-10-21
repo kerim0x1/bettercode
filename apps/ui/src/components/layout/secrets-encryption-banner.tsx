@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { getElectronApi } from "@/services/ipc-facade"
 
 /**
  * S4: persistent banner shown when the OS keyring is unavailable and
@@ -39,7 +40,7 @@ export function SecretsEncryptionBanner() {
     let cancelled = false
     void (async () => {
       try {
-        const info = await window.electronAPI?.getAppInfo?.()
+        const info = await getElectronApi()?.getAppInfo?.()
         if (cancelled) return
         // Older builds don't return the field; treat absent as encrypted
         // so we don't false-alarm users on macOS/Windows.

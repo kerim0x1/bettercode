@@ -37,6 +37,11 @@ import {
   resolveProviderModelSwitchSelection,
 } from "@/lib/provider-model-selection"
 import type { ComposerFooterProps } from "./chat-composer-types"
+import {
+  CompareChipModels,
+  ComposerCompareHint,
+  useComposerCompare,
+} from "./composer-compare"
 
 const MAX_RECENT_MODELS = 5
 
@@ -50,7 +55,6 @@ export function ComposerInlineModelTrigger(props: ComposerFooterProps) {
     currentModelName,
     selectedProvider,
     currentProvider,
-    selectedProviderId,
     selectedModel,
     setSelectedModel,
     setSelectedProviderId,
@@ -63,6 +67,8 @@ export function ComposerInlineModelTrigger(props: ComposerFooterProps) {
   } = props
 
   const triggerProvider = selectedProvider ?? resolveDefaultProvider(providers)
+  // Shift/Ctrl/⌘-click in a new chat: one prompt to several models.
+  const compare = useComposerCompare(props)
   const thinkingOptions = useMemo(
     () => getModelThinkingOptions(currentProvider, selectedModel),
     [currentProvider, selectedModel]
@@ -123,15 +129,21 @@ export function ComposerInlineModelTrigger(props: ComposerFooterProps) {
             "focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none"
           )}
         >
-          <ProviderIcon
-            provider={triggerProvider}
-            className={cn(
-              "size-3.5 shrink-0",
-              (triggerProvider.providerKind ?? triggerProvider.id) ===
-                "openai" && "size-4"
-            )}
-          />
-          <span className="max-w-[140px] truncate">{currentModelName}</span>
+          {compare.active ? (
+            <CompareChipModels compare={compare} className="max-w-[160px]" />
+          ) : (
+            <>
+              <ProviderIcon
+                provider={triggerProvider}
+                className={cn(
+                  "size-3.5 shrink-0",
+                  (triggerProvider.providerKind ?? triggerProvider.id) ===
+                    "openai" && "size-4"
+                )}
+              />
+              <span className="max-w-[140px] truncate">{currentModelName}</span>
+            </>
+          )}
           <ChevronDownIcon className="size-3 shrink-0 opacity-60" />
         </button>
       </DropdownMenuTrigger>
@@ -168,12 +180,19 @@ export function ComposerInlineModelTrigger(props: ComposerFooterProps) {
               {favoriteEntries.length > 0 ? "Favourites" : "Recent"}
             </div>
             {recentEntries.map(({ key, provider, model }) => {
-              const isActive =
-                selectedProviderId === provider.id && selectedModel === model.id
+              // While comparing, every chosen model is checked.
+              const isActive = compare.isRowSelected(provider.id, model.id)
               return (
                 <DropdownMenuItem
                   key={key}
-                  onClick={() => selectProviderModel(provider, model.id)}
+                  onClick={(event) => {
+                    if (compare.handleModelClick(event, provider, model.id))
+                      return
+                    selectProviderModel(provider, model.id)
+                  }}
+                  onKeyDown={(event) =>
+                    compare.handleModelKeyDown(event, provider, model.id)
+                  }
                   className={cn("gap-2", isActive && "bg-accent")}
                 >
                   <ProviderIcon provider={provider} className="size-3.5" />
@@ -265,6 +284,7 @@ export function ComposerInlineModelTrigger(props: ComposerFooterProps) {
             </DropdownMenuItem>
           </>
         )}
+        <ComposerCompareHint compare={compare} />
       </DropdownMenuContent>
     </DropdownMenu>
   )

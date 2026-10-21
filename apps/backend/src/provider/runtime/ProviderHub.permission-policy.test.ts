@@ -6,6 +6,7 @@ import type {
 } from "./contracts"
 import { ProviderHub } from "./ProviderHub"
 import { HttpError } from "../../errors"
+import type { LegacyProviderEvent } from "../types"
 
 function policyTestAdapter(
   sendTurn: () => Promise<void>
@@ -193,6 +194,69 @@ describe("ProviderHub pre-dispatch policy", () => {
     )
 
     unsubscribe()
+    await hub.stopAll()
+  })
+
+  it("runs the shared turn lifecycle policy in the legacy event shape", async () => {
+    const sendTurn = vi.fn(async () => {})
+    const before: LegacyProviderEvent[] = []
+    const after: LegacyProviderEvent[] = []
+    const preDispatchPolicy = vi.fn(() => ({
+      decision: "deny" as const,
+      toolName: "AgentMode",
+      reason: "Agent Mode is disabled for this untrusted workspace.",
+    }))
+    const hub = new ProviderHub({
+      adapters: [policyTestAdapter(sendTurn)],
+      projectProviderPolicyLoader: async () => null,
+      turnLifecycle: {
+        beforeTurn: async (event) => {
+          before.push(event)
+        },
+        preDispatchPolicy,
+        afterTurn: async (event) => {
+          after.push(event)
+        },
+      },
+    })
+
+    const turn = hub.startTurn("claude", {
+      threadId: "thread-shared-policy",
+      message: "change the workspace",
+      modelId: "test-model",
+      history: [],
+      projectPath: process.cwd(),
+      appMode: "agent",
+    })
+    await expect(turn.settled).resolves.toBeUndefined()
+
+    expect(sendTurn).not.toHaveBeenCalled()
+    expect(before).toEqual([
+      {
+        event_type: "turn_started",
+        thread_id: "thread-shared-policy",
+        payload: {
+          turn_id: turn.turnId,
+          dispatchTurnId: turn.turnId,
+          provider_kind: "claude",
+          provider_instance_id: "claude",
+          project_path: process.cwd(),
+        },
+      },
+    ])
+    expect(preDispatchPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: "thread-shared-policy",
+        turnId: turn.turnId,
+        providerInstanceId: "claude",
+      })
+    )
+    expect(after).toHaveLength(1)
+    expect(after[0]).toMatchObject({
+      event_type: "turn_completed",
+      thread_id: "thread-shared-policy",
+    })
+
     await hub.stopAll()
   })
 })

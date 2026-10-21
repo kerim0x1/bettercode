@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events"
 import { describe, expect, it, vi } from "vitest"
 import { checkpointRefForThreadTurn } from "@betterc0de/schema"
-import type { ProviderRuntimeEvent } from "../provider/types"
+import type { LegacyProviderEvent } from "../provider/types"
 import { CheckpointReactor } from "./CheckpointReactor"
 
 function logger() {
@@ -14,7 +14,7 @@ function logger() {
 function turnEvent(
   event_type: string,
   payload: Record<string, unknown> = {}
-): ProviderRuntimeEvent {
+): LegacyProviderEvent {
   return {
     event_type,
     thread_id: "thread-1",
@@ -24,7 +24,7 @@ function turnEvent(
 
 describe("CheckpointReactor", () => {
   it("keeps delimiter-containing thread and turn identities separate", async () => {
-    const emitted: ProviderRuntimeEvent[] = []
+    const emitted: LegacyProviderEvent[] = []
     const captureCheckpoint = vi.fn(async () => undefined)
     const reactor = new CheckpointReactor({
       eventBus: new EventEmitter(),
@@ -82,7 +82,7 @@ describe("CheckpointReactor", () => {
   })
 
   it("captures hidden git refs around a provider turn and emits a diff update", async () => {
-    const emitted: ProviderRuntimeEvent[] = []
+    const emitted: LegacyProviderEvent[] = []
     const captureCheckpoint = vi.fn().mockResolvedValue(undefined)
     const diffCheckpoints = vi.fn().mockResolvedValue({
       diff: [
@@ -167,7 +167,7 @@ describe("CheckpointReactor", () => {
   })
 
   it("uses provider turn ids when native runtimes provide them", async () => {
-    const emitted: ProviderRuntimeEvent[] = []
+    const emitted: LegacyProviderEvent[] = []
     const reactor = new CheckpointReactor({
       eventBus: new EventEmitter(),
       threads: { getThreadProjectPath: () => "/repo" },
@@ -232,7 +232,7 @@ describe("CheckpointReactor", () => {
   })
 
   it("captures failed turn checkpoints as error after the final failed completion", async () => {
-    const emitted: ProviderRuntimeEvent[] = []
+    const emitted: LegacyProviderEvent[] = []
     const captureCheckpoint = vi.fn().mockResolvedValue(undefined)
     const diffCheckpoints = vi.fn().mockResolvedValue({
       diff: [
@@ -483,7 +483,7 @@ describe("CheckpointReactor", () => {
     })
     const captureCheckpoint = vi.fn().mockResolvedValue(undefined)
     const deleteCheckpointRefs = vi.fn().mockResolvedValue(undefined)
-    const emitted: ProviderRuntimeEvent[] = []
+    const emitted: LegacyProviderEvent[] = []
     const reactor = new CheckpointReactor({
       eventBus: new EventEmitter(),
       threads: { getThreadProjectPath: () => "/repo" },
@@ -930,7 +930,7 @@ describe("CheckpointReactor", () => {
   it("recovers a durably admitted crash-gap before later turns are admitted", async () => {
     const baseCheckpointRef = checkpointRefForThreadTurn("thread-1", 2)
     const checkpointRef = checkpointRefForThreadTurn("thread-1", 3)
-    const emitted: ProviderRuntimeEvent[] = []
+    const emitted: LegacyProviderEvent[] = []
     const completeTurnAdmission = vi.fn()
     const failTurnAdmission = vi.fn()
     const deleteCheckpointRefs = vi.fn().mockResolvedValue(undefined)
@@ -1059,7 +1059,7 @@ describe("CheckpointReactor", () => {
   it("completes recovery with a bounded file summary when the patch is too large", async () => {
     const baseCheckpointRef = checkpointRefForThreadTurn("thread-1", 2)
     const checkpointRef = checkpointRefForThreadTurn("thread-1", 3)
-    const emitted: ProviderRuntimeEvent[] = []
+    const emitted: LegacyProviderEvent[] = []
     const outputLimitError = Object.assign(
       new Error("git diff exceeded the output limit"),
       { gitArgs: ["diff", "--patch"] }
@@ -1143,7 +1143,7 @@ describe("CheckpointReactor", () => {
     // instead of throwing; a partial patch must never be stored as complete.
     const baseCheckpointRef = checkpointRefForThreadTurn("thread-1", 2)
     const checkpointRef = checkpointRefForThreadTurn("thread-1", 3)
-    const emitted: ProviderRuntimeEvent[] = []
+    const emitted: LegacyProviderEvent[] = []
     const completeTurnAdmission = vi.fn()
     const reactor = new CheckpointReactor({
       eventBus: new EventEmitter(),

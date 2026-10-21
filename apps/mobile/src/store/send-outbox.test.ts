@@ -5,6 +5,7 @@ import {
   PERMISSION_MODE_QUEUED,
 } from "@betterc0de/schema/chat-controls"
 import { httpContracts } from "@betterc0de/schema/http-contracts"
+import { bypassUnavailableNotice } from "@/lib/bypass"
 import { DEFAULT_MAX_REQUEST_BYTES } from "@/lib/compat"
 import { setMaxRequestBytes } from "@/lib/request-limit"
 import { requestBytes } from "@/lib/request-size"
@@ -408,6 +409,60 @@ describe("changing the permission preset", () => {
     expect(
       useComposerSettings.getState().settingsFor("thread-1").permissionLevel
     ).toBe("bypass")
+  })
+
+  it("keeps the previous preset when the desktop refuses Bypass to this phone", async () => {
+    useAppStore.setState({ selectedModels: { "thread-1": selection } })
+    useComposerSettings
+      .getState()
+      .update("thread-1", { permissionLevel: "allow-edits" })
+    const { api: desktopApi } = api(async () => {
+      throw new RemoteApiError(
+        "Full access (bypass) from a paired device requires terminal access to be allowed on the desktop host.",
+        403,
+        "remote_bypass_disabled"
+      )
+    })
+    // Outside a turn too: the next message would otherwise run as Ask first
+    // while the chat shows Bypass.
+    expect(
+      await store().changePermissionLevel(desktopApi, "thread-1", "bypass")
+    ).toEqual(bypassUnavailableNotice("allow-edits"))
+    expect(
+      useComposerSettings.getState().settingsFor("thread-1").permissionLevel
+    ).toBe("allow-edits")
+  })
+
+  it("falls back to Ask first when the refused chat was already on Bypass", async () => {
+    useAppStore.setState({ streamsByThread: { "thread-1": running } })
+    useComposerSettings
+      .getState()
+      .update("thread-1", { permissionLevel: "bypass" })
+    const { api: desktopApi } = api(async () => {
+      throw new RemoteApiError("refused", 403, "remote_bypass_disabled")
+    })
+    expect(
+      await store().changePermissionLevel(desktopApi, "thread-1", "bypass")
+    ).toEqual(bypassUnavailableNotice("ask-on-edit"))
+    expect(
+      useComposerSettings.getState().settingsFor("thread-1").permissionLevel
+    ).toBe("ask-on-edit")
+  })
+
+  it("leaves a preset chosen while the refused change was on its way", async () => {
+    useAppStore.setState({ selectedModels: { "thread-1": selection } })
+    const { api: desktopApi } = api(async () => {
+      useComposerSettings
+        .getState()
+        .update("thread-1", { permissionLevel: "read-only" })
+      throw new RemoteApiError("refused", 403, "remote_bypass_disabled")
+    })
+    expect(
+      await store().changePermissionLevel(desktopApi, "thread-1", "bypass")
+    ).toBeNull()
+    expect(
+      useComposerSettings.getState().settingsFor("thread-1").permissionLevel
+    ).toBe("read-only")
   })
 
   it("needs no notice outside a turn", async () => {

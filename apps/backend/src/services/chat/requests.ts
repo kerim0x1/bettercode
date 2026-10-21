@@ -15,7 +15,12 @@ import {
   makeResolvedRequestActivity,
 } from "../../provider/activity-projection"
 import { recordApprovedPermissionUpdates } from "../../provider/agent-permission-updates"
-import { setSessionPermission } from "../../provider/permissions"
+import {
+  isBypassPermissionLevel,
+  normalizeGatePermissionLevel,
+  providerPermissionModeForLevel,
+  setSessionPermission,
+} from "../../provider/permissions"
 import {
   approvalRequestId as toApprovalRequestId,
   threadId as toThreadId,
@@ -28,6 +33,106 @@ import {
   chatRecoveryWorkspaces,
   resolveHubInstanceId,
 } from "./dispatch"
+
+/**
+ * What the caller of a chat route may do with the permission system.
+ *
+ * Bypass (`bypassPermissions`, Codex `danger-full-access`,
+ * `claude --dangerously-skip-permissions`) hands the agent an unattended
+ * shell. A paired device holds a bearer, which proves possession of a
+ * session, not a human at this machine — so it gets bypass only when the
+ * desktop owner granted paired devices a terminal and the session is a full
+ * one (the same rule `/shell/run` applies). Durable permission grants are
+ * policy changes and stay desktop-only, as on `/permissions/*`.
+ */
+export interface RemotePermissionAccess {
+  /** A paired device rather than the desktop's own renderer. */
+  readonly remote: boolean
+  /** May request or keep bypass-level permission. */
+  readonly mayBypass: boolean
+}
+
+export const DESKTOP_PERMISSION_ACCESS: RemotePermissionAccess = {
+  remote: false,
+  mayBypass: true,
+}
+
+export function remoteBypassRefusal(): HttpError {
+  return new HttpError(
+    403,
+    "Full access (bypass) from a paired device requires terminal access to be allowed on the desktop host.",
+    "remote_bypass_disabled"
+  )
+}
+
+type PermissionScopedChatBody = {
+  readonly permission_level: string | null
+  readonly sandbox?: string | null
+  readonly approvalPolicy?: string | null
+}
+
+/**
+ * Caps a chat turn requested by a paired device without the bypass grant.
+ * A bypass (or missing) level becomes `ask-on-edit`, so the turn still runs
+ * and its approvals surface; the never-ask / unsandboxed provider hints are
+ * dropped. A missing level is pinned too: adapters would otherwise fall back
+ * to the session's stored runtime mode, which may be full access.
+ */
+export function capRemoteChatPermissions<T extends PermissionScopedChatBody>(
+  body: T,
+  access: RemotePermissionAccess
+): T {
+  if (access.mayBypass) return body
+  const level = body.permission_level?.trim() ?? ""
+  return {
+    ...body,
+    permission_level:
+      !level || isBypassPermissionLevel(level) ? "ask-on-edit" : level,
+    ...(body.sandbox === "dangerFullAccess" ? { sandbox: null } : {}),
+    ...(body.approvalPolicy === "never" ? { approvalPolicy: null } : {}),
+  } as T
+}
+
+const DURABLE_PERMISSION_DESTINATIONS = new Set([
+  "userSettings",
+  "projectSettings",
+  "localSettings",
+])
+
+/**
+ * The approval's "always allow" updates a caller may apply. A paired device
+ * never writes durable grants (policy changes are desktop-only), and without
+ * the bypass grant it cannot switch the session to bypass either.
+ */
+export function permittedApprovalUpdates<T>(
+  updates: ReadonlyArray<T> | null | undefined,
+  access: RemotePermissionAccess
+): T[] {
+  if (!updates) return []
+  if (!access.remote) return [...updates]
+  return updates.filter((update) => {
+    if (!update || typeof update !== "object") return false
+    const record = update as {
+      destination?: unknown
+      type?: unknown
+      mode?: unknown
+    }
+    if (
+      typeof record.destination === "string" &&
+      DURABLE_PERMISSION_DESTINATIONS.has(record.destination)
+    ) {
+      return false
+    }
+    if (
+      !access.mayBypass &&
+      record.type === "setMode" &&
+      record.mode === "bypassPermissions"
+    ) {
+      return false
+    }
+    return true
+  })
+}
 
 /**
  * Every request settlement this module records goes through here: persist,
@@ -148,8 +253,17 @@ export function withChatRecoveryMutation<T>(
 
 export async function respondToChatApproval(
   state: AppState,
-  body: z.output<typeof chatApprovalSchema>
+  requested: z.output<typeof chatApprovalSchema>,
+  access: RemotePermissionAccess = DESKTOP_PERMISSION_ACCESS
 ): Promise<ApprovalResponse> {
+  const permittedUpdates = permittedApprovalUpdates(
+    requested.updatedPermissions,
+    access
+  )
+  const body = {
+    ...requested,
+    updatedPermissions: requested.updatedPermissions ? permittedUpdates : null,
+  }
   return withChatRecoveryMutation(state, body.threadId, async () => {
     const rawDecision = body.decision.trim().toLowerCase()
     const decision =
@@ -321,23 +435,27 @@ export async function respondToChatPlan(
 
 export async function updateChatPermissionMode(
   state: AppState,
-  body: z.output<typeof chatPermissionModeSchema>
+  body: z.output<typeof chatPermissionModeSchema>,
+  access: RemotePermissionAccess = DESKTOP_PERMISSION_ACCESS
 ): Promise<ApprovalResponse> {
+  if (!access.mayBypass && isBypassPermissionLevel(body.permissionLevel)) {
+    throw remoteBypassRefusal()
+  }
   return withChatRecoveryMutation(state, body.threadId, async () => {
     setSessionPermission(body.threadId, body.permissionLevel)
     const hubKind = asHubProviderKind(body.providerKind)
     if (!hubKind) {
       return { status: "acknowledged", applied: "unsupported" }
     }
-    const level = body.permissionLevel.trim().toLowerCase()
-    const mode =
-      level === "allow-edits" || level === "auto-accept-edits"
-        ? ("acceptEdits" as const)
-        : level === "bypass" || level === "full-access"
-          ? ("bypassPermissions" as const)
-          : level === "plan"
-            ? ("plan" as const)
-            : ("default" as const)
+    // One alias table for every consumer: `full-access` is `allow-edits`
+    // here exactly as it is for the tool gates and the session map, and the
+    // adapters receive the canonical spelling rather than re-mapping a raw
+    // string of their own.
+    const mode = providerPermissionModeForLevel(body.permissionLevel)
+    const permissionLevel =
+      mode === "plan"
+        ? "plan"
+        : normalizeGatePermissionLevel(body.permissionLevel)
     try {
       const providerInstanceId = resolveHubInstanceId({
         state,
@@ -353,7 +471,7 @@ export async function updateChatPermissionMode(
         mode,
         providerInstanceId,
         state.providerSessionBindings,
-        body.permissionLevel
+        permissionLevel
       )
       return { status: "acknowledged", applied: result.applied }
     } catch (error) {

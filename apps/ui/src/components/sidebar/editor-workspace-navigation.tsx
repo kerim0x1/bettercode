@@ -38,7 +38,7 @@ const secondaryViews = [
   { id: "references", label: "References", icon: SearchCodeIcon },
 ] as const
 const viewButtonClassName =
-  "flex h-8 min-w-0 flex-auto items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium whitespace-nowrap"
+  "flex h-7 min-w-0 flex-auto items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium whitespace-nowrap"
 const viewIconClassName =
   "hidden size-3.5 shrink-0 @min-[380px]/workspace-navigation:block"
 
@@ -58,6 +58,11 @@ export function EditorWorkspaceNavigation({
   const navRef = useRef<HTMLElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
   const moreRef = useRef<HTMLButtonElement>(null)
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>())
+  const [indicator, setIndicator] = useState<{
+    left: number
+    width: number
+  } | null>(null)
   const [visibleViews, setVisibleViews] = useState<readonly string[]>(() =>
     primaryViews.map(({ id }) => id)
   )
@@ -114,6 +119,28 @@ export function EditorWorkspaceNavigation({
   const overflowViews = primaryViews.filter(
     ({ id }) => !visibleViews.includes(id)
   )
+  // The thumb follows the active tab, or the More button when the active
+  // view lives in its menu.
+  useLayoutEffect(() => {
+    const nav = navRef.current
+    if (!nav) return
+    const place = () => {
+      const target = tabRefs.current.get(view) ?? moreRef.current
+      setIndicator((previous) =>
+        !target
+          ? null
+          : previous?.left === target.offsetLeft &&
+              previous.width === target.offsetWidth
+            ? previous
+            : { left: target.offsetLeft, width: target.offsetWidth }
+      )
+    }
+    place()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(place)
+    observer.observe(nav)
+    return () => observer.disconnect()
+  }, [view, visibleViews])
   const threads = useChatStore((state) => state.threads)
   const workspaces = useMemo(() => {
     const seen = new Set<string>()
@@ -201,11 +228,25 @@ export function EditorWorkspaceNavigation({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      {/* Drawn like the title bar's mode switch and the canvas toolbar: a
+          slightly raised bar and a flat active fill that slides to the
+          selected view. */}
       <nav
         ref={navRef}
         aria-label="Editor views"
-        className="relative mt-2 flex min-w-0 items-center gap-0.5 rounded-lg bg-sidebar-accent/35 p-0.5"
+        className="relative mt-2 flex min-w-0 items-center gap-0.5 rounded-[10px] border border-border/60 bg-card/70 p-[3px]"
       >
+        {indicator && (
+          <span
+            aria-hidden="true"
+            data-slot="editor-view-indicator"
+            className="pointer-events-none absolute inset-y-[3px] left-0 rounded-md bg-primary/15 transition-[transform,width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+            style={{
+              width: indicator.width,
+              transform: `translateX(${indicator.left}px)`,
+            }}
+          />
+        )}
         <div
           aria-hidden="true"
           className="pointer-events-none invisible absolute inset-0 overflow-hidden"
@@ -224,16 +265,20 @@ export function EditorWorkspaceNavigation({
           .map(({ id, label, icon: Icon }) => (
             <button
               key={id}
+              ref={(node) => {
+                if (node) tabRefs.current.set(id, node)
+                else tabRefs.current.delete(id)
+              }}
               type="button"
               aria-current={view === id ? "page" : undefined}
               title={label}
               onClick={() => onViewChange(id)}
               className={cn(
                 viewButtonClassName,
-                "transition-colors focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none",
+                "relative z-10 transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none",
                 view === id
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                  ? "text-primary"
+                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
               )}
             >
               <Icon className={viewIconClassName} strokeWidth={1.75} />
@@ -248,9 +293,10 @@ export function EditorWorkspaceNavigation({
               aria-label="More editor views"
               title="More editor views"
               className={cn(
-                "flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none",
-                secondaryViews.some((item) => item.id === view) &&
-                  "bg-background text-foreground"
+                "relative z-10 flex h-7 w-8 shrink-0 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none",
+                visibleViews.includes(view)
+                  ? "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                  : "text-primary"
               )}
             >
               <MoreHorizontalIcon className="size-4" />

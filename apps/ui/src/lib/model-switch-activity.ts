@@ -1,5 +1,5 @@
 import { useChatStore } from "@/lib/chat-store"
-import { saveThreadModelSwitchActivity } from "@/services/backend"
+import { saveThreadModelSwitchActivity } from "@/services/backend/chatApi"
 
 /**
  * Record the "Model switched from X to Y" divider on one thread.

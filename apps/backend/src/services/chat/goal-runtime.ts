@@ -4,28 +4,42 @@ import { parseGoalCommand } from "@betterc0de/schema"
 import type { AppState } from "../../appState"
 import { HttpError } from "../../errors"
 import { logger } from "../../observability/logger"
-import { providerEventBus } from "../../provider/events"
-import { getSessionPermission } from "../../provider/permissions"
+import type { ProviderEventBus } from "../../provider/events"
 import { threadId as toThreadId } from "../../provider/runtime"
-import type { ProviderRuntimeEvent } from "../../provider/types"
+import type { LegacyProviderEvent } from "../../provider/types"
 import { ThreadGoals } from "./goals"
 import { threadGoals, type GoalContext } from "./goal-registry"
+import { threadAutonomyRuns } from "./autonomy-registry"
 import {
   asHubProviderKind,
   dispatchChatTurn,
   prepareChatSendBody,
 } from "./dispatch"
+import { resolveChatWorkspaceRoot } from "../workspace/authorization"
+import { currentThreadPermissionLevel } from "./thread-settings"
 import { runMessageSendHooks } from "./turn-preparation"
 
-export function initializeThreadGoals(state: AppState): () => void {
+/**
+ * The bus lanes the goal runtime uses: it publishes a goal change as a
+ * canonical event and waits for its projection.
+ */
+export type GoalEventBus = Pick<
+  ProviderEventBus,
+  "on" | "off" | "emitCanonical"
+>
+
+export function initializeThreadGoals(
+  state: AppState,
+  eventBus: GoalEventBus
+): () => void {
   const goals = new ThreadGoals<GoalContext>({
     read: (threadId) => state.threads.getThreadGoal(threadId),
     publish: (threadId, goal) => {
-      if (state.taintedRef?.() || state.drainingRef?.())
+      if (state.taintedRef() || state.drainingRef())
         throw new Error("Backend is not accepting goal updates.")
       const mutationId = randomUUID()
       let projected = false
-      const observe = (event: ProviderRuntimeEvent) => {
+      const observe = (event: LegacyProviderEvent) => {
         const metadata = event.payload.metadata as
           | Record<string, unknown>
           | undefined
@@ -35,9 +49,9 @@ export function initializeThreadGoals(state: AppState): () => void {
         )
           projected = true
       }
-      providerEventBus.on("projected", observe)
+      eventBus.on("projected", observe)
       try {
-        providerEventBus.emitCanonical({
+        eventBus.emitCanonical({
           eventId: mutationId,
           threadId,
           type: "thread.metadata.updated",
@@ -54,7 +68,7 @@ export function initializeThreadGoals(state: AppState): () => void {
             "Goal update could not be durably projected. No further goal turn will be started."
           )
       } finally {
-        providerEventBus.off("projected", observe)
+        eventBus.off("projected", observe)
       }
     },
     waitForIdle: async (threadId) => {
@@ -62,7 +76,7 @@ export function initializeThreadGoals(state: AppState): () => void {
       await state.providerHub.waitForThreadIdle(threadId)
     },
     dispatch: async (threadId, prompt, context, guard, started) => {
-      if (state.taintedRef?.() || state.drainingRef?.())
+      if (state.taintedRef() || state.drainingRef())
         throw new Error("Backend is stopping; resume the goal after restart.")
       if (!state.threads.hasThread(threadId))
         throw new Error("Goal chat is no longer available.")
@@ -90,9 +104,12 @@ export function initializeThreadGoals(state: AppState): () => void {
           user_message_content: "Continue working toward the goal.",
           user_message_created_at: now,
           attachments: [],
-          // Live permission changes apply to subsequent turns too.
+          // Live permission changes apply to subsequent turns too; the
+          // chat's own level stands in until this process has seen one.
           ...(context.continued
-            ? { permission_level: getSessionPermission(threadId) }
+            ? {
+                permission_level: currentThreadPermissionLevel(state, threadId),
+              }
             : {}),
           source_proposed_plan: null,
         },
@@ -101,8 +118,8 @@ export function initializeThreadGoals(state: AppState): () => void {
           guard: () => {
             guard()
             if (
-              state.taintedRef?.() ||
-              state.drainingRef?.() ||
+              state.taintedRef() ||
+              state.drainingRef() ||
               !state.threads.hasThread(threadId)
             )
               throw new Error(
@@ -119,13 +136,13 @@ export function initializeThreadGoals(state: AppState): () => void {
     onError: (error) =>
       logger.error({ err: error }, "goal continuation stopped"),
     onDispose: () => {
-      providerEventBus.off("projected", observe)
+      eventBus.off("projected", observe)
       threadGoals.delete(state)
     },
   })
-  const observe = (event: ProviderRuntimeEvent) =>
+  const observe = (event: LegacyProviderEvent) =>
     goals.observe(event.thread_id, event.event_type, event.payload)
-  providerEventBus.on("projected", observe)
+  eventBus.on("projected", observe)
   threadGoals.set(state, goals)
   try {
     // Read only goal-bearing rows, without loading the conversation history.
@@ -146,7 +163,7 @@ export function initializeThreadGoals(state: AppState): () => void {
   }
   return () => {
     goals.dispose()
-    providerEventBus.off("projected", observe)
+    eventBus.off("projected", observe)
     threadGoals.delete(state)
   }
 }
@@ -160,13 +177,33 @@ export async function controlThreadGoal(
   if (!goals)
     throw new HttpError(503, "Goal service is unavailable.", "goal_unavailable")
   try {
-    // The desktop runs its message hooks before any /goal command, as
-    // before any message; a prepared command (the phone app's) gets them
-    // here, once, not with each of the goal's turns.
-    if (body.prepare_turn) await runMessageSendHooks(state, body)
     const command = parseGoalCommand(body.message)
     if (!command)
       throw new Error("Expected /goal followed by an objective or command.")
+    // The user's message hooks run here, once, not with each of the goal's
+    // turns: for every command that starts provider work, whichever client
+    // sent it, and for any command a client typed as a message
+    // (`prepareTurn`). The desktop's pause, clear and status buttons send
+    // controls, which start nothing.
+    const startsWork =
+      command.action === "set" ||
+      command.action === "edit" ||
+      command.action === "resume"
+    if (body.prepare_turn || startsWork) {
+      // In the chat's approved folder, never in one the request names. A
+      // pause or a clear still goes through when that folder is gone.
+      let projectPath: string | null = null
+      try {
+        projectPath = await resolveChatWorkspaceRoot(
+          state,
+          body.thread_id,
+          body.project_path
+        )
+      } catch (error) {
+        if (startsWork) throw error
+      }
+      await runMessageSendHooks(state, { ...body, project_path: projectPath })
+    }
     if (command.action !== "status" && !state.threads.hasThread(body.thread_id))
       throw new HttpError(404, "Goal chat not found.", "thread_not_found")
     if (
@@ -174,6 +211,13 @@ export async function controlThreadGoal(
       command.action === "resume" ||
       command.action === "edit"
     ) {
+      // Two schedulers must not take turns in one chat.
+      if (
+        threadAutonomyRuns.get(state)?.get(body.thread_id)?.status === "working"
+      )
+        throw new Error(
+          "Autonomous Work is running in this chat. Pause or stop it before starting a goal."
+        )
       if (state.settings.get().auto_save_conversations === false)
         throw new Error(
           "Enable conversation auto-save before starting a goal. It preserves the history needed for continuation and recovery."

@@ -9,7 +9,7 @@ import {
 import { cn } from "@/lib/utils"
 import { useChatStore } from "@/lib/chat-store"
 import { timeAgo } from "@/lib/format"
-import { listProjects } from "@/services/backend"
+import { listProjects } from "@/services/backend/coreApi"
 
 interface ProjectSearchItem {
   id?: string

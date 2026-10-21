@@ -1,57 +1,122 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { renderToStaticMarkup } from "react-dom/server"
-import type { ProviderUsageReport } from "@/services/backend"
-import type { ReactNode } from "react"
+import type { ProviderUsageReport } from "@/services/backend/coreApi"
+import { TooltipProvider } from "@/components/ui/tooltip"
+import { localDayKey } from "@/lib/usage-overview"
 
 const state = vi.hoisted(() => ({
   reports: [] as ProviderUsageReport[],
   loading: false,
   error: null as string | null,
-  load: vi.fn(),
+  loadedAt: 0,
+  load: vi.fn(() => Promise.resolve()),
 }))
-vi.mock("@/lib/usage-store", () => ({ useUsageStore: () => state }))
-// Render the portal's content inline so SSR can inspect both provider choices.
-vi.mock("@/components/ui/simple-dropdown", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/components/ui/simple-dropdown")>()),
-  SimpleDropdown: ({
-    trigger,
-    children,
-  }: {
-    trigger: ReactNode
-    children: ReactNode
-  }) => (
-    <>
-      {trigger}
-      {children}
-    </>
-  ),
-}))
-import { UsagePage, UsageLimitRow } from "./usage-page"
+vi.mock("@/lib/usage-store", () => {
+  const useUsageStore = (selector?: (value: typeof state) => unknown) =>
+    selector ? selector(state) : state
+  useUsageStore.getState = () => state
+  return { useUsageStore }
+})
+import { UsagePage, type UsageView } from "./usage-page"
 
-describe("usage overview", () => {
+function render(view: UsageView = "cost") {
+  return renderToStaticMarkup(
+    <TooltipProvider>
+      <UsagePage onClose={() => {}} view={view} onViewChange={() => {}} />
+    </TooltipProvider>
+  )
+}
+
+function report(
+  partial: Partial<ProviderUsageReport> & Pick<ProviderUsageReport, "provider">
+): ProviderUsageReport {
+  return {
+    label: partial.provider,
+    status: "ready",
+    installed: true,
+    authenticated: true,
+    version: null,
+    plan: null,
+    source: "",
+    fetchedAt: new Date().toISOString(),
+    scannedMs: 0,
+    summary: {
+      totalTokens: 1000,
+      tokens: {
+        input: 100,
+        output: 100,
+        reasoning: 0,
+        cacheRead: 700,
+        cacheWrite: 100,
+      },
+      peakDayTokens: 0,
+      peakDayDate: null,
+      longestSessionMs: 0,
+      currentStreakDays: 0,
+      longestStreakDays: 0,
+      sessions: 3,
+      messages: 0,
+      activeDays: 1,
+      firstActivity: null,
+      lastActivity: null,
+      cost: null,
+    },
+    daily: [],
+    pricing: null,
+    pricesFile: null,
+    models: [],
+    insights: [],
+    lists: [],
+    limits: [],
+    limitsObservedAt: null,
+    limitNotes: [],
+    notes: [],
+    ...partial,
+  }
+}
+
+describe("usage page", () => {
   beforeEach(() => {
     state.reports = []
     state.loading = false
     state.error = null
   })
 
-  it("offers only Claude Code and Codex with their theme-aware logos before data loads", () => {
+  it("offers Cost, Tokens and Limits and shows both providers' logos while loading", () => {
     state.loading = true
-    const html = renderToStaticMarkup(<UsagePage onClose={() => {}} />)
+    const html = render()
+    expect(html).toContain('role="tablist"')
+    for (const label of ["Cost", "Tokens", "Limits"]) {
+      expect(html).toContain(`>${label}</button>`)
+    }
     expect(html).toContain('src="/icons/providers/claude.svg"')
     expect(html).toContain('src="/icons/providers/openai.svg"')
     expect(html).toContain("dark:invert")
     expect(html).not.toContain("Grok")
-    expect(html).toContain('aria-label="Select usage provider"')
-    expect(html).toContain('aria-pressed="true"')
     expect(html).toContain('aria-busy="true"')
   })
 
-  it("exposes request errors above the report", () => {
+  it("exposes request errors above the views", () => {
     state.error = "Could not update usage. Try refreshing again."
-    const html = renderToStaticMarkup(<UsagePage onClose={() => {}} />)
+    const html = render()
     expect(html).toContain('role="alert"')
     expect(html).toContain(state.error)
+  })
+
+  it("adds the providers into one total with their share", () => {
+    const today = localDayKey(Date.now())
+    const day = (tokens: number) => [
+      { date: today, tokens, messages: 0, sessions: 1 },
+    ]
+    state.reports = [
+      report({ provider: "claude", daily: day(3000) }),
+      report({ provider: "codex", daily: day(1000) }),
+    ]
+    const html = render("tokens")
+    // Today's 3K + 1K tokens in the 30-day range, Claude's share of them.
+    expect(html).toContain("4K")
+    expect(html).toContain("75.0%")
+    expect(html).toContain("Where the tokens go")
   })
 
   it.each([
@@ -60,39 +125,27 @@ describe("usage overview", () => {
     [95, "Almost at limit"],
     [100, "Limit reached"],
   ])(
-    "gives %s percent limits an accessible meter and a text status",
+    "gives a %s percent used limit an accessible meter and a text status",
     (usedPercent, status) => {
-      const html = renderToStaticMarkup(
-        <UsageLimitRow
-          limit={{
-            id: "weekly",
-            label: "Weekly limit",
-            usedPercent,
-            resetsAt: null,
-            resetLabel: "Resets tomorrow",
-          }}
-        />
-      )
+      state.reports = [
+        report({
+          provider: "codex",
+          limits: [
+            {
+              id: "weekly",
+              label: "Weekly limit",
+              usedPercent,
+              resetsAt: null,
+              resetLabel: "Resets someday",
+            },
+          ],
+        }),
+      ]
+      const html = render("limits")
       expect(html).toContain('role="meter"')
-      expect(html).toContain(`aria-valuenow="${usedPercent}"`)
+      expect(html).toContain(`aria-valuenow="${100 - usedPercent}"`)
       expect(html).toContain(status)
-      expect(html).toContain("Resets tomorrow")
+      expect(html).toContain("someday")
     }
   )
-
-  it("keeps out-of-range provider values inside the meter bounds", () => {
-    const html = renderToStaticMarkup(
-      <UsageLimitRow
-        limit={{
-          id: "weekly",
-          label: "Weekly limit",
-          usedPercent: 110,
-          resetsAt: null,
-          resetLabel: null,
-        }}
-      />
-    )
-    expect(html).toContain('aria-valuenow="100"')
-    expect(html).toContain("scaleX(1)")
-  })
 })
