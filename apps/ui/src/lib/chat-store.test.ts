@@ -115,12 +115,36 @@ describe("chat-store", () => {
 
   it("keeps a completed handoff when an older hydration result and replay event arrive", async () => {
     const id = useChatStore.getState().createThread("Handoff", "project")
-    const payload = { status: "compacting", requestMessageId: "request", checkpointMessageId: "checkpoint", sourceProvider: "claude", targetProvider: "codex", sourceModel: "model" }
-    const pending = makeActivity({ id: "handoff", threadId: id, kind: "context.provider-handoff", sequence: 1, payload })
-    const completed = { ...pending, sequence: 2, payload: { ...payload, status: "completed" } }
+    const payload = {
+      status: "compacting",
+      requestMessageId: "request",
+      checkpointMessageId: "checkpoint",
+      sourceProvider: "claude",
+      targetProvider: "codex",
+      sourceModel: "model",
+    }
+    const pending = makeActivity({
+      id: "handoff",
+      threadId: id,
+      kind: "context.provider-handoff",
+      sequence: 1,
+      payload,
+    })
+    const completed = {
+      ...pending,
+      sequence: 2,
+      payload: { ...payload, status: "completed" },
+    }
     useChatStore.getState().upsertThreadActivity(id, pending)
-    let resolveSnapshot: (rows: ThreadActivity[]) => void = () => { throw new Error("Hydration did not start") }
-    vi.mocked(loadThreadActivities).mockImplementationOnce(() => new Promise<ThreadActivity[]>(resolve => { resolveSnapshot = resolve }))
+    let resolveSnapshot: (rows: ThreadActivity[]) => void = () => {
+      throw new Error("Hydration did not start")
+    }
+    vi.mocked(loadThreadActivities).mockImplementationOnce(
+      () =>
+        new Promise<ThreadActivity[]>((resolve) => {
+          resolveSnapshot = resolve
+        })
+    )
     const hydration = useChatStore.getState().hydrateThreadActivities(id, true)
     useChatStore.getState().upsertThreadActivity(id, completed)
     resolveSnapshot([pending])
@@ -135,11 +159,19 @@ describe("chat-store", () => {
   // -----------------------------------------------------------------------
   describe("createThread", () => {
     it("ignores retired Feature modes in saved global and thread preferences", () => {
-      const preferences = { ...usePreferencesStore.getState(), specialMode: "frontend" }
-      expect(resolveComposerPreferences(preferences, undefined).specialMode).toBeNull()
-      expect(resolveComposerPreferences(preferences, {
-        specialMode: "performance", chatMode: "plan",
-      })).toMatchObject({ specialMode: null, chatMode: "plan" })
+      const preferences = {
+        ...usePreferencesStore.getState(),
+        specialMode: "frontend",
+      }
+      expect(
+        resolveComposerPreferences(preferences, undefined).specialMode
+      ).toBeNull()
+      expect(
+        resolveComposerPreferences(preferences, {
+          specialMode: "performance",
+          chatMode: "plan",
+        })
+      ).toMatchObject({ specialMode: null, chatMode: "plan" })
     })
 
     it("freezes the defaults of a fresh chat before another pane changes them", () => {
@@ -444,12 +476,25 @@ describe("chat-store", () => {
       // Create 11 threads — each creation touches LRU
       for (let i = 0; i < 11; i++) {
         ids.push(store.createThread(`Thread ${i}`, "p"))
-        if (i === 0) useChatStore.setState(state => ({
-          threads: state.threads.map(thread => thread.id === ids[0] ? {
-            ...thread,
-            messages: [{ id: "model-history", role: "assistant", content: "Done", modelId: "gpt-6-astra", createdAt: thread.createdAt }],
-          } : thread),
-        }))
+        if (i === 0)
+          useChatStore.setState((state) => ({
+            threads: state.threads.map((thread) =>
+              thread.id === ids[0]
+                ? {
+                    ...thread,
+                    messages: [
+                      {
+                        id: "model-history",
+                        role: "assistant",
+                        content: "Done",
+                        modelId: "gpt-6-astra",
+                        createdAt: thread.createdAt,
+                      },
+                    ],
+                  }
+                : thread
+            ),
+          }))
       }
 
       const state = useChatStore.getState()
@@ -591,11 +636,19 @@ describe("chat-store", () => {
       useChatStore.getState().setAutonomousStatus("working")
       const other = useChatStore.getState().createThread("Other", "p")
       useChatStore.getState().deleteThread(other)
-      await vi.waitFor(() => expect(useChatStore.getState().threads.some(t => t.id === other)).toBe(false))
+      await vi.waitFor(() =>
+        expect(
+          useChatStore.getState().threads.some((t) => t.id === other)
+        ).toBe(false)
+      )
       expect(useChatStore.getState().autonomousThreadId).toBe(owner)
       expect(useChatStore.getState().autonomousStatus).toBe("working")
       useChatStore.getState().deleteThread(owner)
-      await vi.waitFor(() => expect(useChatStore.getState().threads.some(t => t.id === owner)).toBe(false))
+      await vi.waitFor(() =>
+        expect(
+          useChatStore.getState().threads.some((t) => t.id === owner)
+        ).toBe(false)
+      )
       expect(useChatStore.getState().autonomousThreadId).toBeNull()
       expect(useChatStore.getState().autonomousMode).toBe(false)
       expect(useChatStore.getState().autonomousStatus).toBe("idle")
@@ -850,15 +903,34 @@ describe("chat-store", () => {
   // 9. finalizeStream
   // -----------------------------------------------------------------------
   describe("finalizeStream", () => {
-    it.each([null, "C:/worktrees/test"])("binds file checkpoints to their own chat's runtime path (%s)", worktreePath => {
-      const id = useChatStore.getState().createThread("Source", "kittycord", "C:/projects/kittycord", { worktreePath })
-      const other = useChatStore.getState().createThread("Other", "other", "C:/projects/other")
-      useChatStore.getState().setActiveThread(other)
-      const tool = { id: "edit-1", name: "Edit", state: "output-available" as const, input: { file_path: "src/app.ts" } }
-      useChatStore.getState().addToolCall(id, tool)
-      useChatStore.getState().finalizeStream(id)
-      expect(autoCheckpointFromToolCalls).toHaveBeenCalledWith(id, expect.any(String), expect.arrayContaining([expect.objectContaining({ id: "edit-1" })]), worktreePath ?? "C:/projects/kittycord")
-    })
+    it.each([null, "C:/worktrees/test"])(
+      "binds file checkpoints to their own chat's runtime path (%s)",
+      (worktreePath) => {
+        const id = useChatStore
+          .getState()
+          .createThread("Source", "kittycord", "C:/projects/kittycord", {
+            worktreePath,
+          })
+        const other = useChatStore
+          .getState()
+          .createThread("Other", "other", "C:/projects/other")
+        useChatStore.getState().setActiveThread(other)
+        const tool = {
+          id: "edit-1",
+          name: "Edit",
+          state: "output-available" as const,
+          input: { file_path: "src/app.ts" },
+        }
+        useChatStore.getState().addToolCall(id, tool)
+        useChatStore.getState().finalizeStream(id)
+        expect(autoCheckpointFromToolCalls).toHaveBeenCalledWith(
+          id,
+          expect.any(String),
+          expect.arrayContaining([expect.objectContaining({ id: "edit-1" })]),
+          worktreePath ?? "C:/projects/kittycord"
+        )
+      }
+    )
 
     it("creates assistant message from accumulated stream text", () => {
       const id = useChatStore.getState().createThread("T", "p")
@@ -1289,10 +1361,26 @@ describe("chat-store", () => {
 
       useChatStore
         .getState()
-        .appendToolOutputDelta(id, "tc-1", "npm test", "shell", "cursor", undefined, "replace")
+        .appendToolOutputDelta(
+          id,
+          "tc-1",
+          "npm test",
+          "shell",
+          "cursor",
+          undefined,
+          "replace"
+        )
       useChatStore
         .getState()
-        .appendToolOutputDelta(id, "tc-1", "npm test\nok", "shell", "cursor", undefined, "replace")
+        .appendToolOutputDelta(
+          id,
+          "tc-1",
+          "npm test\nok",
+          "shell",
+          "cursor",
+          undefined,
+          "replace"
+        )
 
       const stream = useChatStore.getState().streamingByThread[id]
       expect(stream.streamingTools).toHaveLength(1)

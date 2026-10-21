@@ -8,7 +8,7 @@ export type RuntimeConfig = {
   previewPartition?: string
 }
 
-export type BackendMode = 'local_sidecar' | 'remote_http'
+export type BackendMode = "local_sidecar" | "remote_http"
 
 export type RequestOptions = {
   method?: string
@@ -42,7 +42,7 @@ export interface ShellCommandResult {
 
 export interface TerminalPtyEvent {
   seq: number
-  type: 'data' | 'exit' | 'system'
+  type: "data" | "exit" | "system"
   data?: string
   exitCode?: number | null
   signal?: number | string | null
@@ -56,7 +56,7 @@ export interface TerminalPtySnapshot {
   shell: string
   command: string
   args: string[]
-  status: 'running' | 'exited'
+  status: "running" | "exited"
   events: TerminalPtyEvent[]
   nextCursor: number
 }

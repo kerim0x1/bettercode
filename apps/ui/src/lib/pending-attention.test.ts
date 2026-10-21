@@ -25,13 +25,40 @@ function activity(
 
 describe("deriveThreadAttention", () => {
   it("does not revive an approved plan after reordered replay or its legacy capture", () => {
-    const capture = activity("turn.proposed.completed", { planMarkdown: "# Ship it", planId: "plan-1" }, { turnId: "turn-1" })
-    const requested = activity("plan-approval.requested", { requestId: "plan-req" }, { turnId: "turn-1", sequence: 100 })
-    const resolved = activity("plan-approval.resolved", { requestId: "plan-req", decision: "approve" }, { sequence: 1 })
-    expect(deriveThreadAttention("thread-1", [capture, requested, resolved]).total).toBe(0)
-    const later = activity("turn.proposed.completed", { planMarkdown: "# Next plan", planId: "plan-2" }, { turnId: "turn-2" })
-    expect(deriveThreadAttention("thread-1", [resolved, requested, capture, later]).openRequestKeys).toEqual(["plan:thread-1::plan-2"])
-    expect(deriveThreadAttention("thread-1", [capture, requested, { ...resolved, payload: { requestId: "plan-req", decision: "deny" } }]).planApprovals).toBe(1)
+    const capture = activity(
+      "turn.proposed.completed",
+      { planMarkdown: "# Ship it", planId: "plan-1" },
+      { turnId: "turn-1" }
+    )
+    const requested = activity(
+      "plan-approval.requested",
+      { requestId: "plan-req" },
+      { turnId: "turn-1", sequence: 100 }
+    )
+    const resolved = activity(
+      "plan-approval.resolved",
+      { requestId: "plan-req", decision: "approve" },
+      { sequence: 1 }
+    )
+    expect(
+      deriveThreadAttention("thread-1", [capture, requested, resolved]).total
+    ).toBe(0)
+    const later = activity(
+      "turn.proposed.completed",
+      { planMarkdown: "# Next plan", planId: "plan-2" },
+      { turnId: "turn-2" }
+    )
+    expect(
+      deriveThreadAttention("thread-1", [resolved, requested, capture, later])
+        .openRequestKeys
+    ).toEqual(["plan:thread-1::plan-2"])
+    expect(
+      deriveThreadAttention("thread-1", [
+        capture,
+        requested,
+        { ...resolved, payload: { requestId: "plan-req", decision: "deny" } },
+      ]).planApprovals
+    ).toBe(1)
   })
   it("counts open approvals and clears them on resolve", () => {
     const requested = activity("approval.requested", {
@@ -46,7 +73,10 @@ describe("deriveThreadAttention", () => {
 
     const resolved = deriveThreadAttention("thread-1", [
       requested,
-      activity("approval.resolved", { requestId: "req-1", decision: "approve" }),
+      activity("approval.resolved", {
+        requestId: "req-1",
+        decision: "approve",
+      }),
     ])
     expect(resolved.approvals).toBe(0)
     expect(resolved.total).toBe(0)

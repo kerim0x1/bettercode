@@ -181,7 +181,10 @@ export function isTraceEnabled(): boolean {
   return process.env.BETTERC0DE_TRACE_PROVIDER_EVENTS === "1"
 }
 
-export function _logXlat(native: CodexNativeEvent, out: ProviderRuntimeEvent[]): void {
+export function _logXlat(
+  native: CodexNativeEvent,
+  out: ProviderRuntimeEvent[]
+): void {
   if (!isTraceEnabled()) return
   // [REASON-TRACE:CODEX-XLAT-OUT]
   const label = native.method ?? native.kind
@@ -195,7 +198,10 @@ export function readToolId(item: Record<string, unknown>): string {
   return findToolId(item, 0) ?? randomUUID()
 }
 
-function findToolId(item: Record<string, unknown>, depth: number): string | undefined {
+function findToolId(
+  item: Record<string, unknown>,
+  depth: number
+): string | undefined {
   // Native notifications are untrusted JSON; nested aliases must have a bound.
   if (depth > 8) return undefined
   for (const key of [
@@ -258,7 +264,9 @@ export function normalizeThreadState(method: string, params: unknown): string {
   return status ?? "active"
 }
 
-export function normalizeUsageSnapshot(raw: unknown): Record<string, unknown> | null {
+export function normalizeUsageSnapshot(
+  raw: unknown
+): Record<string, unknown> | null {
   const usage =
     raw && typeof raw === "object"
       ? ((raw as Record<string, unknown>).usage ??
@@ -428,7 +436,8 @@ export function readToolError(item: Record<string, unknown>): string | null {
     const message = (error as Record<string, unknown>).message
     if (typeof message === "string" && message) return message
   }
-  const status = typeof item.status === "string" ? item.status.toLowerCase() : ""
+  const status =
+    typeof item.status === "string" ? item.status.toLowerCase() : ""
   if (status === "failed" || status === "error")
     return readStringField(item, ["message"]) || "Tool failed"
   return null
@@ -585,8 +594,6 @@ export function normalizeApprovalDecision(
 export function isFatalCodexProcessStderrMessage(message: string): boolean {
   return message.toLowerCase().includes("failed to connect to websocket")
 }
-
-
 
 export function normalizeUserInputQuestions(raw: unknown): Array<{
   id?: string

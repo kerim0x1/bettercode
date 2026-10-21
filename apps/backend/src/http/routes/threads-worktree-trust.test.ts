@@ -19,7 +19,11 @@ describe("thread worktree trust boundary", () => {
     const baseRepoPath = await temporaryDirectory("boolean-base")
     const worktreePath = await temporaryDirectory("boolean-worktree")
     const assertWorkspaceTrusted = vi.fn()
-    const { app, removeForThread, resetForThread } = worktreeApp({ baseRepoPath, worktreePath, assertWorkspaceTrusted })
+    const { app, removeForThread, resetForThread } = worktreeApp({
+      baseRepoPath,
+      worktreePath,
+      assertWorkspaceTrusted,
+    })
     for (const [route, body] of [
       ["/threads/thread-1/worktree/remove", { deleteBranch: "false" }],
       ["/threads/thread-1/worktree/remove", { force: "false" }],

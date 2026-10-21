@@ -41,15 +41,36 @@ const REMOTE_PERMISSION_READS = [
  */
 export function registerPermissionsRoutes(
   api: Hono,
-  state: Pick<AppState, "config" | "remoteAccess" | "checkpointReverts" | "agentPermissions" | "db" | "projectProjections" | "threads" | "worktreeRegistry">
+  state: Pick<
+    AppState,
+    | "config"
+    | "remoteAccess"
+    | "checkpointReverts"
+    | "agentPermissions"
+    | "db"
+    | "projectProjections"
+    | "threads"
+    | "worktreeRegistry"
+  >
 ): void {
   // Policy mutations, including newly added actions, require the desktop owner.
   // Remote approval responses are separate, request-scoped chat endpoints.
   api.use("/permissions/*", async (c, next) => {
-    const readOnly = c.req.method === "POST" &&
+    const readOnly =
+      c.req.method === "POST" &&
       REMOTE_PERMISSION_READS.some((route) => c.req.path.endsWith(route))
-    if (!readOnly && resolveRequestIdentity(c, state.config, state.remoteAccess)?.kind !== "local") {
-      return c.json({ error: "Only the desktop host can change permission policy.", code: "remote_host_owner_required" }, 403)
+    if (
+      !readOnly &&
+      resolveRequestIdentity(c, state.config, state.remoteAccess)?.kind !==
+        "local"
+    ) {
+      return c.json(
+        {
+          error: "Only the desktop host can change permission policy.",
+          code: "remote_host_owner_required",
+        },
+        403
+      )
     }
     return next()
   })
@@ -59,10 +80,12 @@ export function registerPermissionsRoutes(
       permissionRulesListSchema,
       async (body) => {
         const cwd = body.cwd?.trim()
-        const approvedCwd = cwd &&
-          resolveRequestIdentity(c, state.config, state.remoteAccess)?.kind === "remote"
-          ? await resolveApprovedWorkspaceRoot(state, cwd)
-          : cwd
+        const approvedCwd =
+          cwd &&
+          resolveRequestIdentity(c, state.config, state.remoteAccess)?.kind ===
+            "remote"
+            ? await resolveApprovedWorkspaceRoot(state, cwd)
+            : cwd
         return { rules: listClaudePermissionRules({ cwd: approvedCwd }) }
       },
       { operation: "permissions claude-rules list" }
@@ -92,10 +115,10 @@ export function registerPermissionsRoutes(
           source === "userSettings" ? null : body.cwd?.trim() || null
         const deleted = workspace
           ? await withCheckpointRecoveryMutation(
-                  state,
-                  { workspaces: [workspace] },
-                  removeRule
-                )
+              state,
+              { workspaces: [workspace] },
+              removeRule
+            )
           : removeRule()
         return deleted
           ? { status: "acknowledged" }

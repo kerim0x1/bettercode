@@ -1,11 +1,16 @@
 import { EventEmitter } from "node:events"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-const children = vi.hoisted(() => [] as Array<EventEmitter & {
-  stdout: EventEmitter
-  stderr: EventEmitter
-  kill: ReturnType<typeof vi.fn>
-}>)
+const children = vi.hoisted(
+  () =>
+    [] as Array<
+      EventEmitter & {
+        stdout: EventEmitter
+        stderr: EventEmitter
+        kill: ReturnType<typeof vi.fn>
+      }
+    >
+)
 
 vi.mock("node:child_process", () => ({
   spawn: vi.fn(() => {

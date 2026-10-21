@@ -170,7 +170,10 @@ export function PlanImplementationCard({
   }
   const copyPlan = async () => {
     try {
-      if (!await copyText(exportContents)) { setActionMessage("Could not copy"); return }
+      if (!(await copyText(exportContents))) {
+        setActionMessage("Could not copy")
+        return
+      }
       setCopied(true)
       setActionMessage("Copied")
       window.setTimeout(() => setCopied(false), 1500)
@@ -230,9 +233,7 @@ export function PlanImplementationCard({
           >
             <div className="flex min-w-0 items-center gap-2.5">
               {/* The plan badge stays the anchor; only active planning animates. */}
-              {streaming ? (
-                <AgentActivityOrb state="solving" />
-              ) : null}
+              {streaming ? <AgentActivityOrb state="solving" /> : null}
               <div className="min-w-0">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium tracking-normal text-muted-foreground uppercase">

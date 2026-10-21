@@ -15,7 +15,10 @@ export function forwardedClientAddress(
 ): string | null {
   const raw = Array.isArray(header) ? header[header.length - 1] : header
   if (typeof raw !== "string") return null
-  const hops = raw.split(",").map((part) => part.trim()).filter(Boolean)
+  const hops = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
   return hops.length > 0 ? hops[hops.length - 1]! : null
 }
 
@@ -53,15 +56,18 @@ export function isPrivateLanAddress(address: string): boolean {
     const parts = normalized.split(".").map(Number)
     const [a, b] = parts as [number, number, number, number]
     return (
-      a === 10
-      || (a === 172 && b >= 16 && b <= 31)
-      || (a === 192 && b === 168)
-      || (a === 169 && b === 254)
+      a === 10 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 169 && b === 254)
     )
   }
   if (family === 6) {
     // fc00::/7 (ULA) and fe80::/10 (link-local).
-    return /^f[cd][0-9a-f]{2}:/.test(normalized) || /^fe[89ab][0-9a-f]:/.test(normalized)
+    return (
+      /^f[cd][0-9a-f]{2}:/.test(normalized) ||
+      /^fe[89ab][0-9a-f]:/.test(normalized)
+    )
   }
   return false
 }

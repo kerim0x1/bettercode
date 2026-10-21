@@ -1,6 +1,9 @@
 import { useState } from "react"
 import { DownloadIcon, ImageIcon, PaperclipIcon } from "lucide-react"
-import { readBrowserElementAttachment, type ChatAttachment } from "@betterc0de/schema"
+import {
+  readBrowserElementAttachment,
+  type ChatAttachment,
+} from "@betterc0de/schema"
 import { cn } from "@/lib/utils"
 import { BrowserElementChips } from "@/components/chat/browser-element-chips"
 import {
@@ -66,7 +69,9 @@ export function AttachmentPreviewDialog({
       {/* A fixed stage of three quarters of the screen; the image scales to
           fill it, so a small screenshot is as readable as a large one. */}
       <DialogContent
-        aria-label={preview ? `Preview of ${preview.label}` : "Attachment preview"}
+        aria-label={
+          preview ? `Preview of ${preview.label}` : "Attachment preview"
+        }
         className="h-[75vh] w-[75vw] max-w-none grid-rows-[auto_minmax(0,1fr)] gap-3 p-4 sm:max-w-none"
       >
         <div className="flex min-w-0 items-center gap-3 pr-12">
@@ -130,7 +135,12 @@ export function MessageAttachments({
       {attachments.map((attachment, index) => {
         const element = readBrowserElementAttachment(attachment)
         if (element)
-          return <BrowserElementChips key={`element-${index}`} elements={[element]} />
+          return (
+            <BrowserElementChips
+              key={`element-${index}`}
+              elements={[element]}
+            />
+          )
         const mediaType = attachment.mediaType?.trim() || "file"
         const isImage = isPreviewableImage(attachment)
         const label = attachmentLabel(attachment, index)
@@ -141,7 +151,11 @@ export function MessageAttachments({
           <>
             {isImage ? (
               <span className="relative grid size-8 shrink-0 place-items-center overflow-hidden rounded border border-border/45 bg-background/80">
-                <img alt="" className="size-full object-cover" src={attachment.url} />
+                <img
+                  alt=""
+                  className="size-full object-cover"
+                  src={attachment.url}
+                />
                 <ImageIcon className="absolute size-3 text-muted-foreground opacity-0 group-hover:opacity-100" />
               </span>
             ) : (
@@ -178,7 +192,10 @@ export function MessageAttachments({
           </a>
         )
       })}
-      <AttachmentPreviewDialog preview={preview} onClose={() => setPreview(null)} />
+      <AttachmentPreviewDialog
+        preview={preview}
+        onClose={() => setPreview(null)}
+      />
     </div>
   )
 }

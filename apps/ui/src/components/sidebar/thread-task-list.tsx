@@ -444,7 +444,7 @@ const TaskCard = memo(function TaskCard({
       {(modelName || branch) && (
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pr-6">
           {modelName && (
-            <span className="flex min-w-0 max-w-full items-center gap-1 rounded-md bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-sidebar-foreground/80">
+            <span className="flex max-w-full min-w-0 items-center gap-1 rounded-md bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-sidebar-foreground/80">
               {logo && (
                 <img
                   src={logo}

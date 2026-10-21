@@ -190,7 +190,9 @@ export function projectPermissionPattern(
     )
   }
   if (permission === "external_directory") {
-    return stringField(record, ["filepath", "parentDir", "path", "directory"]) ?? "*"
+    return (
+      stringField(record, ["filepath", "parentDir", "path", "directory"]) ?? "*"
+    )
   }
   if (permission === "task_status") {
     return stringField(record, ["task_id", "taskId", "id"]) ?? "*"

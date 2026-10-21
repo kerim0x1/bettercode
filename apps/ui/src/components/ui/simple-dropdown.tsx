@@ -395,7 +395,11 @@ function SimpleDropdownSub({
 
   const handleTriggerKeyDown = (event: React.KeyboardEvent) => {
     if (disabled) return
-    if (event.key === "Enter" || event.key === " " || event.key === "ArrowRight") {
+    if (
+      event.key === "Enter" ||
+      event.key === " " ||
+      event.key === "ArrowRight"
+    ) {
       event.preventDefault()
       event.stopPropagation()
       openSub()
@@ -415,10 +419,12 @@ function SimpleDropdownSub({
   // user clicked a provider.
   React.useEffect(() => {
     const onOtherOpened = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        id?: string
-        trigger?: Node | null
-      }>).detail
+      const detail = (
+        event as CustomEvent<{
+          id?: string
+          trigger?: Node | null
+        }>
+      ).detail
       const opener = detail?.trigger ?? null
       const shouldClose = shouldCloseOnOtherSubOpen(instanceId, {
         openerId: detail?.id,

@@ -21,7 +21,6 @@ import { PencilIcon, Trash2Icon, PlusIcon, Loader2Icon } from "lucide-react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { LinkIcon } from "@hugeicons/core-free-icons"
 
-
 const HOOK_EVENTS = [
   {
     value: "on_message_send" as const,
@@ -136,9 +135,7 @@ export function SettingsHooksSection() {
       {/* Supported events info */}
       <SettingsSection title="Supported Events">
         {HOOK_EVENTS.map((evt) => {
-          const count = hooks.filter(
-            (h) => h.event === evt.value
-          ).length
+          const count = hooks.filter((h) => h.event === evt.value).length
           return (
             <div
               key={evt.value}

@@ -51,7 +51,11 @@ function FileLabel({
     .join("/")
   return (
     <>
-      <img src={getFileIconUrl(fileName)} alt="" className="size-[18px] shrink-0" />
+      <img
+        src={getFileIconUrl(fileName)}
+        alt=""
+        className="size-[18px] shrink-0"
+      />
       <span className="min-w-0 flex-1">
         <span className={cn("block truncate text-[13px]", preview && "italic")}>
           {fileName}
@@ -81,13 +85,11 @@ export function EditorRecentFilesList({
   )
 
   const openRecentFile = async (item: EditorRecentFileItem) => {
-    await useEditorStore
-      .getState()
-      .openFile(item.filePath, {
-        line: item.line,
-        column: item.column,
-        preview: true,
-      })
+    await useEditorStore.getState().openFile(item.filePath, {
+      line: item.line,
+      column: item.column,
+      preview: true,
+    })
     dispatchEditorGotoLine(
       {
         filePath: item.filePath,
@@ -179,7 +181,11 @@ export function EditorOpenEditorsList({
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuItem
               disabled={dirtyCount === 0}
-              onSelect={() => void runEditorSave(() => useEditorStore.getState().saveAllTabs())}
+              onSelect={() =>
+                void runEditorSave(() =>
+                  useEditorStore.getState().saveAllTabs()
+                )
+              }
             >
               <SaveIcon />
               Save all modified files
@@ -241,7 +247,11 @@ export function EditorOpenEditorsList({
                     relativePath={relativePath}
                     preview={tab.isPreview}
                   />
-                  {tab.diff && <span className="shrink-0 text-[10px] text-muted-foreground">{editorDiffLabel(tab.diff)}</span>}
+                  {tab.diff && (
+                    <span className="shrink-0 text-[10px] text-muted-foreground">
+                      {editorDiffLabel(tab.diff)}
+                    </span>
+                  )}
                   {tab.isPinned && (
                     <span role="img" aria-label="Pinned file">
                       <PinIcon

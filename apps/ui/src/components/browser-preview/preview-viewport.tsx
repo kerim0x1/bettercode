@@ -17,10 +17,7 @@ import { cn } from "@/lib/utils"
 import { toFileUrl } from "@/lib/asset-url"
 import { PreviewSelectionOverlay } from "./preview-selection-overlay"
 import { forwardCanvasWheel } from "./canvas-gesture"
-import {
-  INJECT_SCRIPT_WEBVIEW,
-  buildIframeInjectScript,
-} from "./inject-script"
+import { INJECT_SCRIPT_WEBVIEW, buildIframeInjectScript } from "./inject-script"
 import type {
   ConsoleLog,
   DomNode,
@@ -65,7 +62,10 @@ interface PreviewViewportProps {
   interactive?: boolean
   selectionMode?: boolean
   onSelectionExit?: () => void
-  onNavigate?: (url: string, history: { back: boolean; forward: boolean }) => void
+  onNavigate?: (
+    url: string,
+    history: { back: boolean; forward: boolean }
+  ) => void
   onLoadingChange?: (loading: boolean) => void
   onElementSelected?: (el: SelectedElement) => void
   onDomTree?: (tree: DomNode | null) => void
@@ -164,11 +164,15 @@ export const PreviewViewport = forwardRef<
         if (
           (data?.key === "Control" && data.ctrlKey === true) ||
           (data?.key === "Meta" && data.metaKey === true)
-        ) cbs.onShortcut?.("canvas-zoom-start")
+        )
+          cbs.onShortcut?.("canvas-zoom-start")
         else if (
-          data?.key === "Alt" && data.altKey === true &&
-          !data.ctrlKey && !data.metaKey
-        ) cbs.onShortcut?.("canvas-pan-start")
+          data?.key === "Alt" &&
+          data.altKey === true &&
+          !data.ctrlKey &&
+          !data.metaKey
+        )
+          cbs.onShortcut?.("canvas-pan-start")
         break
     }
   }, [])
@@ -205,11 +209,17 @@ export const PreviewViewport = forwardRef<
       if (canvas) wv.setZoomFactor(1)
       callbacksRef.current.onLoadingChange?.(false)
       // Inject the inspector script (uses window.cursorBrowser.send exposed by preload)
-      wv.executeJavaScript(INJECT_SCRIPT_WEBVIEW).catch(() => { /* Expected: webview may not be ready for JS injection */ })
+      wv.executeJavaScript(INJECT_SCRIPT_WEBVIEW).catch(() => {
+        /* Expected: webview may not be ready for JS injection */
+      })
     }
     const onNavigation = (event: Event) => {
       const nextUrl = (event as Event & { url?: string }).url
-      if (nextUrl && /^(?:https?|betterc0de-html):\/\//.test(nextUrl)) callbacksRef.current.onNavigate?.(nextUrl, { back: wv.canGoBack(), forward: wv.canGoForward() })
+      if (nextUrl && /^(?:https?|betterc0de-html):\/\//.test(nextUrl))
+        callbacksRef.current.onNavigate?.(nextUrl, {
+          back: wv.canGoBack(),
+          forward: wv.canGoForward(),
+        })
     }
 
     const onIpcMessage = ((e: ElectronWebviewIpcEvent) => {
@@ -258,7 +268,9 @@ export const PreviewViewport = forwardRef<
       if (isElectron && webviewRef.current) {
         webviewRef.current
           .executeJavaScript(`window.postMessage(${JSON.stringify(msg)}, '*')`)
-          .catch(() => { /* Expected: webview may have navigated away */ })
+          .catch(() => {
+            /* Expected: webview may have navigated away */
+          })
         return
       }
       iframeRef.current?.contentWindow?.postMessage(msg, iframeTargetOrigin)
@@ -267,7 +279,11 @@ export const PreviewViewport = forwardRef<
   )
 
   const execute = useCallback(async (code: string) => {
-    try { return await webviewRef.current?.executeJavaScript(code) } catch { return undefined }
+    try {
+      return await webviewRef.current?.executeJavaScript(code)
+    } catch {
+      return undefined
+    }
   }, [])
 
   useImperativeHandle(
@@ -345,7 +361,9 @@ export const PreviewViewport = forwardRef<
           style={{ display: "inline-flex" }}
           preload={webviewPreload || undefined}
           partition={
-            canvas ? "betterc0de-canvas-preview" : window.__BETTERC0DE__?.previewPartition || "betterc0de-preview"
+            canvas
+              ? "betterc0de-canvas-preview"
+              : window.__BETTERC0DE__?.previewPartition || "betterc0de-preview"
           }
         />
       ) : (
@@ -373,11 +391,13 @@ export const PreviewViewport = forwardRef<
           onLoad={handleIframeLoad}
         />
       )}
-      {isElectron && selectionMode && <PreviewSelectionOverlay
-        execute={execute}
-        onSelect={onElementSelected}
-        onExit={onSelectionExit}
-      />}
+      {isElectron && selectionMode && (
+        <PreviewSelectionOverlay
+          execute={execute}
+          onSelect={onElementSelected}
+          onExit={onSelectionExit}
+        />
+      )}
     </div>
   )
 })

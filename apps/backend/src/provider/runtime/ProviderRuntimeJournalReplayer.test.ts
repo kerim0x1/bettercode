@@ -53,7 +53,9 @@ function appendProviderEvent(
 }
 
 function legacyTurnId(entry: ProviderRuntimeJournalEntry): unknown {
-  return entry.shape === "legacy" ? entry.event.payload.turn_id : entry.event.turnId
+  return entry.shape === "legacy"
+    ? entry.event.payload.turn_id
+    : entry.event.turnId
 }
 
 describe("ProviderRuntimeJournalReplayer", () => {
@@ -141,12 +143,23 @@ describe("ProviderRuntimeJournalReplayer", () => {
       blocked: null,
     })
     expect(replayPersisted.mock.calls).toEqual([
-      [{ shape: "legacy", event }, { projectionSequence: 1, truncation: null }],
-      [{ shape: "legacy", event }, { projectionSequence: 2, truncation: null }],
-      [{ shape: "legacy", event }, { projectionSequence: 3, truncation: null }],
+      [
+        { shape: "legacy", event },
+        { projectionSequence: 1, truncation: null },
+      ],
+      [
+        { shape: "legacy", event },
+        { projectionSequence: 2, truncation: null },
+      ],
+      [
+        { shape: "legacy", event },
+        { projectionSequence: 3, truncation: null },
+      ],
     ])
     for (const stored of [markedV2, markedV1, unmarked]) {
-      expect(receipts.get(stored.sequence)).toMatchObject({ status: "projected" })
+      expect(receipts.get(stored.sequence)).toMatchObject({
+        status: "projected",
+      })
     }
     db.close()
   })
@@ -251,7 +264,9 @@ describe("ProviderRuntimeJournalReplayer", () => {
     expect(replayer.replayAll().blocked).toMatchObject({
       eventSequence: stored.sequence,
       error: expect.objectContaining({
-        message: expect.stringContaining("Unsupported provider runtime journal schema"),
+        message: expect.stringContaining(
+          "Unsupported provider runtime journal schema"
+        ),
       }),
     })
     expect(replayPersisted).not.toHaveBeenCalled()
@@ -394,39 +409,57 @@ describe("ProviderRuntimeJournalReplayer", () => {
     })
     // Thread B replayed; thread A stopped at its poisoned row and its
     // later row was neither projected ahead of it nor charged an attempt.
-    expect(replayPersisted.mock.calls.map(([entry]) => legacyTurnId(entry))).toEqual([
-      "turn-a-poison",
-      "turn-b",
-    ])
-    expect(receipts.get(healthyB.sequence)).toMatchObject({ status: "projected" })
+    expect(
+      replayPersisted.mock.calls.map(([entry]) => legacyTurnId(entry))
+    ).toEqual(["turn-a-poison", "turn-b"])
+    expect(receipts.get(healthyB.sequence)).toMatchObject({
+      status: "projected",
+    })
     expect(receipts.get(poisonA.sequence)).toBeNull()
     expect(receipts.get(laterA.sequence)).toBeNull()
     expect(receipts.replayAttempts(laterA.sequence)).toBe(0)
-    expect(events.readUnprojectedProviderRuntimeEvents(10).map((row) => row.sequence)).toEqual([
-      poisonA.sequence,
-      laterA.sequence,
-    ])
+    expect(
+      events.readUnprojectedProviderRuntimeEvents(10).map((row) => row.sequence)
+    ).toEqual([poisonA.sequence, laterA.sequence])
     db.close()
   })
 
   it("does not rerun a row whose earlier processes exhausted the attempt budget", () => {
     const { db, events, receipts, logger } = setup()
-    const poison = appendProviderEvent(events, { event: {
-      event_type: "turn_completed", thread_id: "thread-1", payload: { turn_id: "turn-poison" },
-    } })
-    appendProviderEvent(events, { streamVersion: 2, event: {
-      event_type: "turn_completed", thread_id: "thread-1", payload: { turn_id: "turn-healthy" },
-    } })
+    const poison = appendProviderEvent(events, {
+      event: {
+        event_type: "turn_completed",
+        thread_id: "thread-1",
+        payload: { turn_id: "turn-poison" },
+      },
+    })
+    appendProviderEvent(events, {
+      streamVersion: 2,
+      event: {
+        event_type: "turn_completed",
+        thread_id: "thread-1",
+        payload: { turn_id: "turn-healthy" },
+      },
+    })
     // Simulate persisted attempt records left by processes that terminated
     // during projection, before JavaScript could enter the failure handler.
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      receipts.recordReplayAttempt(poison.sequence, "startup replay attempt in progress")
+      receipts.recordReplayAttempt(
+        poison.sequence,
+        "startup replay attempt in progress"
+      )
     }
     const replayPersisted = vi.fn()
-    const result = new ProviderRuntimeJournalReplayer(events,
-      new ProviderRuntimeProjectionReceiptStore(db), { replayPersisted }, logger).replayAll()
+    const result = new ProviderRuntimeJournalReplayer(
+      events,
+      new ProviderRuntimeProjectionReceiptStore(db),
+      { replayPersisted },
+      logger
+    ).replayAll()
     expect(result).toEqual({ replayed: 1, discarded: 1, blocked: null })
-    expect(replayPersisted.mock.calls.map(([entry]) => legacyTurnId(entry))).toEqual(["turn-healthy"])
+    expect(
+      replayPersisted.mock.calls.map(([entry]) => legacyTurnId(entry))
+    ).toEqual(["turn-healthy"])
     expect(receipts.get(poison.sequence)).toMatchObject({ status: "discarded" })
     db.close()
   })
@@ -473,7 +506,9 @@ describe("ProviderRuntimeJournalReplayer", () => {
         "discarded after 3 failed startup replay attempt(s) (projection): projection unavailable"
       ),
     })
-    expect(receipts.get(healthy.sequence)).toMatchObject({ status: "projected" })
+    expect(receipts.get(healthy.sequence)).toMatchObject({
+      status: "projected",
+    })
     expect(receipts.replayAttempts(poison.sequence)).toBe(0)
     expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ eventSequence: poison.sequence, attempts: 3 }),
@@ -519,7 +554,11 @@ describe("ProviderRuntimeJournalReplayer canonical rows", () => {
       logger
     )
 
-    expect(replayer.replayAll()).toEqual({ replayed: 1, discarded: 0, blocked: null })
+    expect(replayer.replayAll()).toEqual({
+      replayed: 1,
+      discarded: 0,
+      blocked: null,
+    })
     expect(replayPersisted).toHaveBeenCalledWith(
       { shape: "canonical", event: canonical },
       { projectionSequence: 4, truncation: null }
@@ -543,7 +582,12 @@ describe("ProviderRuntimeJournalReplayer canonical rows", () => {
       },
     })
     const replayPersisted = vi.fn()
-    new ProviderRuntimeJournalReplayer(events, receipts, { replayPersisted }, logger).replayAll()
+    new ProviderRuntimeJournalReplayer(
+      events,
+      receipts,
+      { replayPersisted },
+      logger
+    ).replayAll()
 
     expect(replayPersisted).toHaveBeenCalledWith(
       { shape: "canonical", event: { ...canonical, output: "x".repeat(64) } },
@@ -589,13 +633,21 @@ describe("ProviderRuntimeJournalReplayer canonical rows", () => {
       },
     })
     const replayPersisted = vi.fn()
-    new ProviderRuntimeJournalReplayer(events, receipts, { replayPersisted }, logger).replayAll()
+    new ProviderRuntimeJournalReplayer(
+      events,
+      receipts,
+      { replayPersisted },
+      logger
+    ).replayAll()
 
     expect(replayPersisted).toHaveBeenCalledWith(
       { shape: "canonical", event: diff },
       {
         projectionSequence: 6,
-        truncation: { originalBytes: 3_000_000, fields: ["payload.unifiedDiff"] },
+        truncation: {
+          originalBytes: 3_000_000,
+          fields: ["payload.unifiedDiff"],
+        },
       }
     )
     db.close()
@@ -624,10 +676,17 @@ describe("ProviderRuntimeJournalReplayer canonical rows", () => {
     })
     const replayPersisted = vi.fn()
     expect(
-      new ProviderRuntimeJournalReplayer(events, receipts, { replayPersisted }, logger).replayAll()
+      new ProviderRuntimeJournalReplayer(
+        events,
+        receipts,
+        { replayPersisted },
+        logger
+      ).replayAll()
     ).toEqual({ replayed: 0, discarded: 3, blocked: null })
     for (const stored of [wrongEnvelope, wrongStream, missingEventId]) {
-      expect(receipts.get(stored.sequence)).toMatchObject({ status: "discarded" })
+      expect(receipts.get(stored.sequence)).toMatchObject({
+        status: "discarded",
+      })
     }
     expect(replayPersisted).not.toHaveBeenCalled()
     db.close()
@@ -653,11 +712,22 @@ describe("ProviderRuntimeJournalReplayer canonical rows", () => {
       metadata: canonicalMetadata,
     })
     const replayPersisted = vi.fn()
-    new ProviderRuntimeJournalReplayer(events, receipts, { replayPersisted }, logger).replayAll()
+    new ProviderRuntimeJournalReplayer(
+      events,
+      receipts,
+      { replayPersisted },
+      logger
+    ).replayAll()
 
     expect(replayPersisted.mock.calls).toEqual([
-      [{ shape: "legacy", event: legacy }, { projectionSequence: 1, truncation: null }],
-      [{ shape: "canonical", event: canonical }, { projectionSequence: 2, truncation: null }],
+      [
+        { shape: "legacy", event: legacy },
+        { projectionSequence: 1, truncation: null },
+      ],
+      [
+        { shape: "canonical", event: canonical },
+        { projectionSequence: 2, truncation: null },
+      ],
     ])
     db.close()
   })

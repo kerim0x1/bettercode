@@ -160,10 +160,7 @@ export class DirectMcpToolSession {
     for (const server of successful) {
       for (const tool of server.tools) {
         if (toolCount >= MAX_MCP_TOOLS_PER_TURN) break
-        const schema = boundedInputSchema(
-          tool.inputSchema,
-          server.secretValues
-        )
+        const schema = boundedInputSchema(tool.inputSchema, server.secretValues)
         if (!schema || !validMcpToolName(tool.name)) continue
         const name = uniqueAdvertisedToolName(
           session.byAdvertisedName,
@@ -214,14 +211,11 @@ export class DirectMcpToolSession {
   ): Promise<ToolExecResult> {
     const tool = this.byAdvertisedName.get(advertisedName)
     if (!tool) return failed("Unknown MCP tool.")
-    if (
-      !input ||
-      typeof input !== "object" ||
-      Array.isArray(input)
-    ) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
       return failed("MCP tool input must be a JSON object.")
     }
-    if (options.signal.aborted) return failed("MCP tool execution was cancelled.")
+    if (options.signal.aborted)
+      return failed("MCP tool execution was cancelled.")
 
     try {
       const result = await tool.client.callTool(
@@ -235,7 +229,11 @@ export class DirectMcpToolSession {
           maxTotalTimeout: MCP_CALL_TIMEOUT_MS,
         }
       )
-      const normalized = normalizeMcpToolResult(result, options.limits, tool.secretValues)
+      const normalized = normalizeMcpToolResult(
+        result,
+        options.limits,
+        tool.secretValues
+      )
       const output = normalized.output
       return normalized.isError
         ? {
@@ -264,9 +262,7 @@ export class DirectMcpToolSession {
   }
 }
 
-export function directMcpToolsForOpenAi(
-  session: DirectMcpToolSession
-): Array<{
+export function directMcpToolsForOpenAi(session: DirectMcpToolSession): Array<{
   type: "function"
   function: {
     name: string
@@ -311,7 +307,8 @@ export function directMcpEnabledForTurn(
   permissionLevel: string | null | undefined
 ): boolean {
   return (
-    directMcpEnabledForMode(mode) && normalizeLevel(permissionLevel) !== "read-only"
+    directMcpEnabledForMode(mode) &&
+    normalizeLevel(permissionLevel) !== "read-only"
   )
 }
 
@@ -327,7 +324,11 @@ export async function connectDirectMcpClient(
   try {
     if (server.transport === "stdio") {
       const env = validatedEnvironment(server.env)
-      if (!validCommand(server.command) || !validArguments(server.args) || !env) {
+      if (
+        !validCommand(server.command) ||
+        !validArguments(server.args) ||
+        !env
+      ) {
         throw new Error("Unsupported MCP stdio configuration.")
       }
       const transport = new StdioClientTransport({
@@ -374,8 +375,7 @@ export async function connectDirectMcpClient(
 
     return {
       listTools: (options) => client.listTools(undefined, options),
-      callTool: (input, options) =>
-        client.callTool(input, undefined, options),
+      callTool: (input, options) => client.callTool(input, undefined, options),
       close: () => client.close(),
     }
   } catch {
@@ -390,8 +390,10 @@ function boundedDescription(
   secrets: ReadonlyArray<string>
 ): string {
   const description = tool.description?.trim() || `Run ${tool.name}.`
-  return redactKnownSecrets(`MCP server ${serverName}: ${description}`, secrets)
-    .slice(0, MAX_DESCRIPTION_CHARS)
+  return redactKnownSecrets(
+    `MCP server ${serverName}: ${description}`,
+    secrets
+  ).slice(0, MAX_DESCRIPTION_CHARS)
 }
 
 function validMcpToolName(value: string): boolean {
@@ -525,10 +527,10 @@ function toolNameSlug(value: string, maxLength: number): string {
 function validCommand(value: string): boolean {
   return Boolean(
     value.trim() &&
-      value.length <= 4_096 &&
-      !value.includes("\0") &&
-      !value.includes("\r") &&
-      !value.includes("\n")
+    value.length <= 4_096 &&
+    !value.includes("\0") &&
+    !value.includes("\r") &&
+    !value.includes("\n")
   )
 }
 
@@ -630,10 +632,7 @@ function configuredSecretValues(
   const values =
     server.transport === "stdio"
       ? Object.values(server.env)
-      : [
-          ...Object.values(server.headers),
-          ...safeUrlSearchValues(server.url),
-        ]
+      : [...Object.values(server.headers), ...safeUrlSearchValues(server.url)]
   const secrets = new Set<string>()
   for (const value of values) {
     if (!value) continue
@@ -701,19 +700,13 @@ function normalizeMcpToolResult(
     if (!isRecord(item)) continue
     if (item.type === "text" && typeof item.text === "string") {
       addPart(item.text)
-    } else if (
-      item.type === "image" &&
-      typeof item.data === "string"
-    ) {
+    } else if (item.type === "image" && typeof item.data === "string") {
       addPart(
         `[image ${stringValue(item.mimeType) ?? "unknown"}; ${base64ByteLength(
           item.data
         )} bytes]`
       )
-    } else if (
-      item.type === "audio" &&
-      typeof item.data === "string"
-    ) {
+    } else if (item.type === "audio" && typeof item.data === "string") {
       addPart(
         `[audio ${stringValue(item.mimeType) ?? "unknown"}; ${base64ByteLength(
           item.data
@@ -722,9 +715,7 @@ function normalizeMcpToolResult(
     } else if (item.type === "resource" && isRecord(item.resource)) {
       const resource = item.resource
       if (typeof resource.text === "string") {
-        addPart(
-          `${stringValue(resource.uri) ?? "resource"}:\n${resource.text}`
-        )
+        addPart(`${stringValue(resource.uri) ?? "resource"}:\n${resource.text}`)
       } else {
         addPart(
           `[resource ${stringValue(resource.uri) ?? "unknown"}; binary content omitted]`
@@ -748,7 +739,10 @@ function normalizeMcpToolResult(
   if (parts.length === 0) addPart("MCP tool returned no content.")
   if (contentWasTruncated) addPart("\nadditional content omitted")
   return {
-    output: truncateOutput(redactKnownSecrets(parts.join("\n"), secrets), limits),
+    output: truncateOutput(
+      redactKnownSecrets(parts.join("\n"), secrets),
+      limits
+    ),
     isError: value.isError === true,
   }
 }

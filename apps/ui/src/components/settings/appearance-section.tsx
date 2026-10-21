@@ -408,9 +408,7 @@ export function SettingsAppearanceSection() {
         >
           <Switch
             checked={a.sessionDirectoryFilterEnabled}
-            onCheckedChange={(v) =>
-              a.set("sessionDirectoryFilterEnabled", v)
-            }
+            onCheckedChange={(v) => a.set("sessionDirectoryFilterEnabled", v)}
           />
         </SettingsRow>
         <SettingsRow

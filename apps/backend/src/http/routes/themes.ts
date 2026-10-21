@@ -12,7 +12,10 @@ const MAX_IMPORT_TEXT = 4 * 1024 * 1024
  * machine's editors, importing and deleting are desktop-only
  * (`DESKTOP_ONLY_PATHS` in remote/http.ts).
  */
-export function registerThemesRoutes(api: Hono, config: Pick<ServerConfig, "dataDir">): void {
+export function registerThemesRoutes(
+  api: Hono,
+  config: Pick<ServerConfig, "dataDir">
+): void {
   // Lazy so building the app never touches the data directory.
   let cached: ThemeStore | null = null
   const storeOf = () => (cached ??= new ThemeStore(config.dataDir))
@@ -22,14 +25,16 @@ export function registerThemesRoutes(api: Hono, config: Pick<ServerConfig, "data
   // Before `/themes/:id` so the literal segment wins.
   api.get("/themes/installed", (c) =>
     c.json({
-      themes: storeOf().installed().map((theme) => ({
-        id: theme.id,
-        label: theme.label,
-        app: theme.app,
-        extensionId: theme.extensionId,
-        extensionName: theme.extensionName,
-        uiTheme: theme.uiTheme,
-      })),
+      themes: storeOf()
+        .installed()
+        .map((theme) => ({
+          id: theme.id,
+          label: theme.label,
+          app: theme.app,
+          extensionId: theme.extensionId,
+          extensionName: theme.extensionName,
+          uiTheme: theme.uiTheme,
+        })),
     })
   )
 
@@ -52,23 +57,36 @@ export function registerThemesRoutes(api: Hono, config: Pick<ServerConfig, "data
     try {
       if (body.kind === "installed") {
         const id = typeof body.id === "string" ? body.id : ""
-        const installed = storeOf().installed().find((theme) => theme.id === id)
+        const installed = storeOf()
+          .installed()
+          .find((theme) => theme.id === id)
         if (!installed) {
-          throw new HttpError(404, "That theme is no longer installed", "theme_not_installed")
+          throw new HttpError(
+            404,
+            "That theme is no longer installed",
+            "theme_not_installed"
+          )
         }
         return c.json(storeOf().importInstalled(installed))
       }
       if (body.kind === "text") {
         const text = typeof body.text === "string" ? body.text : ""
-        if (!text.trim()) throw new HttpError(400, "Theme text is empty", "theme_empty")
+        if (!text.trim())
+          throw new HttpError(400, "Theme text is empty", "theme_empty")
         if (text.length > MAX_IMPORT_TEXT) {
-          throw new HttpError(413, "Theme file is larger than 4 MB", "theme_too_large")
+          throw new HttpError(
+            413,
+            "Theme file is larger than 4 MB",
+            "theme_too_large"
+          )
         }
         const source = body.source === "file" ? "file" : "paste"
         const label =
           typeof body.label === "string" && body.label.trim()
             ? body.label.trim().slice(0, 120)
-            : source === "file" ? "theme.json" : "Pasted JSON"
+            : source === "file"
+              ? "theme.json"
+              : "Pasted JSON"
         return c.json(
           storeOf().importText({
             text,

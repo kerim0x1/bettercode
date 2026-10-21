@@ -239,7 +239,9 @@ describe("isProviderNativeSlashCommand", () => {
 describe("extractBetterC0deMentions", () => {
   it("matches BetterC0de-compatible file, skill, agent, and reference mentions", () => {
     expect(
-      extractBetterC0deMentions("Use @src/app.ts and @docs/readme.md plus @skill")
+      extractBetterC0deMentions(
+        "Use @src/app.ts and @docs/readme.md plus @skill"
+      )
     ).toEqual(["src/app.ts", "docs/readme.md", "skill"])
   })
 
@@ -687,10 +689,7 @@ describe("BetterC0de-compatible VCS output", () => {
   })
 
   it("renders BetterC0de VCS apply guidance without mutating files", () => {
-    const output = buildVcsApplyOutput("/repo", [
-      "changes.patch",
-      "--terminal",
-    ])
+    const output = buildVcsApplyOutput("/repo", ["changes.patch", "--terminal"])
 
     expect(output).toContain("# VCS Apply")
     expect(output).toContain("Compatibility reference: `vcs.apply`")
@@ -777,7 +776,9 @@ describe("buildBetterC0deDefaultCommandPrompt", () => {
 
   it("prefills the BetterC0de PR CLI only when terminal mode is explicit", () => {
     const pending = buildBetterC0dePrTerminalCommand("/pr 123")
-    const terminal = buildBetterC0dePrTerminalCommand("/github.pr 123 --terminal")
+    const terminal = buildBetterC0dePrTerminalCommand(
+      "/github.pr 123 --terminal"
+    )
     const urlTerminal = buildBetterC0dePrTerminalCommand(
       "/pr https://github.com/acme/demo/pull/456 --terminal"
     )
@@ -798,7 +799,9 @@ describe("buildBetterC0deDefaultCommandPrompt", () => {
     expect(invalidOutput).toContain(
       "BetterC0de PR target must be a numeric PR number"
     )
-    expect(output).toContain("Compatibility reference: `betterc0de pr <number>`")
+    expect(output).toContain(
+      "Compatibility reference: `betterc0de pr <number>`"
+    )
     expect(output).toContain("betterc0de pr 123")
     expect(output).toContain("fetch and checkout")
   })
@@ -996,7 +999,9 @@ describe("buildGithubAgentOutput", () => {
       { projectPath: "/repo" }
     )
 
-    expect(output).toContain("Created the BetterC0de GitHub agent workflow file")
+    expect(output).toContain(
+      "Created the BetterC0de GitHub agent workflow file"
+    )
     expect(output).toContain("Model: `anthropic/claude-sonnet-4-5`")
     expect(output).toContain("Agent: `build`")
     expect(output).toContain("Variant: `max`")
@@ -1039,21 +1044,13 @@ describe("buildGithubAgentOutput", () => {
 
     const output = await buildGithubAgentOutput(
       "/github.install",
-      [
-        "--workflow-only",
-        "--provider",
-        "openai",
-        "--model",
-        "gpt-5.5",
-      ],
+      ["--workflow-only", "--provider", "openai", "--model", "gpt-5.5"],
       { projectPath: "/repo" }
     )
 
     expect(output).toContain("Secrets referenced: OPENAI_API_KEY")
     const workflow = writeFileMock.mock.calls[0]?.[2] ?? ""
-    expect(workflow).toContain(
-      "OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}"
-    )
+    expect(workflow).toContain("OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}")
   })
 
   it("infers provider from provider/model in GitHub workflow-only mode", async () => {
@@ -1357,7 +1354,9 @@ describe("buildAgentCreateOutput", () => {
     )
 
     expect(output).toContain("# BetterC0de Agent Create")
-    expect(output).toContain("Compatibility reference: `betterc0de agent create`")
+    expect(output).toContain(
+      "Compatibility reference: `betterc0de agent create`"
+    )
     expect(output).toContain("Workspace: `/repo`")
     expect(output).toContain(
       'betterc0de agent create --description "Review React performance" --mode subagent'
@@ -1367,9 +1366,9 @@ describe("buildAgentCreateOutput", () => {
   })
 
   it("strips BetterC0de agent subcommands while preserving terminal flags", () => {
-    expect(
-      stripBetterC0deAgentSlashSubcommand(["list", "--terminal"])
-    ).toEqual(["--terminal"])
+    expect(stripBetterC0deAgentSlashSubcommand(["list", "--terminal"])).toEqual(
+      ["--terminal"]
+    )
     expect(
       stripBetterC0deAgentSlashSubcommand([
         "--terminal",
@@ -1472,7 +1471,9 @@ describe("buildAgentCreateOutput", () => {
     expect(output).toContain("| **State** | disabled |")
     expect(output).toContain("is disabled for this agent")
     expect(output).toContain("Could not parse `--params` as JSON object")
-    expect(output).toContain("the compatibility CLI's CLI also accepts JS object literals")
+    expect(output).toContain(
+      "the compatibility CLI's CLI also accepts JS object literals"
+    )
   })
 
   it("shows BetterC0de agent create usage without args", async () => {
@@ -1649,14 +1650,16 @@ describe("buildBetterC0deRuntimeEntrypointOutput", () => {
         label: "Output token max",
         kind: "scalar",
         value: "8192",
-        sourcePath: "BetterC0de compatibility runtime flags#runtime.outputTokenMax",
+        sourcePath:
+          "BetterC0de compatibility runtime flags#runtime.outputTokenMax",
       },
       {
         key: "runtime.disableLspDownload",
         label: "Disable LSP download",
         kind: "toggle",
         value: "enabled",
-        sourcePath: "BetterC0de compatibility runtime flags#runtime.disableLspDownload",
+        sourcePath:
+          "BetterC0de compatibility runtime flags#runtime.disableLspDownload",
       },
       {
         key: "provider",
@@ -1861,7 +1864,9 @@ describe("buildBetterC0deRuntimeEntrypointOutput", () => {
       { projectPath: "/repo" }
     )
 
-    expect(output).toContain("Updated the workspace BetterC0de compatibility config")
+    expect(output).toContain(
+      "Updated the workspace BetterC0de compatibility config"
+    )
     expect(output).toContain("reference.sdk")
     expect(writeFileMock).toHaveBeenCalledWith(
       "/repo",
@@ -1927,8 +1932,23 @@ describe("buildBetterC0deRuntimeEntrypointOutput", () => {
 
   it("keeps the default skills list compact while preserving exact invocations", () => {
     const output = buildRuntimeSkillsOutput([
-      { id: "codex-skill-review", name: "Code review", version: "1", public: false, enabled: true, content: "private body", sourcePath: "C:\\Users\\person\\.codex\\skills\\review" },
-      { id: "claude-skill-review", name: "Code review", version: "1", public: false, enabled: false, content: "private body" },
+      {
+        id: "codex-skill-review",
+        name: "Code review",
+        version: "1",
+        public: false,
+        enabled: true,
+        content: "private body",
+        sourcePath: "C:\\Users\\person\\.codex\\skills\\review",
+      },
+      {
+        id: "claude-skill-review",
+        name: "Code review",
+        version: "1",
+        public: false,
+        enabled: false,
+        content: "private body",
+      },
     ])
     expect(output).toContain("1 enabled · 2 installed")
     expect(output).toContain("@codex-skill-review")
@@ -2000,7 +2020,9 @@ describe("buildBetterC0deRuntimeEntrypointOutput", () => {
       ["--json"]
     )
 
-    expect(output).toContain("Compatibility reference: `betterc0de debug skill`")
+    expect(output).toContain(
+      "Compatibility reference: `betterc0de debug skill`"
+    )
     expect(output).toContain('"name": "customize-betterc0de"')
     expect(output).toContain('"location": "<built-in>"')
     expect(output).toContain(
@@ -2106,7 +2128,9 @@ describe("buildBetterC0deRuntimeEntrypointOutput", () => {
       { projectPath: "/repo" }
     )
 
-    expect(output).toContain("Updated the workspace BetterC0de compatibility config")
+    expect(output).toContain(
+      "Updated the workspace BetterC0de compatibility config"
+    )
     expect(output).toContain("mcp.docs")
     expect(writeFileMock).toHaveBeenCalledWith(
       "/repo",
@@ -2156,7 +2180,9 @@ describe("buildBetterC0deRuntimeEntrypointOutput", () => {
       { projectPath: "/repo" }
     )
 
-    expect(output).toContain("Refusing to write an invalid BetterC0de MCP config")
+    expect(output).toContain(
+      "Refusing to write an invalid BetterC0de MCP config"
+    )
     expect(output).toContain("`--type` must be `local` or `remote`")
     expect(output).toContain("`--env` must be an environment key")
     expect(output).toContain("`--header` must use `Header-Name=value`")
@@ -2293,9 +2319,7 @@ describe("buildBetterC0deRuntimeEntrypointOutput", () => {
 
     expect(run).toContain("`--interactive` needs a terminal/TTY")
     expect(run).toContain("`--interactive` cannot be used with `--command`")
-    expect(run).toContain(
-      "`--interactive` cannot be used with `--format json`"
-    )
+    expect(run).toContain("`--interactive` cannot be used with `--format json`")
     expect(demo).toContain("`--demo` requires `--interactive`")
     expect(tui).toContain("`--fork` requires `--continue` or `--session`")
     expect(tuiContinueFalse).toContain(
@@ -2344,13 +2368,7 @@ describe("buildBetterC0deRuntimeEntrypointOutput", () => {
   it("surfaces BetterC0de global CLI flag validation", () => {
     const output = buildBetterC0deRuntimeEntrypointOutput(
       "/betterc0de-run",
-      [
-        "--log-level",
-        "debug",
-        "--print-logs",
-        "--pure",
-        "--share=maybe",
-      ],
+      ["--log-level", "debug", "--print-logs", "--pure", "--share=maybe"],
       { projectPath: "/repo" }
     )
 
@@ -2359,7 +2377,9 @@ describe("buildBetterC0deRuntimeEntrypointOutput", () => {
       "`--log-level` must be `DEBUG`, `INFO`, `WARN`, or `ERROR`"
     )
     expect(output).toContain("`--share` must be true or false")
-    expect(output).toContain("betterc0de run --log-level debug --print-logs --pure")
+    expect(output).toContain(
+      "betterc0de run --log-level debug --print-logs --pure"
+    )
   })
 
   it("surfaces compatibility server option value validation", () => {
@@ -2503,11 +2523,10 @@ describe("buildBetterC0deMaintenanceOutput", () => {
       "brew",
       "--terminal",
     ])
-    const uninstall = buildBetterC0deMaintenanceOutput("/betterc0de-uninstall", [
-      "--dry-run",
-      "--keep-data",
-      "--force",
-    ])
+    const uninstall = buildBetterC0deMaintenanceOutput(
+      "/betterc0de-uninstall",
+      ["--dry-run", "--keep-data", "--force"]
+    )
 
     expect(upgrade).toContain("# BetterC0de Upgrade")
     expect(upgrade).toContain("betterc0de upgrade v1.2.3 --method brew")
@@ -2522,13 +2541,19 @@ describe("buildBetterC0deMaintenanceOutput", () => {
   })
 
   it("renders BetterC0de generate, completion, and database guidance", () => {
-    const generate = buildBetterC0deMaintenanceOutput("/betterc0de-generate", [])
+    const generate = buildBetterC0deMaintenanceOutput(
+      "/betterc0de-generate",
+      []
+    )
     const completion = buildBetterC0deMaintenanceOutput(
       "/betterc0de-completion",
       ["zsh", "--terminal"]
     )
     const db = buildBetterC0deMaintenanceOutput("/betterc0de-db", ["path"])
-    const dbPathAlias = buildBetterC0deMaintenanceOutput("/betterc0de-db-path", [])
+    const dbPathAlias = buildBetterC0deMaintenanceOutput(
+      "/betterc0de-db-path",
+      []
+    )
     const dbMigrateAlias = buildBetterC0deMaintenanceOutput(
       "/betterc0de-db-migrate",
       ["--terminal"]
@@ -2539,10 +2564,10 @@ describe("buildBetterC0deMaintenanceOutput", () => {
       "--terminal",
     ])
     const dbShell = buildBetterC0deMaintenanceOutput("/betterc0de-db", [])
-    const dbFormatOnlyShell = buildBetterC0deMaintenanceOutput("/betterc0de-db", [
-      "--format",
-      "json",
-    ])
+    const dbFormatOnlyShell = buildBetterC0deMaintenanceOutput(
+      "/betterc0de-db",
+      ["--format", "json"]
+    )
 
     expect(generate).toContain("# BetterC0de Generate")
     expect(generate).toContain("OpenAPI generation")
@@ -2558,10 +2583,10 @@ describe("buildBetterC0deMaintenanceOutput", () => {
     expect(dbPathAlias).toContain("betterc0de db path")
     expect(dbMigrateAlias).toContain("betterc0de db migrate")
     expect(dbMigrateAlias).not.toContain("betterc0de db migrate --terminal")
-    expect(dbQueryAlias).toContain("betterc0de db \"select 1\" --format=json")
+    expect(dbQueryAlias).toContain('betterc0de db "select 1" --format=json')
     expect(dbQueryAlias).toContain("read-only compatibility SQLite query")
     expect(dbQueryAlias).not.toContain(
-      "betterc0de db \"select 1\" --format=json --terminal"
+      'betterc0de db "select 1" --format=json --terminal'
     )
     expect(dbShell).toContain("interactive `sqlite3` shell")
     expect(dbFormatOnlyShell).toContain("interactive `sqlite3` shell")
@@ -2586,12 +2611,14 @@ describe("buildBetterC0deMaintenanceOutput", () => {
       "/betterc0de-db-path",
       ["--format", "json"]
     )
-    const uninstall = buildBetterC0deMaintenanceOutput("/betterc0de-uninstall", [
-      "--force=maybe",
-    ])
-    const completion = buildBetterC0deMaintenanceOutput("/betterc0de-completion", [
-      "xonsh",
-    ])
+    const uninstall = buildBetterC0deMaintenanceOutput(
+      "/betterc0de-uninstall",
+      ["--force=maybe"]
+    )
+    const completion = buildBetterC0deMaintenanceOutput(
+      "/betterc0de-completion",
+      ["xonsh"]
+    )
 
     expect(upgrade).toContain("## Validation")
     expect(upgrade).toContain("`--method` must be one of")
@@ -2614,7 +2641,9 @@ describe("buildBetterC0deSessionCliOutput", () => {
     )
 
     expect(output).toContain("# BetterC0de Session List")
-    expect(output).toContain("Compatibility reference: `betterc0de session list`")
+    expect(output).toContain(
+      "Compatibility reference: `betterc0de session list`"
+    )
     expect(output).toContain(
       "betterc0de session list --format json --max-count 5"
     )
@@ -2631,7 +2660,9 @@ describe("buildBetterC0deSessionCliOutput", () => {
     )
 
     expect(output).toContain("# BetterC0de Session Delete")
-    expect(output).toContain("Compatibility reference: `betterc0de session delete`")
+    expect(output).toContain(
+      "Compatibility reference: `betterc0de session delete`"
+    )
     expect(output).toContain("betterc0de session delete ses_123")
     expect(output).toContain("the compatibility CLI's own session storage")
     expect(output).toContain("/delete-session --yes")
@@ -2679,7 +2710,11 @@ describe("buildBetterC0deSessionCliOutput", () => {
   it("does not duplicate BetterC0de session subcommands in CLI output", () => {
     const output = buildBetterC0deSessionCliOutput(
       "/betterc0de-session-delete",
-      stripBetterC0deSessionSlashSubcommand(["delete", "ses_123", "--terminal"]),
+      stripBetterC0deSessionSlashSubcommand([
+        "delete",
+        "ses_123",
+        "--terminal",
+      ]),
       { projectPath: "/repo" }
     )
 
@@ -2793,9 +2828,10 @@ describe("buildBetterC0deInternalRouteOutput", () => {
     const connect = buildBetterC0deInternalRouteOutput("/tui.command.execute", [
       "provider.connect",
     ])
-    const whichKey = buildBetterC0deInternalRouteOutput("/tui.command.execute", [
-      "which-key.page.down",
-    ])
+    const whichKey = buildBetterC0deInternalRouteOutput(
+      "/tui.command.execute",
+      ["which-key.page.down"]
+    )
     const variant = buildBetterC0deInternalRouteOutput("/tui.command.execute", [
       "variant.list",
     ])
@@ -2856,7 +2892,9 @@ describe("buildBetterC0deInternalRouteOutput", () => {
       ["--command=input.move.left"]
     )
 
-    expect(dialog).toContain("Settings > Compatibility > BetterC0de Default Keybinds")
+    expect(dialog).toContain(
+      "Settings > Compatibility > BetterC0de Default Keybinds"
+    )
     expect(dialog).toContain("`dialog.select.prev`")
     expect(dialog).toContain("Move to previous dialog item")
     expect(nativeInput).toContain("native Native textarea")
@@ -2903,11 +2941,15 @@ describe("buildBetterC0deSyncRouteOutput", () => {
         activitiesByThread: { "sync-thread": [syncActivity] },
       }
     )
-    const json = buildBetterC0deSyncRouteOutput("/sync.history.list", ["--json"], {
-      threads: [syncThread],
-      activeThreadId: "sync-thread",
-      activitiesByThread: { "sync-thread": [syncActivity] },
-    })
+    const json = buildBetterC0deSyncRouteOutput(
+      "/sync.history.list",
+      ["--json"],
+      {
+        threads: [syncThread],
+        activeThreadId: "sync-thread",
+        activitiesByThread: { "sync-thread": [syncActivity] },
+      }
+    )
 
     expect(output).toContain("# BetterC0de Sync History")
     expect(output).toContain("Cursor aggregates: 1")
@@ -2970,9 +3012,7 @@ describe("BetterC0de remaining route compatibility outputs", () => {
     )
     const warp = buildBetterC0deWorkspaceRouteOutput(
       "/experimental.workspace.warp",
-      [
-        '{"id":"wrk_123","sessionID":"workspace-thread","copyChanges":true}',
-      ],
+      ['{"id":"wrk_123","sessionID":"workspace-thread","copyChanges":true}'],
       {
         threads: [workspaceThread],
         activeThreadId: "workspace-thread",
@@ -3057,7 +3097,9 @@ describe("buildBetterC0deDebugUtilityOutput", () => {
       thread({ projectPath: "/repo" })
     )
 
-    expect(output).toContain("Compatibility reference: `betterc0de debug config`")
+    expect(output).toContain(
+      "Compatibility reference: `betterc0de debug config`"
+    )
     expect(output).toContain('"shell": "zsh"')
     expect(output).toContain('"snapshot": false')
     expect(output).toContain('"disabled_providers": [')
@@ -3397,7 +3439,9 @@ describe("buildProjectPermissionsOutput", () => {
       ]
     )
 
-    expect(output).toContain("No top-level BetterC0de `permission` config found")
+    expect(output).toContain(
+      "No top-level BetterC0de `permission` config found"
+    )
     expect(output).toContain("| `planner` | `read` | `*` | **allow** |")
   })
 
@@ -3482,7 +3526,8 @@ describe("buildProjectProvidersOutput", () => {
                 name: "Fast Model",
                 family: "gpt",
                 releaseDate: "2026-01-01",
-                sourcePath: "betterc0de.jsonc#provider.custom.models.fast-model",
+                sourcePath:
+                  "betterc0de.jsonc#provider.custom.models.fast-model",
                 attachment: true,
                 reasoning: true,
                 temperature: true,
@@ -3829,8 +3874,12 @@ describe("buildProjectProviderConfigOutput", () => {
     )
 
     expect(output).toContain("## Validation")
-    expect(output).toContain("Invalid BetterC0de compatibility provider env name: `bad-name`")
-    expect(output).toContain("Invalid BetterC0de compatibility provider env name: `lowercase`")
+    expect(output).toContain(
+      "Invalid BetterC0de compatibility provider env name: `bad-name`"
+    )
+    expect(output).toContain(
+      "Invalid BetterC0de compatibility provider env name: `lowercase`"
+    )
     expect(readFileMock).not.toHaveBeenCalled()
     expect(writeFileMock).not.toHaveBeenCalled()
   })
@@ -3863,11 +3912,19 @@ describe("buildProjectProviderConfigOutput", () => {
 
     expect(output).toContain("## Validation")
     expect(output).toContain("`--provider` must be an BetterC0de identifier")
-    expect(output).toContain("`--provider-api-id` must be an BetterC0de identifier")
-    expect(output).toContain("Invalid BetterC0de id for `--whitelist`: `bad model`")
-    expect(output).toContain("Invalid BetterC0de id for `--disable-provider`: `bad provider`")
+    expect(output).toContain(
+      "`--provider-api-id` must be an BetterC0de identifier"
+    )
+    expect(output).toContain(
+      "Invalid BetterC0de id for `--whitelist`: `bad model`"
+    )
+    expect(output).toContain(
+      "Invalid BetterC0de id for `--disable-provider`: `bad provider`"
+    )
     expect(output).toContain("`--model` must be an BetterC0de identifier")
-    expect(output).toContain("`--model-api-id` must be an BetterC0de identifier")
+    expect(output).toContain(
+      "`--model-api-id` must be an BetterC0de identifier"
+    )
     expect(output).toContain(
       "`--model-status` must be `alpha`, `beta`, `deprecated`, or `active`"
     )
@@ -3926,8 +3983,12 @@ describe("buildProjectProviderConfigOutput", () => {
     expect(output).toContain(
       "`--model-cost-output` must be a finite non-negative number"
     )
-    expect(output).toContain("`--model-header` must be a non-secret Header-Name=value pair")
-    expect(output).toContain("`--model-variant` must be an BetterC0de variant id")
+    expect(output).toContain(
+      "`--model-header` must be a non-secret Header-Name=value pair"
+    )
+    expect(output).toContain(
+      "`--model-variant` must be an BetterC0de variant id"
+    )
     expect(readFileMock).not.toHaveBeenCalled()
     expect(writeFileMock).not.toHaveBeenCalled()
   })
@@ -4669,7 +4730,9 @@ describe("buildProviderConnectionOutput", () => {
     expect(
       stripBetterC0deConsoleSlashSubcommand(["logout", "kerim@example.test"])
     ).toEqual(["kerim@example.test"])
-    expect(stripBetterC0deConsoleSlashSubcommand(["status"])).toEqual(["status"])
+    expect(stripBetterC0deConsoleSlashSubcommand(["status"])).toEqual([
+      "status",
+    ])
 
     const output = buildProviderConnectionOutput(
       {
@@ -4745,7 +4808,9 @@ describe("buildComposerInputActionsOutput", () => {
   it("renders a single BetterC0de input action when addressed directly", () => {
     const output = buildComposerInputActionsOutput("/input.delete.word.forward")
 
-    expect(output).toContain("Compatibility reference: `input.delete.word.forward`")
+    expect(output).toContain(
+      "Compatibility reference: `input.delete.word.forward`"
+    )
     expect(output).toContain("alt+d")
     expect(output).not.toContain("`input.submit`")
   })
@@ -4765,7 +4830,9 @@ describe("buildProviderOrganizationOutput", () => {
     expect(output).toContain("betterc0de console switch")
     expect(output).not.toContain("betterc0de console switch unused")
     expect(output).toContain("## Validation")
-    expect(output).toContain("Compatibility console switch does not accept arguments")
+    expect(output).toContain(
+      "Compatibility console switch does not accept arguments"
+    )
     expect(output).toContain("`console.org.switch` TUI action")
     expect(output).toContain("metadata-only display")
   })
@@ -4775,7 +4842,9 @@ describe("buildProjectKeybindsOutput", () => {
   it("shows BetterC0de default keybinds even without project overrides", () => {
     const output = buildProjectKeybindsOutput([], thread())
 
-    expect(output).toContain("No BetterC0de terminal UI keybind overrides found")
+    expect(output).toContain(
+      "No BetterC0de terminal UI keybind overrides found"
+    )
     expect(output).toContain("BetterC0de Default Keybinds")
     expect(output).toContain("`session.export`")
     expect(output).toContain("<leader>x")
@@ -4858,7 +4927,9 @@ describe("buildProjectTuiConfigWriteOutput", () => {
       thread({ projectPath: "/repo" })
     )
 
-    expect(output).toContain("Updated the workspace BetterC0de terminal UI config")
+    expect(output).toContain(
+      "Updated the workspace BetterC0de terminal UI config"
+    )
     expect(output).toContain("Target: `tui.json`")
     expect(output).toContain("keybinds.session_copy")
     expect(output).toContain("keybinds.input_newline")
@@ -4946,7 +5017,9 @@ describe("buildProjectTuiConfigWriteOutput", () => {
       { projectPath: "/repo" }
     )
 
-    expect(output).toContain("Updated the workspace BetterC0de terminal UI config")
+    expect(output).toContain(
+      "Updated the workspace BetterC0de terminal UI config"
+    )
     expect(writeFileMock).toHaveBeenCalledWith(
       "/repo",
       "tui.json",
@@ -5281,18 +5354,20 @@ describe("buildThreadJsonExportPayload", () => {
   })
 
   it("builds BetterC0de import API candidates for /share and /s links", () => {
-    expect(betterC0deImportUrlCandidates("https://opncd.ai/share/ses_123")).toEqual(
+    expect(
+      betterC0deImportUrlCandidates("https://opncd.ai/share/ses_123")
+    ).toEqual([
+      "https://opncd.ai/share/ses_123",
+      "https://opncd.ai/api/share/ses_123/data",
+      "https://opncd.ai/api/shares/ses_123/data",
+    ])
+    expect(betterC0deImportUrlCandidates("https://opncd.ai/s/ses_123")).toEqual(
       [
-        "https://opncd.ai/share/ses_123",
+        "https://opncd.ai/s/ses_123",
         "https://opncd.ai/api/share/ses_123/data",
         "https://opncd.ai/api/shares/ses_123/data",
       ]
     )
-    expect(betterC0deImportUrlCandidates("https://opncd.ai/s/ses_123")).toEqual([
-      "https://opncd.ai/s/ses_123",
-      "https://opncd.ai/api/share/ses_123/data",
-      "https://opncd.ai/api/shares/ses_123/data",
-    ])
   })
 })
 
@@ -5309,7 +5384,9 @@ describe("buildProjectPluginsOutput", () => {
     )
 
     expect(output).toContain("# BetterC0de Plugin Install")
-    expect(output).toContain("Compatibility reference: `betterc0de plugin <module>`")
+    expect(output).toContain(
+      "Compatibility reference: `betterc0de plugin <module>`"
+    )
     expect(output).toContain("Workspace: `/repo`")
     expect(output).toContain("Module: `@acme/betterc0de-plugin`")
     expect(output).toContain(
@@ -5355,11 +5432,17 @@ describe("buildProjectPluginsOutput", () => {
       thread({ projectPath: "/repo" })
     )
 
-    expect(output).toContain("Scope: workspace/project BetterC0de compatibility config")
+    expect(output).toContain(
+      "Scope: workspace/project BetterC0de compatibility config"
+    )
     expect(output).toContain("Replace existing entry: no")
     expect(output).toContain("betterc0de plugin @acme/betterc0de-plugin")
-    expect(output).not.toContain("betterc0de plugin @acme/betterc0de-plugin --global")
-    expect(output).not.toContain("betterc0de plugin @acme/betterc0de-plugin --force")
+    expect(output).not.toContain(
+      "betterc0de plugin @acme/betterc0de-plugin --global"
+    )
+    expect(output).not.toContain(
+      "betterc0de plugin @acme/betterc0de-plugin --force"
+    )
   })
 
   it("warns for deprecated BetterC0de auth plugin packages", async () => {
@@ -5668,7 +5751,9 @@ describe("buildProjectPluginsOutput", () => {
       thread({ projectPath: "/repo" })
     )
 
-    expect(output).toContain("Updated the workspace BetterC0de terminal UI plugin state")
+    expect(output).toContain(
+      "Updated the workspace BetterC0de terminal UI plugin state"
+    )
     expect(output).toContain("Plugin: `@acme/betterc0de-plugin`")
     expect(output).toContain("State: `false`")
     expect(writeFileMock).toHaveBeenCalledWith(
@@ -5840,7 +5925,9 @@ describe("buildProjectFormatOutput", () => {
       thread({ projectPath: "/repo" })
     )
 
-    expect(output).toContain("Updated the workspace BetterC0de formatter config")
+    expect(output).toContain(
+      "Updated the workspace BetterC0de formatter config"
+    )
     expect(output).toContain("Formatter: `prettier`")
     expect(output).toContain("Command: `prettier --write $FILE`")
     expect(writeFileMock).toHaveBeenCalledWith(
@@ -6954,9 +7041,7 @@ describe("MCP slash helpers", () => {
   })
 
   it("renders BetterC0de-compatible MCP resource availability", () => {
-    const output = buildMcpResourcesOutput([runtimeMcp, projectMcp], [
-      "local",
-    ])
+    const output = buildMcpResourcesOutput([runtimeMcp, projectMcp], ["local"])
     const json = buildMcpResourcesOutput([runtimeMcp], ["--json"])
 
     expect(output).toContain("# MCP Resources")
@@ -6975,7 +7060,9 @@ describe("MCP slash helpers", () => {
     const output = buildMcpAuthOutput([runtimeMcp, projectMcp], ["--terminal"])
 
     expect(output).toContain("# MCP Auth")
-    expect(output).toContain("Compatibility reference: `betterc0de mcp auth list`")
+    expect(output).toContain(
+      "Compatibility reference: `betterc0de mcp auth list`"
+    )
     expect(output).toContain("betterc0de mcp auth list")
     expect(output).toContain("## Terminal")
     expect(output).toContain("`local-demo`")
@@ -7376,12 +7463,16 @@ describe("MCP slash helpers", () => {
     expect(output).toContain("| SQLite database |")
     expect(output).toContain("betterc0de.db")
     expect(output).toContain("| Compatibility data dir |")
-    expect(output).toContain("| BetterC0de compatibility config source | `default` |")
+    expect(output).toContain(
+      "| BetterC0de compatibility config source | `default` |"
+    )
     expect(output).toContain("| Compatibility state dir |")
     expect(output).toContain("| Compatibility plugin metadata |")
     expect(output).toContain("plugin-meta.json")
     expect(output).toContain("custom.db")
-    expect(output).toContain("| BetterC0de compatibility database source | `BETTERC0DE_DB` |")
+    expect(output).toContain(
+      "| BetterC0de compatibility database source | `BETTERC0DE_DB` |"
+    )
     expect(output).toContain(
       "Auth contents and other secrets are not displayed"
     )
@@ -7390,7 +7481,9 @@ describe("MCP slash helpers", () => {
     expect(dbPath).toContain("betterc0de db path --format json")
     expect(dbPath).toContain("| BetterC0de compatibility database |")
     expect(dbPath).toContain("custom.db")
-    expect(dbPath).toContain("| BetterC0de compatibility database source | `BETTERC0DE_DB` |")
+    expect(dbPath).toContain(
+      "| BetterC0de compatibility database source | `BETTERC0DE_DB` |"
+    )
     expect(dbPath).toContain("| BetterC0de database |")
     expect(dbPath).toContain("## Validation")
     expect(dbPath).toContain(
@@ -7692,7 +7785,9 @@ describe("MCP slash helpers", () => {
       parseSessionListOptions(["--max-count=20"])
     )
 
-    expect(output).toContain("Compatibility reference: `betterc0de session list`")
+    expect(output).toContain(
+      "Compatibility reference: `betterc0de session list`"
+    )
     expect(output).toContain("Showing up to 20 sessions.")
     expect(output).toContain("Active")
   })

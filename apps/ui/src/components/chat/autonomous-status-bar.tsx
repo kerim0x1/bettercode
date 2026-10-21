@@ -86,14 +86,10 @@ export function AutonomousStatusBar({
   // snaps the elapsed label to truth on the next visible edge instead of
   // waiting up to a second for the first tick.
   const [, setTick] = useState(0)
-  useVisibilityInterval(
-    () => setTick((n) => n + 1),
-    1000,
-    {
-      enabled: autonomousStatus === "working" && !!autonomousStartedAt,
-      runOnVisible: true,
-    },
-  )
+  useVisibilityInterval(() => setTick((n) => n + 1), 1000, {
+    enabled: autonomousStatus === "working" && !!autonomousStartedAt,
+    runOnVisible: true,
+  })
 
   if (!autonomousMode || autonomousStatus === "idle") return null
 

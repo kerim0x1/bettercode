@@ -12,7 +12,9 @@ export interface InstalledThemeInfo {
 }
 
 export function listImportedThemes(): Promise<ImportedThemeSummary[]> {
-  return invoke<{ themes: ImportedThemeSummary[] }>("/themes").then((r) => r.themes)
+  return invoke<{ themes: ImportedThemeSummary[] }>("/themes").then(
+    (r) => r.themes
+  )
 }
 
 export function getImportedTheme(id: string): Promise<ImportedTheme> {
@@ -20,7 +22,9 @@ export function getImportedTheme(id: string): Promise<ImportedTheme> {
 }
 
 export function listInstalledThemes(): Promise<InstalledThemeInfo[]> {
-  return invoke<{ themes: InstalledThemeInfo[] }>("/themes/installed").then((r) => r.themes)
+  return invoke<{ themes: InstalledThemeInfo[] }>("/themes/installed").then(
+    (r) => r.themes
+  )
 }
 
 export function importInstalledTheme(id: string): Promise<ImportedTheme> {

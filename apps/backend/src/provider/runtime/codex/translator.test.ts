@@ -14,37 +14,54 @@ function translate(native: CodexNativeEvent) {
 
 describe("translateCodexEvent", () => {
   it("finds a tool ID after an empty nested item branch", () => {
-    expect(translate({
-      kind: "notification",
-      method: "item/commandExecution/outputDelta",
-      params: { item: {}, call: { id: "actual-call" }, delta: "output" },
-    })[0]).toMatchObject({ type: "tool.delta", toolId: "actual-call" })
+    expect(
+      translate({
+        kind: "notification",
+        method: "item/commandExecution/outputDelta",
+        params: { item: {}, call: { id: "actual-call" }, delta: "output" },
+      })[0]
+    ).toMatchObject({ type: "tool.delta", toolId: "actual-call" })
   })
 
   it("bounds tool ID traversal for deeply nested JSON notifications", () => {
-    const nested = JSON.parse('{"item":'.repeat(12000) + '{}' + '}'.repeat(12000))
+    const nested = JSON.parse(
+      '{"item":'.repeat(12000) + "{}" + "}".repeat(12000)
+    )
     const event = translate({
       kind: "notification",
       method: "item/commandExecution/outputDelta",
       params: { item: nested, delta: "output" },
     })[0]
-    expect(event).toMatchObject({ type: "tool.delta", toolId: expect.any(String) })
+    expect(event).toMatchObject({
+      type: "tool.delta",
+      toolId: expect.any(String),
+    })
   })
 
   it("normalizes malformed item identity fields without dropping completion", () => {
-    expect(translate({
-      kind: "notification",
-      method: "item/completed",
-      params: { item: { id: 42, type: { invalid: true } } },
-    })[0]).toMatchObject({ type: "item.completed", itemId: "", kind: "unknown" })
+    expect(
+      translate({
+        kind: "notification",
+        method: "item/completed",
+        params: { item: { id: 42, type: { invalid: true } } },
+      })[0]
+    ).toMatchObject({ type: "item.completed", itemId: "", kind: "unknown" })
   })
 
   it("reads tool status without coercing JSON objects", () => {
-    expect(translate({
-      kind: "notification",
-      method: "item/completed",
-      params: { item: { id: "tool-1", type: "commandExecution", status: { toString: null } } },
-    })[0]).toMatchObject({ type: "tool.completed", toolId: "tool-1" })
+    expect(
+      translate({
+        kind: "notification",
+        method: "item/completed",
+        params: {
+          item: {
+            id: "tool-1",
+            type: "commandExecution",
+            status: { toString: null },
+          },
+        },
+      })[0]
+    ).toMatchObject({ type: "tool.completed", toolId: "tool-1" })
   })
 
   it("does not expose Codex stderr diagnostics in public events", () => {
@@ -94,9 +111,9 @@ describe("translateCodexEvent", () => {
         message: "Codex provider process could not be started.",
       }),
     ])
-    expect(JSON.stringify([...fatal, ...warning, ...spawnFailure])).not.toContain(
-      privateDiagnostic
-    )
+    expect(
+      JSON.stringify([...fatal, ...warning, ...spawnFailure])
+    ).not.toContain(privateDiagnostic)
   })
 
   it("reads reasoning deltas nested under params.event.delta", () => {
@@ -652,8 +669,8 @@ describe("translateCodexEvent", () => {
           // The whole patch so far: a snapshot, carried as the item's
           // output so consumers replace instead of appending it. It is the
           // same text the diff panel receives.
-          output: (patchEvents[0] as { payload: { unifiedDiff: string } }).payload
-            .unifiedDiff,
+          output: (patchEvents[0] as { payload: { unifiedDiff: string } })
+            .payload.unifiedDiff,
         }),
       }),
     ])
@@ -1206,17 +1223,12 @@ describe("normalizeCodexServiceTier (Fast Mode)", () => {
         ],
       })
     ).toBe("fast")
-    expect(
-      serviceTierForModel(true, { optionDescriptors: [] })
-    ).toBeUndefined()
+    expect(serviceTierForModel(true, { optionDescriptors: [] })).toBeUndefined()
   })
 })
 
 describe("effortForModel", () => {
-  const capabilities = (
-    options: string[],
-    currentValue?: string
-  ) => ({
+  const capabilities = (options: string[], currentValue?: string) => ({
     optionDescriptors: [
       {
         id: "reasoningEffort",
@@ -1237,9 +1249,7 @@ describe("effortForModel", () => {
 
   it("uses live default metadata rather than a slug-based fallback", () => {
     const live = capabilities(["low", "medium", "high"], "medium")
-    expect(effortForModel("ultra", "model-with-any-name", live)).toBe(
-      "medium"
-    )
+    expect(effortForModel("ultra", "model-with-any-name", live)).toBe("medium")
   })
 
   it("omits effort when metadata is unavailable", () => {

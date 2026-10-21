@@ -118,7 +118,7 @@ describe("settings schema", () => {
       settingsSchema.parse({
         theme: "light",
         custom_future_field: 42,
-      }),
+      })
     ).toThrow(/Unrecognized key/)
   })
 

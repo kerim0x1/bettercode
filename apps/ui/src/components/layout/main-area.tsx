@@ -199,7 +199,7 @@ export function MainArea(props: MainAreaProps) {
     )
   }
 
-  // The one chat container editor and design share. 
+  // The one chat container editor and design share.
   const renderChatWorkbenchPanel = (frame: {
     className?: string
     style?: CSSProperties
@@ -352,26 +352,26 @@ export function MainArea(props: MainAreaProps) {
           },
         })
       ) : (
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {/* Chat area — swarm grid or agent pane grid */}
-        {swarmActive ? (
-          <MultiAgentSwarmView providers={providers} />
-        ) : (
-          <PaneGrid
-            layout={paneLayout}
-            chatBag={chatBag}
-            setActivePane={setActivePane}
-            closePane={closePane}
-            setActiveTab={setActiveTab}
-            closeTab={closeTab}
-            addTab={addTab}
-            moveTabToPane={moveTabToPane}
-            openThreadOnPane={openThreadOnPane}
-          />
-        )}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {/* Chat area — swarm grid or agent pane grid */}
+          {swarmActive ? (
+            <MultiAgentSwarmView providers={providers} />
+          ) : (
+            <PaneGrid
+              layout={paneLayout}
+              chatBag={chatBag}
+              setActivePane={setActivePane}
+              closePane={closePane}
+              setActiveTab={setActiveTab}
+              closeTab={closeTab}
+              addTab={addTab}
+              moveTabToPane={moveTabToPane}
+              openThreadOnPane={openThreadOnPane}
+            />
+          )}
 
-        {consolePanel}
-      </div>
+          {consolePanel}
+        </div>
       )}
       {/* end chat column */}
 

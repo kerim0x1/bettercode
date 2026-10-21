@@ -51,9 +51,14 @@ export function openPersistence(root: BootRoot): PersistenceContext {
     return process.platform === "win32" ? resolved.toLowerCase() : resolved
   }
   const targetKey = canonicalPathKey(config.dbPath)
-  if ([".betterc0de", ".betterc0de-dev"].some((base) =>
-    canonicalPathKey(path.join(os.homedir(), base, "userdata", "betterc0de.db")) === targetKey
-  )) {
+  if (
+    [".betterc0de", ".betterc0de-dev"].some(
+      (base) =>
+        canonicalPathKey(
+          path.join(os.homedir(), base, "userdata", "betterc0de.db")
+        ) === targetKey
+    )
+  ) {
     migrateLegacyDbIfNeeded(config.dbPath)
   }
   const db = openDatabase(config.dbPath)

@@ -178,7 +178,11 @@ function normalizeSelectableTemplateId(templateId: string | undefined): string {
   if (templateId && SELECTABLE_THEME_TEMPLATE_IDS.has(templateId)) {
     return templateId
   }
-  if (templateId && isCustomTemplateId(templateId) && getCustomTheme(customThemeIdOf(templateId))) {
+  if (
+    templateId &&
+    isCustomTemplateId(templateId) &&
+    getCustomTheme(customThemeIdOf(templateId))
+  ) {
     return templateId
   }
   return DEFAULTS.template

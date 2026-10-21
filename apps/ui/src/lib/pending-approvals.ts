@@ -161,7 +161,10 @@ export function derivePendingPlanApprovals(
   // A resolution must win even when replay sorts it before its request.
   const settled = new Set<string>()
   for (const activity of activities) {
-    if (activity.kind === "plan-approval.resolved" || isStalePendingApprovalFailureActivity(activity)) {
+    if (
+      activity.kind === "plan-approval.resolved" ||
+      isStalePendingApprovalFailureActivity(activity)
+    ) {
       const requestId = requestIdFromActivity(activity)
       if (requestId) settled.add(requestId)
     }

@@ -40,11 +40,15 @@ describe("editor navigation history", () => {
     try {
       await useEditorStore.getState().openFile("/repo/src/a.ts")
       const tabId = useEditorStore.getState().activeTabId!
-      await useEditorStore.getState().openFile("/repo/src/a.ts", { reloadExisting: false })
+      await useEditorStore
+        .getState()
+        .openFile("/repo/src/a.ts", { reloadExisting: false })
       useEditorStore.getState().setActiveTab(tabId)
       expect(reveal).toHaveBeenCalledTimes(3)
       expect(useEditorStore.getState().tabs).toHaveLength(1)
-    } finally { vi.unstubAllGlobals() }
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it("detects common languages and special filenames", () => {
@@ -458,13 +462,29 @@ describe("editor navigation history", () => {
     useEditorStore.getState().updateContent(tabId, "unsaved changes")
     await useEditorStore.getState().openFile("/repo/src/nested/b.ts")
     useEditorStore.getState().closeTab(useEditorStore.getState().activeTabId!)
-    useEditorStore.getState().handlePathMoved("/repo/src/nested", "/repo/assets/nested")
-    expect(useEditorStore.getState().tabs.find((tab) => tab.id === tabId)).toMatchObject({
-      filePath: "/repo/assets/nested/a.ts", content: "unsaved changes", isDirty: true,
+    useEditorStore
+      .getState()
+      .handlePathMoved("/repo/src/nested", "/repo/assets/nested")
+    expect(
+      useEditorStore.getState().tabs.find((tab) => tab.id === tabId)
+    ).toMatchObject({
+      filePath: "/repo/assets/nested/a.ts",
+      content: "unsaved changes",
+      isDirty: true,
     })
-    expect(useEditorStore.getState().recentlyClosedTabs[0]?.filePath).toBe("/repo/assets/nested/b.ts")
-    expect(useEditorStore.getState().recentFiles.map((file) => file.filePath)).toContain("/repo/assets/nested/a.ts")
-    expect(useEditorStore.getState().navigationBackStack.every((entry) => !entry.filePath.startsWith("/repo/src/nested"))).toBe(true)
+    expect(useEditorStore.getState().recentlyClosedTabs[0]?.filePath).toBe(
+      "/repo/assets/nested/b.ts"
+    )
+    expect(
+      useEditorStore.getState().recentFiles.map((file) => file.filePath)
+    ).toContain("/repo/assets/nested/a.ts")
+    expect(
+      useEditorStore
+        .getState()
+        .navigationBackStack.every(
+          (entry) => !entry.filePath.startsWith("/repo/src/nested")
+        )
+    ).toBe(true)
   })
 
   it("closes open editors under deleted folders while preserving dirty recently closed content", async () => {

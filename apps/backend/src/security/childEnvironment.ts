@@ -147,10 +147,7 @@ export function sanitizedShellEnvironment(
     if (value !== undefined) env[key] = value
   }
   for (const [key, value] of Object.entries(overrides)) {
-    if (
-      value !== undefined &&
-      isSafeShellEnvironmentOverrideKey(key)
-    ) {
+    if (value !== undefined && isSafeShellEnvironmentOverrideKey(key)) {
       env[key] = value
     }
   }

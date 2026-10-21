@@ -29,14 +29,11 @@ describe("provider-neutral permission API authentication", () => {
       agentPermissions: { listGrants },
     } as unknown as AppState)
 
-    const unauthorized = await app.request(
-      "/api/v1/permissions/grants/list",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      }
-    )
+    const unauthorized = await app.request("/api/v1/permissions/grants/list", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    })
     expect(unauthorized.status).toBe(401)
     expect(listGrants).not.toHaveBeenCalled()
 

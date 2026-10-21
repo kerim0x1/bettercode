@@ -110,7 +110,8 @@ export async function revertThreadCheckpoint(input: {
     })
   }
 
-  const checkpointRefs = state.checkpointDiffs.listCheckpointRefsByThread(threadId)
+  const checkpointRefs =
+    state.checkpointDiffs.listCheckpointRefsByThread(threadId)
   const currentTurnCount = currentCheckpointTurnCount(
     threadId,
     checkpointRefs,
@@ -259,7 +260,10 @@ async function executeCheckpointRevertOperation(
   reason?: string
 }> {
   let operation = initialOperation
-  assertCheckpointRevertTurnRange(operation.turnCount, operation.currentTurnCount)
+  assertCheckpointRevertTurnRange(
+    operation.turnCount,
+    operation.currentTurnCount
+  )
   let safetyRef: string | null = null
   let restorePreview: {
     modified: readonly string[]

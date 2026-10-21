@@ -11,7 +11,7 @@ vi.mock("../checkpoint-recovery-fence", () => ({
   ) => operation(),
 }))
 vi.mock("./dispatch", () => ({
-  asHubProviderKind: (kind: string) => kind === "claude" ? kind : null,
+  asHubProviderKind: (kind: string) => (kind === "claude" ? kind : null),
   chatRecoveryWorkspaces: () => [],
   resolveHubInstanceId: () => "claude-main",
 }))
@@ -24,7 +24,9 @@ describe("approval permission persistence", () => {
     "does not persist grants when the %s rejects an approval",
     async (provider) => {
       const { state, upsertGrant } = fixture(provider, true)
-      await expect(respondToChatApproval(state, approval(provider))).rejects.toThrow()
+      await expect(
+        respondToChatApproval(state, approval(provider))
+      ).rejects.toThrow()
       expect(upsertGrant).not.toHaveBeenCalled()
     }
   )
@@ -33,14 +35,18 @@ describe("approval permission persistence", () => {
     "persists grants only after the %s acknowledges approval",
     async (provider) => {
       const { state, upsertGrant, acknowledged } = fixture(provider, false)
-      await expect(respondToChatApproval(state, approval(provider))).resolves.toEqual({
+      await expect(
+        respondToChatApproval(state, approval(provider))
+      ).resolves.toEqual({
         status: "acknowledged",
       })
-      expect(upsertGrant).toHaveBeenCalledWith(expect.objectContaining({
-        destination: "workspace",
-        toolName: "Edit",
-        behavior: "allow",
-      }))
+      expect(upsertGrant).toHaveBeenCalledWith(
+        expect.objectContaining({
+          destination: "workspace",
+          toolName: "Edit",
+          behavior: "allow",
+        })
+      )
       expect(acknowledged.mock.invocationCallOrder[0]).toBeLessThan(
         upsertGrant.mock.invocationCallOrder[0]!
       )
@@ -60,12 +66,14 @@ function approval(provider: "hub" | "legacy") {
     providerKind: provider === "hub" ? "claude" : "custom",
     requestId: "request-approval",
     decision: "approve",
-    updatedPermissions: [{
-      type: "addRules",
-      behavior: "allow",
-      destination: "projectSettings",
-      rules: [{ toolName: "Edit", ruleContent: "src/**" }],
-    }],
+    updatedPermissions: [
+      {
+        type: "addRules",
+        behavior: "allow",
+        destination: "projectSettings",
+        rules: [{ toolName: "Edit", ruleContent: "src/**" }],
+      },
+    ],
   })
 }
 

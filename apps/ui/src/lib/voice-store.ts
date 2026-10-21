@@ -9,15 +9,72 @@ function detectSystemLanguage(): string {
   // Try exact match first (e.g. "en-US", "pt-BR", "es-419", "fr-CA")
   const exact = nav.replace("_", "-")
   const deepgramExact = new Set([
-    "en", "en-US", "en-GB", "en-AU", "en-IN", "en-NZ",
-    "es", "es-419", "fr", "fr-CA", "de", "de-CH",
-    "pt", "pt-BR", "zh", "zh-CN", "zh-TW",
-    "ja", "ko", "hi", "hi-Latn", "ta", "bn", "gu", "kn", "ml", "mr", "pa", "te",
-    "id", "ms", "th", "vi", "tl",
-    "ru", "uk", "pl", "cs", "sk", "bg", "hr", "sr", "sl",
-    "sv", "no", "da", "fi",
-    "nl", "nl-BE", "it", "el", "ro", "hu", "ca", "lt", "lv", "et",
-    "tr", "az", "kk", "ar", "he", "fa", "sw", "af", "mi",
+    "en",
+    "en-US",
+    "en-GB",
+    "en-AU",
+    "en-IN",
+    "en-NZ",
+    "es",
+    "es-419",
+    "fr",
+    "fr-CA",
+    "de",
+    "de-CH",
+    "pt",
+    "pt-BR",
+    "zh",
+    "zh-CN",
+    "zh-TW",
+    "ja",
+    "ko",
+    "hi",
+    "hi-Latn",
+    "ta",
+    "bn",
+    "gu",
+    "kn",
+    "ml",
+    "mr",
+    "pa",
+    "te",
+    "id",
+    "ms",
+    "th",
+    "vi",
+    "tl",
+    "ru",
+    "uk",
+    "pl",
+    "cs",
+    "sk",
+    "bg",
+    "hr",
+    "sr",
+    "sl",
+    "sv",
+    "no",
+    "da",
+    "fi",
+    "nl",
+    "nl-BE",
+    "it",
+    "el",
+    "ro",
+    "hu",
+    "ca",
+    "lt",
+    "lv",
+    "et",
+    "tr",
+    "az",
+    "kk",
+    "ar",
+    "he",
+    "fa",
+    "sw",
+    "af",
+    "mi",
   ])
   if (deepgramExact.has(exact)) return exact
 
@@ -49,10 +106,16 @@ export interface VoiceState {
   loaded: boolean
 
   init: () => Promise<void>
-  update: (patch: Partial<Pick<VoiceState, "deepgramApiKey" | "micDeviceId" | "voiceLanguage">>) => Promise<void>
+  update: (
+    patch: Partial<
+      Pick<VoiceState, "deepgramApiKey" | "micDeviceId" | "voiceLanguage">
+    >
+  ) => Promise<void>
 }
 
-type VoiceSettingsPatch = Partial<Pick<Settings, "voice_mic_device_id" | "voice_language">> & {
+type VoiceSettingsPatch = Partial<
+  Pick<Settings, "voice_mic_device_id" | "voice_language">
+> & {
   deepgram_api_key?: SecretPatch
 }
 
@@ -77,8 +140,13 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
         deepgramApiKey: customKey,
         deepgramConfigured: stored?.configured === true || customKey.length > 0,
         micDeviceId: (settings.voice_mic_device_id as string) || "",
-        voiceLanguage: (settings.voice_language as string) || detectSystemLanguage(),
-        setupComplete: !!(stored?.configured || customKey || BUILTIN_DEEPGRAM_KEY),
+        voiceLanguage:
+          (settings.voice_language as string) || detectSystemLanguage(),
+        setupComplete: !!(
+          stored?.configured ||
+          customKey ||
+          BUILTIN_DEEPGRAM_KEY
+        ),
         loaded: true,
       })
     } catch {
@@ -101,8 +169,10 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
         ? { set: patch.deepgramApiKey }
         : { clear: true }
     }
-    if (patch.micDeviceId !== undefined) backendPatch.voice_mic_device_id = patch.micDeviceId
-    if (patch.voiceLanguage !== undefined) backendPatch.voice_language = patch.voiceLanguage
+    if (patch.micDeviceId !== undefined)
+      backendPatch.voice_mic_device_id = patch.micDeviceId
+    if (patch.voiceLanguage !== undefined)
+      backendPatch.voice_language = patch.voiceLanguage
     try {
       await updateSettings(backendPatch)
     } catch (e) {
@@ -125,6 +195,7 @@ function readSecretState(
   if (!value || typeof value !== "object" || Array.isArray(value)) return null
   const state = value as Record<string, unknown>
   if (typeof state.configured !== "boolean") return null
-  if (state.storage !== "encrypted" && state.storage !== "plaintext") return null
+  if (state.storage !== "encrypted" && state.storage !== "plaintext")
+    return null
   return { configured: state.configured, storage: state.storage }
 }

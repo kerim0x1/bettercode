@@ -99,7 +99,8 @@ export function describeTailscaleServe(
   if (!hostingEnabled) {
     return {
       headline: "Hosting off",
-      detail: "Turn on Remote Access above before publishing through Tailscale.",
+      detail:
+        "Turn on Remote Access above before publishing through Tailscale.",
       canToggle: false,
       tone: "muted",
     }

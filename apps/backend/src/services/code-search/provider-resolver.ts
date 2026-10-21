@@ -8,10 +8,21 @@ export function withCodeSearchServer(
 ): PortableMcpServerResolver {
   return async (cwd) => {
     const server = await resolveCodeSearch(cwd)
-    const configured = (await configuredServers(cwd))
-      .filter((entry) => entry.id !== CODE_SEARCH_SERVER && entry.name !== CODE_SEARCH_SERVER)
+    const configured = (await configuredServers(cwd)).filter(
+      (entry) =>
+        entry.id !== CODE_SEARCH_SERVER && entry.name !== CODE_SEARCH_SERVER
+    )
     return server
-      ? [{ id: CODE_SEARCH_SERVER, name: CODE_SEARCH_SERVER, transport: "http", url: server.url, headers: server.headers }, ...configured]
+      ? [
+          {
+            id: CODE_SEARCH_SERVER,
+            name: CODE_SEARCH_SERVER,
+            transport: "http",
+            url: server.url,
+            headers: server.headers,
+          },
+          ...configured,
+        ]
       : configured
   }
 }

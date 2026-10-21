@@ -12,20 +12,24 @@ import type { UiProvider } from "@/lib/provider-types"
  * kind (fallback chain: `providerKind` → `id` → `"openai"`) is what the
  * backend uses to route the interrupt call to the right adapter.
  */
-export function useChatStop(selectedProvider: UiProvider | undefined, threadId?: string | null) {
+export function useChatStop(
+  selectedProvider: UiProvider | undefined,
+  threadId?: string | null
+) {
   return useCallback(() => {
     const store = useChatStore.getState()
-    const targetThreadId = threadId === undefined ? store.activeThreadId : threadId
+    const targetThreadId =
+      threadId === undefined ? store.activeThreadId : threadId
     if (!targetThreadId) return
     const rawProviderKind =
-      selectedProvider?.providerKind ??
-      selectedProvider?.id ??
-      "openai"
+      selectedProvider?.providerKind ?? selectedProvider?.id ?? "openai"
     interruptTurn(
       targetThreadId,
       rawProviderKind,
-      selectedProvider?.providerInstanceId ?? null,
-    ).catch(() => { console.warn("Failed to interrupt AI turn") })
+      selectedProvider?.providerInstanceId ?? null
+    ).catch(() => {
+      console.warn("Failed to interrupt AI turn")
+    })
     store.finalizeStream(targetThreadId)
   }, [selectedProvider, threadId])
 }

@@ -371,7 +371,7 @@ export function AppModals(props: any) {
       sourceProposedPlan: planModalSourceProposedPlan,
       inNewThread,
       submit: handleSubmit,
-    }).catch(error => handleError(error, { source: "plan-implementation" }))
+    }).catch((error) => handleError(error, { source: "plan-implementation" }))
   }
 
   return (
@@ -629,11 +629,15 @@ export function AppModals(props: any) {
             if (!open) setSystemBrowserIntent("agent-new-thread")
           }}
           onPathPicked={(path: string) => {
-            void openWorkspace(path).then((registeredPath) => {
-              applyPickedFolder(registeredPath, systemBrowserIntent)
-              setSystemBrowserOpen(false)
-              setSystemBrowserIntent("agent-new-thread")
-            }).catch((error) => handleError(error, { source: "open-workspace" }))
+            void openWorkspace(path)
+              .then((registeredPath) => {
+                applyPickedFolder(registeredPath, systemBrowserIntent)
+                setSystemBrowserOpen(false)
+                setSystemBrowserIntent("agent-new-thread")
+              })
+              .catch((error) =>
+                handleError(error, { source: "open-workspace" })
+              )
           }}
         />
       )}

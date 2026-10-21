@@ -72,7 +72,10 @@ describe("thread route input bounds", () => {
     )
     expect(own.status).toBe(200)
     expect(upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ activity_id: "switch-1", thread_id: "thread-other" })
+      expect.objectContaining({
+        activity_id: "switch-1",
+        thread_id: "thread-other",
+      })
     )
   })
 })

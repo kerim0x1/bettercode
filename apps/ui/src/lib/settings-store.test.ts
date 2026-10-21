@@ -187,19 +187,32 @@ describe("settings-store", () => {
     })
   })
 
-  it.each([true, false])("initializes and updates automatic trust to %s", async (enabled) => {
-    vi.mocked(getSettings).mockResolvedValue({ auto_trust_workspaces: !enabled })
-    await useSettingsStore.getState().init()
-    expect(useSettingsStore.getState().autoTrustWorkspaces).toBe(!enabled)
-    vi.mocked(updateSettings).mockResolvedValue({ auto_trust_workspaces: enabled })
-    const pending = useSettingsStore.getState().update({ auto_trust_workspaces: enabled })
-    expect(useSettingsStore.getState().autoTrustWorkspaces).toBe(enabled)
-    await pending
-    expect(useSettingsStore.getState().autoTrustWorkspaces).toBe(enabled)
-    vi.mocked(updateSettings).mockRejectedValueOnce(new Error("storage failed"))
-    await expect(useSettingsStore.getState().update({ auto_trust_workspaces: !enabled })).rejects.toThrow("storage failed")
-    expect(useSettingsStore.getState().autoTrustWorkspaces).toBe(enabled)
-  })
+  it.each([true, false])(
+    "initializes and updates automatic trust to %s",
+    async (enabled) => {
+      vi.mocked(getSettings).mockResolvedValue({
+        auto_trust_workspaces: !enabled,
+      })
+      await useSettingsStore.getState().init()
+      expect(useSettingsStore.getState().autoTrustWorkspaces).toBe(!enabled)
+      vi.mocked(updateSettings).mockResolvedValue({
+        auto_trust_workspaces: enabled,
+      })
+      const pending = useSettingsStore
+        .getState()
+        .update({ auto_trust_workspaces: enabled })
+      expect(useSettingsStore.getState().autoTrustWorkspaces).toBe(enabled)
+      await pending
+      expect(useSettingsStore.getState().autoTrustWorkspaces).toBe(enabled)
+      vi.mocked(updateSettings).mockRejectedValueOnce(
+        new Error("storage failed")
+      )
+      await expect(
+        useSettingsStore.getState().update({ auto_trust_workspaces: !enabled })
+      ).rejects.toThrow("storage failed")
+      expect(useSettingsStore.getState().autoTrustWorkspaces).toBe(enabled)
+    }
+  )
 
   it("ignores unknown response fields that collide with store actions and runtime state", async () => {
     const before = useSettingsStore.getState()
@@ -239,11 +252,15 @@ describe("settings-store", () => {
     const unhandled = vi.fn()
     process.on("unhandledRejection", unhandled)
     try {
-      const pending = useSettingsStore.getState().update({ diff_style: "stacked" })
+      const pending = useSettingsStore
+        .getState()
+        .update({ diff_style: "stacked" })
       // Let Node perform its unhandled-rejection check before awaiting the save.
-      await new Promise<void>(resolve => setImmediate(resolve))
+      await new Promise<void>((resolve) => setImmediate(resolve))
       expect(unhandled).not.toHaveBeenCalled()
-      expect(handleError).toHaveBeenCalledExactlyOnceWith(error, { source: "settings-save" })
+      expect(handleError).toHaveBeenCalledExactlyOnceWith(error, {
+        source: "settings-save",
+      })
       expect(useSettingsStore.getState().diffStyle).toBe("auto")
       await expect(pending).rejects.toBe(error)
     } finally {
@@ -268,9 +285,7 @@ describe("settings-store", () => {
           })
       )
 
-    const first = useSettingsStore
-      .getState()
-      .update({ diff_style: "stacked" })
+    const first = useSettingsStore.getState().update({ diff_style: "stacked" })
     const second = useSettingsStore.getState().update({ diff_style: "auto" })
     resolveSecond({ diff_style: "auto" })
     await second

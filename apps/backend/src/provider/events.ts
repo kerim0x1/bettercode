@@ -1,6 +1,6 @@
-import { EventEmitter } from "node:events";
-import type { ProviderRuntimeEvent as CanonicalProviderRuntimeEvent } from "@betterc0de/schema";
-import type { ProviderRuntimeEvent } from "./types";
+import { EventEmitter } from "node:events"
+import type { ProviderRuntimeEvent as CanonicalProviderRuntimeEvent } from "@betterc0de/schema"
+import type { ProviderRuntimeEvent } from "./types"
 
 /**
  * Global provider-event bus with three lanes:
@@ -20,17 +20,17 @@ import type { ProviderRuntimeEvent } from "./types";
  */
 export class ProviderEventBus extends EventEmitter {
   emitEvent(event: ProviderRuntimeEvent): void {
-    this.emit("event", event);
+    this.emit("event", event)
   }
 
   emitCanonical(event: CanonicalProviderRuntimeEvent): void {
-    this.emit("canonical", event);
+    this.emit("canonical", event)
   }
 
   emitProjected(event: ProviderRuntimeEvent): void {
-    this.emit("projected", event);
+    this.emit("projected", event)
   }
 }
 
-export const providerEventBus = new ProviderEventBus();
-providerEventBus.setMaxListeners(0); // Many subscribers — don't warn.
+export const providerEventBus = new ProviderEventBus()
+providerEventBus.setMaxListeners(0) // Many subscribers — don't warn.

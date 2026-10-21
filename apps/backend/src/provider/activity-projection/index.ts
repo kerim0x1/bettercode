@@ -12,10 +12,7 @@ import {
   providerInstanceIdFromPayload,
 } from "./shared"
 
-export {
-  isCumulativeToolOutputPayload,
-  toolUpdateActivityKey,
-} from "./shared"
+export { isCumulativeToolOutputPayload, toolUpdateActivityKey } from "./shared"
 export {
   makeFailedRequestActivity,
   makeResolvedRequestActivity,
@@ -29,7 +26,12 @@ export type { ProjectionContext } from "./context"
  */
 const PROJECTORS: ReadonlyArray<
   (ctx: ProjectionContext) => ThreadActivityProjection | null
-> = [projectToolEvents, projectRequestEvents, projectSessionEvents, projectTurnEvents]
+> = [
+  projectToolEvents,
+  projectRequestEvents,
+  projectSessionEvents,
+  projectTurnEvents,
+]
 
 /**
  * Turns one provider runtime event into the durable, user-visible activity

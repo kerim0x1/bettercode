@@ -243,10 +243,7 @@ export function EditorSearchSidebarView({
     Number(Boolean(includePattern.trim())) +
     Number(Boolean(excludePattern.trim()))
   const canReplace =
-    !replacing &&
-    !loading &&
-    trimmedQuery.length >= 2 &&
-    results.length > 0
+    !replacing && !loading && trimmedQuery.length >= 2 && results.length > 0
 
   return (
     <section

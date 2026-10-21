@@ -17,9 +17,7 @@ import {
   parseTurnDiffFilesFromUnifiedDiff,
   type TurnDiffFileSummary,
 } from "@betterc0de/schema"
-import type {
-  CheckpointRefCleanupIntent,
-} from "./CheckpointRefCleanupStore"
+import type { CheckpointRefCleanupIntent } from "./CheckpointRefCleanupStore"
 import type { CheckpointRefOperationGate } from "./CheckpointRefOperationGate"
 
 /**
@@ -288,7 +286,8 @@ export class CheckpointReactor {
     this.localTurnSlots.delete(threadId)
     this.queuesByThread.delete(threadId)
     for (const key of this.terminalFailures.keys()) {
-      if (key.startsWith(`${JSON.stringify(threadId)}::`)) this.terminalFailures.delete(key)
+      if (key.startsWith(`${JSON.stringify(threadId)}::`))
+        this.terminalFailures.delete(key)
     }
   }
 
@@ -340,11 +339,10 @@ export class CheckpointReactor {
               cwd: pending.cwd,
               checkpointRefs: [pending.checkpointRef],
             })
-            const checkpointAlreadyCaptured =
-              await this.hasCheckpointRefFn({
-                cwd: pending.cwd,
-                checkpointRef: pending.checkpointRef,
-              })
+            const checkpointAlreadyCaptured = await this.hasCheckpointRefFn({
+              cwd: pending.cwd,
+              checkpointRef: pending.checkpointRef,
+            })
             if (!checkpointAlreadyCaptured) {
               await this.captureCheckpointFn({
                 cwd: pending.cwd,
@@ -353,20 +351,14 @@ export class CheckpointReactor {
             }
           }
         )
-        const {
-          diff,
-          files,
-          truncated,
-          totalFiles,
-          filesTruncated,
-        } =
+        const { diff, files, truncated, totalFiles, filesTruncated } =
           await this.loadCheckpointDiff({
-          cwd: pending.cwd,
-          fromCheckpointRef: pending.baseCheckpointRef,
-          toCheckpointRef: pending.checkpointRef,
-          fallbackFromToHead: false,
-          ignoreWhitespace: false,
-        })
+            cwd: pending.cwd,
+            fromCheckpointRef: pending.baseCheckpointRef,
+            toCheckpointRef: pending.checkpointRef,
+            fallbackFromToHead: false,
+            ignoreWhitespace: false,
+          })
         const recoveryEvent: ProviderRuntimeEvent = {
           event_type: "turn_interrupted",
           thread_id: pending.threadId,
@@ -399,9 +391,7 @@ export class CheckpointReactor {
         this.completeAdmission(pending)
         pending.admissionRecorded = false
         if (!pending.baselineRetained) {
-          await this.cleanupCheckpointRefs(pending, [
-            pending.baseCheckpointRef,
-          ])
+          await this.cleanupCheckpointRefs(pending, [pending.baseCheckpointRef])
         }
         recovered += 1
       } catch (error) {
@@ -524,12 +514,7 @@ export class CheckpointReactor {
       event.event_type === "session.exited"
     ) {
       if (deferTerminalCapture) return
-      await this.captureCompletion(
-        event,
-        "error",
-        generation,
-        threadToken
-      )
+      await this.captureCompletion(event, "error", generation, threadToken)
       if (propagateTerminalFailure) this.throwTerminalFailure(event)
       return
     }
@@ -537,12 +522,7 @@ export class CheckpointReactor {
     if (event.event_type === "turn_error") {
       if (isFailedTurnStatus(event.payload)) {
         if (deferTerminalCapture) return
-        await this.captureCompletion(
-          event,
-          "error",
-          generation,
-          threadToken
-        )
+        await this.captureCompletion(event, "error", generation, threadToken)
         if (propagateTerminalFailure) this.throwTerminalFailure(event)
       }
     }
@@ -636,34 +616,27 @@ export class CheckpointReactor {
     const baseline =
       retainedBaseline != null
         ? Promise.resolve([] as readonly CheckpointRefCleanupIntent[])
-        : this.withCheckpointRefLocks(
-            cwd,
-            [baseCheckpointRef],
-            async () => {
-              const intents =
-                this.options.cleanupJournal?.enqueue({
-                  threadId: event.thread_id,
-                  cwd,
-                  checkpointRefs: [baseCheckpointRef],
-                }) ?? []
-              await this.captureCheckpointFn({
+        : this.withCheckpointRefLocks(cwd, [baseCheckpointRef], async () => {
+            const intents =
+              this.options.cleanupJournal?.enqueue({
+                threadId: event.thread_id,
                 cwd,
-                checkpointRef: baseCheckpointRef,
-              })
-              return intents
-            }
-          )
+                checkpointRefs: [baseCheckpointRef],
+              }) ?? []
+            await this.captureCheckpointFn({
+              cwd,
+              checkpointRef: baseCheckpointRef,
+            })
+            return intents
+          })
 
     const pending: PendingCheckpoint = {
       key,
       threadId: event.thread_id,
       turnId: payloadString(event.payload, "turn_id", "turnId") ?? null,
       dispatchTurnId:
-        payloadString(
-          event.payload,
-          "dispatchTurnId",
-          "dispatch_turn_id"
-        ) ?? null,
+        payloadString(event.payload, "dispatchTurnId", "dispatch_turn_id") ??
+        null,
       checkpointTurnCount,
       cwd,
       baseCheckpointRef,
@@ -677,13 +650,7 @@ export class CheckpointReactor {
 
     try {
       const baselineIntents = await baseline
-      if (
-        !this.isCurrentGeneration(
-          event.thread_id,
-          generation,
-          threadToken
-        )
-      ) {
+      if (!this.isCurrentGeneration(event.thread_id, generation, threadToken)) {
         if (this.pending.get(mapKey) === pending) {
           this.pending.delete(mapKey)
         }
@@ -748,13 +715,7 @@ export class CheckpointReactor {
     const failures: unknown[] = []
     try {
       await pending.baseline
-      if (
-        !this.isCurrentGeneration(
-          event.thread_id,
-          generation,
-          threadToken
-        )
-      ) {
+      if (!this.isCurrentGeneration(event.thread_id, generation, threadToken)) {
         return
       }
       outputAttempted = true
@@ -773,22 +734,10 @@ export class CheckpointReactor {
           })
         }
       )
-      if (
-        !this.isCurrentGeneration(
-          event.thread_id,
-          generation,
-          threadToken
-        )
-      ) {
+      if (!this.isCurrentGeneration(event.thread_id, generation, threadToken)) {
         return
       }
-      const {
-        diff,
-        files,
-        truncated,
-        totalFiles,
-        filesTruncated,
-      } =
+      const { diff, files, truncated, totalFiles, filesTruncated } =
         await this.loadCheckpointDiff({
           cwd: pending.cwd,
           fromCheckpointRef: pending.baseCheckpointRef,
@@ -796,13 +745,7 @@ export class CheckpointReactor {
           fallbackFromToHead: false,
           ignoreWhitespace: false,
         })
-      if (
-        !this.isCurrentGeneration(
-          event.thread_id,
-          generation,
-          threadToken
-        )
-      ) {
+      if (!this.isCurrentGeneration(event.thread_id, generation, threadToken)) {
         return
       }
       this.emitDiffUpdated(
@@ -843,12 +786,8 @@ export class CheckpointReactor {
         // until its output diff has been durably projected and acknowledged.
         if (completed || !pending.admissionRecorded) {
           await this.cleanupCheckpointRefs(pending, [
-            ...(!pending.baselineRetained
-              ? [pending.baseCheckpointRef]
-              : []),
-            ...(!completed && outputAttempted
-              ? [pending.checkpointRef]
-              : []),
+            ...(!pending.baselineRetained ? [pending.baseCheckpointRef] : []),
+            ...(!completed && outputAttempted ? [pending.checkpointRef] : []),
           ])
         }
       } catch (err) {
@@ -884,63 +823,50 @@ export class CheckpointReactor {
   ): Promise<void> {
     const uniqueRefs = [...new Set(checkpointRefs)].sort()
     if (uniqueRefs.length === 0) return
-    await this.withCheckpointRefLocks(
-      pending.cwd,
-      uniqueRefs,
-      async () => {
-        const intents =
-          this.options.cleanupJournal?.enqueue({
-            threadId: pending.threadId,
-            cwd: pending.cwd,
-            checkpointRefs: uniqueRefs,
-          }) ?? []
-        try {
-          await this.deleteCheckpointRefsFn({
-            cwd: pending.cwd,
-            checkpointRefs: uniqueRefs,
-          })
-          if (
-            intents.length > 0 &&
-            this.options.cleanupJournal?.completeIntent
-          ) {
-            for (const intent of intents) {
-              this.options.cleanupJournal.completeIntent(intent)
-            }
-          } else {
-            this.options.cleanupJournal?.complete?.(
-              pending.cwd,
-              uniqueRefs
-            )
+    await this.withCheckpointRefLocks(pending.cwd, uniqueRefs, async () => {
+      const intents =
+        this.options.cleanupJournal?.enqueue({
+          threadId: pending.threadId,
+          cwd: pending.cwd,
+          checkpointRefs: uniqueRefs,
+        }) ?? []
+      try {
+        await this.deleteCheckpointRefsFn({
+          cwd: pending.cwd,
+          checkpointRefs: uniqueRefs,
+        })
+        if (intents.length > 0 && this.options.cleanupJournal?.completeIntent) {
+          for (const intent of intents) {
+            this.options.cleanupJournal.completeIntent(intent)
           }
-        } catch (err) {
-          for (const checkpointRef of uniqueRefs) {
-            const intent = intents.find(
-              (candidate) => candidate.checkpointRef === checkpointRef
-            )
-            if (
-              intent &&
-              this.options.cleanupJournal?.recordIntentFailure
-            ) {
-              this.options.cleanupJournal.recordIntentFailure(intent, err)
-            } else {
-              this.options.cleanupJournal?.recordFailure?.(
-                pending.cwd,
-                checkpointRef,
-                err
-              )
-            }
-          }
-          this.options.logger.warn(
-            {
-              err,
-              thread: pending.threadId,
-              checkpointRefs: uniqueRefs,
-            },
-            "failed to clean up checkpoint refs"
-          )
+        } else {
+          this.options.cleanupJournal?.complete?.(pending.cwd, uniqueRefs)
         }
+      } catch (err) {
+        for (const checkpointRef of uniqueRefs) {
+          const intent = intents.find(
+            (candidate) => candidate.checkpointRef === checkpointRef
+          )
+          if (intent && this.options.cleanupJournal?.recordIntentFailure) {
+            this.options.cleanupJournal.recordIntentFailure(intent, err)
+          } else {
+            this.options.cleanupJournal?.recordFailure?.(
+              pending.cwd,
+              checkpointRef,
+              err
+            )
+          }
+        }
+        this.options.logger.warn(
+          {
+            err,
+            thread: pending.threadId,
+            checkpointRefs: uniqueRefs,
+          },
+          "failed to clean up checkpoint refs"
+        )
       }
-    )
+    })
   }
 
   private completeCleanupIntents(
@@ -978,11 +904,7 @@ export class CheckpointReactor {
   ): unknown | null {
     if (!pending.admissionRecorded) return null
     try {
-      this.options.failTurnAdmission?.(
-        pending.threadId,
-        pending.key,
-        error
-      )
+      this.options.failTurnAdmission?.(pending.threadId, pending.key, error)
       return null
     } catch (admissionError) {
       this.options.logger.error(
@@ -1049,9 +971,7 @@ export class CheckpointReactor {
     // thread for the lifetime of the backend.
     this.forgottenThreads.delete(threadId)
     this.forgottenThreads.add(threadId)
-    while (
-      this.forgottenThreads.size > MAX_FORGOTTEN_THREAD_TOMBSTONES
-    ) {
+    while (this.forgottenThreads.size > MAX_FORGOTTEN_THREAD_TOMBSTONES) {
       const oldest = this.forgottenThreads.values().next().value
       if (oldest === undefined) break
       this.forgottenThreads.delete(oldest)
@@ -1082,9 +1002,7 @@ export class CheckpointReactor {
     return next
   }
 
-  private async loadCheckpointDiff(
-    input: DiffCheckpointsInput
-  ): Promise<{
+  private async loadCheckpointDiff(input: DiffCheckpointsInput): Promise<{
     diff: string
     files: TurnDiffFileSummary[]
     truncated: boolean

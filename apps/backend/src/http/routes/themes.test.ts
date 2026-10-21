@@ -17,7 +17,9 @@ afterEach(async () => {
 })
 
 function fixture() {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-themes-http-"))
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "betterc0de-themes-http-")
+  )
   const db = openDatabase(path.join(directory, "test.sqlite"))
   runMigrations(db)
   const values = { ...defaultSettings(), remote_access_enabled: true }
@@ -35,7 +37,12 @@ function fixture() {
     authPath: path.join(directory, "auth.json"),
     logsDir: path.join(directory, "logs"),
     providerLogsDir: path.join(directory, "logs", "provider"),
-    providerEventLogPath: path.join(directory, "logs", "provider", "events.log"),
+    providerEventLogPath: path.join(
+      directory,
+      "logs",
+      "provider",
+      "events.log"
+    ),
     authToken: "desktop-secret",
   }
   const remoteAccess = new RemoteAccessService(db, { isEnabled: () => true })
@@ -117,18 +124,32 @@ describe("themes routes", () => {
       body: JSON.stringify({ kind: "text", text: THEME, source: "paste" }),
     })
     expect(imported.status).toBe(200)
-    const theme = (await imported.json()) as { id: string; mode: string; source: unknown }
-    expect(theme).toMatchObject({ id: "test-dark", mode: "dark", source: { kind: "paste" } })
-    expect(fs.existsSync(path.join(directory, "themes", "test-dark.json"))).toBe(true)
+    const theme = (await imported.json()) as {
+      id: string
+      mode: string
+      source: unknown
+    }
+    expect(theme).toMatchObject({
+      id: "test-dark",
+      mode: "dark",
+      source: { kind: "paste" },
+    })
+    expect(
+      fs.existsSync(path.join(directory, "themes", "test-dark.json"))
+    ).toBe(true)
 
-    const list = (await (await app.request("/api/v1/themes", { headers: desktop })).json()) as {
+    const list = (await (
+      await app.request("/api/v1/themes", { headers: desktop })
+    ).json()) as {
       themes: Array<{ id: string; preview: { bg: string } }>
     }
     expect(list.themes.map((t) => t.id)).toEqual(["test-dark"])
     expect(list.themes[0]?.preview.bg).toBe("#101010")
     // The listing is a summary; the color tables come with the single read.
     expect(JSON.stringify(list)).not.toContain("tokenColors")
-    const full = (await (await app.request("/api/v1/themes/test-dark", { headers: desktop })).json()) as {
+    const full = (await (
+      await app.request("/api/v1/themes/test-dark", { headers: desktop })
+    ).json()) as {
       tokenColors: unknown[]
     }
     expect(full.tokenColors).toHaveLength(1)
@@ -139,8 +160,12 @@ describe("themes routes", () => {
       body: JSON.stringify({ kind: "text", text: "{ nope", source: "file" }),
     })
     expect(junk.status).toBe(422)
-    expect(((await junk.json()) as { error: string }).error).toMatch(/Not valid theme JSON/)
-    expect((await app.request("/api/v1/themes/missing", { headers: desktop })).status).toBe(404)
+    expect(((await junk.json()) as { error: string }).error).toMatch(
+      /Not valid theme JSON/
+    )
+    expect(
+      (await app.request("/api/v1/themes/missing", { headers: desktop })).status
+    ).toBe(404)
   })
 
   it("lets a paired device read themes but not scan, import or delete", async () => {
@@ -151,9 +176,17 @@ describe("themes routes", () => {
       body: JSON.stringify({ kind: "text", text: THEME }),
     })
     const remote = await pairedHeaders(app)
-    expect((await app.request("/api/v1/themes", { headers: remote })).status).toBe(200)
-    expect((await app.request("/api/v1/themes/test-dark", { headers: remote })).status).toBe(200)
-    expect((await app.request("/api/v1/themes/installed", { headers: remote })).status).toBe(403)
+    expect(
+      (await app.request("/api/v1/themes", { headers: remote })).status
+    ).toBe(200)
+    expect(
+      (await app.request("/api/v1/themes/test-dark", { headers: remote }))
+        .status
+    ).toBe(200)
+    expect(
+      (await app.request("/api/v1/themes/installed", { headers: remote }))
+        .status
+    ).toBe(403)
     expect(
       (
         await app.request("/api/v1/themes/import", {
@@ -164,12 +197,25 @@ describe("themes routes", () => {
       ).status
     ).toBe(403)
     expect(
-      (await app.request("/api/v1/themes/test-dark", { method: "DELETE", headers: remote })).status
+      (
+        await app.request("/api/v1/themes/test-dark", {
+          method: "DELETE",
+          headers: remote,
+        })
+      ).status
     ).toBe(403)
     // The desktop can; the summary list follows.
     expect(
-      (await app.request("/api/v1/themes/test-dark", { method: "DELETE", headers: desktop })).status
+      (
+        await app.request("/api/v1/themes/test-dark", {
+          method: "DELETE",
+          headers: desktop,
+        })
+      ).status
     ).toBe(200)
-    expect((await app.request("/api/v1/themes/installed", { headers: desktop })).status).toBe(200)
+    expect(
+      (await app.request("/api/v1/themes/installed", { headers: desktop }))
+        .status
+    ).toBe(200)
   })
 })

@@ -4,15 +4,12 @@
  * one import.
  */
 
-import {
-  useState,
-  useEffect,
-  useMemo,
-  useCallback,
-  useRef,
-} from "react"
+import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { cn } from "@/lib/utils"
-import { ComposerSuggestionItem, ComposerSuggestionPanel } from "@/components/chat/composer-suggestion-panel"
+import {
+  ComposerSuggestionItem,
+  ComposerSuggestionPanel,
+} from "@/components/chat/composer-suggestion-panel"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   AiBrain01Icon,
@@ -155,7 +152,8 @@ export function SlashCommandMenu({
   setInputText,
 }: SlashCommandMenuProps) {
   const [selectedIndex, setSelectedIndex] = useState(0)
-  const [categoryFilter, setCategoryFilter] = useState<SlashCommandFilter>("all")
+  const [categoryFilter, setCategoryFilter] =
+    useState<SlashCommandFilter>("all")
   const [projectCommands, setProjectCommands] = useState<
     WorkspaceProjectCommand[]
   >([])
@@ -252,7 +250,11 @@ export function SlashCommandMenu({
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (!visible) return
-      if (e.target instanceof Element && e.target.closest("[data-slash-command-filter]")) return
+      if (
+        e.target instanceof Element &&
+        e.target.closest("[data-slash-command-filter]")
+      )
+        return
       if (e.key === "ArrowDown") {
         e.preventDefault()
         if (filtered.length > 0) {
@@ -282,7 +284,9 @@ export function SlashCommandMenu({
   }, [handleKeyDown])
 
   useEffect(() => {
-    menuRef.current?.querySelector(`[data-command-index="${activeIndex}"]`)?.scrollIntoView({ block: "nearest" })
+    menuRef.current
+      ?.querySelector(`[data-command-index="${activeIndex}"]`)
+      ?.scrollIntoView({ block: "nearest" })
   }, [activeIndex])
 
   if (!visible) return null
@@ -293,23 +297,46 @@ export function SlashCommandMenu({
         symbol={trigger}
         title={trigger === "$" ? "Skills" : "Commands"}
         detail={`${filtered.length} ${filtered.length === 1 ? "result" : "results"}`}
-        toolbar={trigger === "/" && (
-          <div className="flex items-center gap-1 border-b border-border/50 px-2 py-1.5" role="group" aria-label="Show commands or skills" data-slash-command-filter>
-            {([['all', 'All'], ['commands', 'Commands'], ['skills', 'Skills']] as const).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={categoryFilter === value}
-                className={cn("rounded-md px-2.5 py-1 text-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-foreground/40", categoryFilter === value ? "bg-foreground/[0.08] font-medium text-foreground" : "text-muted-foreground hover:bg-foreground/[0.04]")}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => setCategoryFilter(value)}
-              >{label}</button>
-            ))}
-          </div>
-        )}
+        toolbar={
+          trigger === "/" && (
+            <div
+              className="flex items-center gap-1 border-b border-border/50 px-2 py-1.5"
+              role="group"
+              aria-label="Show commands or skills"
+              data-slash-command-filter
+            >
+              {(
+                [
+                  ["all", "All"],
+                  ["commands", "Commands"],
+                  ["skills", "Skills"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={categoryFilter === value}
+                  className={cn(
+                    "rounded-md px-2.5 py-1 text-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-foreground/40",
+                    categoryFilter === value
+                      ? "bg-foreground/[0.08] font-medium text-foreground"
+                      : "text-muted-foreground hover:bg-foreground/[0.04]"
+                  )}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => setCategoryFilter(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )
+        }
       >
         {filtered.length === 0 ? (
-          <div role="status" className="px-2.5 py-5 text-xs text-muted-foreground">
+          <div
+            role="status"
+            className="px-2.5 py-5 text-xs text-muted-foreground"
+          >
             {slashCommandEmptyStateText(trigger, categoryFilter)}
           </div>
         ) : null}
@@ -330,10 +357,14 @@ export function SlashCommandMenu({
               strokeWidth={1.75}
               className="size-4 shrink-0 text-muted-foreground"
             />
-            <span className="min-w-0 max-w-[55%] truncate text-[13px] font-medium tracking-[-0.01em] text-foreground/95">
+            <span className="max-w-[55%] min-w-0 truncate text-[13px] font-medium tracking-[-0.01em] text-foreground/95">
               {cmd.name}
             </span>
-            {cmd.category === "skill" && <span className="shrink-0 rounded bg-muted/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">Skill</span>}
+            {cmd.category === "skill" && (
+              <span className="shrink-0 rounded bg-muted/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                Skill
+              </span>
+            )}
             <span className="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">
               {cmd.description}
             </span>

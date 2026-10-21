@@ -31,7 +31,8 @@ export function SecretsEncryptionBanner() {
   const [available, setAvailable] = useState<boolean | null>(null)
   const [platform, setPlatform] = useState<NodeJS.Platform | undefined>()
   const [dismissed, setDismissed] = useState(
-    typeof window !== "undefined" && window.localStorage?.getItem(DISMISS_KEY) === "1",
+    typeof window !== "undefined" &&
+      window.localStorage?.getItem(DISMISS_KEY) === "1"
   )
 
   useEffect(() => {
@@ -89,10 +90,9 @@ export function SecretsEncryptionBanner() {
       }}
     >
       <span>
-        <strong>Stored secrets are unencrypted.</strong>{" "}
-        The OS keyring is unavailable, so API keys, passwords, and plugin
-        secrets live in plaintext on disk.{" "}
-        {platformAdvice(platform)}
+        <strong>Stored secrets are unencrypted.</strong> The OS keyring is
+        unavailable, so API keys, passwords, and plugin secrets live in
+        plaintext on disk. {platformAdvice(platform)}
       </span>
       <button
         type="button"

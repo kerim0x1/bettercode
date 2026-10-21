@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto"
-import { CODE_SEARCH_SERVER, type CodeSearchServer } from "../../../services/code-search/contracts"
+import {
+  CODE_SEARCH_SERVER,
+  type CodeSearchServer,
+} from "../../../services/code-search/contracts"
 import { EventEmitter } from "node:events"
 import {
   CodexRpcClient,
@@ -23,7 +26,9 @@ import {
 
 export interface CodexSessionStartOptions {
   readonly codeSearchServer?: CodeSearchServer | null
-  readonly orchestratorServer?: import("../../../services/orchestrator/mcp").OrchestratorServer | null
+  readonly orchestratorServer?:
+    | import("../../../services/orchestrator/mcp").OrchestratorServer
+    | null
   readonly cwd?: string | null
   readonly env?: NodeJS.ProcessEnv
   readonly storedProviderThreadId?: string | null
@@ -301,12 +306,13 @@ export class CodexSessionRuntime extends EventEmitter {
       entry.jsonRpcMethod === "item/tool/requestUserInput"
     if (
       requiresUserInput
-        ? decision.kind !== "user_input" && decision.kind !== "user_input_reject"
+        ? decision.kind !== "user_input" &&
+          decision.kind !== "user_input_reject"
         : decision.kind !== "tool_approval"
     ) {
       throw new StalePendingProviderRequestError(
         pendingRequestKindFromDecisionKind(decision.kind),
-        requestId,
+        requestId
       )
     }
     this.pendingServerRequests.delete(requestId)
@@ -343,7 +349,7 @@ export class CodexSessionRuntime extends EventEmitter {
         // plan_approval is Claude-runtime-only; Codex never opens one.
         throw new StalePendingProviderRequestError(
           pendingRequestKindFromDecisionKind(decision.kind),
-          requestId,
+          requestId
         )
       }
       const answers = toCodexUserInputAnswers(decision.answers)
@@ -475,15 +481,38 @@ function threadOpenParams(
 ): Record<string, unknown> {
   return {
     // Per-thread override; never write transient capability headers to user config.
-    ...(options.codeSearchServer !== undefined || options.orchestratorServer !== undefined ? { config: {
-      ...(options.orchestratorServer !== undefined ? { "mcp_servers.betterc0de_orchestrator": options.orchestratorServer
-        ? { url: options.orchestratorServer.url, http_headers: options.orchestratorServer.headers, enabled: true }
-        : { url: "http://127.0.0.1:9/mcp", enabled: false } } : {}),
-      ...(options.codeSearchServer !== undefined ? { [`mcp_servers.${CODE_SEARCH_SERVER}`]: options.codeSearchServer
-        ? { url: options.codeSearchServer.url, http_headers: options.codeSearchServer.headers, enabled: true }
-        // Codex validates transport fields even for disabled entries.
-        : { url: "http://127.0.0.1:9/mcp", enabled: false } } : {}),
-    } } : {}),
+    ...(options.codeSearchServer !== undefined ||
+    options.orchestratorServer !== undefined
+      ? {
+          config: {
+            ...(options.orchestratorServer !== undefined
+              ? {
+                  "mcp_servers.betterc0de_orchestrator":
+                    options.orchestratorServer
+                      ? {
+                          url: options.orchestratorServer.url,
+                          http_headers: options.orchestratorServer.headers,
+                          enabled: true,
+                        }
+                      : { url: "http://127.0.0.1:9/mcp", enabled: false },
+                }
+              : {}),
+            ...(options.codeSearchServer !== undefined
+              ? {
+                  [`mcp_servers.${CODE_SEARCH_SERVER}`]:
+                    options.codeSearchServer
+                      ? {
+                          url: options.codeSearchServer.url,
+                          http_headers: options.codeSearchServer.headers,
+                          enabled: true,
+                        }
+                      : // Codex validates transport fields even for disabled entries.
+                        { url: "http://127.0.0.1:9/mcp", enabled: false },
+                }
+              : {}),
+          },
+        }
+      : {}),
     ...(options.cwd ? { cwd: options.cwd } : {}),
     ...(options.model ? { model: options.model } : {}),
     ...(options.approvalPolicy

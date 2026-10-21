@@ -94,7 +94,9 @@ export function QuestionCard({
             dispatchUserMessage
           )
         )
-        .catch((e) => { log.warn("Failed to send question answer to AI", e) })
+        .catch((e) => {
+          log.warn("Failed to send question answer to AI", e)
+        })
     },
     [
       question.id,

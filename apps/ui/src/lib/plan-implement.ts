@@ -38,7 +38,11 @@ export function selectPlanApprovalForImplement(
 // consumed) and surface as an error bubble.
 const implementInFlight = new Set<string>()
 
-export type ImplementOutcome = "resolved" | "no-approval" | "in-flight" | "error"
+export type ImplementOutcome =
+  | "resolved"
+  | "no-approval"
+  | "in-flight"
+  | "error"
 
 /**
  * Resolve a pending plan approval for `threadId` (approve + acceptEdits by

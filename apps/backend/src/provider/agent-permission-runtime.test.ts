@@ -9,7 +9,10 @@ import {
   configureAgentPermissionRuntime,
   evaluateConfiguredAgentToolPermission,
 } from "./agent-permission-runtime"
-import { clearSessionRules, recordSessionPermissionUpdates } from "./session-permission-rules"
+import {
+  clearSessionRules,
+  recordSessionPermissionUpdates,
+} from "./session-permission-rules"
 
 const threadId = "runtime-policy-precedence"
 const workspacePath = path.resolve("runtime-policy-workspace")
@@ -21,7 +24,11 @@ beforeEach(() => {
   runMigrations(db)
   policy = new AgentPermissionPolicy(db, { agentConfigRoots: () => [] })
   configureAgentPermissionRuntime(policy)
-  bindAgentPermissionRuntimeContext({ threadId, workspacePath, permissionLevel: "bypass" })
+  bindAgentPermissionRuntimeContext({
+    threadId,
+    workspacePath,
+    permissionLevel: "bypass",
+  })
 })
 
 afterEach(() => {
@@ -30,13 +37,18 @@ afterEach(() => {
   db.close()
 })
 
-function sessionRule(behavior: "allow" | "ask" | "deny", ruleContent = "src/*") {
-  recordSessionPermissionUpdates(threadId, [{
-    type: "addRules",
-    destination: "session",
-    behavior,
-    rules: [{ toolName: "Read", ruleContent }],
-  }])
+function sessionRule(
+  behavior: "allow" | "ask" | "deny",
+  ruleContent = "src/*"
+) {
+  recordSessionPermissionUpdates(threadId, [
+    {
+      type: "addRules",
+      destination: "session",
+      behavior,
+      rules: [{ toolName: "Read", ruleContent }],
+    },
+  ])
 }
 
 function evaluate(filePath = "src/private.txt") {
@@ -48,28 +60,55 @@ function evaluate(filePath = "src/private.txt") {
 }
 
 describe("session and durable permission precedence", () => {
-  it.each(["deny", "ask"] as const)("preserves durable %s over session allow", (behavior) => {
-    sessionRule("allow")
-    policy.upsertGrant({ destination: "workspace", workspacePath, toolName: "Read", pathScope: "src", behavior })
-    expect(evaluate()).toMatchObject({ decision: behavior, source: "grant" })
-  })
+  it.each(["deny", "ask"] as const)(
+    "preserves durable %s over session allow",
+    (behavior) => {
+      sessionRule("allow")
+      policy.upsertGrant({
+        destination: "workspace",
+        workspacePath,
+        toolName: "Read",
+        pathScope: "src",
+        behavior,
+      })
+      expect(evaluate()).toMatchObject({ decision: behavior, source: "grant" })
+    }
+  )
 
   it("preserves workspace trust after a session approval", () => {
     sessionRule("allow")
     policy.setWorkspaceTrust({ workspacePath, state: "untrusted" })
-    expect(evaluate()).toMatchObject({ decision: "deny", source: "workspace_trust" })
+    expect(evaluate()).toMatchObject({
+      decision: "deny",
+      source: "workspace_trust",
+    })
   })
 
   it("preserves path confinement after a session approval", () => {
     sessionRule("allow", "../*")
-    expect(evaluate("../private.txt")).toMatchObject({ decision: "deny", source: "path_confinement" })
+    expect(evaluate("../private.txt")).toMatchObject({
+      decision: "deny",
+      source: "path_confinement",
+    })
   })
 
-  it.each(["deny", "ask"] as const)("preserves session %s over durable allow", (behavior) => {
-    sessionRule(behavior)
-    policy.upsertGrant({ destination: "workspace", workspacePath, toolName: "Read", pathScope: "src", behavior: "allow" })
-    expect(evaluate()).toMatchObject({ decision: behavior, source: "session" })
-  })
+  it.each(["deny", "ask"] as const)(
+    "preserves session %s over durable allow",
+    (behavior) => {
+      sessionRule(behavior)
+      policy.upsertGrant({
+        destination: "workspace",
+        workspacePath,
+        toolName: "Read",
+        pathScope: "src",
+        behavior: "allow",
+      })
+      expect(evaluate()).toMatchObject({
+        decision: behavior,
+        source: "session",
+      })
+    }
+  )
 
   it("allows scoped session approvals when policy only supplies its default", () => {
     sessionRule("allow")
@@ -78,12 +117,23 @@ describe("session and durable permission precedence", () => {
 
   it("checks every input path before honoring a session approval", () => {
     sessionRule("allow")
-    policy.upsertGrant({ destination: "workspace", workspacePath, toolName: "Read", pathScope: "secrets", behavior: "deny" })
-    expect(evaluateConfiguredAgentToolPermission({
-      threadId,
+    policy.upsertGrant({
+      destination: "workspace",
+      workspacePath,
       toolName: "Read",
-      toolInput: { file_path: "src/public.txt", files: [{ path: "secrets/private.txt" }] },
-    })).toMatchObject({ decision: "deny", source: "grant" })
+      pathScope: "secrets",
+      behavior: "deny",
+    })
+    expect(
+      evaluateConfiguredAgentToolPermission({
+        threadId,
+        toolName: "Read",
+        toolInput: {
+          file_path: "src/public.txt",
+          files: [{ path: "secrets/private.txt" }],
+        },
+      })
+    ).toMatchObject({ decision: "deny", source: "grant" })
   })
 })
 

@@ -12,15 +12,16 @@ const TOOL_OUTPUT_ARCHIVE_ID_RE = /^[A-Za-z0-9_-]{32}$/
 
 const shellCommandSchema = z.string().max(SHELL_COMMAND_MAX_CHARS)
 const shellCwdSchema = z.coerce.string().max(SHELL_CWD_MAX_CHARS)
-const shellSessionIdSchema = z
-  .string()
-  .min(1)
-  .max(SHELL_SESSION_ID_MAX_CHARS)
+const shellSessionIdSchema = z.string().min(1).max(SHELL_SESSION_ID_MAX_CHARS)
 const permissionLevelSchema = z.string().max(64)
 
 const shellEnvironmentSchema = z
   .record(
-    z.string().min(1).max(128).regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+    z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
     z.string().max(8 * 1024)
   )
   .superRefine((environment, context) => {
@@ -56,48 +57,58 @@ const terminalArgsSchema = z
     }
   })
 
-export const shellRunSchema = z.object({
-  command: z.coerce.string().max(SHELL_COMMAND_MAX_CHARS).default(""),
-  cwd: shellCwdSchema.default("."),
-  shell: z.string().max(1_024).optional(),
-  env: shellEnvironmentSchema.optional(),
-  timeoutMs: z.number().int().min(1_000).max(600_000).optional(),
-  sessionId: shellSessionIdSchema.optional(),
-  // Human intent alone is not authorization. The backend also requires the
-  // short-lived, operation-bound capability issued by /shell/capability.
-  humanOrigin: z.boolean().optional(),
-  humanCapability: z.string().min(1).max(256).optional(),
-  // Optional permission override for non-human-origin callers. Must be one of
-  // the four permission levels; unknown values fall back to `ask-on-edit`.
-  permissionLevel: permissionLevelSchema.optional(),
-}).strict()
+export const shellRunSchema = z
+  .object({
+    command: z.coerce.string().max(SHELL_COMMAND_MAX_CHARS).default(""),
+    cwd: shellCwdSchema.default("."),
+    shell: z.string().max(1_024).optional(),
+    env: shellEnvironmentSchema.optional(),
+    timeoutMs: z.number().int().min(1_000).max(600_000).optional(),
+    sessionId: shellSessionIdSchema.optional(),
+    // Human intent alone is not authorization. The backend also requires the
+    // short-lived, operation-bound capability issued by /shell/capability.
+    humanOrigin: z.boolean().optional(),
+    humanCapability: z.string().min(1).max(256).optional(),
+    // Optional permission override for non-human-origin callers. Must be one of
+    // the four permission levels; unknown values fall back to `ask-on-edit`.
+    permissionLevel: permissionLevelSchema.optional(),
+  })
+  .strict()
 export type ShellRunBody = z.infer<typeof shellRunSchema>
 
 export const shellCapabilityRequestSchema = z.discriminatedUnion("operation", [
-  z.object({
-    operation: z.literal("run"),
-    command: shellCommandSchema,
-    cwd: z.string().max(SHELL_CWD_MAX_CHARS),
-  }).strict(),
-  z.object({
-    operation: z.literal("pty-open"),
-    cwd: z.string().max(SHELL_CWD_MAX_CHARS),
-    sessionId: shellSessionIdSchema.optional(),
-    command: shellCommandSchema.optional(),
-  }).strict(),
-  z.object({
-    operation: z.literal("pty-write"),
-    sessionId: shellSessionIdSchema,
-    data: z.string().max(SHELL_DATA_MAX_CHARS),
-  }).strict(),
+  z
+    .object({
+      operation: z.literal("run"),
+      command: shellCommandSchema,
+      cwd: z.string().max(SHELL_CWD_MAX_CHARS),
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("pty-open"),
+      cwd: z.string().max(SHELL_CWD_MAX_CHARS),
+      sessionId: shellSessionIdSchema.optional(),
+      command: shellCommandSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("pty-write"),
+      sessionId: shellSessionIdSchema,
+      data: z.string().max(SHELL_DATA_MAX_CHARS),
+    })
+    .strict(),
 ])
 export type ShellCapabilityRequest = z.infer<
   typeof shellCapabilityRequestSchema
 >
 
-export const shellAbortSchema = z.object({
-  sessionId: shellSessionIdSchema,
-}).strict()
+export const shellAbortSchema = z
+  .object({
+    sessionId: shellSessionIdSchema,
+  })
+  .strict()
 export type ShellAbortBody = z.infer<typeof shellAbortSchema>
 
 /** Opaque server-issued identifier used by the authenticated archive route. */
@@ -108,39 +119,52 @@ export type ToolOutputArchiveId = z.infer<typeof toolOutputArchiveIdSchema>
 
 const terminalDimensionSchema = z.coerce.number().int().min(2).max(500)
 
-export const terminalOpenSchema = z.object({
-  sessionId: shellSessionIdSchema.optional(),
-  cwd: shellCwdSchema.default("."),
-  shell: z.string().max(1_024).optional(),
-  command: shellCommandSchema.min(1).optional(),
-  args: terminalArgsSchema.optional(),
-  env: shellEnvironmentSchema.optional(),
-  cols: terminalDimensionSchema.optional(),
-  rows: terminalDimensionSchema.optional(),
-  humanOrigin: z.boolean().optional(),
-  humanCapability: z.string().min(1).max(256).optional(),
-  permissionLevel: permissionLevelSchema.optional(),
-}).strict()
+export const terminalOpenSchema = z
+  .object({
+    sessionId: shellSessionIdSchema.optional(),
+    cwd: shellCwdSchema.default("."),
+    shell: z.string().max(1_024).optional(),
+    command: shellCommandSchema.min(1).optional(),
+    args: terminalArgsSchema.optional(),
+    env: shellEnvironmentSchema.optional(),
+    cols: terminalDimensionSchema.optional(),
+    rows: terminalDimensionSchema.optional(),
+    humanOrigin: z.boolean().optional(),
+    humanCapability: z.string().min(1).max(256).optional(),
+    permissionLevel: permissionLevelSchema.optional(),
+  })
+  .strict()
 export type TerminalOpenBody = z.infer<typeof terminalOpenSchema>
 
-export const terminalWriteSchema = z.object({
-  sessionId: shellSessionIdSchema,
-  data: z.string().max(SHELL_DATA_MAX_CHARS),
-  humanOrigin: z.boolean().optional(),
-  humanCapability: z.string().min(1).max(256).optional(),
-  permissionLevel: permissionLevelSchema.optional(),
-}).strict()
+export const terminalWriteSchema = z
+  .object({
+    sessionId: shellSessionIdSchema,
+    data: z.string().max(SHELL_DATA_MAX_CHARS),
+    humanOrigin: z.boolean().optional(),
+    humanCapability: z.string().min(1).max(256).optional(),
+    permissionLevel: permissionLevelSchema.optional(),
+  })
+  .strict()
 export type TerminalWriteBody = z.infer<typeof terminalWriteSchema>
 
-export const terminalResizeSchema = z.object({
-  sessionId: shellSessionIdSchema,
-  cols: terminalDimensionSchema,
-  rows: terminalDimensionSchema,
-}).strict()
+export const terminalResizeSchema = z
+  .object({
+    sessionId: shellSessionIdSchema,
+    cols: terminalDimensionSchema,
+    rows: terminalDimensionSchema,
+  })
+  .strict()
 export type TerminalResizeBody = z.infer<typeof terminalResizeSchema>
 
-export const terminalReadSchema = z.object({
-  sessionId: shellSessionIdSchema,
-  cursor: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
-}).strict()
+export const terminalReadSchema = z
+  .object({
+    sessionId: shellSessionIdSchema,
+    cursor: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(Number.MAX_SAFE_INTEGER)
+      .optional(),
+  })
+  .strict()
 export type TerminalReadBody = z.infer<typeof terminalReadSchema>

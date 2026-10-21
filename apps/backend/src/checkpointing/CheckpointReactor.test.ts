@@ -34,7 +34,9 @@ describe("CheckpointReactor", () => {
       diffCheckpoints: async () => ({ diff: "" }),
       isSnapshotEnabled: async () => true,
       isGitRepo: async () => true,
-      emitEvent: (event) => { emitted.push(event) },
+      emitEvent: (event) => {
+        emitted.push(event)
+      },
     })
     const first = { thread_id: "a", payload: { dispatchTurnId: "b::turn:c" } }
     const second = { thread_id: "a::turn:b", payload: { dispatchTurnId: "c" } }
@@ -43,8 +45,11 @@ describe("CheckpointReactor", () => {
     await reactor.finalizeTurn({ ...second, event_type: "turn_completed" })
     await reactor.finalizeTurn({ ...first, event_type: "turn_completed" })
     expect(captureCheckpoint).toHaveBeenCalledTimes(4)
-    expect(emitted.filter((event) => event.event_type === "checkpoint.captured").map((event) => event.thread_id))
-      .toEqual([second.thread_id, first.thread_id])
+    expect(
+      emitted
+        .filter((event) => event.event_type === "checkpoint.captured")
+        .map((event) => event.thread_id)
+    ).toEqual([second.thread_id, first.thread_id])
     await reactor.stop()
   })
 
@@ -55,15 +60,24 @@ describe("CheckpointReactor", () => {
       threads: { getThreadProjectPath: () => "/repo" },
       logger: logger(),
       captureCheckpoint: async () => undefined,
-      diffCheckpoints: async () => { throw failure },
+      diffCheckpoints: async () => {
+        throw failure
+      },
       isSnapshotEnabled: async () => true,
       isGitRepo: async () => true,
     })
-    const identity = { thread_id: "a::sibling", payload: { dispatchTurnId: "turn" } }
+    const identity = {
+      thread_id: "a::sibling",
+      payload: { dispatchTurnId: "turn" },
+    }
     await reactor.prepareTurn({ ...identity, event_type: "turn_started" })
-    await expect(reactor.finalizeTurn({ ...identity, event_type: "turn_completed" })).rejects.toBe(failure)
+    await expect(
+      reactor.finalizeTurn({ ...identity, event_type: "turn_completed" })
+    ).rejects.toBe(failure)
     await reactor.forgetThread("a")
-    await expect(reactor.finalizeTurn({ ...identity, event_type: "turn_completed" })).rejects.toBe(failure)
+    await expect(
+      reactor.finalizeTurn({ ...identity, event_type: "turn_completed" })
+    ).rejects.toBe(failure)
     await reactor.stop()
   })
 
@@ -415,9 +429,15 @@ describe("CheckpointReactor", () => {
     expect(captureCheckpoint).toHaveBeenCalledTimes(1)
 
     bus.emit("projected", started)
-    bus.emit("projected", turnEvent("turn_started", { dispatchTurnId: "dispatch-prepared" }))
+    bus.emit(
+      "projected",
+      turnEvent("turn_started", { dispatchTurnId: "dispatch-prepared" })
+    )
     // The raw lane is not the reactor's: an event there is not observed.
-    bus.emit("event", turnEvent("turn_started", { dispatchTurnId: "dispatch-raw-only" }))
+    bus.emit(
+      "event",
+      turnEvent("turn_started", { dispatchTurnId: "dispatch-raw-only" })
+    )
     await new Promise((resolve) => setTimeout(resolve, 0))
     await new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -492,9 +512,7 @@ describe("CheckpointReactor", () => {
     ])
     expect(deleteCheckpointRefs).toHaveBeenCalledWith({
       cwd: "/repo",
-      checkpointRefs: [
-        checkpointRefForThreadTurn("thread-1", 0),
-      ],
+      checkpointRefs: [checkpointRefForThreadTurn("thread-1", 0)],
     })
   })
 
@@ -792,10 +810,7 @@ describe("CheckpointReactor", () => {
     const deleteCheckpointRefs = vi.fn().mockResolvedValue(undefined)
     const cleanupJournal = {
       enqueue: vi.fn(
-        (input: {
-          cwd: string
-          checkpointRefs: readonly string[]
-        }) =>
+        (input: { cwd: string; checkpointRefs: readonly string[] }) =>
           input.checkpointRefs.map((checkpointRef) => ({
             cwd: input.cwd,
             checkpointRef,
@@ -839,12 +854,10 @@ describe("CheckpointReactor", () => {
 
   it("retains the initial baseline and advances the slot after an interrupted turn", async () => {
     const baseRef = checkpointRefForThreadTurn("thread-1", 0)
-    let retained:
-      | {
-          readonly cwd: string
-          readonly checkpointRef: string
-        }
-      | null = null
+    let retained: {
+      readonly cwd: string
+      readonly checkpointRef: string
+    } | null = null
     let nextSlot = 0
     const retainBaseline = vi.fn(
       (input: { cwd: string; checkpointRef: string }) => {
@@ -1235,9 +1248,7 @@ describe("CheckpointReactor", () => {
       failTurnAdmission,
     })
 
-    await expect(reactor.recoverPendingAdmissions()).rejects.toBe(
-      survivorError
-    )
+    await expect(reactor.recoverPendingAdmissions()).rejects.toBe(survivorError)
 
     expect(summarizeCheckpointDiff).not.toHaveBeenCalled()
     expect(completeTurnAdmission).not.toHaveBeenCalled()
@@ -1277,21 +1288,21 @@ describe("CheckpointReactor", () => {
       turnEvent("turn_started", {
         turn_id: "native-1",
         dispatchTurnId: "dispatch-1",
-      }),
+      })
     )
     await expect(
       reactor.finalizeTurn(
         turnEvent("turn_completed", {
           turn_id: "native-1",
           dispatchTurnId: "dispatch-1",
-        }),
-      ),
+        })
+      )
     ).rejects.toThrow("projection receipt missing")
 
     expect(failTurnAdmission).toHaveBeenCalledWith(
       "thread-1",
       "turn:dispatch-1",
-      expect.objectContaining({ message: "projection receipt missing" }),
+      expect.objectContaining({ message: "projection receipt missing" })
     )
     expect(reconcileTurnSlot).not.toHaveBeenCalled()
   })

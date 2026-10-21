@@ -132,10 +132,20 @@ describe("tailscale serve mapping", () => {
 
 describe("tailscale CLI safety", () => {
   it("classifies wrapped and styled diagnostics while preserving priority", () => {
-    expect(classifyTailscaleStderr("Access\r\n is\tdenied. tskey-auth-private")).toBe("permission-denied")
-    expect(classifyTailscaleStderr("\u001b[31mNot logged\u001b[0m in\nhttps://login.example/secret")).toBe("not-logged-in")
-    expect(classifyTailscaleStderr("permission denied; handler does not exist")).toBe("no-existing-handler")
-    expect(classifyTailscaleStderr("permission denied; needs login")).toBe("not-logged-in")
+    expect(
+      classifyTailscaleStderr("Access\r\n is\tdenied. tskey-auth-private")
+    ).toBe("permission-denied")
+    expect(
+      classifyTailscaleStderr(
+        "\u001b[31mNot logged\u001b[0m in\nhttps://login.example/secret"
+      )
+    ).toBe("not-logged-in")
+    expect(
+      classifyTailscaleStderr("permission denied; handler does not exist")
+    ).toBe("no-existing-handler")
+    expect(classifyTailscaleStderr("permission denied; needs login")).toBe(
+      "not-logged-in"
+    )
     expect(classifyTailscaleStderr(" \r\n\t")).toBeUndefined()
   })
 
@@ -144,11 +154,15 @@ describe("tailscale CLI safety", () => {
     expect(classifyTailscaleStderr("error: handler does not exist")).toBe(
       "no-existing-handler"
     )
-    expect(classifyTailscaleStderr("Logged out. Log in with tskey-auth-abc")).toBe(
-      "not-logged-in"
+    expect(
+      classifyTailscaleStderr("Logged out. Log in with tskey-auth-abc")
+    ).toBe("not-logged-in")
+    expect(classifyTailscaleStderr("Access is denied.")).toBe(
+      "permission-denied"
     )
-    expect(classifyTailscaleStderr("Access is denied.")).toBe("permission-denied")
-    expect(classifyTailscaleStderr("something else tskey-auth-xyz")).toBe("unknown")
+    expect(classifyTailscaleStderr("something else tskey-auth-xyz")).toBe(
+      "unknown"
+    )
   })
 
   it("spawns tailscale.exe on Windows and falls back to the install directory", () => {
@@ -183,7 +197,10 @@ describe("tailscale remote access service", () => {
       "status --json": { ok: false, reason: "not-installed" },
     })
     const service = createTailscaleRemoteAccess({ run })
-    const described = await service.describe({ localPort: 3773, serveEnabled: true })
+    const described = await service.describe({
+      localPort: 3773,
+      serveEnabled: true,
+    })
     expect(described).toMatchObject({
       installed: false,
       serveActive: false,

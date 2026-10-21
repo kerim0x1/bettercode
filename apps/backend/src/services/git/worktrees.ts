@@ -9,10 +9,7 @@ import {
   canonicalizeExistingPath,
   normalizeBranchRef,
 } from "./refs"
-import {
-  invalidateStatusCache,
-  invalidateStatusCaches,
-} from "./status"
+import { invalidateStatusCache, invalidateStatusCaches } from "./status"
 
 // ─── Worktree operations (Phase 1 Objective 1) ───────────────────────────────
 // Everything in this section routes through `gitRun` so there's no shell

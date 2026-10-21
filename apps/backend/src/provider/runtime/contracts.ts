@@ -1,6 +1,4 @@
-import type {
-  ProviderSendTurnInput as SchemaProviderSendTurnInput,
-} from "@betterc0de/schema"
+import type { ProviderSendTurnInput as SchemaProviderSendTurnInput } from "@betterc0de/schema"
 
 export type ProviderSendTurnInput = SchemaProviderSendTurnInput & {
   readonly dispatchTurnId?: string

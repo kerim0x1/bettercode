@@ -91,7 +91,10 @@ export function clampDesignChatPanelWidth(
 ): number {
   const viewportMax = Math.max(
     DESIGN_CHAT_PANEL_MIN_WIDTH,
-    Math.min(DESIGN_CHAT_PANEL_MAX_WIDTH, viewportWidth - DESIGN_CANVAS_MIN_WIDTH)
+    Math.min(
+      DESIGN_CHAT_PANEL_MAX_WIDTH,
+      viewportWidth - DESIGN_CANVAS_MIN_WIDTH
+    )
   )
   return clampNumber(
     value,

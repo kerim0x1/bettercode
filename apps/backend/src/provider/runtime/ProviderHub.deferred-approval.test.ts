@@ -8,7 +8,10 @@ import type {
   ThreadId,
 } from "./contracts"
 import { ProviderHub } from "./ProviderHub"
-import { configureAgentPermissionRuntime, currentAgentPermissionRuntimeContext } from "../agent-permission-runtime"
+import {
+  configureAgentPermissionRuntime,
+  currentAgentPermissionRuntimeContext,
+} from "../agent-permission-runtime"
 
 afterEach(() => configureAgentPermissionRuntime(null))
 
@@ -73,15 +76,17 @@ function deferredApprovalAdapter(): {
     interruptTurn: async () => {},
     respondToRequest: async (_threadId, requestId, decision) => {
       responses.push({ requestId: requestId as string, decision })
-      for (const listener of listeners) listener({
-        threadId: _threadId,
-        eventId: `resolved-${requestId}`,
-        at: Date.now(),
-        type: "request.resolved",
-        kind: "tool_approval",
-        requestId,
-        decision: decision.kind === "tool_approval" ? decision.decision : "deny",
-      } as ProviderRuntimeEvent)
+      for (const listener of listeners)
+        listener({
+          threadId: _threadId,
+          eventId: `resolved-${requestId}`,
+          at: Date.now(),
+          type: "request.resolved",
+          kind: "tool_approval",
+          requestId,
+          decision:
+            decision.kind === "tool_approval" ? decision.decision : "deny",
+        } as ProviderRuntimeEvent)
     },
     stopSession: async (threadId) => {
       sessions.delete(threadId)
@@ -106,9 +111,10 @@ function deferredApprovalAdapter(): {
 }
 
 /** Narrow the approval union so tests can assert on decision/message. */
-function toolApproval(
-  decision: ProviderApprovalDecision
-): { decision: "approve" | "deny"; message?: string } {
+function toolApproval(decision: ProviderApprovalDecision): {
+  decision: "approve" | "deny"
+  message?: string
+} {
   if (decision.kind !== "tool_approval") {
     throw new Error(`expected a tool_approval decision, got ${decision.kind}`)
   }
@@ -250,8 +256,17 @@ describe("ProviderHub approvals that arrive after sendTurn resolves", () => {
 })
 
 describe("live permission changes with pending approvals", () => {
-  function configurePolicy(decision: "allow" | "ask" | "deny" = "ask", source: "default" | "grant" | "workspace_trust" = "default") {
-    const evaluateTool = vi.fn(() => ({ decision, source, reason: "Configured policy", normalizedPath: null, grant: null }))
+  function configurePolicy(
+    decision: "allow" | "ask" | "deny" = "ask",
+    source: "default" | "grant" | "workspace_trust" = "default"
+  ) {
+    const evaluateTool = vi.fn(() => ({
+      decision,
+      source,
+      reason: "Configured policy",
+      normalizedPath: null,
+      grant: null,
+    }))
     configureAgentPermissionRuntime({ evaluateTool, listGrants: () => [] })
     return evaluateTool
   }
@@ -259,28 +274,56 @@ describe("live permission changes with pending approvals", () => {
   async function start(provider: ProviderKind = "codex", chatMode = "agent") {
     const fixture = deferredApprovalAdapter()
     const adapter = { ...fixture.adapter, provider }
-    const hub = new ProviderHub({ adapters: [adapter], projectProviderPolicyLoader: async () => null })
+    const hub = new ProviderHub({
+      adapters: [adapter],
+      projectProviderPolicyLoader: async () => null,
+    })
     const events: ProviderRuntimeEvent[] = []
-    hub.subscribe(event => events.push(event))
+    hub.subscribe((event) => events.push(event))
     const thread = "live-switch" as ThreadId
     const turn = hub.startTurn(provider, {
-      threadId: thread, message: "inspect", modelId: "test-model", history: [],
-      projectPath: process.cwd(), appMode: "editor", chatMode, permissionLevel: "ask-on-edit",
+      threadId: thread,
+      message: "inspect",
+      modelId: "test-model",
+      history: [],
+      projectPath: process.cwd(),
+      appMode: "editor",
+      chatMode,
+      permissionLevel: "ask-on-edit",
     })
     await turn.completion
-    const request = (requestId: string, kind: "tool_approval" | "user_input" = "tool_approval", target = thread) => fixture.emit({
-      threadId: target, providerKind: provider, providerInstanceId: provider,
-      eventId: `opened-${requestId}`, at: Date.now(), type: "request.opened",
-      kind, requestId, tool: "shell", input: { command: "npm run check" },
-    } as ProviderRuntimeEvent)
-    const switchMode = (level: "bypass" | "ask-on-edit" | "read-only") => hub.setPermissionMode(
-      provider, thread, level === "bypass" ? "bypassPermissions" : "default", provider, undefined, level,
-    )
+    const request = (
+      requestId: string,
+      kind: "tool_approval" | "user_input" = "tool_approval",
+      target = thread
+    ) =>
+      fixture.emit({
+        threadId: target,
+        providerKind: provider,
+        providerInstanceId: provider,
+        eventId: `opened-${requestId}`,
+        at: Date.now(),
+        type: "request.opened",
+        kind,
+        requestId,
+        tool: "shell",
+        input: { command: "npm run check" },
+      } as ProviderRuntimeEvent)
+    const switchMode = (level: "bypass" | "ask-on-edit" | "read-only") =>
+      hub.setPermissionMode(
+        provider,
+        thread,
+        level === "bypass" ? "bypassPermissions" : "default",
+        provider,
+        undefined,
+        level
+      )
     return { ...fixture, adapter, hub, thread, events, request, switchMode }
   }
 
   it.each(["codex", "claude", "cursor", "grok_cli", "betterc0de"] as const)(
-    "%s settles existing and subsequent tool requests when Ask first switches to Bypass", async provider => {
+    "%s settles existing and subsequent tool requests when Ask first switches to Bypass",
+    async (provider) => {
       configurePolicy()
       const f = await start(provider)
       try {
@@ -291,11 +334,21 @@ describe("live permission changes with pending approvals", () => {
         expect(await f.switchMode("bypass")).toEqual({ applied: "live" })
         f.request("next")
         await flush()
-        expect(f.responses.map(r => r.requestId)).toEqual(["pending", "next"])
-        expect(f.responses.every(r => toolApproval(r.decision).decision === "approve")).toBe(true)
-        expect(f.events.filter(e => e.requestId === "pending").map(e => e.type)).toEqual(["request.opened", "request.resolved"])
-        expect(currentAgentPermissionRuntimeContext(f.thread)?.permissionLevel).toBe("bypass")
-      } finally { await f.hub.stopAll() }
+        expect(f.responses.map((r) => r.requestId)).toEqual(["pending", "next"])
+        expect(
+          f.responses.every(
+            (r) => toolApproval(r.decision).decision === "approve"
+          )
+        ).toBe(true)
+        expect(
+          f.events.filter((e) => e.requestId === "pending").map((e) => e.type)
+        ).toEqual(["request.opened", "request.resolved"])
+        expect(
+          currentAgentPermissionRuntimeContext(f.thread)?.permissionLevel
+        ).toBe("bypass")
+      } finally {
+        await f.hub.stopAll()
+      }
     }
   )
 
@@ -309,25 +362,44 @@ describe("live permission changes with pending approvals", () => {
       await flush()
       expect(f.responses).toEqual([])
       await f.switchMode("read-only")
-      expect(f.responses.map(r => toolApproval(r.decision).decision)).toEqual(["deny"])
-      expect(currentAgentPermissionRuntimeContext(f.thread)?.permissionLevel).toBe("read-only")
-    } finally { await f.hub.stopAll() }
+      expect(f.responses.map((r) => toolApproval(r.decision).decision)).toEqual(
+        ["deny"]
+      )
+      expect(
+        currentAgentPermissionRuntimeContext(f.thread)?.permissionLevel
+      ).toBe("read-only")
+    } finally {
+      await f.hub.stopAll()
+    }
   })
 
-  it.each(["plan", "ask", "security"])("preserves the %s chat-mode ceiling", async chatMode => {
-    configurePolicy()
-    const f = await start("codex", chatMode)
-    try {
-      await f.switchMode("bypass")
-      f.request("restricted")
-      await flush()
-      expect(f.responses.some(r => toolApproval(r.decision).decision === "approve")).toBe(false)
-      expect(currentAgentPermissionRuntimeContext(f.thread)?.chatMode).toBe(chatMode)
-    } finally { await f.hub.stopAll() }
-  })
+  it.each(["plan", "ask", "security"])(
+    "preserves the %s chat-mode ceiling",
+    async (chatMode) => {
+      configurePolicy()
+      const f = await start("codex", chatMode)
+      try {
+        await f.switchMode("bypass")
+        f.request("restricted")
+        await flush()
+        expect(
+          f.responses.some(
+            (r) => toolApproval(r.decision).decision === "approve"
+          )
+        ).toBe(false)
+        expect(currentAgentPermissionRuntimeContext(f.thread)?.chatMode).toBe(
+          chatMode
+        )
+      } finally {
+        await f.hub.stopAll()
+      }
+    }
+  )
 
   it.each([
-    ["ask", "grant"], ["deny", "grant"], ["deny", "workspace_trust"],
+    ["ask", "grant"],
+    ["deny", "grant"],
+    ["deny", "workspace_trust"],
   ] as const)("preserves %s from %s in Bypass", async (decision, source) => {
     configurePolicy(decision, source)
     const f = await start()
@@ -335,9 +407,13 @@ describe("live permission changes with pending approvals", () => {
       f.request("restricted")
       await f.switchMode("bypass")
       await flush()
-      expect(f.responses.some(r => toolApproval(r.decision).decision === "approve")).toBe(false)
+      expect(
+        f.responses.some((r) => toolApproval(r.decision).decision === "approve")
+      ).toBe(false)
       expect(f.responses).toHaveLength(decision === "ask" ? 0 : 1)
-    } finally { await f.hub.stopAll() }
+    } finally {
+      await f.hub.stopAll()
+    }
   })
 
   it("does not answer an already resolved request or send concurrent responses twice", async () => {
@@ -345,46 +421,69 @@ describe("live permission changes with pending approvals", () => {
     const f = await start()
     try {
       f.request("resolved")
-      await f.hub.respondToRequest("codex", f.thread, "resolved" as Parameters<ProviderHub["respondToRequest"]>[2], { kind: "tool_approval", decision: "deny" })
+      await f.hub.respondToRequest(
+        "codex",
+        f.thread,
+        "resolved" as Parameters<ProviderHub["respondToRequest"]>[2],
+        { kind: "tool_approval", decision: "deny" }
+      )
       f.request("pending")
       await Promise.all([f.switchMode("bypass"), f.switchMode("bypass")])
-      expect(f.responses.map(r => r.requestId)).toEqual(["resolved", "pending"])
-    } finally { await f.hub.stopAll() }
+      expect(f.responses.map((r) => r.requestId)).toEqual([
+        "resolved",
+        "pending",
+      ])
+    } finally {
+      await f.hub.stopAll()
+    }
   })
 
   it("retains the pending request on a provider response failure and allows retry", async () => {
     configurePolicy()
     const f = await start()
     const respond = f.adapter.respondToRequest
-    const spy = vi.spyOn(f.adapter, "respondToRequest").mockRejectedValueOnce(new Error("connection closed")).mockImplementation(respond)
+    const spy = vi
+      .spyOn(f.adapter, "respondToRequest")
+      .mockRejectedValueOnce(new Error("connection closed"))
+      .mockImplementation(respond)
     try {
       f.request("retry")
       await expect(f.switchMode("bypass")).rejects.toThrow("connection closed")
-      expect(f.events.some(e => e.type === "request.resolved")).toBe(false)
+      expect(f.events.some((e) => e.type === "request.resolved")).toBe(false)
       await f.switchMode("bypass")
       expect(spy).toHaveBeenCalledTimes(2)
-      expect(f.responses.map(r => r.requestId)).toEqual(["retry"])
-    } finally { await f.hub.stopAll() }
+      expect(f.responses.map((r) => r.requestId)).toEqual(["retry"])
+    } finally {
+      await f.hub.stopAll()
+    }
   })
 
   it("reports Bypass as live when hub approvals work but the native update is queued", async () => {
     configurePolicy()
     const f = await start("claude")
-    f.adapter.setPermissionMode = vi.fn(async () => ({ applied: "queued" as const }))
+    f.adapter.setPermissionMode = vi.fn(async () => ({
+      applied: "queued" as const,
+    }))
     try {
       f.request("pending")
       expect(await f.switchMode("bypass")).toEqual({ applied: "live" })
-      expect(f.responses.map(r => r.requestId)).toEqual(["pending"])
-    } finally { await f.hub.stopAll() }
+      expect(f.responses.map((r) => r.requestId)).toEqual(["pending"])
+    } finally {
+      await f.hub.stopAll()
+    }
   })
 
   it("does not send native Bypass while the active turn remains in Plan mode", async () => {
     configurePolicy()
     const f = await start("claude", "plan")
-    f.adapter.setPermissionMode = vi.fn(async () => ({ applied: "live" as const }))
+    f.adapter.setPermissionMode = vi.fn(async () => ({
+      applied: "live" as const,
+    }))
     try {
       expect(await f.switchMode("bypass")).toEqual({ applied: "queued" })
       expect(f.adapter.setPermissionMode).not.toHaveBeenCalled()
-    } finally { await f.hub.stopAll() }
+    } finally {
+      await f.hub.stopAll()
+    }
   })
 })

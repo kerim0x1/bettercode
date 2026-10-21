@@ -62,8 +62,14 @@ export function PreviewSelectionOverlay({
       event.stopPropagation()
       const bounds = node.getBoundingClientRect()
       point.current = {
-        x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / Math.max(1, bounds.width))),
-        y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / Math.max(1, bounds.height))),
+        x: Math.max(
+          0,
+          Math.min(1, (event.clientX - bounds.left) / Math.max(1, bounds.width))
+        ),
+        y: Math.max(
+          0,
+          Math.min(1, (event.clientY - bounds.top) / Math.max(1, bounds.height))
+        ),
       }
       const unit =
         event.deltaMode === 1
@@ -71,7 +77,8 @@ export function PreviewSelectionOverlay({
           : event.deltaMode === 2
             ? node.clientHeight
             : 1
-      dx += (event.shiftKey && !event.deltaX ? event.deltaY : event.deltaX) * unit
+      dx +=
+        (event.shiftKey && !event.deltaX ? event.deltaY : event.deltaX) * unit
       dy += (event.shiftKey && !event.deltaX ? 0 : event.deltaY) * unit
       if (scrollFrame) return
       scrollFrame = requestAnimationFrame(() => {

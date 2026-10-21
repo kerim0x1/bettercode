@@ -1,6 +1,9 @@
 import { asRecord } from "@betterc0de/schema"
 import type { ThreadActivity } from "@/lib/chat-store"
-import { derivePendingApprovals, derivePendingPlanApprovals } from "@/lib/pending-approvals"
+import {
+  derivePendingApprovals,
+  derivePendingPlanApprovals,
+} from "@/lib/pending-approvals"
 import { derivePendingProviderUserInputs } from "@/lib/pending-user-input-requests"
 import { requestIdFromActivity } from "@/lib/pending-provider-requests"
 
@@ -48,7 +51,8 @@ function derivePendingLegacyPlanKey(
   for (const activity of activities) {
     if (activity.kind !== "plan-approval.requested") continue
     const requestId = requestIdFromActivity(activity)
-    const turnId = stringFrom(asRecord(activity.payload).turn_id) ?? activity.turnId
+    const turnId =
+      stringFrom(asRecord(activity.payload).turn_id) ?? activity.turnId
     if (requestId && approvedRequests.has(requestId) && turnId) {
       approvedTurns.add(`${activity.threadId}::${turnId}`)
     }
@@ -56,7 +60,9 @@ function derivePendingLegacyPlanKey(
   for (const activity of activities) {
     if (activity.kind !== "turn.proposed.implemented") continue
     const payload = asRecord(activity.payload)
-    const source = asRecord(payload.sourceProposedPlan ?? payload.source_proposed_plan)
+    const source = asRecord(
+      payload.sourceProposedPlan ?? payload.source_proposed_plan
+    )
     const threadId =
       stringFrom(source.threadId) ??
       stringFrom(source.thread_id) ??
@@ -104,7 +110,9 @@ export function deriveThreadAttention(
   let planApprovals = 0
   if (planApprovalRequests.length > 0) {
     planApprovals = 1
-    keys.push(`plan:${planApprovalRequests[planApprovalRequests.length - 1]!.requestId}`)
+    keys.push(
+      `plan:${planApprovalRequests[planApprovalRequests.length - 1]!.requestId}`
+    )
   } else {
     const legacyKey = derivePendingLegacyPlanKey(activities)
     if (legacyKey) {

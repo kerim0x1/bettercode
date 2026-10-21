@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto"
 
 export type ShellCapabilityScope =
-  | { readonly operation: "run"; readonly command: string; readonly cwd: string }
+  | {
+      readonly operation: "run"
+      readonly command: string
+      readonly cwd: string
+    }
   | {
       readonly operation: "pty-open"
       readonly cwd: string

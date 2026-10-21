@@ -20,7 +20,9 @@ export { makeActivity } from "./shared"
 export type { ActivityContext } from "./context"
 
 /** Families in the order they are tried; their event types are disjoint. */
-const PROJECTORS: ReadonlyArray<(ctx: ActivityContext) => ThreadActivity | null> = [
+const PROJECTORS: ReadonlyArray<
+  (ctx: ActivityContext) => ThreadActivity | null
+> = [
   projectToolActivity,
   projectRequestActivity,
   projectSessionActivity,

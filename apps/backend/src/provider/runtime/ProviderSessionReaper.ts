@@ -45,7 +45,8 @@ export class ProviderSessionReaper {
   private stopped = false
 
   constructor(private readonly options: ProviderSessionReaperOptions) {
-    const inactivityThreshold = options.inactivityThresholdMs ?? DEFAULT_INACTIVITY_THRESHOLD_MS
+    const inactivityThreshold =
+      options.inactivityThresholdMs ?? DEFAULT_INACTIVITY_THRESHOLD_MS
     this.inactivityThresholdMs = Number.isFinite(inactivityThreshold)
       ? Math.max(1, inactivityThreshold)
       : DEFAULT_INACTIVITY_THRESHOLD_MS
@@ -58,9 +59,10 @@ export class ProviderSessionReaper {
   }
 
   start(): () => void {
-    if (this.timer) return () => {
-      void this.stop()
-    }
+    if (this.timer)
+      return () => {
+        void this.stop()
+      }
     this.stopped = false
     this.timer = setInterval(() => {
       void this.sweep().catch((err) => {
@@ -226,10 +228,7 @@ function emptySweepResult(): ProviderSessionReaperSweepResult {
 }
 
 function isStoppedBinding(binding: ProviderSessionBinding): boolean {
-  return (
-    binding.status === "stopped" ||
-    binding.status === "closed"
-  )
+  return binding.status === "stopped" || binding.status === "closed"
 }
 
 function providerKindForHub(providerKind: ProviderKind): ProviderKind {

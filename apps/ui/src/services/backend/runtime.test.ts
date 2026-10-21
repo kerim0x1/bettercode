@@ -29,23 +29,43 @@ beforeEach(() => {
 describe("workspace folder selection", () => {
   it("waits for registration before exposing a native selection", async () => {
     window.__BETTERC0DE__ = { port: 3773, mode: "local_sidecar" }
-    window.electronAPI = { pickFolder: vi.fn().mockResolvedValue("C:\\project") } as unknown as NonNullable<Window["electronAPI"]>
+    window.electronAPI = {
+      pickFolder: vi.fn().mockResolvedValue("C:\\project"),
+    } as unknown as NonNullable<Window["electronAPI"]>
     let respond!: (response: Response) => void
     let requested!: () => void
-    const requestSeen = new Promise<void>((resolve) => { requested = resolve })
-    const fetchMock = vi.fn(() => { requested(); return new Promise<Response>((resolve) => { respond = resolve }) })
+    const requestSeen = new Promise<void>((resolve) => {
+      requested = resolve
+    })
+    const fetchMock = vi.fn(() => {
+      requested()
+      return new Promise<Response>((resolve) => {
+        respond = resolve
+      })
+    })
     vi.stubGlobal("fetch", fetchMock)
     let exposed = false
-    const picked = pickFolder().then((folder) => { exposed = true; return folder })
+    const picked = pickFolder().then((folder) => {
+      exposed = true
+      return folder
+    })
     await requestSeen
     expect(exposed).toBe(false)
-    expect(fetchMock.mock.calls[0]).toEqual([expect.stringContaining("/workspace/open"), expect.objectContaining({ method: "POST", body: JSON.stringify({ workspacePath: "C:\\project" }) })])
+    expect(fetchMock.mock.calls[0]).toEqual([
+      expect.stringContaining("/workspace/open"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ workspacePath: "C:\\project" }),
+      }),
+    ])
     respond(new Response(JSON.stringify({ path: "C:\\project" })))
     await expect(picked).resolves.toBe("C:\\project")
   })
 
   it("does not open a cancelled selection", async () => {
-    window.electronAPI = { pickFolder: vi.fn().mockResolvedValue(null) } as unknown as NonNullable<Window["electronAPI"]>
+    window.electronAPI = {
+      pickFolder: vi.fn().mockResolvedValue(null),
+    } as unknown as NonNullable<Window["electronAPI"]>
     const fetchMock = vi.fn()
     vi.stubGlobal("fetch", fetchMock)
     await expect(pickFolder()).resolves.toBeNull()
@@ -115,22 +135,32 @@ describe("local sidecar runtime config", () => {
   it("stops fetching while the shell reports downtime and resumes on the new port", async () => {
     let report!: (event: unknown) => void
     window.electronAPI = {
-      onBackendStatus: (callback: (event: unknown) => void) => { report = callback; return vi.fn() },
+      onBackendStatus: (callback: (event: unknown) => void) => {
+        report = callback
+        return vi.fn()
+      },
     } as unknown as NonNullable<Window["electronAPI"]>
     window.__BETTERC0DE__ = { port: 3773, mode: "local_sidecar" }
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"status":"ok"}'))
     vi.stubGlobal("fetch", fetchMock)
     getConfig()
     report({ status: "failed", reason: "backend exited" })
-    await expect(invoke("/workspace/search", { method: "POST", body: {} })).rejects.toMatchObject({ code: "BACKEND_UNAVAILABLE" })
+    await expect(
+      invoke("/workspace/search", { method: "POST", body: {} })
+    ).rejects.toMatchObject({ code: "BACKEND_UNAVAILABLE" })
     expect(fetchMock).not.toHaveBeenCalled()
     report({ status: "restarting" })
-    await expect(invoke("/ws-port")).rejects.toMatchObject({ code: "BACKEND_UNAVAILABLE" })
+    await expect(invoke("/ws-port")).rejects.toMatchObject({
+      code: "BACKEND_UNAVAILABLE",
+    })
     expect(fetchMock).not.toHaveBeenCalled()
     report({ status: "ready", port: 4774 })
     await invoke("/ws-port")
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:4774/api/v1/ws-port", expect.anything())
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:4774/api/v1/ws-port",
+      expect.anything()
+    )
   })
 
   it("picks up a replacement backend port after a development restart", () => {
@@ -179,7 +209,9 @@ describe("backend-served remote runtime", () => {
       "http://192.168.1.50:4773/api/v1/runtime/health",
       expect.objectContaining({
         credentials: "include",
-        headers: expect.not.objectContaining({ Authorization: expect.anything() }),
+        headers: expect.not.objectContaining({
+          Authorization: expect.anything(),
+        }),
       })
     )
   })

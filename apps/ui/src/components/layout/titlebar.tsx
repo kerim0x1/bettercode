@@ -355,21 +355,39 @@ export function Titlebar({
       ],
     },
     ...(windowOpenWith
-      ? [{
-          label: "Window",
-          icon: <MonitorIcon className="size-3.5" />,
-          items: ([
-            { mode: "editor", label: "New Editor Window", icon: CodeHugeIcon },
-            { mode: "design", label: "New Canvas Window", icon: PaintBoardIcon },
-            { mode: "agent", label: "New Agent Window", icon: BotIcon },
-          ] as const).map(({ mode, label, icon }) => ({
-            label,
-            icon: <HugeiconsIcon icon={icon} strokeWidth={2} className="size-3.5" />,
-            action: () => {
-              void openAppWindow(mode, undefined, { windowOpenWith })
-            },
-          })),
-        }]
+      ? [
+          {
+            label: "Window",
+            icon: <MonitorIcon className="size-3.5" />,
+            items: (
+              [
+                {
+                  mode: "editor",
+                  label: "New Editor Window",
+                  icon: CodeHugeIcon,
+                },
+                {
+                  mode: "design",
+                  label: "New Canvas Window",
+                  icon: PaintBoardIcon,
+                },
+                { mode: "agent", label: "New Agent Window", icon: BotIcon },
+              ] as const
+            ).map(({ mode, label, icon }) => ({
+              label,
+              icon: (
+                <HugeiconsIcon
+                  icon={icon}
+                  strokeWidth={2}
+                  className="size-3.5"
+                />
+              ),
+              action: () => {
+                void openAppWindow(mode, undefined, { windowOpenWith })
+              },
+            })),
+          },
+        ]
       : []),
     {
       label: "Help",

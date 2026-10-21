@@ -152,9 +152,7 @@ function quoteForArgv(value: string): string {
   // Double every backslash run that immediately precedes a quote, then escape
   // the quote. Also double a trailing backslash run so it does not escape the
   // closing quote we are about to add.
-  const escaped = value
-    .replace(/(\\*)"/g, '$1$1\\"')
-    .replace(/(\\+)$/, "$1$1")
+  const escaped = value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, "$1$1")
   return `"${escaped}"`
 }
 
@@ -185,7 +183,9 @@ function escapeForCmd(token: string): string {
 export function quoteWindowsCmdPath(command: string): string {
   if (/["\r\n\0%!]/.test(command)) {
     throw Object.assign(
-      new Error("Executable path must not contain a quote, control, or expansion character."),
+      new Error(
+        "Executable path must not contain a quote, control, or expansion character."
+      ),
       { statusCode: 400 }
     )
   }
@@ -204,12 +204,21 @@ export function buildWindowsCmdArgs(
 ): string[] {
   for (const value of [command, ...args]) {
     if (/[\r\n\0]/.test(value)) {
-      throw Object.assign(new Error("Windows command arguments must not contain CR, LF, or NUL."), { statusCode: 400 })
+      throw Object.assign(
+        new Error("Windows command arguments must not contain CR, LF, or NUL."),
+        { statusCode: 400 }
+      )
     }
   }
-  const directExecutable = /\.exe$/i.test(command) && path.win32.isAbsolute(command)
+  const directExecutable =
+    /\.exe$/i.test(command) && path.win32.isAbsolute(command)
   if (!directExecutable && args.some((value) => value.includes('"'))) {
-    throw Object.assign(new Error("Quoted arguments require an absolute executable rather than a batch shim."), { statusCode: 400 })
+    throw Object.assign(
+      new Error(
+        "Quoted arguments require an absolute executable rather than a batch shim."
+      ),
+      { statusCode: 400 }
+    )
   }
   const line = [
     quoteWindowsCmdPath(command),

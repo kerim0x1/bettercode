@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest"
 import {
   IMAGEGEN_TOOL_NAME,
   PLAN_MODE_DENY_MESSAGE,
@@ -6,7 +6,7 @@ import {
   createClaudePreToolUseApprovalHook,
   isImagegenAutoAllowed,
   getToolsForMode,
-} from "./chat-mode-tools";
+} from "./chat-mode-tools"
 
 describe("chat-mode tool rules", () => {
   it("keeps plan mode on explicit read-only planning tools", () => {
@@ -20,8 +20,8 @@ describe("chat-mode tool rules", () => {
       "WebSearch",
       "AskUserQuestion",
       "ExitPlanMode",
-    ]);
-  });
+    ])
+  })
 
   it("keeps ask mode read-only instead of disabling codebase context", () => {
     expect(getToolsForMode("ask")).toEqual([
@@ -31,8 +31,8 @@ describe("chat-mode tool rules", () => {
       "WebSearch",
       "WebFetch",
       "AskUserQuestion",
-    ]);
-  });
+    ])
+  })
 
   it("keeps security mode audit-focused with shell approval available", () => {
     expect(getToolsForMode("security")).toEqual([
@@ -43,8 +43,8 @@ describe("chat-mode tool rules", () => {
       "WebSearch",
       "WebFetch",
       "AskUserQuestion",
-    ]);
-  });
+    ])
+  })
 
   it("auto-allows imagegen only for explicit edit/bypass permission", () => {
     expect(isImagegenAutoAllowed("agent", "allow-edits")).toBe(true)
@@ -59,22 +59,22 @@ describe("chat-mode tool rules", () => {
     expect(isImagegenAutoAllowed("security", "bypass")).toBe(false)
     // MCP tools never join AGENT_TOOLS — that list feeds the builtins-only
     // SDK `tools` option.
-    expect(getToolsForMode("agent")).not.toContain(IMAGEGEN_TOOL_NAME);
-  });
+    expect(getToolsForMode("agent")).not.toContain(IMAGEGEN_TOOL_NAME)
+  })
 
   it("classifies the imagegen tool as mutating", () => {
     expect(classifyToolPermission(IMAGEGEN_TOOL_NAME)).toBe("mutate")
-  });
+  })
 
   it("keeps TodoWrite available in agent mode for BetterC0de-style progress tracking", () => {
-    expect(getToolsForMode("agent")).toContain("TodoWrite");
-    expect(classifyToolPermission("TodoWrite")).toBe("mutate");
-  });
+    expect(getToolsForMode("agent")).toContain("TodoWrite")
+    expect(classifyToolPermission("TodoWrite")).toBe("mutate")
+  })
 
   it("classifies plan submit/question tools as non-mutating", () => {
-    expect(classifyToolPermission("AskUserQuestion")).toBe("read");
-    expect(classifyToolPermission("ExitPlanMode")).toBe("read");
-  });
+    expect(classifyToolPermission("AskUserQuestion")).toBe("read")
+    expect(classifyToolPermission("ExitPlanMode")).toBe("read")
+  })
 
   // classifyToolPermission is the hard Plan/Ask/read-only gate, and MCP tool
   // names are chosen by whoever configured the server — including a project's
@@ -92,9 +92,9 @@ describe("chat-mode tool rules", () => {
       "spread_files",
       "unlink_readme",
     ]) {
-      expect(classifyToolPermission(name), name).not.toBe("read");
+      expect(classifyToolPermission(name), name).not.toBe("read")
     }
-  });
+  })
 
   it("keeps the exact builtin read set classified read", () => {
     for (const name of [
@@ -106,9 +106,9 @@ describe("chat-mode tool rules", () => {
       "AskUserQuestion",
       "ExitPlanMode",
     ]) {
-      expect(classifyToolPermission(name), name).toBe("read");
+      expect(classifyToolPermission(name), name).toBe("read")
     }
-  });
+  })
 
   it("forces native Claude auto-allow rules through BetterC0de policy", async () => {
     await expect(createClaudePreToolUseApprovalHook()()).resolves.toEqual({
@@ -117,12 +117,12 @@ describe("chat-mode tool rules", () => {
         hookEventName: "PreToolUse",
         permissionDecision: "ask",
       }),
-    });
-  });
+    })
+  })
 
   it("denies mutating plan-mode work with a clear file/code message", () => {
-    expect(PLAN_MODE_DENY_MESSAGE).toContain("no file creation");
-    expect(PLAN_MODE_DENY_MESSAGE).toContain("code edits");
-    expect(PLAN_MODE_DENY_MESSAGE).toContain("shell commands");
-  });
-});
+    expect(PLAN_MODE_DENY_MESSAGE).toContain("no file creation")
+    expect(PLAN_MODE_DENY_MESSAGE).toContain("code edits")
+    expect(PLAN_MODE_DENY_MESSAGE).toContain("shell commands")
+  })
+})

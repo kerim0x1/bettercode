@@ -169,11 +169,7 @@ async function openRegularFileNoFollow(
   let handle: FileHandle | null = null
   try {
     const before = await fs.promises.lstat(filePath)
-    if (
-      before.isSymbolicLink()
-      || !before.isFile()
-      || before.size > maxBytes
-    ) {
+    if (before.isSymbolicLink() || !before.isFile() || before.size > maxBytes) {
       return null
     }
     handle = await fs.promises.open(
@@ -182,9 +178,9 @@ async function openRegularFileNoFollow(
     )
     const opened = await handle.stat()
     if (
-      !opened.isFile()
-      || opened.size > maxBytes
-      || !sameFileIdentity(before, opened)
+      !opened.isFile() ||
+      opened.size > maxBytes ||
+      !sameFileIdentity(before, opened)
     ) {
       await handle.close()
       return null
@@ -202,20 +198,14 @@ function sameFileIdentity(left: Stats, right: Stats): boolean {
   // still protect against a replacement while avoiding false 404s for valid
   // static assets.
   if (process.platform === "win32") {
-    return (
-      left.size === right.size &&
-      left.mtimeMs === right.mtimeMs
-    )
+    return left.size === right.size && left.mtimeMs === right.mtimeMs
   }
   if (left.ino !== 0 || right.ino !== 0) {
-    return (
-      left.ino === right.ino
-      && left.dev === right.dev
-    )
+    return left.ino === right.ino && left.dev === right.dev
   }
   return (
-    left.size === right.size
-    && left.birthtimeMs === right.birthtimeMs
-    && left.mtimeMs === right.mtimeMs
+    left.size === right.size &&
+    left.birthtimeMs === right.birthtimeMs &&
+    left.mtimeMs === right.mtimeMs
   )
 }

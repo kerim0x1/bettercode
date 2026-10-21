@@ -108,7 +108,9 @@ describe("sanitizedChildEnvironment", () => {
     expect(isSafeShellEnvironmentOverrideKey("SERVICE_PASSWORD")).toBe(false)
     expect(isSafeShellEnvironmentOverrideKey("GIT_CONFIG_COUNT")).toBe(false)
     expect(isSafeShellEnvironmentOverrideKey("GIT_CONFIG_KEY_0")).toBe(false)
-    expect(isSafeShellEnvironmentOverrideKey("npm_config_script_shell")).toBe(false)
+    expect(isSafeShellEnvironmentOverrideKey("npm_config_script_shell")).toBe(
+      false
+    )
     expect(isSafeShellEnvironmentOverrideKey("GIT_AUTHOR_NAME")).toBe(true)
 
     const env = sanitizedShellEnvironment({

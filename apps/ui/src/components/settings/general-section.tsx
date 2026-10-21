@@ -106,7 +106,8 @@ export function SettingsGeneralSection({
         >
           <Switch
             checked={
-              preferences.rightSidebarOpen && preferences.workspaceTab === "files"
+              preferences.rightSidebarOpen &&
+              preferences.workspaceTab === "files"
             }
             onCheckedChange={(value) => {
               if (value) {
@@ -124,9 +125,7 @@ export function SettingsGeneralSection({
         >
           <Switch
             checked={preferences.terminalOpen}
-            onCheckedChange={(value) =>
-              preferences.set("terminalOpen", value)
-            }
+            onCheckedChange={(value) => preferences.set("terminalOpen", value)}
           />
         </SettingsRow>
         <SettingsRow
@@ -138,7 +137,10 @@ export function SettingsGeneralSection({
             onCheckedChange={setDiffViewOpen}
           />
         </SettingsRow>
-        <SettingsRow label="Console" description="Show the developer console panel">
+        <SettingsRow
+          label="Console"
+          description="Show the developer console panel"
+        >
           <Switch
             checked={preferences.consolePanelOpen}
             onCheckedChange={(value) =>
@@ -389,7 +391,9 @@ export function SettingsGeneralSection({
             onClick={() => {
               requestNativeNotificationPermission()
                 .then(setNotificationPermission)
-                .catch(() => setNotificationPermission(nativeNotificationPermission()))
+                .catch(() =>
+                  setNotificationPermission(nativeNotificationPermission())
+                )
             }}
           >
             <BellIcon className="size-3.5" />
@@ -411,9 +415,7 @@ export function SettingsGeneralSection({
             onValueChange={(value) =>
               settings.update({
                 backend_log_level:
-                  value === "debug" ||
-                  value === "warn" ||
-                  value === "error"
+                  value === "debug" || value === "warn" || value === "error"
                     ? value
                     : "info",
               })

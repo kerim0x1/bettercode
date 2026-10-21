@@ -49,22 +49,28 @@ describe("design chat panel width", () => {
       DESIGN_CHAT_PANEL_DEFAULT_WIDTH
     )
     expect(DESIGN_CHAT_PANEL_DEFAULT_WIDTH).toBeGreaterThanOrEqual(560)
-    expect(clampDesignChatPanelWidth(100, 1920)).toBe(DESIGN_CHAT_PANEL_MIN_WIDTH)
-    expect(clampDesignChatPanelWidth(5000, 1920)).toBe(DESIGN_CHAT_PANEL_MAX_WIDTH)
+    expect(clampDesignChatPanelWidth(100, 1920)).toBe(
+      DESIGN_CHAT_PANEL_MIN_WIDTH
+    )
+    expect(clampDesignChatPanelWidth(5000, 1920)).toBe(
+      DESIGN_CHAT_PANEL_MAX_WIDTH
+    )
     expect(clampDesignChatPanelWidth("wide", 1920)).toBe(
       DESIGN_CHAT_PANEL_DEFAULT_WIDTH
     )
   })
 
   it("leaves the canvas its minimum on a small window, but never goes under the column minimum", () => {
-    expect(clampDesignChatPanelWidth(700, 1100)).toBe(1100 - DESIGN_CANVAS_MIN_WIDTH)
-    expect(clampDesignChatPanelWidth(700, 700)).toBe(DESIGN_CHAT_PANEL_MIN_WIDTH)
+    expect(clampDesignChatPanelWidth(700, 1100)).toBe(
+      1100 - DESIGN_CANVAS_MIN_WIDTH
+    )
+    expect(clampDesignChatPanelWidth(700, 700)).toBe(
+      DESIGN_CHAT_PANEL_MIN_WIDTH
+    )
   })
 
   it("reads a stored width and survives missing or throwing storage", () => {
-    expect(
-      readStoredDesignChatPanelWidth({ getItem: () => "512" })
-    ).toBe(512)
+    expect(readStoredDesignChatPanelWidth({ getItem: () => "512" })).toBe(512)
     // The previous default was never a choice; it follows the new default.
     expect(readStoredDesignChatPanelWidth({ getItem: () => "480" })).toBe(
       DESIGN_CHAT_PANEL_DEFAULT_WIDTH
@@ -82,6 +88,8 @@ describe("design chat panel width", () => {
         },
       })
     ).toBe(DESIGN_CHAT_PANEL_DEFAULT_WIDTH)
-    expect(readStoredDesignChatPanelWidth(null)).toBe(DESIGN_CHAT_PANEL_DEFAULT_WIDTH)
+    expect(readStoredDesignChatPanelWidth(null)).toBe(
+      DESIGN_CHAT_PANEL_DEFAULT_WIDTH
+    )
   })
 })

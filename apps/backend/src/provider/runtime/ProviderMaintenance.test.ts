@@ -10,23 +10,39 @@ import {
 } from "./ProviderMaintenance"
 
 describe("ProviderMaintenance", () => {
-  it.runIf(process.platform === "win32")("runs a Windows batch shim with literal arguments", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bc0de-maintenance-shim-"))
-    const shim = path.join(directory, "provider update.cmd")
-    const script = path.join(directory, "args.cjs")
-    fs.writeFileSync(script, "process.stdout.write(JSON.stringify(process.argv.slice(2)))")
-    fs.writeFileSync(shim, `@"${process.execPath}" "%~dp0args.cjs" %*\r\n`)
-    const args = ["package with space", "@scope/pkg@latest", "literal&echo value"]
-    try {
-      const result = await runProviderMaintenanceCommand({ executable: shim, args, timeoutMs: 5_000 })
-      expect(result.exitCode).toBe(0)
-      expect(JSON.parse(result.stdout)).toEqual(args)
-    } finally {
-      fs.unlinkSync(shim)
-      fs.unlinkSync(script)
-      fs.rmdirSync(directory)
+  it.runIf(process.platform === "win32")(
+    "runs a Windows batch shim with literal arguments",
+    async () => {
+      const directory = fs.mkdtempSync(
+        path.join(os.tmpdir(), "bc0de-maintenance-shim-")
+      )
+      const shim = path.join(directory, "provider update.cmd")
+      const script = path.join(directory, "args.cjs")
+      fs.writeFileSync(
+        script,
+        "process.stdout.write(JSON.stringify(process.argv.slice(2)))"
+      )
+      fs.writeFileSync(shim, `@"${process.execPath}" "%~dp0args.cjs" %*\r\n`)
+      const args = [
+        "package with space",
+        "@scope/pkg@latest",
+        "literal&echo value",
+      ]
+      try {
+        const result = await runProviderMaintenanceCommand({
+          executable: shim,
+          args,
+          timeoutMs: 5_000,
+        })
+        expect(result.exitCode).toBe(0)
+        expect(JSON.parse(result.stdout)).toEqual(args)
+      } finally {
+        fs.unlinkSync(shim)
+        fs.unlinkSync(script)
+        fs.rmdirSync(directory)
+      }
     }
-  })
+  )
 
   it("selects package-managed update commands for Codex install paths", () => {
     expect(
@@ -98,7 +114,9 @@ describe("ProviderMaintenance", () => {
   })
 
   it("does not pass provider secrets or the parent environment to an update", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bc0de-maintenance-env-"))
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "bc0de-maintenance-env-")
+    )
     const script = path.join(directory, "env.cjs")
     fs.writeFileSync(
       script,
@@ -128,14 +146,17 @@ describe("ProviderMaintenance", () => {
     } finally {
       if (previousKey === undefined) delete process.env.OPENAI_API_KEY
       else process.env.OPENAI_API_KEY = previousKey
-      if (previousParent === undefined) delete process.env.BETTERC0DE_MAINTENANCE_PARENT
+      if (previousParent === undefined)
+        delete process.env.BETTERC0DE_MAINTENANCE_PARENT
       else process.env.BETTERC0DE_MAINTENANCE_PARENT = previousParent
       fs.rmSync(directory, { recursive: true, force: true })
     }
   })
 
   it("settles a timed-out update after killing the process tree", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bc0de-maintenance-hang-"))
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "bc0de-maintenance-hang-")
+    )
     const script = path.join(directory, "hang.cjs")
     fs.writeFileSync(
       script,

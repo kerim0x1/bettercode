@@ -328,7 +328,8 @@ export class ProviderSessionBindingStore {
       input.continuationKey !== undefined
         ? input.continuationKey
         : (existing?.continuationKey ?? null)
-    const generation = existing?.generation ?? this.getThreadGeneration(input.threadId)
+    const generation =
+      existing?.generation ?? this.getThreadGeneration(input.threadId)
     this.upsertStmt.run(
       input.threadId,
       input.providerInstanceId,
@@ -363,7 +364,8 @@ export class ProviderSessionBindingStore {
     const row = this.getThreadGenerationStmt.get(threadId) as
       | { generation: number }
       | undefined
-    return typeof row?.generation === "number" && Number.isFinite(row.generation)
+    return typeof row?.generation === "number" &&
+      Number.isFinite(row.generation)
       ? Math.max(0, Math.trunc(row.generation))
       : 0
   }

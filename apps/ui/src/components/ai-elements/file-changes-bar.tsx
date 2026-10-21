@@ -2,8 +2,12 @@ import { copyText } from "@/lib/clipboard"
 import { useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
 import {
-  ChevronDownIcon, CopyIcon, CheckIcon, XIcon,
-  Undo2Icon, ExternalLinkIcon,
+  ChevronDownIcon,
+  CopyIcon,
+  CheckIcon,
+  XIcon,
+  Undo2Icon,
+  ExternalLinkIcon,
 } from "lucide-react"
 import { getFileIconUrl } from "@/lib/file-icons"
 import { useChatStore, getThreadStream } from "@/lib/chat-store"
@@ -34,39 +38,55 @@ const EXIT_MS = 300
 
 /** Unified file changes component with per-file accept/reject */
 export function FileChangesBar({ threadId }: { threadId: string | null }) {
-  const streamingDiffs = useChatStore((s) => getThreadStream(s, threadId).streamingDiffs)
-  const activeTurnId = useChatStore((s) => getThreadStream(s, threadId).activeTurnId)
-  const thread = useChatStore((s) => s.threads.find(t => t.id === threadId))
-  const lastMsg = thread?.messages?.findLast(m => m.role === "assistant")
+  const streamingDiffs = useChatStore(
+    (s) => getThreadStream(s, threadId).streamingDiffs
+  )
+  const activeTurnId = useChatStore(
+    (s) => getThreadStream(s, threadId).activeTurnId
+  )
+  const thread = useChatStore((s) => s.threads.find((t) => t.id === threadId))
+  const lastMsg = thread?.messages?.findLast((m) => m.role === "assistant")
   const savedDiffs = lastMsg?.diffs || []
   const diffs = streamingDiffs.length > 0 ? streamingDiffs : savedDiffs
   const turnId = streamingDiffs.length > 0 ? activeTurnId : lastMsg?.turnId
-  const messageId = streamingDiffs.length === 0 || (turnId && lastMsg?.turnId === turnId)
-    ? lastMsg?.id : undefined
+  const messageId =
+    streamingDiffs.length === 0 || (turnId && lastMsg?.turnId === turnId)
+      ? lastMsg?.id
+      : undefined
 
   if (!threadId || !thread || diffs.length === 0) return null
 
   // Keep review state when a live turn becomes a saved message. A different
   // thread/turn gets a new instance, including fresh timers and verdicts.
   const sourceKey = JSON.stringify([threadId, turnId ?? messageId ?? "stream"])
-  return <ThreadFileChanges
-    key={sourceKey}
-    threadId={threadId}
-    turnId={turnId}
-    messageId={messageId}
-    workspacePath={thread?.worktreePath || thread?.projectPath || ""}
-    diffs={diffs}
-  />
+  return (
+    <ThreadFileChanges
+      key={sourceKey}
+      threadId={threadId}
+      turnId={turnId}
+      messageId={messageId}
+      workspacePath={thread?.worktreePath || thread?.projectPath || ""}
+      diffs={diffs}
+    />
+  )
 }
 
-function ThreadFileChanges({ threadId, turnId, messageId, workspacePath, diffs }: {
+function ThreadFileChanges({
+  threadId,
+  turnId,
+  messageId,
+  workspacePath,
+  diffs,
+}: {
   threadId: string
   turnId: string | null | undefined
   messageId: string | undefined
   workspacePath: string
   diffs: FileDiff[]
 }) {
-  const [resolved, setResolved] = useState<Record<string, "accepted" | "rejected">>({})
+  const [resolved, setResolved] = useState<
+    Record<string, "accepted" | "rejected">
+  >({})
   const [leaving, setLeaving] = useState<Set<string>>(new Set())
   const [gone, setGone] = useState<Set<string>>(new Set())
   const [dismissed, setDismissed] = useState(false)
@@ -89,18 +109,20 @@ function ThreadFileChanges({ threadId, turnId, messageId, workspacePath, diffs }
     if (existing) {
       existing.additions += d.additions
       existing.deletions += d.deletions
-      existing.oldText += (existing.oldText && d.oldText ? "\n" : "") + d.oldText
-      existing.newText += (existing.newText && d.newText ? "\n" : "") + d.newText
+      existing.oldText +=
+        (existing.oldText && d.oldText ? "\n" : "") + d.oldText
+      existing.newText +=
+        (existing.newText && d.newText ? "\n" : "") + d.newText
     } else {
       fileMap.set(d.path, { ...d })
     }
   }
   const files = [...fileMap.values()]
-  const visibleFiles = files.filter(f => !gone.has(f.path))
-  const pendingFiles = files.filter(f => !resolved[f.path])
+  const visibleFiles = files.filter((f) => !gone.has(f.path))
+  const pendingFiles = files.filter((f) => !resolved[f.path])
   const totalAdd = visibleFiles.reduce((s, f) => s + f.additions, 0)
   const totalDel = visibleFiles.reduce((s, f) => s + f.deletions, 0)
-  const allResolved = files.length > 0 && files.every(f => gone.has(f.path))
+  const allResolved = files.length > 0 && files.every((f) => gone.has(f.path))
 
   const handleDismiss = () => {
     // Dismissing UI must not erase provider diffs needed for finalization/replay.
@@ -111,13 +133,17 @@ function ThreadFileChanges({ threadId, turnId, messageId, workspacePath, diffs }
 
   const resolve = (path: string, verdict: "accepted" | "rejected") => {
     if (resolved[path]) return
-    setResolved(prev => ({ ...prev, [path]: verdict }))
-    timersRef.current.push(window.setTimeout(() => {
-      setLeaving(prev => new Set(prev).add(path))
-    }, BADGE_MS))
-    timersRef.current.push(window.setTimeout(() => {
-      setGone(prev => new Set(prev).add(path))
-    }, BADGE_MS + EXIT_MS))
+    setResolved((prev) => ({ ...prev, [path]: verdict }))
+    timersRef.current.push(
+      window.setTimeout(() => {
+        setLeaving((prev) => new Set(prev).add(path))
+      }, BADGE_MS)
+    )
+    timersRef.current.push(
+      window.setTimeout(() => {
+        setGone((prev) => new Set(prev).add(path))
+      }, BADGE_MS + EXIT_MS)
+    )
   }
 
   const handleAcceptFile = (path: string) => {
@@ -130,39 +156,64 @@ function ThreadFileChanges({ threadId, turnId, messageId, workspacePath, diffs }
     pendingReverts.current.add(path)
     setError(null)
     try {
-      const target = resolveSourceTarget({ kind: "file", filePath: path }, { workspacePath })
-      if (!target || target.kind !== "file") throw new Error("File is outside this chat's workspace.")
-      const checkpoints = useCheckpointStore.getState().checkpoints
-      const checkpoint = checkpoints.findLast(cp =>
-        cp.threadId === threadId &&
-        (!cp.projectPath || workspaceRelativeEditorPath(workspacePath, cp.projectPath) === "") && (
-          (turnId && cp.turnId === turnId) || (messageId && cp.messageId === messageId)
-        )
+      const target = resolveSourceTarget(
+        { kind: "file", filePath: path },
+        { workspacePath }
       )
-      const snapshot = Object.entries(checkpoint?.files ?? {}).find(([filePath]) => {
-        const saved = resolveSourceTarget({ kind: "file", filePath }, { workspacePath })
-        return saved?.kind === "file" && workspaceRelativeEditorPath(target.filePath, saved.filePath) === ""
-      })
-      if (!snapshot) throw new Error("No file snapshot is available for this chat turn. Use its restore checkpoint action.")
-      const relativePath = workspaceRelativeEditorPath(workspacePath, target.filePath)
-      if (!relativePath) throw new Error("Cannot resolve this file inside the chat's workspace.")
+      if (!target || target.kind !== "file")
+        throw new Error("File is outside this chat's workspace.")
+      const checkpoints = useCheckpointStore.getState().checkpoints
+      const checkpoint = checkpoints.findLast(
+        (cp) =>
+          cp.threadId === threadId &&
+          (!cp.projectPath ||
+            workspaceRelativeEditorPath(workspacePath, cp.projectPath) ===
+              "") &&
+          ((turnId && cp.turnId === turnId) ||
+            (messageId && cp.messageId === messageId))
+      )
+      const snapshot = Object.entries(checkpoint?.files ?? {}).find(
+        ([filePath]) => {
+          const saved = resolveSourceTarget(
+            { kind: "file", filePath },
+            { workspacePath }
+          )
+          return (
+            saved?.kind === "file" &&
+            workspaceRelativeEditorPath(target.filePath, saved.filePath) === ""
+          )
+        }
+      )
+      if (!snapshot)
+        throw new Error(
+          "No file snapshot is available for this chat turn. Use its restore checkpoint action."
+        )
+      const relativePath = workspaceRelativeEditorPath(
+        workspacePath,
+        target.filePath
+      )
+      if (!relativePath)
+        throw new Error("Cannot resolve this file inside the chat's workspace.")
       const { writeFile } = await import("@/services/backend")
       await writeFile(workspacePath, relativePath, snapshot[1])
       if (mountedRef.current) resolve(path, "rejected")
     } catch (e) {
       log.warn("Failed to revert file change:", path, e)
-      if (mountedRef.current) setError(`Could not revert ${path}: ${e instanceof Error ? e.message : String(e)}`)
+      if (mountedRef.current)
+        setError(
+          `Could not revert ${path}: ${e instanceof Error ? e.message : String(e)}`
+        )
     } finally {
       pendingReverts.current.delete(path)
     }
   }
 
   const handleAcceptAll = () => {
-    pendingFiles.forEach(f => handleAcceptFile(f.path))
+    pendingFiles.forEach((f) => handleAcceptFile(f.path))
   }
 
   const handleRejectAll = () => {
-    pendingFiles.forEach(f => handleRejectFile(f.path))
+    pendingFiles.forEach((f) => handleRejectFile(f.path))
   }
 
   const handleReview = (path: string) => {
@@ -174,13 +225,16 @@ function ThreadFileChanges({ threadId, turnId, messageId, workspacePath, diffs }
     })
   }
 
-  const allLeaving = files.every(f => leaving.has(f.path) || gone.has(f.path))
+  const allLeaving = files.every((f) => leaving.has(f.path) || gone.has(f.path))
 
   return (
-    <div data-review-thread={threadId} className={cn(
-      "mx-4 mb-2 overflow-hidden rounded-lg border border-border bg-card shadow-sm transition-opacity duration-300",
-      allLeaving && "opacity-0",
-    )}>
+    <div
+      data-review-thread={threadId}
+      className={cn(
+        "mx-4 mb-2 overflow-hidden rounded-lg border border-border bg-card shadow-sm transition-opacity duration-300",
+        allLeaving && "opacity-0"
+      )}
+    >
       {/* Header — title + aggregate stats + bulk actions, all theme-token
           styled so it sits next to the chat composer instead of fighting
           it with colored chrome. Only the +/- numbers carry color (the
@@ -189,11 +243,13 @@ function ThreadFileChanges({ threadId, turnId, messageId, workspacePath, diffs }
         <span className="text-[12px] font-semibold text-foreground">
           Review File Changes
         </span>
-        <span className="rounded-md bg-secondary px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-secondary-foreground">
+        <span className="rounded-md bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-secondary-foreground tabular-nums">
           {visibleFiles.length}
         </span>
-        <span className="flex items-center gap-2 text-[11px] font-mono tabular-nums">
-          {totalAdd > 0 && <span className="text-emerald-500">+{totalAdd}</span>}
+        <span className="flex items-center gap-2 font-mono text-[11px] tabular-nums">
+          {totalAdd > 0 && (
+            <span className="text-emerald-500">+{totalAdd}</span>
+          )}
           {totalDel > 0 && <span className="text-rose-500">−{totalDel}</span>}
         </span>
         <div className="flex-1" />
@@ -230,30 +286,34 @@ function ThreadFileChanges({ threadId, turnId, messageId, workspacePath, diffs }
           <XIcon className="size-3.5" strokeWidth={2} />
         </button>
       </div>
-      {error && <p role="alert" className="px-3 py-2 text-xs text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="px-3 py-2 text-xs text-destructive">
+          {error}
+        </p>
+      )}
       {/* File list — each row lives in a grid wrapper so it can collapse
           to zero height (grid-template-rows 1fr → 0fr) once resolved,
           regardless of whether its diff is expanded. */}
       <div className="max-h-64 overflow-y-auto overscroll-contain">
-      {visibleFiles.map((f) => (
-        <div
-          key={f.path}
-          className={cn(
-            "grid transition-all duration-300 [grid-template-rows:1fr]",
-            leaving.has(f.path) && "opacity-0 [grid-template-rows:0fr]",
-          )}
-        >
-          <div className="min-h-0 overflow-hidden">
-            <FileChangeItem
-              diff={f}
-              status={resolved[f.path] ?? "pending"}
-              onOpen={() => handleReview(f.path)}
-              onAccept={() => handleAcceptFile(f.path)}
-              onReject={() => handleRejectFile(f.path)}
-            />
+        {visibleFiles.map((f) => (
+          <div
+            key={f.path}
+            className={cn(
+              "grid [grid-template-rows:1fr] transition-all duration-300",
+              leaving.has(f.path) && "[grid-template-rows:0fr] opacity-0"
+            )}
+          >
+            <div className="min-h-0 overflow-hidden">
+              <FileChangeItem
+                diff={f}
+                status={resolved[f.path] ?? "pending"}
+                onOpen={() => handleReview(f.path)}
+                onAccept={() => handleAcceptFile(f.path)}
+                onReject={() => handleRejectFile(f.path)}
+              />
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
       </div>
     </div>
   )
@@ -282,14 +342,27 @@ export function FileChangeItem({
   // The transcript can contain thousands of files. Parse content only when
   // the user opens or copies this file's diff.
   const readLines = () => [
-    ...diff.oldText.split("\n").filter(Boolean).map(text => ({ type: "del" as const, text })),
-    ...diff.newText.split("\n").filter(Boolean).map(text => ({ type: "add" as const, text })),
+    ...diff.oldText
+      .split("\n")
+      .filter(Boolean)
+      .map((text) => ({ type: "del" as const, text })),
+    ...diff.newText
+      .split("\n")
+      .filter(Boolean)
+      .map((text) => ({ type: "add" as const, text })),
   ]
   const diffLines = open ? readLines() : []
 
   const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!await copyText(readLines().map(l => `${l.type === "del" ? "-" : "+"} ${l.text}`).join("\n"))) return
+    if (
+      !(await copyText(
+        readLines()
+          .map((l) => `${l.type === "del" ? "-" : "+"} ${l.text}`)
+          .join("\n")
+      ))
+    )
+      return
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -310,12 +383,14 @@ export function FileChangeItem({
     <div className="group border-b border-border last:border-b-0">
       {/* File row — resolved rows get a faint verdict tint while their
           badge is shown, then the parent collapses them away. */}
-      <div className={cn(
-        "flex items-center gap-2 px-3 py-2 transition-colors",
-        status === "pending" && "hover:bg-accent/40",
-        status === "accepted" && "bg-emerald-500/[0.05]",
-        status === "rejected" && "bg-rose-500/[0.05]",
-      )}>
+      <div
+        className={cn(
+          "flex items-center gap-2 px-3 py-2 transition-colors",
+          status === "pending" && "hover:bg-accent/40",
+          status === "accepted" && "bg-emerald-500/[0.05]",
+          status === "rejected" && "bg-rose-500/[0.05]"
+        )}
+      >
         {/* Expand toggle */}
         {hasLines ? (
           <button
@@ -325,7 +400,13 @@ export function FileChangeItem({
             aria-label={open ? "Collapse diff" : "Expand diff"}
             aria-expanded={open}
           >
-            <ChevronDownIcon className={cn("size-3.5 transition-transform", !open && "-rotate-90")} strokeWidth={2} />
+            <ChevronDownIcon
+              className={cn(
+                "size-3.5 transition-transform",
+                !open && "-rotate-90"
+              )}
+              strokeWidth={2}
+            />
           </button>
         ) : (
           <span className="size-3.5 shrink-0" />
@@ -334,15 +415,19 @@ export function FileChangeItem({
           src={getFileIconUrl(fileName)}
           alt=""
           className="size-4 shrink-0"
-          onError={(e) => { (e.target as HTMLImageElement).style.display = "none" }}
+          onError={(e) => {
+            ;(e.target as HTMLImageElement).style.display = "none"
+          }}
         />
         <button
           type="button"
-          onClick={() => hasLines ? setOpen(!open) : handleOpen()}
+          onClick={() => (hasLines ? setOpen(!open) : handleOpen())}
           title={diff.path}
           className="flex min-w-0 flex-1 items-baseline gap-1.5 text-left"
         >
-          <span className="truncate text-[12px] font-medium text-foreground">{fileName}</span>
+          <span className="truncate text-[12px] font-medium text-foreground">
+            {fileName}
+          </span>
           {dirPath && (
             <span className="truncate text-[10.5px] text-muted-foreground">
               {dirPath}
@@ -353,13 +438,17 @@ export function FileChangeItem({
         {/* +/- diff stats — the only colored elements per the user's
             explicit ask. No backgrounds, no rings — just text. */}
         <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11px] tabular-nums">
-          {diff.additions > 0 && <span className="text-emerald-500">+{diff.additions}</span>}
-          {diff.deletions > 0 && <span className="text-rose-500">−{diff.deletions}</span>}
+          {diff.additions > 0 && (
+            <span className="text-emerald-500">+{diff.additions}</span>
+          )}
+          {diff.deletions > 0 && (
+            <span className="text-rose-500">−{diff.deletions}</span>
+          )}
         </span>
 
         {/* "new" tag — neutral pill */}
         {diff.isNew && (
-          <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wider text-secondary-foreground">
+          <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[9.5px] font-medium tracking-wider text-secondary-foreground uppercase">
             new
           </span>
         )}
@@ -368,12 +457,12 @@ export function FileChangeItem({
             the diff numbers already use, shown briefly before the row
             animates out. */}
         {status === "accepted" && (
-          <span className="shrink-0 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wider text-emerald-500">
+          <span className="shrink-0 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9.5px] font-medium tracking-wider text-emerald-500 uppercase">
             Accepted
           </span>
         )}
         {status === "rejected" && (
-          <span className="shrink-0 rounded bg-rose-500/15 px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wider text-rose-500">
+          <span className="shrink-0 rounded bg-rose-500/15 px-1.5 py-0.5 text-[9.5px] font-medium tracking-wider text-rose-500 uppercase">
             Rejected
           </span>
         )}
@@ -384,7 +473,10 @@ export function FileChangeItem({
           {status === "pending" && onAccept && (
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); onAccept() }}
+              onClick={(e) => {
+                e.stopPropagation()
+                onAccept()
+              }}
               className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-emerald-500"
               title="Accept changes"
             >
@@ -394,7 +486,10 @@ export function FileChangeItem({
           {status === "pending" && onReject && (
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); onReject() }}
+              onClick={(e) => {
+                e.stopPropagation()
+                onReject()
+              }}
               className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
               title="Reject & revert changes"
             >
@@ -408,12 +503,19 @@ export function FileChangeItem({
               className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               title="Copy diff"
             >
-              {copied ? <CheckIcon className="size-3.5" strokeWidth={2} /> : <CopyIcon className="size-3.5" strokeWidth={2} />}
+              {copied ? (
+                <CheckIcon className="size-3.5" strokeWidth={2} />
+              ) : (
+                <CopyIcon className="size-3.5" strokeWidth={2} />
+              )}
             </button>
           )}
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); handleOpen() }}
+            onClick={(e) => {
+              e.stopPropagation()
+              handleOpen()
+            }}
             className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
             title="Open in editor"
           >
@@ -432,19 +534,23 @@ export function FileChangeItem({
               key={i}
               className={cn(
                 "relative flex px-3 py-px",
-                line.type === "del" ? "bg-rose-500/[0.06]" : "bg-emerald-500/[0.06]",
+                line.type === "del"
+                  ? "bg-rose-500/[0.06]"
+                  : "bg-emerald-500/[0.06]"
               )}
             >
               <span
                 className={cn(
                   "pointer-events-none absolute inset-y-0 left-0 w-[2px]",
-                  line.type === "del" ? "bg-rose-500/50" : "bg-emerald-500/50",
+                  line.type === "del" ? "bg-rose-500/50" : "bg-emerald-500/50"
                 )}
               />
               <span
                 className={cn(
-                  "w-4 shrink-0 select-none pr-1.5 text-right",
-                  line.type === "del" ? "text-rose-400/70" : "text-emerald-400/70",
+                  "w-4 shrink-0 pr-1.5 text-right select-none",
+                  line.type === "del"
+                    ? "text-rose-400/70"
+                    : "text-emerald-400/70"
                 )}
               >
                 {line.type === "del" ? "−" : "+"}

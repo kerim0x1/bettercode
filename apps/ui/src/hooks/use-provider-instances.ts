@@ -87,7 +87,10 @@ export function useProviderInstances(cwd?: string | null): {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<ProviderMetadataChangedDetail>)
         .detail
-      const targets = providerMetadataRefreshTargets(instancesRef.current, detail)
+      const targets = providerMetadataRefreshTargets(
+        instancesRef.current,
+        detail
+      )
       void (async () => {
         if (targets.length > 0) {
           await Promise.allSettled(

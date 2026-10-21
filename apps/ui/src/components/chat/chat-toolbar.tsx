@@ -119,7 +119,8 @@ export function ChatToolbar({
   const providerLabel = selectedProvider?.name ?? selectedProvider?.id
 
   // The project path — NEVER "." (which would be the IDE itself)
-  const cwd = thread?.worktreePath?.trim() || thread?.projectPath?.trim() || null
+  const cwd =
+    thread?.worktreePath?.trim() || thread?.projectPath?.trim() || null
 
   // Installed external tools for the "Open In" menu (shared cache with
   // the right panel's header menu).
@@ -188,11 +189,7 @@ export function ChatToolbar({
   }, [cwd])
 
   const confirmGitMutation = useCallback(
-    (input: {
-      title: string
-      description: string
-      action: () => void
-    }) => {
+    (input: { title: string; description: string; action: () => void }) => {
       if (onConfirm) {
         onConfirm(input)
         return
@@ -262,7 +259,7 @@ export function ChatToolbar({
         {isGit && gitDirty && (
           <Badge
             variant="outline"
-            className="shrink-0 gap-1.5 border-transparent bg-amber-500/10 py-0.5 text-xs tabular-nums text-amber-600 dark:text-amber-400"
+            className="shrink-0 gap-1.5 border-transparent bg-amber-500/10 py-0.5 text-xs text-amber-600 tabular-nums dark:text-amber-400"
           >
             <span className="size-1.5 rounded-full bg-current" aria-hidden />
             {gitChanges} change{gitChanges !== 1 ? "s" : ""}
@@ -486,7 +483,7 @@ export function ChatToolbar({
         {isGit && gitDirty && (
           <Badge
             variant="outline"
-            className="shrink-0 gap-1.5 border-transparent bg-amber-500/10 py-0.5 text-xs tabular-nums text-amber-600 dark:text-amber-400"
+            className="shrink-0 gap-1.5 border-transparent bg-amber-500/10 py-0.5 text-xs text-amber-600 tabular-nums dark:text-amber-400"
           >
             <span className="size-1.5 rounded-full bg-current" aria-hidden />
             {gitChanges} change{gitChanges !== 1 ? "s" : ""}

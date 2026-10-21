@@ -131,7 +131,12 @@ export function isImagegenAutoAllowed(
   permissionLevel: string | null | undefined
 ): boolean {
   const chatMode = normalizeChatMode(mode)
-  if (chatMode === "plan" || chatMode === "ask" || chatMode === "security" || chatMode === "restricted") {
+  if (
+    chatMode === "plan" ||
+    chatMode === "ask" ||
+    chatMode === "security" ||
+    chatMode === "restricted"
+  ) {
     return false
   }
   const normalized = normalizeLevel(permissionLevel)

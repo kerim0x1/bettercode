@@ -18,10 +18,7 @@ const MIN_IMAGE_ZOOM = 25
 const MAX_IMAGE_ZOOM = 400
 const IMAGE_ZOOM_STEP = 25
 
-const inFlightBinaryReads = new Map<
-  string,
-  ReturnType<typeof readBinaryFile>
->()
+const inFlightBinaryReads = new Map<string, ReturnType<typeof readBinaryFile>>()
 
 function readPreviewFile(path: string): ReturnType<typeof readBinaryFile> {
   const existing = inFlightBinaryReads.get(path)
@@ -251,12 +248,19 @@ export function FilePreview({
               <MusicIcon className="size-7" strokeWidth={1.4} />
             </div>
             <div className="text-center">
-              <p className="text-sm font-medium text-foreground">{tab.fileName}</p>
+              <p className="text-sm font-medium text-foreground">
+                {tab.fileName}
+              </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 {formatBytes(preview.size)}
               </p>
             </div>
-            <audio src={preview.url} className="w-full" controls preload="metadata" />
+            <audio
+              src={preview.url}
+              className="w-full"
+              controls
+              preload="metadata"
+            />
           </div>
         </div>
       </div>

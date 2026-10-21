@@ -66,12 +66,14 @@ describe("buildThreadCompactionOutput", () => {
       content: "continue from here",
       createdAt: "2026-07-10T12:00:00.000Z",
     }
-    mocks.state.threads = [{
-      id: "thread-1",
-      title: "Thread",
-      projectPath: "C:/repo",
-      messages: [oldMessage, checkpoint, tail],
-    }]
+    mocks.state.threads = [
+      {
+        id: "thread-1",
+        title: "Thread",
+        projectPath: "C:/repo",
+        messages: [oldMessage, checkpoint, tail],
+      },
+    ]
 
     await buildThreadCompactionOutput({
       threadId: "thread-1",

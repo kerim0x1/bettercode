@@ -21,15 +21,21 @@ const pdf = {
 
 describe("message attachments", () => {
   it("opens images in the preview and other files as links", () => {
-    const html = renderToStaticMarkup(<MessageAttachments attachments={[png, pdf]} />)
+    const html = renderToStaticMarkup(
+      <MessageAttachments attachments={[png, pdf]} />
+    )
     expect(html).toMatch(/<button[^>]*aria-label="Preview image.png"/)
     expect(html).not.toMatch(/<a[^>]*image\/png[^>]*target="_blank"/)
-    expect(html).toMatch(/<a[^>]*href="data:application\/pdf[^"]*"[^>]*target="_blank"/)
+    expect(html).toMatch(
+      /<a[^>]*href="data:application\/pdf[^"]*"[^>]*target="_blank"/
+    )
     expect(html).toContain("image/png · 70 B")
   })
 
   it("renders nothing for an empty list", () => {
-    expect(renderToStaticMarkup(<MessageAttachments attachments={[]} />)).toBe("")
+    expect(renderToStaticMarkup(<MessageAttachments attachments={[]} />)).toBe(
+      ""
+    )
   })
 
   it("previews every image type and nothing else", () => {
@@ -41,6 +47,8 @@ describe("message attachments", () => {
 
   it("reports the decoded size of a data url", () => {
     expect(formatAttachmentSize(png)).toBe("70 B")
-    expect(formatAttachmentSize({ url: "https://example.com/a.png" })).toBeNull()
+    expect(
+      formatAttachmentSize({ url: "https://example.com/a.png" })
+    ).toBeNull()
   })
 })

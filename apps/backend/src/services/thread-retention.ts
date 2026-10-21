@@ -24,7 +24,10 @@ export interface ThreadRetentionOptions {
 
 interface ThreadRetentionDependencies {
   readonly forgetThreadGoal?: (threadId: string) => void
-  readonly orchestrator?: Pick<import("./orchestrator/service").OrchestratorService, "quiesceThread" | "forgetThread">
+  readonly orchestrator?: Pick<
+    import("./orchestrator/service").OrchestratorService,
+    "quiesceThread" | "forgetThread"
+  >
   readonly threads: Pick<
     ThreadService,
     | "archiveOldThreads"

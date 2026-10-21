@@ -11,7 +11,9 @@ describe("git route cwd confinement", () => {
     const registered = await fs.mkdtemp(
       path.join(os.tmpdir(), "bc0de-git-approved-")
     )
-    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "bc0de-git-outside-"))
+    const outside = await fs.mkdtemp(
+      path.join(os.tmpdir(), "bc0de-git-outside-")
+    )
     const state = {
       projectProjections: { listAll: () => [{ path: registered }] },
       threads: { listProjects: () => [] },

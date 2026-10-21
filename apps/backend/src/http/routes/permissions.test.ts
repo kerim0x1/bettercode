@@ -12,38 +12,56 @@ import { registerPermissionsRoutes } from "./permissions"
 
 describe("permission routes", () => {
   it("confines remote Claude rule reads to registered workspaces while retaining desktop access", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "betterc0de-permission-roots-"))
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "betterc0de-permission-roots-")
+    )
     const approved = path.join(directory, "approved")
     const outside = path.join(directory, "outside")
     for (const cwd of [approved, outside]) {
       fs.mkdirSync(path.join(cwd, ".claude"), { recursive: true })
-      fs.writeFileSync(path.join(cwd, ".claude", "settings.json"), JSON.stringify({
-        permissions: { allow: ["Read(private-project)"] },
-      }))
+      fs.writeFileSync(
+        path.join(cwd, ".claude", "settings.json"),
+        JSON.stringify({
+          permissions: { allow: ["Read(private-project)"] },
+        })
+      )
     }
     const home = vi.spyOn(os, "homedir").mockReturnValue(directory)
     const app = new Hono()
     registerPermissionsRoutes(app, {
       config: { ...createServerConfig(), authToken: "desktop-secret" },
-      remoteAccess: { authenticate: (token: string) => token === "remote-secret" ? { id: "remote-session" } : null },
+      remoteAccess: {
+        authenticate: (token: string) =>
+          token === "remote-secret" ? { id: "remote-session" } : null,
+      },
       projectProjections: { listAll: () => [{ path: approved }] },
       agentPermissions: {},
     } as unknown as AppState)
-    const read = (cwd: string | undefined, token: string) => app.request("/permissions/claude-rules/list", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ cwd }),
-    })
+    const read = (cwd: string | undefined, token: string) =>
+      app.request("/permissions/claude-rules/list", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ cwd }),
+      })
     try {
       const denied = await read(outside, "remote-secret")
       expect(denied.status).toBe(403)
-      expect(await denied.json()).toMatchObject({ code: "workspace_not_registered" })
+      expect(await denied.json()).toMatchObject({
+        code: "workspace_not_registered",
+      })
       const remote = await read(approved, "remote-secret")
       expect(remote.status).toBe(200)
-      expect(await remote.json()).toMatchObject({ rules: [{ rule: "Read(private-project)" }] })
+      expect(await remote.json()).toMatchObject({
+        rules: [{ rule: "Read(private-project)" }],
+      })
       const desktop = await read(outside, "desktop-secret")
       expect(desktop.status).toBe(200)
-      expect(await desktop.json()).toMatchObject({ rules: [{ rule: "Read(private-project)" }] })
+      expect(await desktop.json()).toMatchObject({
+        rules: [{ rule: "Read(private-project)" }],
+      })
       expect((await read(undefined, "remote-secret")).status).toBe(200)
     } finally {
       home.mockRestore()
@@ -66,7 +84,10 @@ describe("permission routes", () => {
 
     const response = await app.request("/permissions/claude-rules/delete", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer desktop-secret" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer desktop-secret",
+      },
       body: JSON.stringify({
         source: "localSettings",
         behavior: "allow",
@@ -103,7 +124,10 @@ describe("permission routes", () => {
 
     const create = await app.request("/permissions/grants/upsert", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer desktop-secret" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer desktop-secret",
+      },
       body: JSON.stringify({
         destination: "workspace",
         workspacePath: workspace,
@@ -125,7 +149,10 @@ describe("permission routes", () => {
 
     const list = await app.request("/permissions/grants/list", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer desktop-secret" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer desktop-secret",
+      },
       body: JSON.stringify({ workspacePath: workspace }),
     })
     expect(list.status).toBe(200)
@@ -135,7 +162,10 @@ describe("permission routes", () => {
 
     const evaluate = await app.request("/permissions/grants/evaluate", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer desktop-secret" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer desktop-secret",
+      },
       body: JSON.stringify({
         workspacePath: workspace,
         toolName: "edit",
@@ -153,7 +183,10 @@ describe("permission routes", () => {
 
     const remove = await app.request("/permissions/grants/delete", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer desktop-secret" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer desktop-secret",
+      },
       body: JSON.stringify({ id: "grant-api" }),
     })
     expect(remove.status).toBe(200)
@@ -179,7 +212,10 @@ describe("permission routes", () => {
 
     const missingScope = await app.request("/permissions/grants/upsert", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer desktop-secret" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer desktop-secret",
+      },
       body: JSON.stringify({
         destination: "workspace",
         workspacePath: workspace,
@@ -191,7 +227,10 @@ describe("permission routes", () => {
 
     const matchAll = await app.request("/permissions/grants/upsert", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer desktop-secret" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer desktop-secret",
+      },
       body: JSON.stringify({
         destination: "user",
         toolName: "edit",
@@ -221,7 +260,10 @@ describe("permission routes", () => {
 
     const initial = await app.request("/permissions/workspace-trust/get", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer desktop-secret" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer desktop-secret",
+      },
       body: JSON.stringify({ workspacePath: workspace }),
     })
     expect(await initial.json()).toMatchObject({
@@ -230,7 +272,10 @@ describe("permission routes", () => {
 
     const update = await app.request("/permissions/workspace-trust/set", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer desktop-secret" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer desktop-secret",
+      },
       body: JSON.stringify({ workspacePath: workspace, state: "untrusted" }),
     })
     expect(await update.json()).toMatchObject({
@@ -239,7 +284,10 @@ describe("permission routes", () => {
 
     const invalidScope = await app.request("/permissions/grants/upsert", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer desktop-secret" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer desktop-secret",
+      },
       body: JSON.stringify({
         destination: "workspace",
         workspacePath: workspace,

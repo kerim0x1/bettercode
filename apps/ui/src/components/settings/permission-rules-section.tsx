@@ -68,21 +68,25 @@ export function SettingsPermissionsSection() {
   const confirm = useConfirm()
   const settings = useSettingsStore()
   const activeProjectPath = useChatStore((state) => {
-    const thread = state.threads.find((item) => item.id === state.activeThreadId)
+    const thread = state.threads.find(
+      (item) => item.id === state.activeThreadId
+    )
     return thread?.projectPath ?? null
   })
-  const [claudeRules, setClaudeRules] = useState<ClaudePermissionRuleEntry[]>([])
-  const [sessionRules, setSessionRules] = useState<SessionPermissionRuleEntry[]>(
+  const [claudeRules, setClaudeRules] = useState<ClaudePermissionRuleEntry[]>(
     []
   )
+  const [sessionRules, setSessionRules] = useState<
+    SessionPermissionRuleEntry[]
+  >([])
   const [sharedGrants, setSharedGrants] = useState<AgentPermissionGrant[]>([])
   const [workspaceTrust, setWorkspaceTrust] =
     useState<WorkspaceTrustRecord | null>(null)
   const [grantTool, setGrantTool] = useState("")
   const [grantPath, setGrantPath] = useState(".")
-  const [grantBehavior, setGrantBehavior] = useState<
-    "allow" | "ask" | "deny"
-  >("ask")
+  const [grantBehavior, setGrantBehavior] = useState<"allow" | "ask" | "deny">(
+    "ask"
+  )
   const [grantDestination, setGrantDestination] = useState<
     "workspace" | "user"
   >(activeProjectPath ? "workspace" : "user")
@@ -295,8 +299,7 @@ export function SettingsPermissionsSection() {
           {activeProjectPath && workspaceTrust ? (
             <Button
               variant={
-                workspaceTrust.state === "untrusted" ||
-                !workspaceTrust.explicit
+                workspaceTrust.state === "untrusted" || !workspaceTrust.explicit
                   ? "default"
                   : "outline"
               }
@@ -309,8 +312,7 @@ export function SettingsPermissionsSection() {
               ) : (
                 <ShieldAlertIcon className="size-3.5" />
               )}
-              {workspaceTrust.state === "untrusted" ||
-              !workspaceTrust.explicit
+              {workspaceTrust.state === "untrusted" || !workspaceTrust.explicit
                 ? "Trust project"
                 : "Mark untrusted"}
             </Button>
@@ -442,7 +444,10 @@ export function SettingsPermissionsSection() {
             }
           >
             {rules.length === 0 ? (
-              <SettingsRow label="No rules" description="Nothing persisted here yet.">
+              <SettingsRow
+                label="No rules"
+                description="Nothing persisted here yet."
+              >
                 <span />
               </SettingsRow>
             ) : (
@@ -479,7 +484,10 @@ export function SettingsPermissionsSection() {
         description="“Always allow — this session” decisions. They live per thread and vanish when the thread closes."
       >
         {sessionRules.length === 0 ? (
-          <SettingsRow label="No session rules" description="Nothing active right now.">
+          <SettingsRow
+            label="No session rules"
+            description="Nothing active right now."
+          >
             <span />
           </SettingsRow>
         ) : (

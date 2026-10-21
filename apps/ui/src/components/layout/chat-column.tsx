@@ -143,8 +143,11 @@ export function ChatColumn({
       .filter((plan) => !plan.streaming && !plan.implemented)
       .at(-1) ?? null
   const effectiveMinimalChat = minimalChat
-  const emptyEditorChat = appMode === "editor" && messages.length === 0 &&
-    activities.length === 0 && !streaming.isStreaming
+  const emptyEditorChat =
+    appMode === "editor" &&
+    messages.length === 0 &&
+    activities.length === 0 &&
+    !streaming.isStreaming
 
   const composer = useAppPreferences(threadId)
   const selection = resolveProviderModelThinkingSelection({
@@ -212,9 +215,15 @@ export function ChatColumn({
 
   if (appMode === "editor" && threadId && !thread) {
     return (
-      <div role="status" className="m-auto max-w-xs space-y-2 px-5 text-center text-xs text-muted-foreground">
+      <div
+        role="status"
+        className="m-auto max-w-xs space-y-2 px-5 text-center text-xs text-muted-foreground"
+      >
         <p className="font-medium text-foreground">Conversation unavailable</p>
-        <p>This chat is not in the loaded history. Reopen it from history or close its tab.</p>
+        <p>
+          This chat is not in the loaded history. Reopen it from history or
+          close its tab.
+        </p>
       </div>
     )
   }
@@ -239,31 +248,37 @@ export function ChatColumn({
       )}
       <ProviderStatusBanner provider={selectedProvider} />
 
-      {emptyEditorChat && <div className="min-h-0 flex-1" data-editor-empty-chat="true" />}
-      {!emptyEditorChat && <ChatTranscript
-        messages={messages}
-        activities={activities}
-        isStreaming={streaming.isStreaming}
-        minimalChat={effectiveMinimalChat}
-        activeThreadId={threadId}
-        activeProjectPath={thread?.worktreePath || thread?.projectPath || null}
-        handleSubmit={wrappedSubmit}
-        setConfirmAction={setConfirmAction}
-        setPlanModalContent={openPlan}
-        streamingText={streaming.streamingText}
-        streamingPlanText={streaming.streamingPlanText}
-        streamingTools={streaming.streamingTools}
-        streamingDiffs={streaming.streamingDiffs}
-        streamingTasks={streaming.streamingTasks}
-        reasoningText={streaming.reasoningText}
-        reasoningSegments={streaming.reasoningSegments}
-        isReasoning={streaming.isReasoning}
-        isPlanStreaming={streaming.isPlanStreaming}
-        chatMode={effectiveChatMode}
-        shimmerPhase={streaming.shimmerPhase}
-        selectedProvider={selectedProvider}
-        appMode={appMode}
-      />}
+      {emptyEditorChat && (
+        <div className="min-h-0 flex-1" data-editor-empty-chat="true" />
+      )}
+      {!emptyEditorChat && (
+        <ChatTranscript
+          messages={messages}
+          activities={activities}
+          isStreaming={streaming.isStreaming}
+          minimalChat={effectiveMinimalChat}
+          activeThreadId={threadId}
+          activeProjectPath={
+            thread?.worktreePath || thread?.projectPath || null
+          }
+          handleSubmit={wrappedSubmit}
+          setConfirmAction={setConfirmAction}
+          setPlanModalContent={openPlan}
+          streamingText={streaming.streamingText}
+          streamingPlanText={streaming.streamingPlanText}
+          streamingTools={streaming.streamingTools}
+          streamingDiffs={streaming.streamingDiffs}
+          streamingTasks={streaming.streamingTasks}
+          reasoningText={streaming.reasoningText}
+          reasoningSegments={streaming.reasoningSegments}
+          isReasoning={streaming.isReasoning}
+          isPlanStreaming={streaming.isPlanStreaming}
+          chatMode={effectiveChatMode}
+          shimmerPhase={streaming.shimmerPhase}
+          selectedProvider={selectedProvider}
+          appMode={appMode}
+        />
+      )}
 
       <ChatInputArea
         isActive={isActive}

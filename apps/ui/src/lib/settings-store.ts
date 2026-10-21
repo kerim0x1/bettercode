@@ -237,7 +237,10 @@ type PersistedSettingsState = Omit<
 
 // One exhaustive mapping for startup, optimistic updates, and server responses.
 const settingsFields = {
-  orchestratorEnabled: { key: "orchestrator_enabled", read: (value: unknown) => value === true },
+  orchestratorEnabled: {
+    key: "orchestrator_enabled",
+    read: (value: unknown) => value === true,
+  },
   theme: {
     key: "theme",
     read: (value: unknown) => value as SettingsState["theme"],

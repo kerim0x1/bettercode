@@ -83,13 +83,17 @@ export const usePluginStore = create<PluginState>((set, get) => ({
     try {
       const list = await bridge.pluginList()
       set({ plugins: (list as InstalledPlugin[]) || [] })
-    } catch (err) { log.warn("Failed to refresh plugin list", err) }
+    } catch (err) {
+      log.warn("Failed to refresh plugin list", err)
+    }
   },
 
   installPlugin: async (sourcePath?: string) => {
     const bridge = api()
     if (!bridge?.pluginInstall) {
-      log.warn("electronAPI.pluginInstall not available — restart app if you just added plugin support")
+      log.warn(
+        "electronAPI.pluginInstall not available — restart app if you just added plugin support"
+      )
       // A toast rather than `alert()`: the native dialog blocks the renderer
       // and ignores the theme, and it is the last of the browser dialogs left
       // here — `prompt()` was worse, it simply throws in Electron.

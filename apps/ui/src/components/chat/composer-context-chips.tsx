@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react"
 import {
   CheckIcon,
   CloudOffIcon,
@@ -61,7 +68,6 @@ import {
  * leaving the composer entirely.
  */
 
-
 /** Backend failures arrive as Error or as a bare string; both need showing. */
 function errorText(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err ?? "")
@@ -114,7 +120,9 @@ function ProjectChip({
   const mounted = useRef(false)
   useEffect(() => {
     mounted.current = true
-    return () => { mounted.current = false }
+    return () => {
+      mounted.current = false
+    }
   }, [])
   const [known, setKnown] = useState<Array<{ name: string; path: string }>>([])
   const threads = useChatStore((s) => s.threads)
@@ -182,7 +190,8 @@ function ProjectChip({
     return [...byPath.values()].sort((a, b) => {
       // Most recently worked in first; projects with no thread trail behind
       // in name order rather than jumping to the top on an empty timestamp.
-      if (a.updatedAt && b.updatedAt) return b.updatedAt.localeCompare(a.updatedAt)
+      if (a.updatedAt && b.updatedAt)
+        return b.updatedAt.localeCompare(a.updatedAt)
       if (a.updatedAt) return -1
       if (b.updatedAt) return 1
       return a.name.localeCompare(b.name)
@@ -225,7 +234,9 @@ function ProjectChip({
         <Command>
           <CommandInput className={MENU_INPUT} placeholder="Search projects" />
           <CommandList className={MENU_LIST}>
-            <CommandEmpty className="px-2 py-2 text-[11px] text-muted-foreground">No projects yet.</CommandEmpty>
+            <CommandEmpty className="px-2 py-2 text-[11px] text-muted-foreground">
+              No projects yet.
+            </CommandEmpty>
             <CommandGroup>
               {projects.map((project) => (
                 <CommandItem
@@ -259,8 +270,10 @@ function ProjectChip({
                     const folder = await pickFolder()
                     if (!folder || !mounted.current) return
                     const name =
-                      folder.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ||
                       folder
+                        .replace(/[/\\]+$/, "")
+                        .split(/[/\\]/)
+                        .pop() || folder
                     startThread(name, folder)
                   })()
                 }}
@@ -468,11 +481,13 @@ function BranchChip({
       <PopoverContent align="start" className={cn(MENU_WIDTH_MD, MENU_PANEL)}>
         <Command>
           <CommandInput
-              className={MENU_INPUT}
-              placeholder={`Search branches in ${projectName}`}
-            />
+            className={MENU_INPUT}
+            placeholder={`Search branches in ${projectName}`}
+          />
           <CommandList className={MENU_LIST}>
-            <CommandEmpty className="px-2 py-2 text-[11px] text-muted-foreground">No branches found.</CommandEmpty>
+            <CommandEmpty className="px-2 py-2 text-[11px] text-muted-foreground">
+              No branches found.
+            </CommandEmpty>
             <CommandGroup heading="Branches">
               {branches.map((name) => (
                 <CommandItem
@@ -534,10 +549,14 @@ function BranchChip({
   )
 }
 
-export function ComposerContextChips({ threadId, activatePane }: { threadId: string | null; activatePane?: () => void }) {
-  const thread = useChatStore((s) =>
-    s.threads.find((t) => t.id === threadId)
-  )
+export function ComposerContextChips({
+  threadId,
+  activatePane,
+}: {
+  threadId: string | null
+  activatePane?: () => void
+}) {
+  const thread = useChatStore((s) => s.threads.find((t) => t.id === threadId))
   const runtimePath = thread ? resolveThreadRuntimePath(thread) : null
   const threadBranch = thread?.branch ?? null
   const [probed, setProbed] = useState<{
@@ -589,7 +608,8 @@ export function ComposerContextChips({ threadId, activatePane }: { threadId: str
 
   if (!thread?.projectName) return null
   // Probe first: `thread.branch` only seeds the label before git answers.
-  const branch = (probed.path === runtimePath ? probed.branch : null) ?? threadBranch
+  const branch =
+    (probed.path === runtimePath ? probed.branch : null) ?? threadBranch
 
   return (
     // Sits inside the composer's outer card (see chat-composer.tsx), so the

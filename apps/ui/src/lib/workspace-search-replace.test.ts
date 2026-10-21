@@ -13,9 +13,11 @@ vi.mock("@/services/backend", () => ({
     path: filePath,
     content: backendState.files.get(filePath) ?? "",
   })),
-  writeFile: vi.fn(async (cwd: string, relativePath: string, contents: string) => {
-    backendState.files.set(`${cwd}/${relativePath}`, contents)
-  }),
+  writeFile: vi.fn(
+    async (cwd: string, relativePath: string, contents: string) => {
+      backendState.files.set(`${cwd}/${relativePath}`, contents)
+    }
+  ),
 }))
 
 const readFileMock = vi.mocked(readFile)

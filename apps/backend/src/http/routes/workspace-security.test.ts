@@ -15,12 +15,15 @@ import {
 
 describe("workspace route root authorization", () => {
   it("registers an explicitly opened folder before its first thread while preserving trust decisions", async () => {
-    const folder = await fs.mkdtemp(path.join(os.tmpdir(), "bc0de-open-workspace-"))
+    const folder = await fs.mkdtemp(
+      path.join(os.tmpdir(), "bc0de-open-workspace-")
+    )
     const db = openDatabase(":memory:")
     runMigrations(db)
     const agentPermissions = new AgentPermissionPolicy(db)
     const state = {
-      db, agentPermissions,
+      db,
+      agentPermissions,
       projectProjections: { listAll: () => [] },
       threads: { listProjects: () => [] },
       worktreeRegistry: { listAll: () => [] },
@@ -29,18 +32,41 @@ describe("workspace route root authorization", () => {
     registerWorkspaceRoutes(api, state)
     try {
       const canonical = await fs.realpath(folder)
-      agentPermissions.setWorkspaceTrust({ workspacePath: canonical, state: "untrusted" })
-      await expect(resolveApprovedWorkspaceRoot(state, folder)).rejects.toMatchObject({ code: "workspace_not_registered" })
-      const response = await api.request("/workspace/open", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspacePath: folder }) })
+      agentPermissions.setWorkspaceTrust({
+        workspacePath: canonical,
+        state: "untrusted",
+      })
+      await expect(
+        resolveApprovedWorkspaceRoot(state, folder)
+      ).rejects.toMatchObject({ code: "workspace_not_registered" })
+      const response = await api.request("/workspace/open", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspacePath: folder }),
+      })
       expect(response.status).toBe(200)
       expect(await response.json()).toEqual({ path: canonical })
-      await expect(resolveApprovedWorkspaceRoot(state, folder)).resolves.toBe(canonical)
-      expect(agentPermissions.getWorkspaceTrust(canonical).state).toBe("untrusted")
+      await expect(resolveApprovedWorkspaceRoot(state, folder)).resolves.toBe(
+        canonical
+      )
+      expect(agentPermissions.getWorkspaceTrust(canonical).state).toBe(
+        "untrusted"
+      )
       // Registration is not a tool grant, and unrelated callers stay confined.
-      await expect(resolveApprovedWorkspaceRoot(state, path.dirname(folder))).rejects.toMatchObject({ code: "workspace_not_registered" })
-      const config = await api.request("/workspace/project-config", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: folder }) })
+      await expect(
+        resolveApprovedWorkspaceRoot(state, path.dirname(folder))
+      ).rejects.toMatchObject({ code: "workspace_not_registered" })
+      const config = await api.request("/workspace/project-config", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cwd: folder }),
+      })
       expect(config.status).toBe(200)
-      const invalid = await api.request("/workspace/open", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspacePath: "relative-folder" }) })
+      const invalid = await api.request("/workspace/open", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspacePath: "relative-folder" }),
+      })
       expect(invalid.status).toBe(400)
     } finally {
       db.close()
@@ -283,7 +309,9 @@ describe("workspace route root authorization", () => {
   it.each(["source thread", "destination"])(
     "blocks scratch adoption while %s checkpoint recovery is pending",
     async (blockedScope) => {
-      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "bc0de-adopt-fenced-"))
+      const directory = await fs.mkdtemp(
+        path.join(os.tmpdir(), "bc0de-adopt-fenced-")
+      )
       const destination = path.join(directory, "destination")
       const dataDir = path.join(directory, "data")
       const source = path.join(dataDir, "scratch", "thread-source")
@@ -300,7 +328,8 @@ describe("workspace route root authorization", () => {
             blockedScope === "source thread" && threadId === "thread-source",
           blockingThreadForCwd: (cwd: string) =>
             blockedScope === "destination" && cwd === canonicalDestination
-              ? "thread-destination" : null,
+              ? "thread-destination"
+              : null,
         },
       } as unknown as AppState
       const api = new Hono()
@@ -312,8 +341,12 @@ describe("workspace route root authorization", () => {
           body: JSON.stringify({ threadId: "thread-source", destination }),
         })
         expect(response.status).toBe(409)
-        expect(await response.json()).toMatchObject({ code: "checkpoint_recovery_pending" })
-        await expect(fs.stat(path.join(destination, "draft.txt"))).rejects.toMatchObject({ code: "ENOENT" })
+        expect(await response.json()).toMatchObject({
+          code: "checkpoint_recovery_pending",
+        })
+        await expect(
+          fs.stat(path.join(destination, "draft.txt"))
+        ).rejects.toMatchObject({ code: "ENOENT" })
       } finally {
         await fs.rm(directory, { recursive: true, force: true })
       }

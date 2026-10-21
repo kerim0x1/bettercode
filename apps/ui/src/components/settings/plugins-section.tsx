@@ -10,7 +10,6 @@ import { createLogger } from "@/lib/logger"
 
 const log = createLogger("settings-plugins") // M11
 
-
 export function SettingsPluginsSection() {
   const _loaded = usePluginStore((s) => s.loaded)
   const plugins = usePluginStore((s) => s.plugins)
@@ -24,7 +23,9 @@ export function SettingsPluginsSection() {
     usePluginStore
       .getState()
       .init()
-      .catch((e) => { log.warn("Failed to initialize plugin store", e) })
+      .catch((e) => {
+        log.warn("Failed to initialize plugin store", e)
+      })
   }, [])
 
   return (

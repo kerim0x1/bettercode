@@ -181,8 +181,8 @@ export function registerShellRoutes(
       const capabilitySecret =
         c.req.header("X-BetterC0de-Human-Capability") ?? ""
       const trustedDesktop = Boolean(
-        config.authToken
-        && constantTimeEqual(capabilitySecret, config.authToken)
+        config.authToken &&
+        constantTimeEqual(capabilitySecret, config.authToken)
       )
       if (!trustedDesktop) {
         return c.json(
@@ -248,12 +248,7 @@ export function registerShellRoutes(
     if (!parsedId.success) {
       return c.json({ error: "Tool output archive not found." }, 404)
     }
-    const ownerId = shellRateLimitKey(
-      c,
-      config,
-      remoteAccess,
-      identity
-    )
+    const ownerId = shellRateLimitKey(c, config, remoteAccess, identity)
     try {
       const archive = await archiveStore.openForRead(parsedId.data, ownerId)
       if (!archive) {
@@ -275,10 +270,7 @@ export function registerShellRoutes(
         "tool output archive download",
         { path: "/shell/output/:archiveId" }
       )
-      return c.json(
-        { error: message },
-        statusCode as 400 | 404 | 500 | 503
-      )
+      return c.json({ error: message }, statusCode as 400 | 404 | 500 | 503)
     }
   })
 
@@ -349,17 +341,15 @@ export function registerShellRoutes(
     if (requestedBypass && !humanBypass) {
       return c.json(
         {
-          error: "Shell bypass requires a trusted, operation-bound user capability.",
+          error:
+            "Shell bypass requires a trusted, operation-bound user capability.",
           decision: "deny",
           permissionLevel: level,
         },
         403
       )
     }
-    const decision =
-      humanBypass
-        ? "allow"
-        : evaluatePermission(level, cls)
+    const decision = humanBypass ? "allow" : evaluatePermission(level, cls)
     if (decision !== "allow") {
       return c.json(
         {
@@ -379,10 +369,7 @@ export function registerShellRoutes(
         ReturnType<typeof resolveProjectShellPermissionRule>
       >
       try {
-        projectRule = await resolveProjectShellPermissionRule(
-          cwd,
-          body.command
-        )
+        projectRule = await resolveProjectShellPermissionRule(cwd, body.command)
       } catch (err) {
         const { message } = sanitizeError(
           err,
@@ -757,15 +744,15 @@ async function applyProjectToolOutputLimits(
     output.stderrTruncated === true
   )
   const shouldRetainArchive =
-    stdoutNeedsTruncation
-    || stderrNeedsTruncation
-    || output.archiveTruncated === true
+    stdoutNeedsTruncation ||
+    stderrNeedsTruncation ||
+    output.archiveTruncated === true
 
   let outputArchiveId: string | undefined
   let outputDownloadUrl: string | undefined
   if (
-    shouldRetainArchive
-    && output.archivePath === archiveReservation.filePath
+    shouldRetainArchive &&
+    output.archivePath === archiveReservation.filePath
   ) {
     try {
       const committed = await archiveStore.commit(archiveReservation)
@@ -809,12 +796,12 @@ async function applyProjectToolOutputLimits(
     combined,
     ...(stdout.truncated ? { stdoutTruncated: true } : {}),
     ...(stderr.truncated ? { stderrTruncated: true } : {}),
-    ...(stdout.truncated || stderr.truncated ? { combinedTruncated: true } : {}),
+    ...(stdout.truncated || stderr.truncated
+      ? { combinedTruncated: true }
+      : {}),
     ...(outputArchiveId ? { outputArchiveId } : {}),
     ...(outputDownloadUrl ? { outputDownloadUrl } : {}),
-    ...(output.archiveTruncated
-      ? { outputArchiveTruncated: true }
-      : {}),
+    ...(output.archiveTruncated ? { outputArchiveTruncated: true } : {}),
   }
 }
 
@@ -826,8 +813,8 @@ function toolOutputRequiresTruncation(
   if (forceTruncated) return true
   if (!text) return false
   return (
-    text.split("\n").length > limits.maxLines
-    || Buffer.byteLength(text, "utf8") > limits.maxBytes
+    text.split("\n").length > limits.maxLines ||
+    Buffer.byteLength(text, "utf8") > limits.maxBytes
   )
 }
 
@@ -875,10 +862,10 @@ function truncateToolOutputText(
       : "...additional output omitted from the in-memory response..."
   const archiveNotice =
     options.archiveId && options.archiveDownloadUrl
-    ? options.archiveTruncated
-      ? `The retained output archive reached its safety cap and is partial (archive ${options.archiveId}).`
-      : `Full output retained as archive ${options.archiveId}.`
-    : "The full output archive could not be created."
+      ? options.archiveTruncated
+        ? `The retained output archive reached its safety cap and is partial (archive ${options.archiveId}).`
+        : `Full output retained as archive ${options.archiveId}.`
+      : "The full output archive could not be created."
   const archiveDownload =
     options.archiveId && options.archiveDownloadUrl
       ? `Authenticated download: ${options.archiveDownloadUrl}`
@@ -915,15 +902,12 @@ async function resolveProjectShell(
 async function resolveProjectShellPermissionRule(
   cwd: string,
   command: string
-): Promise<
-  | {
-      readonly permission: string
-      readonly pattern: string
-      readonly action: "ask" | "allow" | "deny"
-      readonly sourcePath: string
-    }
-  | null
-> {
+): Promise<{
+  readonly permission: string
+  readonly pattern: string
+  readonly action: "ask" | "allow" | "deny"
+  readonly sourcePath: string
+} | null> {
   const rules = await listProjectPermissions(cwd)
   return evaluateProjectPermissionRules(rules, {
     permission: "bash",
@@ -937,12 +921,7 @@ function shellRateLimitKey(
   remoteAccess: RemoteAccessService | undefined,
   knownIdentity = resolveRequestIdentity(c, config, remoteAccess)
 ): string {
-  return shellOwnerContext(
-    c,
-    config,
-    remoteAccess,
-    knownIdentity
-  ).ownerId
+  return shellOwnerContext(c, config, remoteAccess, knownIdentity).ownerId
 }
 
 interface ShellOwnerContext {

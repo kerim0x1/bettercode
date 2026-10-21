@@ -50,8 +50,7 @@ export function loadSettingsAndRemote(
   const remoteOwnerCleanupByOwner = new Map<string, Promise<void>>()
   const scheduleRemoteOwnerCleanup = (sessionId: string): Promise<void> => {
     const ownerId = `remote:${sessionId}`
-    const previous =
-      remoteOwnerCleanupByOwner.get(ownerId) ?? Promise.resolve()
+    const previous = remoteOwnerCleanupByOwner.get(ownerId) ?? Promise.resolve()
     const cleanup = previous
       .catch(() => undefined)
       .then(async () => {

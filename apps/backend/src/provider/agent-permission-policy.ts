@@ -127,7 +127,8 @@ export function isAgentConfigPath(
   roots: readonly string[]
 ): boolean {
   const trimmed = candidate.trim()
-  if (!trimmed || trimmed.includes("\0") || !path.isAbsolute(trimmed)) return false
+  if (!trimmed || trimmed.includes("\0") || !path.isAbsolute(trimmed))
+    return false
   const absolute = path.resolve(trimmed.replace(/[\\/]+/g, path.sep))
   return roots.some((root) => {
     const normalizedRoot = path.resolve(root)
@@ -420,7 +421,10 @@ export class AgentPermissionPolicy {
     try {
       workspacePath = normalizeWorkspaceRoot(input.workspacePath)
       toolName = normalizeAgentPermissionToolName(input.toolName)
-      if (input.path && isAgentConfigPath(input.path, this.agentConfigRoots())) {
+      if (
+        input.path &&
+        isAgentConfigPath(input.path, this.agentConfigRoots())
+      ) {
         // The CLI's own home is not a workspace escape. No workspace grant
         // can match an absolute path here, so the caller's level ceiling
         // (read-only, ask, allow-edits, bypass) decides, as it does for an
@@ -511,7 +515,8 @@ export class AgentPermissionPolicy {
     readonly workspacePath?: string | null
     readonly appMode?: string | null
   }): AgentTurnTrustDecision {
-    const isAgentMode = normalizeEffectiveAgentAppMode(input.appMode) === "agent"
+    const isAgentMode =
+      normalizeEffectiveAgentAppMode(input.appMode) === "agent"
     if (!input.workspacePath?.trim()) {
       if (!isAgentMode) return { decision: "allow", source: "default" }
       return {

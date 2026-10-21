@@ -342,7 +342,10 @@ function parseEnvelope(
   }
 }
 
-function directoryFootprint(directory: string): { files: number; bytes: number } {
+function directoryFootprint(directory: string): {
+  files: number
+  bytes: number
+} {
   let files = 0
   let bytes = 0
   // Crash leftovers and quarantined records consume the same disk budget as

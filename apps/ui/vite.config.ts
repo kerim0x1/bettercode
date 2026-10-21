@@ -34,17 +34,28 @@ import { defineConfig, type Plugin } from "vite"
 // ─────────────────────────────────────────────────────────────────────
 const VENDOR_CHUNK_MAP: Record<string, readonly string[]> = {
   "vendor-react": [
-    "react", "react-dom", "scheduler",
-    "use-sync-external-store", "use-sync-external-store-shim",
+    "react",
+    "react-dom",
+    "scheduler",
+    "use-sync-external-store",
+    "use-sync-external-store-shim",
   ],
   "vendor-monaco": ["monaco-editor", "@monaco-editor"],
   "vendor-ui": [
     // Radix uses Floating UI, while cmdk imports Radix. Keep that dependency
     // cycle inside one chunk so its initialization stays under Rollup's control.
-    "@radix-ui", "radix-ui",
-    "class-variance-authority", "clsx", "tailwind-merge", "lucide-react",
-    "@floating-ui", "tippy.js", "cmdk",
-    "embla-carousel", "embla-carousel-react", "embla-carousel-reactive-utils",
+    "@radix-ui",
+    "radix-ui",
+    "class-variance-authority",
+    "clsx",
+    "tailwind-merge",
+    "lucide-react",
+    "@floating-ui",
+    "tippy.js",
+    "cmdk",
+    "embla-carousel",
+    "embla-carousel-react",
+    "embla-carousel-reactive-utils",
   ],
   "vendor-motion": ["motion", "framer-motion"],
   "vendor-remotion": ["remotion", "@remotion"],
@@ -75,10 +86,7 @@ const VENDOR_CHUNK_MAP: Record<string, readonly string[]> = {
   // (and shiki's grammars, and katex) async chunks. Listing either — or the
   // `@streamdown` scope as a whole — pins it back into this eager chunk and
   // undoes that.
-  "vendor-markdown": [
-    "streamdown",
-    "@streamdown/cjk", "@streamdown/mermaid",
-  ],
+  "vendor-markdown": ["streamdown", "@streamdown/cjk", "@streamdown/mermaid"],
   // Reached only through the deferred math plugin, so this resolves to an
   // async chunk rather than a preloaded one.
   "vendor-math": ["katex"],
@@ -101,7 +109,10 @@ const VENDOR_CHUNK_MATCHERS: ReadonlyArray<readonly [string, RegExp]> =
     const alt = names
       .map((n) => n.replace(/[.+*?^${}()|[\]\\]/g, "\\$&"))
       .join("|")
-    return [chunk, new RegExp(`[\\\\/]node_modules[\\\\/](?:${alt})(?=[\\\\/])`)] as const
+    return [
+      chunk,
+      new RegExp(`[\\\\/]node_modules[\\\\/](?:${alt})(?=[\\\\/])`),
+    ] as const
   })
 
 function pickVendorChunk(id: string): string | undefined {
@@ -128,7 +139,7 @@ function writePortFile(): Plugin {
         if (addr && typeof addr === "object") {
           fs.writeFileSync(
             path.join(__dirname, "..", "..", ".vite-port"),
-            String(addr.port),
+            String(addr.port)
           )
         }
       })

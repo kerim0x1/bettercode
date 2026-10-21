@@ -13,9 +13,14 @@ export interface TerminalNewSessionEventDetail {
   threadId?: string | null
 }
 
-export function terminalSessionTargetsPanel(detail: TerminalNewSessionEventDetail, panel: {
-  id: string; mode: "agent" | "editor" | "design"; threadId?: string | null
-}): boolean {
+export function terminalSessionTargetsPanel(
+  detail: TerminalNewSessionEventDetail,
+  panel: {
+    id: string
+    mode: "agent" | "editor" | "design"
+    threadId?: string | null
+  }
+): boolean {
   if (detail.mode && detail.mode !== panel.mode) return false
   if (detail.targetPanelId) return detail.targetPanelId === panel.id
   return panel.threadId === undefined || detail.threadId === panel.threadId
@@ -31,7 +36,13 @@ export function dispatchTerminalNewSession(
   if (typeof window === "undefined") return
   window.dispatchEvent(
     new CustomEvent<TerminalNewSessionEventDetail>(TERMINAL_NEW_SESSION_EVENT, {
-      detail: { ...detail, threadId: detail.threadId === undefined ? useChatStore.getState().activeThreadId : detail.threadId },
+      detail: {
+        ...detail,
+        threadId:
+          detail.threadId === undefined
+            ? useChatStore.getState().activeThreadId
+            : detail.threadId,
+      },
     })
   )
 }

@@ -73,7 +73,9 @@ export function runtimeModeForTurn(
   }
 }
 
-export function normalizeRuntimeMode(value: string | null | undefined): string | null {
+export function normalizeRuntimeMode(
+  value: string | null | undefined
+): string | null {
   if (typeof value !== "string") return null
   switch (value.trim().toLowerCase()) {
     case "plan":

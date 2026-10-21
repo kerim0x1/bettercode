@@ -6,10 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { AppState } from "../../appState"
 import type { ServerConfig } from "../../config"
 import type { RemoteAccessService } from "../../remote/service"
-import {
-  runShellCommand,
-  type RunShellInput,
-} from "../../services/shell"
+import { runShellCommand, type RunShellInput } from "../../services/shell"
 import {
   closeTerminalPtySession,
   openTerminalPtySession,
@@ -60,8 +57,9 @@ beforeEach(() => {
   vi.mocked(readTerminalPtySession).mockClear()
   vi.mocked(resizeTerminalPtySession).mockClear()
   vi.mocked(closeTerminalPtySession).mockClear()
-  vi.mocked(runShellCommand).mockReset().mockImplementation(
-    async (input: RunShellInput) => ({
+  vi.mocked(runShellCommand)
+    .mockReset()
+    .mockImplementation(async (input: RunShellInput) => ({
       success: true,
       stdout: "ok",
       stderr: "",
@@ -70,8 +68,7 @@ beforeEach(() => {
       sessionId: input.sessionId ?? "generated",
       aborted: false,
       timedOut: false,
-    })
-  )
+    }))
 })
 
 afterEach(async () => {
@@ -110,12 +107,7 @@ function makeApp(
     authPath: path.join(dataDir, "auth.json"),
     logsDir: path.join(dataDir, "logs"),
     providerLogsDir: path.join(dataDir, "logs", "provider"),
-    providerEventLogPath: path.join(
-      dataDir,
-      "logs",
-      "provider",
-      "events.log"
-    ),
+    providerEventLogPath: path.join(dataDir, "logs", "provider", "events.log"),
     authToken: "secret",
   }
   const remoteAccess = options.remoteToken
@@ -305,7 +297,9 @@ describe("shell route security boundaries", () => {
       remote
     )
     expect(write.status).toBe(403)
-    expect(await write.json()).toMatchObject({ code: "remote_terminal_disabled" })
+    expect(await write.json()).toMatchObject({
+      code: "remote_terminal_disabled",
+    })
     expect(runShellCommand).not.toHaveBeenCalled()
     expect(openTerminalPtySession).not.toHaveBeenCalled()
   })
@@ -337,7 +331,12 @@ describe("shell route security boundaries", () => {
       remoteAccessLevel: "read_only",
       allowRemoteTerminal: true,
     })
-    const readOnlyRead = await post(readOnly, "/shell/pty/read", cases[0]![1], REMOTE)
+    const readOnlyRead = await post(
+      readOnly,
+      "/shell/pty/read",
+      cases[0]![1],
+      REMOTE
+    )
     expect(readOnlyRead.status).toBe(403)
     expect(readTerminalPtySession).not.toHaveBeenCalled()
 
@@ -347,7 +346,12 @@ describe("shell route security boundaries", () => {
       remoteToken: "remote-session-token",
       allowRemoteTerminal: true,
     })
-    const grantedRead = await post(granted, "/shell/pty/read", cases[0]![1], REMOTE)
+    const grantedRead = await post(
+      granted,
+      "/shell/pty/read",
+      cases[0]![1],
+      REMOTE
+    )
     expect(grantedRead.status).toBe(404)
     expect(readTerminalPtySession).toHaveBeenCalledWith(
       "remote-pty",
@@ -563,9 +567,7 @@ describe("shell route security boundaries", () => {
     expect(output.outputDownloadUrl).toBe(
       `/api/v1/shell/output/${output.outputArchiveId}`
     )
-    expect(JSON.stringify(output)).not.toContain(
-      temporaryDirectories.at(-1)!
-    )
+    expect(JSON.stringify(output)).not.toContain(temporaryDirectories.at(-1)!)
 
     const archivePath = `/shell/output/${output.outputArchiveId}`
     expect((await app.request(archivePath)).status).toBe(401)
@@ -573,8 +575,7 @@ describe("shell route security boundaries", () => {
       (
         await app.request(archivePath, {
           headers: {
-            Cookie:
-              "betterc0de_remote_session=remote-session-token",
+            Cookie: "betterc0de_remote_session=remote-session-token",
           },
         })
       ).status

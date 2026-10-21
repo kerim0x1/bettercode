@@ -60,9 +60,7 @@ export function startRetention(
         "BETTERC0DE_THREAD_PURGE_AFTER_ARCHIVE_DAYS"
       ),
       batchSize: positiveEnvInteger("BETTERC0DE_THREAD_RETENTION_BATCH_SIZE"),
-      intervalMs: positiveEnvInteger(
-        "BETTERC0DE_THREAD_RETENTION_INTERVAL_MS"
-      ),
+      intervalMs: positiveEnvInteger("BETTERC0DE_THREAD_RETENTION_INTERVAL_MS"),
     }
   )
   startupCleanup.push({
@@ -135,9 +133,12 @@ export function startTimers(
   )
   const vacuumTimer =
     Number.isFinite(vacuumIntervalMs) && vacuumIntervalMs > 0
-      // Node reduces an overflowing timer delay to 1ms, which would turn a
-      // long maintenance cadence into a synchronous database hot loop.
-      ? setInterval(() => incrementalVacuum(db), Math.min(vacuumIntervalMs, 2_147_483_647))
+      ? // Node reduces an overflowing timer delay to 1ms, which would turn a
+        // long maintenance cadence into a synchronous database hot loop.
+        setInterval(
+          () => incrementalVacuum(db),
+          Math.min(vacuumIntervalMs, 2_147_483_647)
+        )
       : null
   if (vacuumTimer?.unref) vacuumTimer.unref()
   startupCleanup.push({

@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useVoiceStore, getEffectiveApiKey } from "./voice-store"
 import { createDeepgramAccessToken } from "@/services/backend"
-import { DeepgramSession, type DeepgramCallbacks, type DictationPhase } from "./deepgram-session"
+import {
+  DeepgramSession,
+  type DeepgramCallbacks,
+  type DictationPhase,
+} from "./deepgram-session"
 
 export type { DeepgramCallbacks } from "./deepgram-session"
 
@@ -22,7 +26,8 @@ export function useDeepgram() {
 
   const start = useCallback(async (callbacks: DeepgramCallbacks) => {
     if (session.current || !mounted.current) return
-    const { deepgramConfigured, micDeviceId, voiceLanguage } = useVoiceStore.getState()
+    const { deepgramConfigured, micDeviceId, voiceLanguage } =
+      useVoiceStore.getState()
     const apiKey = getEffectiveApiKey()
     if (!apiKey && !deepgramConfigured) {
       setError("No Deepgram API key configured")
@@ -32,12 +37,17 @@ export function useDeepgram() {
     setError(null)
     const next = new DeepgramSession({
       language: voiceLanguage,
-      getStream: () => navigator.mediaDevices.getUserMedia({
-        audio: micDeviceId ? { deviceId: { exact: micDeviceId } } : true,
-      }),
-      getAuth: async () => apiKey
-        ? { protocol: "token", credential: apiKey }
-        : { protocol: "bearer", credential: (await createDeepgramAccessToken()).accessToken },
+      getStream: () =>
+        navigator.mediaDevices.getUserMedia({
+          audio: micDeviceId ? { deviceId: { exact: micDeviceId } } : true,
+        }),
+      getAuth: async () =>
+        apiKey
+          ? { protocol: "token", credential: apiKey }
+          : {
+              protocol: "bearer",
+              credential: (await createDeepgramAccessToken()).accessToken,
+            },
       callbacks,
       onPhase: (nextPhase) => {
         if (session.current !== next) return
@@ -56,5 +66,13 @@ export function useDeepgram() {
   const cancel = useCallback(() => session.current?.cancel(), [])
   const clearError = useCallback(() => setError(null), [])
 
-  return { isRecording: phase !== "idle", isFinalizing: phase === "finishing", error, start, stop, cancel, clearError }
+  return {
+    isRecording: phase !== "idle",
+    isFinalizing: phase === "finishing",
+    error,
+    start,
+    stop,
+    cancel,
+    clearError,
+  }
 }

@@ -96,7 +96,7 @@ export function PendingQuestionsPanel({
       (lastAssistant?.questions?.filter((q) => !q.answer) ?? [])
         .map((question, index) => normalizeProviderQuestion(question, index))
         .filter((question): question is PanelQuestion => question !== null),
-    [lastAssistant?.questions],
+    [lastAssistant?.questions]
   )
   const pendingProviderInput = useMemo(() => {
     const pending = derivePendingProviderUserInputs(activities)
@@ -118,12 +118,13 @@ export function PendingQuestionsPanel({
     setCurrentStep(0)
   }, [questionBatchId])
 
-  if (dismissedBatchId === questionBatchId || questions.length === 0) return null
+  if (dismissedBatchId === questionBatchId || questions.length === 0)
+    return null
 
   const progress = derivePendingUserInputProgress(
     questions,
     answers,
-    currentStep,
+    currentStep
   )
   const current = progress.activeQuestion ?? questions[0]
   if (!current) return null
@@ -134,7 +135,7 @@ export function PendingQuestionsPanel({
       [current.id]: togglePendingUserInputOptionSelection(
         current,
         prev[current.id],
-        label,
+        label
       ),
     }))
   }
@@ -143,7 +144,7 @@ export function PendingQuestionsPanel({
     const completedAnswers = buildPendingUserInputAnswers(questions, answers)
     if (!completedAnswers) {
       setCurrentStep(
-        findFirstUnansweredPendingUserInputQuestionIndex(questions, answers),
+        findFirstUnansweredPendingUserInputQuestionIndex(questions, answers)
       )
       return
     }
@@ -170,7 +171,7 @@ export function PendingQuestionsPanel({
           structuredAnswers,
           pendingProviderInput.providerInstanceId ??
             selectedProvider?.providerInstanceId ??
-            null,
+            null
         )
         if (response.status === "failed") {
           const detail = response.error ?? "Provider user input response failed"
@@ -267,7 +268,9 @@ export function PendingQuestionsPanel({
             dispatchUserMessage
           )
         )
-        .catch((e) => { log.warn("Failed to submit pending question answers", e) })
+        .catch((e) => {
+          log.warn("Failed to submit pending question answers", e)
+        })
     }
 
     setAnswers({})
@@ -326,9 +329,9 @@ export function PendingQuestionsPanel({
                   i === currentStep
                     ? "bg-primary"
                     : resolvePendingUserInputAnswer(
-                        questions[i],
-                        answers[questions[i].id],
-                      )
+                          questions[i],
+                          answers[questions[i].id]
+                        )
                       ? "bg-primary/40"
                       : "bg-muted-foreground/30"
                 )}
@@ -393,7 +396,7 @@ export function PendingQuestionsPanel({
                 ...prev,
                 [current.id]: setPendingUserInputCustomAnswer(
                   prev[current.id],
-                  e.target.value,
+                  e.target.value
                 ),
               }))
             }}

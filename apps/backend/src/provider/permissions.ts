@@ -9,11 +9,15 @@
  * OpenAI, Grok, OpenRouter, LM Studio, and Google.
  */
 
-export type PermissionLevel = "read-only" | "ask-on-edit" | "allow-edits" | "bypass";
+export type PermissionLevel =
+  | "read-only"
+  | "ask-on-edit"
+  | "allow-edits"
+  | "bypass"
 
-export type ToolClass = "read" | "egress" | "write" | "execute" | "unknown";
+export type ToolClass = "read" | "egress" | "write" | "execute" | "unknown"
 
-export type PermissionDecision = "allow" | "ask" | "deny";
+export type PermissionDecision = "allow" | "ask" | "deny"
 
 const READ_TOOLS = new Set([
   "Read",
@@ -28,7 +32,7 @@ const READ_TOOLS = new Set([
   "workspace.read",
   "workspace_read",
   "list_directory",
-]);
+])
 
 /**
  * Tools that send data off the machine.
@@ -49,7 +53,7 @@ const EGRESS_TOOLS = new Set([
   "websearch",
   "fetch_url",
   "http_request",
-]);
+])
 
 const WRITE_TOOLS = new Set([
   "Write",
@@ -65,7 +69,7 @@ const WRITE_TOOLS = new Set([
   "apply_patch",
   "workspace.write",
   "workspace_write",
-]);
+])
 
 const EXECUTE_TOOLS = new Set([
   "Bash",
@@ -78,7 +82,7 @@ const EXECUTE_TOOLS = new Set([
   "exec",
   "Agent",
   "Task",
-]);
+])
 
 /**
  * Classify a tool name (and optionally its arguments) into a coarse class.
@@ -86,19 +90,22 @@ const EXECUTE_TOOLS = new Set([
  * `write` — conservative default so a provider that invents its own tool name
  * can't sneak writes through a read-only session.
  */
-export function classifyTool(toolName: string, _toolInput?: unknown): ToolClass {
-  const name = (toolName ?? "").trim();
-  if (!name) return "unknown";
+export function classifyTool(
+  toolName: string,
+  _toolInput?: unknown
+): ToolClass {
+  const name = (toolName ?? "").trim()
+  if (!name) return "unknown"
 
-  const folded = name.toLowerCase();
-  if (READ_TOOLS.has(name) || READ_TOOLS.has(folded)) return "read";
-  if (EGRESS_TOOLS.has(name) || EGRESS_TOOLS.has(folded)) return "egress";
-  if (WRITE_TOOLS.has(name) || WRITE_TOOLS.has(folded)) return "write";
+  const folded = name.toLowerCase()
+  if (READ_TOOLS.has(name) || READ_TOOLS.has(folded)) return "read"
+  if (EGRESS_TOOLS.has(name) || EGRESS_TOOLS.has(folded)) return "egress"
+  if (WRITE_TOOLS.has(name) || WRITE_TOOLS.has(folded)) return "write"
   // A command string cannot be proven read-only by prefix inspection. Common
   // "read" commands have write flags, hooks, aliases and platform-specific
   // escape hatches, so every shell invocation remains executable work.
-  if (EXECUTE_TOOLS.has(name) || EXECUTE_TOOLS.has(folded)) return "execute";
-  return "unknown";
+  if (EXECUTE_TOOLS.has(name) || EXECUTE_TOOLS.has(folded)) return "execute"
+  return "unknown"
 }
 
 /**
@@ -125,16 +132,16 @@ export function classifyTool(toolName: string, _toolInput?: unknown): ToolClass 
  */
 export function evaluatePermission(
   level: PermissionLevel | string | null | undefined,
-  cls: ToolClass,
+  cls: ToolClass
 ): PermissionDecision {
-  const normalized = normalizeLevel(level);
-  if (normalized === "bypass") return "allow";
-  if (cls === "read") return "allow";
-  if (cls === "egress") return "ask";
-  if (normalized === "read-only") return "deny";
-  if (normalized === "allow-edits" && cls === "write") return "allow";
+  const normalized = normalizeLevel(level)
+  if (normalized === "bypass") return "allow"
+  if (cls === "read") return "allow"
+  if (cls === "egress") return "ask"
+  if (normalized === "read-only") return "deny"
+  if (normalized === "allow-edits" && cls === "write") return "allow"
   // ask-on-edit / allow-edits-with-execute / unknown → require approval.
-  return "ask";
+  return "ask"
 }
 
 /**
@@ -143,7 +150,7 @@ export function evaluatePermission(
  * presets, so {@link normalizeLevel} cannot express it, which is why adapters
  * that support it need this wider union.
  */
-export type GatePermissionLevel = PermissionLevel | "default";
+export type GatePermissionLevel = PermissionLevel | "default"
 
 /**
  * Single canonicalizer for every permission-level spelling that reaches an
@@ -162,34 +169,34 @@ export type GatePermissionLevel = PermissionLevel | "default";
  * exactly one place that knows the full set.
  */
 export function normalizeGatePermissionLevel(
-  level: string | null | undefined,
+  level: string | null | undefined
 ): GatePermissionLevel {
-  const key = (level ?? "").toString().toLowerCase().trim();
-  if (key === "default") return "default";
-  if (key === "auto-accept-edits") return "allow-edits";
-  return normalizeLevel(key);
+  const key = (level ?? "").toString().toLowerCase().trim()
+  if (key === "default") return "default"
+  if (key === "auto-accept-edits") return "allow-edits"
+  return normalizeLevel(key)
 }
 
 export function normalizeLevel(
-  level: PermissionLevel | string | null | undefined,
+  level: PermissionLevel | string | null | undefined
 ): PermissionLevel {
   switch ((level ?? "").toString().toLowerCase().trim()) {
     case "bypass":
-      return "bypass";
+      return "bypass"
     case "allow-edits":
     case "full":
     case "full-access":
-      return "allow-edits";
+      return "allow-edits"
     case "read-only":
     case "read":
-      return "read-only";
+      return "read-only"
     case "ask-on-edit":
     case "ask":
-      return "ask-on-edit";
+      return "ask-on-edit"
     default:
       // Fail-closed on unknown/missing levels — users who want auto-execute
       // must explicitly pick "bypass" or "allow-edits".
-      return "ask-on-edit";
+      return "ask-on-edit"
   }
 }
 
@@ -198,14 +205,17 @@ export function normalizeLevel(
  * user when a tool is blocked so they understand the action wasn't just
  * dropped silently.
  */
-export function describeBlock(level: PermissionLevel, toolName: string): string {
+export function describeBlock(
+  level: PermissionLevel,
+  toolName: string
+): string {
   switch (level) {
     case "read-only":
-      return `Permission policy blocked \`${toolName}\` (Read-Only mode — no writes or executions).`;
+      return `Permission policy blocked \`${toolName}\` (Read-Only mode — no writes or executions).`
     case "ask-on-edit":
-      return `Permission policy requires approval for \`${toolName}\` (Ask-on-Edit mode).`;
+      return `Permission policy requires approval for \`${toolName}\` (Ask-on-Edit mode).`
     default:
-      return `Permission policy blocked \`${toolName}\`.`;
+      return `Permission policy blocked \`${toolName}\`.`
   }
 }
 
@@ -218,17 +228,17 @@ export function describeBlock(level: PermissionLevel, toolName: string): string 
 // mutate it directly. A simple Map is enough — this state is ephemeral per
 // IDE session, and threads are short-lived.
 
-export const sessionPermissions = new Map<string, PermissionLevel>();
+export const sessionPermissions = new Map<string, PermissionLevel>()
 
 export function setSessionPermission(
   threadId: string,
-  level: PermissionLevel | string | null | undefined,
+  level: PermissionLevel | string | null | undefined
 ): void {
-  sessionPermissions.set(threadId, normalizeLevel(level));
+  sessionPermissions.set(threadId, normalizeLevel(level))
 }
 
 export function getSessionPermission(threadId: string): PermissionLevel {
-  return sessionPermissions.get(threadId) ?? "ask-on-edit";
+  return sessionPermissions.get(threadId) ?? "ask-on-edit"
 }
 
 // ─── Pending approvals ──────────────────────────────────────────────────────
@@ -238,19 +248,19 @@ export function getSessionPermission(threadId: string): PermissionLevel {
 // `awaitApproval`. Adapters then inspect the decision to decide whether to
 // proceed with the tool call.
 
-type ApprovalDecision = "approve" | "deny";
-type ApprovalResolver = (decision: ApprovalDecision) => void;
+type ApprovalDecision = "approve" | "deny"
+type ApprovalResolver = (decision: ApprovalDecision) => void
 
 interface PendingApproval {
-  readonly resolve: ApprovalResolver;
-  readonly timer: ReturnType<typeof setTimeout>;
+  readonly resolve: ApprovalResolver
+  readonly timer: ReturnType<typeof setTimeout>
 }
 
-const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60_000;
-const pendingApprovals = new Map<string, PendingApproval>();
+const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60_000
+const pendingApprovals = new Map<string, PendingApproval>()
 
 function approvalKey(threadId: string, requestId: string): string {
-  return `${threadId}::${requestId}`;
+  return `${threadId}::${requestId}`
 }
 
 export function generateApprovalRequestId(): string {
@@ -258,58 +268,61 @@ export function generateApprovalRequestId(): string {
   // same millisecond under load) to crypto.randomUUID — already used
   // throughout the codebase, no extra dep.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { randomUUID } = require("node:crypto") as typeof import("node:crypto");
-  return `perm-${randomUUID()}`;
+  const { randomUUID } = require("node:crypto") as typeof import("node:crypto")
+  return `perm-${randomUUID()}`
 }
 
 export function awaitApproval(
   threadId: string,
   requestId: string,
-  timeoutMs = DEFAULT_APPROVAL_TIMEOUT_MS,
+  timeoutMs = DEFAULT_APPROVAL_TIMEOUT_MS
 ): Promise<ApprovalDecision> {
   return new Promise((resolve) => {
-    const key = approvalKey(threadId, requestId);
-    const previous = pendingApprovals.get(key);
+    const key = approvalKey(threadId, requestId)
+    const previous = pendingApprovals.get(key)
     if (previous) {
-      clearTimeout(previous.timer);
-      previous.resolve("deny");
+      clearTimeout(previous.timer)
+      previous.resolve("deny")
     }
-    const timer = setTimeout(() => {
-      const current = pendingApprovals.get(key);
-      if (!current || current.resolve !== resolve) return;
-      pendingApprovals.delete(key);
-      resolve("deny");
-    }, Math.max(1, timeoutMs));
-    timer.unref?.();
-    pendingApprovals.set(key, { resolve, timer });
-  });
+    const timer = setTimeout(
+      () => {
+        const current = pendingApprovals.get(key)
+        if (!current || current.resolve !== resolve) return
+        pendingApprovals.delete(key)
+        resolve("deny")
+      },
+      Math.max(1, timeoutMs)
+    )
+    timer.unref?.()
+    pendingApprovals.set(key, { resolve, timer })
+  })
 }
 
 export function resolveApproval(
   threadId: string,
   requestId: string,
-  decision: ApprovalDecision,
+  decision: ApprovalDecision
 ): boolean {
-  const key = approvalKey(threadId, requestId);
-  const pending = pendingApprovals.get(key);
-  if (!pending) return false;
-  pendingApprovals.delete(key);
-  clearTimeout(pending.timer);
-  pending.resolve(decision);
-  return true;
+  const key = approvalKey(threadId, requestId)
+  const pending = pendingApprovals.get(key)
+  if (!pending) return false
+  pendingApprovals.delete(key)
+  clearTimeout(pending.timer)
+  pending.resolve(decision)
+  return true
 }
 
 /** Reject every pending approval for a thread — used when the user interrupts
  *  the turn so no awaiting adapter hangs forever. */
 export function cancelPendingApprovals(threadId: string): number {
-  let count = 0;
+  let count = 0
   for (const [key, pending] of pendingApprovals) {
     if (key.startsWith(`${threadId}::`)) {
-      pendingApprovals.delete(key);
-      clearTimeout(pending.timer);
-      pending.resolve("deny");
-      count += 1;
+      pendingApprovals.delete(key)
+      clearTimeout(pending.timer)
+      pending.resolve("deny")
+      count += 1
     }
   }
-  return count;
+  return count
 }

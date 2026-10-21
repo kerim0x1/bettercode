@@ -79,19 +79,34 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
       return await handler(confined)
     }
   api.post("/git/status", (c) =>
-    parseAndHandle(c, gitCwdSchema, read((b) => git.status(b.cwd)), {
-      operation: "git status",
-    })
+    parseAndHandle(
+      c,
+      gitCwdSchema,
+      read((b) => git.status(b.cwd)),
+      {
+        operation: "git status",
+      }
+    )
   )
   api.post("/git/profile", (c) =>
-    parseAndHandle(c, gitProfileSchema, read((b) => git.userProfile(b.cwd)), {
-      operation: "git profile",
-    })
+    parseAndHandle(
+      c,
+      gitProfileSchema,
+      read((b) => git.userProfile(b.cwd)),
+      {
+        operation: "git profile",
+      }
+    )
   )
   api.post("/git/branches", (c) =>
-    parseAndHandle(c, gitCwdSchema, read((b) => git.listBranches(b.cwd)), {
-      operation: "git branches",
-    })
+    parseAndHandle(
+      c,
+      gitCwdSchema,
+      read((b) => git.listBranches(b.cwd)),
+      {
+        operation: "git branches",
+      }
+    )
   )
   api.post("/git/commit", (c) =>
     parseAndHandle(
@@ -116,9 +131,14 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
     )
   )
   api.post("/git/fetch", (c) =>
-    parseAndHandle(c, gitCwdSchema, mutate((b) => git.fetchRemote(b.cwd)), {
-      operation: "git fetch",
-    })
+    parseAndHandle(
+      c,
+      gitCwdSchema,
+      mutate((b) => git.fetchRemote(b.cwd)),
+      {
+        operation: "git fetch",
+      }
+    )
   )
   api.post("/git/pull", (c) =>
     parseAndHandle(
@@ -221,24 +241,44 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
     )
   )
   api.post("/git/is-repo", (c) =>
-    parseAndHandle(c, gitCwdSchema, read((b) => git.isRepo(b.cwd)), {
-      operation: "git is-repo",
-    })
+    parseAndHandle(
+      c,
+      gitCwdSchema,
+      read((b) => git.isRepo(b.cwd)),
+      {
+        operation: "git is-repo",
+      }
+    )
   )
   api.post("/git/diff", (c) =>
-    parseAndHandle(c, gitCwdSchema, read((b) => git.diff(b.cwd)), {
-      operation: "git diff",
-    })
+    parseAndHandle(
+      c,
+      gitCwdSchema,
+      read((b) => git.diff(b.cwd)),
+      {
+        operation: "git diff",
+      }
+    )
   )
   api.post("/git/diff-staged", (c) =>
-    parseAndHandle(c, gitCwdSchema, read((b) => git.diffStaged(b.cwd)), {
-      operation: "git diff-staged",
-    })
+    parseAndHandle(
+      c,
+      gitCwdSchema,
+      read((b) => git.diffStaged(b.cwd)),
+      {
+        operation: "git diff-staged",
+      }
+    )
   )
   api.post("/git/remotes", (c) =>
-    parseAndHandle(c, gitCwdSchema, read((b) => git.listRemotes(b.cwd)), {
-      operation: "git remotes",
-    })
+    parseAndHandle(
+      c,
+      gitCwdSchema,
+      read((b) => git.listRemotes(b.cwd)),
+      {
+        operation: "git remotes",
+      }
+    )
   )
   api.post("/git/remotes/add", (c) =>
     parseAndHandle(
@@ -304,9 +344,14 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
     )
   )
   api.post("/git/log", (c) =>
-    parseAndHandle(c, gitLogSchema, read((b) => git.log(b.cwd, b.count)), {
-      operation: "git log",
-    })
+    parseAndHandle(
+      c,
+      gitLogSchema,
+      read((b) => git.log(b.cwd, b.count)),
+      {
+        operation: "git log",
+      }
+    )
   )
   api.post("/git/checkout", (c) =>
     parseAndHandle(
@@ -353,9 +398,14 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
     )
   )
   api.post("/git/worktrees", (c) =>
-    parseAndHandle(c, gitCwdSchema, read((b) => git.listWorktrees(b.cwd)), {
-      operation: "git worktrees",
-    })
+    parseAndHandle(
+      c,
+      gitCwdSchema,
+      read((b) => git.listWorktrees(b.cwd)),
+      {
+        operation: "git worktrees",
+      }
+    )
   )
   api.post("/git/worktrees/create", (c) =>
     parseAndHandle(
@@ -434,9 +484,14 @@ export function registerGitRoutes(api: Hono, state: AppState): void {
     )
   )
   api.post("/git/checkpoints/diff", (c) =>
-    parseAndHandle(c, gitCheckpointDiffSchema, read((b) => git.diffCheckpoints(b)), {
-      operation: "git checkpoint diff",
-    })
+    parseAndHandle(
+      c,
+      gitCheckpointDiffSchema,
+      read((b) => git.diffCheckpoints(b)),
+      {
+        operation: "git checkpoint diff",
+      }
+    )
   )
   api.post("/git/checkpoints/delete", (c) =>
     parseAndHandle(
@@ -558,10 +613,7 @@ async function recoverHunkOperation(
       { statusCode: 409, code: "git_hunk_operation_conflict" }
     )
   }
-  if (
-    input.existing.status === "completed" &&
-    input.existing.result_json
-  ) {
+  if (input.existing.status === "completed" && input.existing.result_json) {
     return {
       ...(JSON.parse(input.existing.result_json) as GitHunkActionResult),
       replayed: true,

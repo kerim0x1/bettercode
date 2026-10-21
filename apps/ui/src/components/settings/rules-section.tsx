@@ -266,9 +266,8 @@ export function SettingsRulesSection() {
       >
         <div className="space-y-3 px-4 py-3">
           {!workspacePath ? (
-            <p className="text-pretty text-xs text-muted-foreground">
-              Open a project-backed conversation to inspect its effective
-              rules.
+            <p className="text-xs text-pretty text-muted-foreground">
+              Open a project-backed conversation to inspect its effective rules.
             </p>
           ) : (
             <>
@@ -315,7 +314,7 @@ export function SettingsRulesSection() {
               </div>
 
               {effectiveRulesError ? (
-                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-pretty text-xs text-destructive">
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-pretty text-destructive">
                   {effectiveRulesError}
                 </div>
               ) : null}
@@ -323,10 +322,10 @@ export function SettingsRulesSection() {
               {effectiveRules ? (
                 <>
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-pretty text-xs text-muted-foreground">
+                    <p className="text-xs text-pretty text-muted-foreground">
                       {effectiveRules.explanation.summary}
                     </p>
-                    <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                    <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
                       {
                         effectiveRules.sources.filter(
                           (source) => source.applied
@@ -342,7 +341,7 @@ export function SettingsRulesSection() {
                     </span>
                   </div>
 
-                  <ol className="list-decimal space-y-1 pl-4 text-pretty text-[11px] text-muted-foreground">
+                  <ol className="list-decimal space-y-1 pl-4 text-[11px] text-pretty text-muted-foreground">
                     {effectiveRules.explanation.precedence.map((entry) => (
                       <li key={entry}>{entry}</li>
                     ))}
@@ -350,12 +349,15 @@ export function SettingsRulesSection() {
 
                   <div className="max-h-[360px] divide-y divide-border/50 overflow-y-auto rounded-lg border border-border/50 bg-background">
                     {effectiveRules.sources.length === 0 ? (
-                      <p className="px-3 py-4 text-pretty text-xs text-muted-foreground">
+                      <p className="px-3 py-4 text-xs text-pretty text-muted-foreground">
                         No rule sources were found for this workspace.
                       </p>
                     ) : (
                       effectiveRules.sources.map((source) => (
-                        <div key={source.id} className="space-y-1.5 px-3 py-2.5">
+                        <div
+                          key={source.id}
+                          className="space-y-1.5 px-3 py-2.5"
+                        >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <p
@@ -364,9 +366,8 @@ export function SettingsRulesSection() {
                               >
                                 {source.sourcePath}
                               </p>
-                              <p className="text-[10px] tabular-nums text-muted-foreground">
-                                {source.scope} · order{" "}
-                                {source.precedence + 1}
+                              <p className="text-[10px] text-muted-foreground tabular-nums">
+                                {source.scope} · order {source.precedence + 1}
                                 {source.scopePath
                                   ? ` · ${source.scopePath}`
                                   : ""}
@@ -387,7 +388,7 @@ export function SettingsRulesSection() {
                               {source.targetGlobs.join(", ")}
                             </p>
                           ) : null}
-                          <p className="text-pretty text-[11px] text-muted-foreground">
+                          <p className="text-[11px] text-pretty text-muted-foreground">
                             {source.reason}
                           </p>
                           {source.content ? (

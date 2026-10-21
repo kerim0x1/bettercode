@@ -76,12 +76,15 @@ export function ChatInputArea(props: any) {
     composerProps,
   } = props
   const fileContextEnabled = useAppearanceStore((s) => s.fileContextEnabled)
-  const ownsAutonomousRun = useChatStore(s => Boolean(activeThreadId && s.autonomousThreadId === activeThreadId))
+  const ownsAutonomousRun = useChatStore((s) =>
+    Boolean(activeThreadId && s.autonomousThreadId === activeThreadId)
+  )
 
   const composerSubmit = (payload: ChatSubmitPayload) => {
     payload = { ...payload, threadId: activeThreadId ?? null }
     // Goal controls must stay immediate, including while a plan is awaiting approval.
-    if (/^\/goal(?:\s|$)/i.test(payload.text.trim())) return composerProps.handleSubmit(payload)
+    if (/^\/goal(?:\s|$)/i.test(payload.text.trim()))
+      return composerProps.handleSubmit(payload)
     const plan = activeProposedPlan as ComposerPlanFollowUp | null
     if (plan && !plan.implemented && payload.files.length === 0) {
       const followUp = resolvePlanFollowUpSubmission({
@@ -143,7 +146,9 @@ export function ChatInputArea(props: any) {
         chatContentWidth(minimalChat)
       )}
     >
-      {permissionLevel !== "bypass" && <FileChangesBar threadId={activeThreadId ?? null} />}
+      {permissionLevel !== "bypass" && (
+        <FileChangesBar threadId={activeThreadId ?? null} />
+      )}
       <QueuedMessages threadId={activeThreadId ?? null} />
       <PendingQuestionsPanel
         key={activeThreadId ?? "new-chat"}
@@ -176,10 +181,18 @@ export function ChatInputArea(props: any) {
           else if (cmd.id === "plan") composerProps.setChatMode?.("plan")
           else if (cmd.id === "ask") composerProps.setChatMode?.("ask")
           else if (cmd.id === "default") composerProps.setChatMode?.("agent")
-          else if (cmd.id === "prompt-clear") setComposerInput(findComposerTextarea(activeThreadId ?? null), "", true)
+          else if (cmd.id === "prompt-clear")
+            setComposerInput(
+              findComposerTextarea(activeThreadId ?? null),
+              "",
+              true
+            )
           else if (cmd.id === "prompt-paste") {
             const input = findComposerTextarea(activeThreadId ?? null)
-            void navigator.clipboard?.readText().then(text => setComposerInput(input, text, true)).catch(() => {})
+            void navigator.clipboard
+              ?.readText()
+              .then((text) => setComposerInput(input, text, true))
+              .catch(() => {})
           }
           closeSlash?.()
         }}

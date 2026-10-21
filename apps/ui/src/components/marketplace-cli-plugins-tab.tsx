@@ -173,11 +173,15 @@ function PluginDetail({
           </Badge>
         </div>
         <div className="mt-1 text-xs text-muted-foreground">
-          {plugin.description || plugin.interface?.shortDescription || plugin.id}
+          {plugin.description ||
+            plugin.interface?.shortDescription ||
+            plugin.id}
         </div>
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-        <span>Version: {plugin.version === "unknown" ? "—" : plugin.version}</span>
+        <span>
+          Version: {plugin.version === "unknown" ? "—" : plugin.version}
+        </span>
         <span>Marketplace: {plugin.marketplace || "local"}</span>
         <span>Scope: {plugin.scope}</span>
       </div>
@@ -401,7 +405,11 @@ function AvailableSection({
  * Codex CLIs, with enable/disable toggles and install/uninstall handled
  * through the respective CLI (the CLIs stay the source of truth).
  */
-export function MarketplaceCliPluginsTab({ isSimple = false }: { isSimple?: boolean }) {
+export function MarketplaceCliPluginsTab({
+  isSimple = false,
+}: {
+  isSimple?: boolean
+}) {
   const {
     inventory,
     available,
@@ -489,7 +497,7 @@ export function MarketplaceCliPluginsTab({ isSimple = false }: { isSimple?: bool
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
-            <SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <SearchIcon className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}

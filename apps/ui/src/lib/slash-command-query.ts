@@ -9,10 +9,7 @@ import {
   type WorkspaceProjectCommand,
   type WorkspaceProjectSkill,
 } from "@/services/backend"
-import type {
-  ProviderSkill,
-  ProviderSlashCommand,
-} from "@betterc0de/schema"
+import type { ProviderSkill, ProviderSlashCommand } from "@betterc0de/schema"
 import {
   GOAL_SUBCOMMANDS,
   isReservedBuiltinSlashCommandName,
@@ -31,21 +28,38 @@ export interface SlashCommandReplacementRange {
   end: number
 }
 
-export function detectSlashCommandTrigger(text: string, cursorInput = text.length): SlashCommandTrigger | null {
+export function detectSlashCommandTrigger(
+  text: string,
+  cursorInput = text.length
+): SlashCommandTrigger | null {
   const rangeEnd = clampCursor(text, cursorInput)
   const afterNewline = text.lastIndexOf("\n", Math.max(0, rangeEnd - 1)) + 1
   const line = text.substring(afterNewline, Math.max(afterNewline, rangeEnd))
   const token = tokenStartForCursor(text, rangeEnd)
   const goalPrefix = /^\/goal[\t ]+(\S*)$/i.exec(line)
-  const completingGoalCommand = goalPrefix !== null && GOAL_SUBCOMMANDS.some(command =>
-    [command.name, ...(command.aliases ?? [])].some(name => name.slice("/goal ".length).startsWith(goalPrefix[1].toLowerCase()))
-  )
+  const completingGoalCommand =
+    goalPrefix !== null &&
+    GOAL_SUBCOMMANDS.some((command) =>
+      [command.name, ...(command.aliases ?? [])].some((name) =>
+        name.slice("/goal ".length).startsWith(goalPrefix[1].toLowerCase())
+      )
+    )
   const candidates: ReadonlyArray<readonly ["/" | "$", number, boolean]> = [
-    ["/", afterNewline, (line[0] === "/" && !/\s/.test(line)) || completingGoalCommand],
+    [
+      "/",
+      afterNewline,
+      (line[0] === "/" && !/\s/.test(line)) || completingGoalCommand,
+    ],
     ["$", token, text.slice(token, rangeEnd).startsWith("$")],
   ]
   for (const [trigger, rangeStart, valid] of candidates) {
-    if (valid) return { trigger, query: text.slice(rangeStart + 1, rangeEnd), rangeStart, rangeEnd }
+    if (valid)
+      return {
+        trigger,
+        query: text.slice(rangeStart + 1, rangeEnd),
+        rangeStart,
+        rangeEnd,
+      }
   }
   return null
 }
@@ -97,11 +111,22 @@ export function filterComposerCommands(
 ): SlashCommand[] {
   const goalPrefix = /^goal[\t ]+(\S*)$/i.exec(query)
   const scopedCommands = goalPrefix
-    ? commands.filter(command => GOAL_SUBCOMMANDS.includes(command) &&
-        [command.name, ...(command.aliases ?? [])].some(name => name.slice("/goal ".length).startsWith(goalPrefix[1].toLowerCase())))
-    : query.trim() ? commands : commands.filter(command => !GOAL_SUBCOMMANDS.includes(command))
+    ? commands.filter(
+        (command) =>
+          GOAL_SUBCOMMANDS.includes(command) &&
+          [command.name, ...(command.aliases ?? [])].some((name) =>
+            name.slice("/goal ".length).startsWith(goalPrefix[1].toLowerCase())
+          )
+      )
+    : query.trim()
+      ? commands
+      : commands.filter((command) => !GOAL_SUBCOMMANDS.includes(command))
   const matching = filterSlashCommandsForQuery(
-    scopedCommands.filter((command) => category === "all" || (category === "skills") === (command.category === "skill")),
+    scopedCommands.filter(
+      (command) =>
+        category === "all" ||
+        (category === "skills") === (command.category === "skill")
+    ),
     goalPrefix ? `goal ${goalPrefix[1]}` : query,
     "/"
   )
@@ -114,10 +139,17 @@ export function filterComposerCommands(
   return [...commandPreview, ...skills.slice(0, limit - commandPreview.length)]
 }
 
-export function slashCommandEmptyStateText(trigger: "/" | "$", category: SlashCommandFilter = "all"): string {
+export function slashCommandEmptyStateText(
+  trigger: "/" | "$",
+  category: SlashCommandFilter = "all"
+): string {
   return trigger === "$"
     ? "No skills found. Try / to browse provider commands."
-    : category === "skills" ? "No matching skills." : category === "commands" ? "No matching command." : "No matching command or skill."
+    : category === "skills"
+      ? "No matching skills."
+      : category === "commands"
+        ? "No matching command."
+        : "No matching command or skill."
 }
 
 export function slashCommandSelectionReplacement(
@@ -293,7 +325,9 @@ function tokenStartForCursor(text: string, cursor: number): number {
   const prefix = text.slice(0, cursor)
   const token = /\S+$/.exec(prefix)
   // JavaScript's $ also matches before a final newline; only accept an actual suffix.
-  return token && token.index + token[0].length === cursor ? token.index : cursor
+  return token && token.index + token[0].length === cursor
+    ? token.index
+    : cursor
 }
 
 function normalizeCommandQuery(query: string, trigger: "/" | "$"): string {

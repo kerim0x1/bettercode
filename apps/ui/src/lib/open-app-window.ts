@@ -14,7 +14,9 @@ export async function openAppWindow(
 ): Promise<void> {
   if (!api?.windowOpenWith) return
   const store = useChatStore.getState()
-  const thread = store.threads.find((entry) => entry.id === store.activeThreadId)
+  const thread = store.threads.find(
+    (entry) => entry.id === store.activeThreadId
+  )
   const cwd = resolveThreadRuntimePath(thread) || fallbackCwd
   try {
     const result = await api.windowOpenWith({ mode, ...(cwd ? { cwd } : {}) })

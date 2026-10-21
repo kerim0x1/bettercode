@@ -134,7 +134,10 @@ export function EditorCodeMapView({ projectPath }: EditorCodeMapViewProps) {
     [matchingFiles]
   )
   const filteredFiles = useMemo(
-    () => kindFilter === "all" ? matchingFiles : matchingFiles.filter((file) => file.kind === kindFilter),
+    () =>
+      kindFilter === "all"
+        ? matchingFiles
+        : matchingFiles.filter((file) => file.kind === kindFilter),
     [kindFilter, matchingFiles]
   )
   const visibleFiles = filteredFiles.slice(0, FILE_INDEX_VISIBLE_LIMIT)
@@ -183,7 +186,10 @@ export function EditorCodeMapView({ projectPath }: EditorCodeMapViewProps) {
       const copied = await copyText(
         buildWorkspaceMapBrief(overview, { projectPath })
       )
-      if (!copied) { setCopyState("error"); return }
+      if (!copied) {
+        setCopyState("error")
+        return
+      }
       setCopyState("copied")
       if (copyResetTimerRef.current !== null) {
         window.clearTimeout(copyResetTimerRef.current)
@@ -205,114 +211,419 @@ export function EditorCodeMapView({ projectPath }: EditorCodeMapViewProps) {
   }, [overview, projectPath])
 
   const renderFile = (file: WorkspaceMapFile, detail?: string) => (
-    <CodeMapFileButton key={file.path} file={file} detail={detail}
-      isActive={sameWorkspaceMapPath(file.path, activeRelativePath)} onOpen={openFile} onReveal={revealFile} />
+    <CodeMapFileButton
+      key={file.path}
+      file={file}
+      detail={detail}
+      isActive={sameWorkspaceMapPath(file.path, activeRelativePath)}
+      onOpen={openFile}
+      onReveal={revealFile}
+    />
   )
-  const hasFilters = Boolean(query || kindFilter !== "all" || directoryFilter !== null)
+  const hasFilters = Boolean(
+    query || kindFilter !== "all" || directoryFilter !== null
+  )
 
   return (
-    <div className="code-map" aria-label="Workspace code map" aria-busy={loading}>
+    <div
+      className="code-map"
+      aria-label="Workspace code map"
+      aria-busy={loading}
+    >
       <div className="code-map-header">
         <div className="code-map-project">
-          <img src={getFolderIconUrl(true, projectPath)} alt="" className="size-6 shrink-0" />
+          <img
+            src={getFolderIconUrl(true, projectPath)}
+            alt=""
+            className="size-6 shrink-0"
+          />
           <div className="min-w-0 flex-1">
-            <p className="code-map-project-name" title={projectPath}>{overview?.rootName || projectPath.replace(/[\\/]+$/, "").split(/[\\/]/).pop()}</p>
-            <p className="code-map-caption">{loading ? "Updating workspace map..." : "Workspace overview"}</p>
+            <p className="code-map-project-name" title={projectPath}>
+              {overview?.rootName ||
+                projectPath
+                  .replace(/[\\/]+$/, "")
+                  .split(/[\\/]/)
+                  .pop()}
+            </p>
+            <p className="code-map-caption">
+              {loading ? "Updating workspace map..." : "Workspace overview"}
+            </p>
           </div>
-          <Button type="button" variant="ghost" size="icon" className={cn("code-map-tool", copyState === "copied" && "text-emerald-600 dark:text-emerald-400", copyState === "error" && "text-destructive")}
-            onClick={() => void copyWorkspaceBrief()} disabled={!overview} aria-label="Copy workspace brief"
-            title={copyState === "copied" ? "Workspace brief copied" : copyState === "error" ? "Could not copy workspace brief" : "Copy workspace brief"}>
-            {copyState === "copied" ? <CheckIcon className="size-3.5" /> : <ClipboardIcon className="size-3.5" />}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={cn(
+              "code-map-tool",
+              copyState === "copied" &&
+                "text-emerald-600 dark:text-emerald-400",
+              copyState === "error" && "text-destructive"
+            )}
+            onClick={() => void copyWorkspaceBrief()}
+            disabled={!overview}
+            aria-label="Copy workspace brief"
+            title={
+              copyState === "copied"
+                ? "Workspace brief copied"
+                : copyState === "error"
+                  ? "Could not copy workspace brief"
+                  : "Copy workspace brief"
+            }
+          >
+            {copyState === "copied" ? (
+              <CheckIcon className="size-3.5" />
+            ) : (
+              <ClipboardIcon className="size-3.5" />
+            )}
           </Button>
-          <Button type="button" variant="ghost" size="icon" className="code-map-tool" onClick={() => setReloadKey((key) => key + 1)} disabled={loading} aria-label="Refresh code map" title="Refresh code map">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="code-map-tool"
+            onClick={() => setReloadKey((key) => key + 1)}
+            disabled={loading}
+            aria-label="Refresh code map"
+            title="Refresh code map"
+          >
             <RefreshCwIcon className="size-3.5" />
           </Button>
         </div>
-        <span className="sr-only" role="status">{copyState === "copied" ? "Workspace brief copied" : copyState === "error" ? "Could not copy workspace brief" : ""}</span>
+        <span className="sr-only" role="status">
+          {copyState === "copied"
+            ? "Workspace brief copied"
+            : copyState === "error"
+              ? "Could not copy workspace brief"
+              : ""}
+        </span>
         {overview && !error && (
           <div className="code-map-metrics">
-            <CodeMapMetric icon={FilesIcon} label="Files" value={overview.totalFiles} />
-            <CodeMapMetric icon={FileCode2Icon} label="Source" value={overview.codeFiles} />
-            <CodeMapMetric icon={GaugeIcon} label="Size" value={formatBytes(overview.totalBytes)} />
+            <CodeMapMetric
+              icon={FilesIcon}
+              label="Files"
+              value={overview.totalFiles}
+            />
+            <CodeMapMetric
+              icon={FileCode2Icon}
+              label="Source"
+              value={overview.codeFiles}
+            />
+            <CodeMapMetric
+              icon={GaugeIcon}
+              label="Size"
+              value={formatBytes(overview.totalBytes)}
+            />
           </div>
         )}
-        <div className="code-map-tabs" role="tablist" aria-label="Code map views">
+        <div
+          className="code-map-tabs"
+          role="tablist"
+          aria-label="Code map views"
+        >
           {(["overview", "files"] as const).map((value) => (
-            <button key={value} type="button" role="tab" id={`${tabId}-${value}`} aria-controls={`${tabId}-content`} aria-selected={view === value} tabIndex={view === value ? 0 : -1}
-              onClick={() => setView(value)} onKeyDown={(event) => {
-                if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              id={`${tabId}-${value}`}
+              aria-controls={`${tabId}-content`}
+              aria-selected={view === value}
+              tabIndex={view === value ? 0 : -1}
+              onClick={() => setView(value)}
+              onKeyDown={(event) => {
+                if (
+                  !["ArrowLeft", "ArrowRight", "Home", "End"].includes(
+                    event.key
+                  )
+                )
+                  return
                 event.preventDefault()
-                const next = event.key === "Home" ? "overview" : event.key === "End" ? "files" : value === "overview" ? "files" : "overview"
+                const next =
+                  event.key === "Home"
+                    ? "overview"
+                    : event.key === "End"
+                      ? "files"
+                      : value === "overview"
+                        ? "files"
+                        : "overview"
                 setView(next)
                 document.getElementById(`${tabId}-${next}`)?.focus()
-              }}>
-              {value === "overview" ? <LayoutGridIcon className="size-3.5" /> : <FilesIcon className="size-3.5" />}
+              }}
+            >
+              {value === "overview" ? (
+                <LayoutGridIcon className="size-3.5" />
+              ) : (
+                <FilesIcon className="size-3.5" />
+              )}
               {value === "overview" ? "Overview" : "Files"}
-              {value === "files" && overview && <span className="code-map-tab-count">{overview.files.length.toLocaleString()}</span>}
+              {value === "files" && overview && (
+                <span className="code-map-tab-count">
+                  {overview.files.length.toLocaleString()}
+                </span>
+              )}
             </button>
           ))}
         </div>
       </div>
 
-      <div className="code-map-content" role="tabpanel" id={`${tabId}-content`} aria-labelledby={`${tabId}-${view}`}>
-        {error ? <CodeMapError message={error} onRetry={() => setReloadKey((key) => key + 1)} /> : loading && !overview ? <CodeMapLoading /> : !overview || overview.totalFiles === 0 ? <CodeMapEmpty /> : (
+      <div
+        className="code-map-content"
+        role="tabpanel"
+        id={`${tabId}-content`}
+        aria-labelledby={`${tabId}-${view}`}
+      >
+        {error ? (
+          <CodeMapError
+            message={error}
+            onRetry={() => setReloadKey((key) => key + 1)}
+          />
+        ) : loading && !overview ? (
+          <CodeMapLoading />
+        ) : !overview || overview.totalFiles === 0 ? (
+          <CodeMapEmpty />
+        ) : (
           <>
-            {overview.truncated && <p className="code-map-notice"><AlertCircleIcon className="size-3.5 shrink-0" /><span>Partial scan: {overview.scannedFiles.toLocaleString()} files indexed. Counts cover this scan.</span></p>}
+            {overview.truncated && (
+              <p className="code-map-notice">
+                <AlertCircleIcon className="size-3.5 shrink-0" />
+                <span>
+                  Partial scan: {overview.scannedFiles.toLocaleString()} files
+                  indexed. Counts cover this scan.
+                </span>
+              </p>
+            )}
             {view === "overview" ? (
               <div className="code-map-scroll code-map-overview">
-                <CodeMapSection title="Folders" count={overview.topDirectories.length}>
-                  {(showAllFolders ? overview.topDirectories : overview.topDirectories.slice(0, 10)).map((directory) => (
-                    <button type="button" key={directory.path || "__root__"} className="code-map-directory" onClick={() => filterDirectory(directory.path)}
-                      aria-label={`Show files in ${directory.path || "project root"}`} title={directory.path || "Files in the project root"}>
-                      <img src={getFolderIconUrl(false, directory.path)} alt="" className="size-4 shrink-0" />
+                <CodeMapSection
+                  title="Folders"
+                  count={overview.topDirectories.length}
+                >
+                  {(showAllFolders
+                    ? overview.topDirectories
+                    : overview.topDirectories.slice(0, 10)
+                  ).map((directory) => (
+                    <button
+                      type="button"
+                      key={directory.path || "__root__"}
+                      className="code-map-directory"
+                      onClick={() => filterDirectory(directory.path)}
+                      aria-label={`Show files in ${directory.path || "project root"}`}
+                      title={directory.path || "Files in the project root"}
+                    >
+                      <img
+                        src={getFolderIconUrl(false, directory.path)}
+                        alt=""
+                        className="size-4 shrink-0"
+                      />
                       <span className="min-w-0 flex-1">
                         <span className="flex min-w-0 items-baseline justify-between gap-2">
-                          <span className="truncate text-[12px] font-medium">{directory.path ? directory.name : "Project root"}</span>
-                          <span className="code-map-directory-count">{directory.fileCount.toLocaleString()} <span>{directory.fileCount === 1 ? "file" : "files"}</span></span>
+                          <span className="truncate text-[12px] font-medium">
+                            {directory.path ? directory.name : "Project root"}
+                          </span>
+                          <span className="code-map-directory-count">
+                            {directory.fileCount.toLocaleString()}{" "}
+                            <span>
+                              {directory.fileCount === 1 ? "file" : "files"}
+                            </span>
+                          </span>
                         </span>
-                        <span className="code-map-directory-track" aria-hidden="true"><span style={{ width: `${(directory.fileCount / maxDirectoryFiles) * 100}%` }} /></span>
+                        <span
+                          className="code-map-directory-track"
+                          aria-hidden="true"
+                        >
+                          <span
+                            style={{
+                              width: `${(directory.fileCount / maxDirectoryFiles) * 100}%`,
+                            }}
+                          />
+                        </span>
                       </span>
                       <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground" />
                     </button>
                   ))}
-                  {overview.topDirectories.length > 10 && <button type="button" className="code-map-text-action" aria-expanded={showAllFolders} onClick={() => setShowAllFolders((value) => !value)}>{showAllFolders ? "Show fewer folders" : `Show all ${overview.topDirectories.length} folders`}</button>}
+                  {overview.topDirectories.length > 10 && (
+                    <button
+                      type="button"
+                      className="code-map-text-action"
+                      aria-expanded={showAllFolders}
+                      onClick={() => setShowAllFolders((value) => !value)}
+                    >
+                      {showAllFolders
+                        ? "Show fewer folders"
+                        : `Show all ${overview.topDirectories.length} folders`}
+                    </button>
+                  )}
                 </CodeMapSection>
-                <CodeMapSection title="File types" count={overview.extensions.length}>
+                <CodeMapSection
+                  title="File types"
+                  count={overview.extensions.length}
+                >
                   <div className="code-map-types">
-                    {(showAllTypes ? overview.extensions : overview.extensions.slice(0, 6)).map((extension) => (
-                      <div key={extension.extension} className="code-map-type" title={`${extension.label}: ${extension.fileCount} files, ${extension.codeFileCount} source files`}>
-                        <img src={getFileIconUrl(extension.label)} alt="" className="size-4 shrink-0" />
-                        <span className="min-w-0 flex-1 truncate">{extension.label}</span>
-                        <span className="tabular-nums text-muted-foreground">{extension.fileCount.toLocaleString()}</span>
+                    {(showAllTypes
+                      ? overview.extensions
+                      : overview.extensions.slice(0, 6)
+                    ).map((extension) => (
+                      <div
+                        key={extension.extension}
+                        className="code-map-type"
+                        title={`${extension.label}: ${extension.fileCount} files, ${extension.codeFileCount} source files`}
+                      >
+                        <img
+                          src={getFileIconUrl(extension.label)}
+                          alt=""
+                          className="size-4 shrink-0"
+                        />
+                        <span className="min-w-0 flex-1 truncate">
+                          {extension.label}
+                        </span>
+                        <span className="text-muted-foreground tabular-nums">
+                          {extension.fileCount.toLocaleString()}
+                        </span>
                       </div>
                     ))}
                   </div>
-                  {overview.extensions.length > 6 && <button type="button" className="code-map-text-action" aria-expanded={showAllTypes} onClick={() => setShowAllTypes((value) => !value)}>{showAllTypes ? "Show fewer types" : `Show all ${overview.extensions.length} types`}</button>}
+                  {overview.extensions.length > 6 && (
+                    <button
+                      type="button"
+                      className="code-map-text-action"
+                      aria-expanded={showAllTypes}
+                      onClick={() => setShowAllTypes((value) => !value)}
+                    >
+                      {showAllTypes
+                        ? "Show fewer types"
+                        : `Show all ${overview.extensions.length} types`}
+                    </button>
+                  )}
                 </CodeMapSection>
-                {overview.importantFiles.length > 0 && <CodeMapSection title="Entry points" count={overview.importantFiles.length}>{overview.importantFiles.map((file) => renderFile(file))}</CodeMapSection>}
-                {activeRelativePath && relatedFiles.length > 0 && <CodeMapSection title="Related files" count={relatedFiles.length}>
-                  <p className="code-map-related-caption" title={activeRelativePath}>Near <strong>{activeTab?.fileName ?? activeRelativePath}</strong></p>
-                  {relatedFiles.map((item) => renderFile(item.file, item.reason))}
-                </CodeMapSection>}
-                {overview.largestFiles.length > 0 && <CodeMapSection title="Largest files" count={overview.largestFiles.length} defaultOpen={false}>{overview.largestFiles.map((file) => renderFile(file, formatBytes(file.sizeBytes)))}</CodeMapSection>}
+                {overview.importantFiles.length > 0 && (
+                  <CodeMapSection
+                    title="Entry points"
+                    count={overview.importantFiles.length}
+                  >
+                    {overview.importantFiles.map((file) => renderFile(file))}
+                  </CodeMapSection>
+                )}
+                {activeRelativePath && relatedFiles.length > 0 && (
+                  <CodeMapSection
+                    title="Related files"
+                    count={relatedFiles.length}
+                  >
+                    <p
+                      className="code-map-related-caption"
+                      title={activeRelativePath}
+                    >
+                      Near{" "}
+                      <strong>
+                        {activeTab?.fileName ?? activeRelativePath}
+                      </strong>
+                    </p>
+                    {relatedFiles.map((item) =>
+                      renderFile(item.file, item.reason)
+                    )}
+                  </CodeMapSection>
+                )}
+                {overview.largestFiles.length > 0 && (
+                  <CodeMapSection
+                    title="Largest files"
+                    count={overview.largestFiles.length}
+                    defaultOpen={false}
+                  >
+                    {overview.largestFiles.map((file) =>
+                      renderFile(file, formatBytes(file.sizeBytes))
+                    )}
+                  </CodeMapSection>
+                )}
               </div>
             ) : (
               <>
                 <div className="code-map-file-tools">
                   <label className="code-map-search">
                     <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                    <input value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Filter code map files" placeholder="Find a file..." />
-                    {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear file filter"><XIcon className="size-3" /></button>}
+                    <input
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      aria-label="Filter code map files"
+                      placeholder="Find a file..."
+                    />
+                    {query && (
+                      <button
+                        type="button"
+                        onClick={() => setQuery("")}
+                        aria-label="Clear file filter"
+                      >
+                        <XIcon className="size-3" />
+                      </button>
+                    )}
                   </label>
-                  {directoryFilter !== null && <div className="code-map-folder-filter"><img src={getFolderIconUrl(false, directoryFilter)} alt="" className="size-3.5" /><span>{directoryFilter || "Project root"}</span><button type="button" onClick={() => setDirectoryFilter(null)} aria-label="Clear folder filter" title="Show files from all folders"><XIcon className="size-3" /></button></div>}
-                  <div className="code-map-kind-filters" role="group" aria-label="Filter by file type">
-                    {CODE_MAP_KIND_FILTERS.map((filter) => <button key={filter.id} type="button" aria-pressed={kindFilter === filter.id} onClick={() => setKindFilter(filter.id)}>{filter.label}<span>{kindCounts[filter.id]}</span></button>)}
+                  {directoryFilter !== null && (
+                    <div className="code-map-folder-filter">
+                      <img
+                        src={getFolderIconUrl(false, directoryFilter)}
+                        alt=""
+                        className="size-3.5"
+                      />
+                      <span>{directoryFilter || "Project root"}</span>
+                      <button
+                        type="button"
+                        onClick={() => setDirectoryFilter(null)}
+                        aria-label="Clear folder filter"
+                        title="Show files from all folders"
+                      >
+                        <XIcon className="size-3" />
+                      </button>
+                    </div>
+                  )}
+                  <div
+                    className="code-map-kind-filters"
+                    role="group"
+                    aria-label="Filter by file type"
+                  >
+                    {CODE_MAP_KIND_FILTERS.map((filter) => (
+                      <button
+                        key={filter.id}
+                        type="button"
+                        aria-pressed={kindFilter === filter.id}
+                        onClick={() => setKindFilter(filter.id)}
+                      >
+                        {filter.label}
+                        <span>{kindCounts[filter.id]}</span>
+                      </button>
+                    ))}
                   </div>
-                  <p className="code-map-caption" role="status">{filteredFiles.length.toLocaleString()} {filteredFiles.length === 1 ? "file" : "files"}{hasFilters ? " found" : " indexed"}{filteredFiles.length > FILE_INDEX_VISIBLE_LIMIT ? ` \u00b7 First ${FILE_INDEX_VISIBLE_LIMIT} shown` : ""}</p>
+                  <p className="code-map-caption" role="status">
+                    {filteredFiles.length.toLocaleString()}{" "}
+                    {filteredFiles.length === 1 ? "file" : "files"}
+                    {hasFilters ? " found" : " indexed"}
+                    {filteredFiles.length > FILE_INDEX_VISIBLE_LIMIT
+                      ? ` \u00b7 First ${FILE_INDEX_VISIBLE_LIMIT} shown`
+                      : ""}
+                  </p>
                 </div>
                 <div className="code-map-scroll code-map-file-list">
-                  {visibleFiles.length ? visibleFiles.map((file) => renderFile(file)) : <div className="code-map-no-results"><SearchIcon className="size-5" /><p>No matching files</p><button type="button" className="code-map-text-action" onClick={() => { setQuery(""); setKindFilter("all"); setDirectoryFilter(null) }}>Clear filters</button></div>}
-                  {filteredFiles.length > FILE_INDEX_VISIBLE_LIMIT && <p className="code-map-list-hint">Refine your search to find more files.</p>}
+                  {visibleFiles.length ? (
+                    visibleFiles.map((file) => renderFile(file))
+                  ) : (
+                    <div className="code-map-no-results">
+                      <SearchIcon className="size-5" />
+                      <p>No matching files</p>
+                      <button
+                        type="button"
+                        className="code-map-text-action"
+                        onClick={() => {
+                          setQuery("")
+                          setKindFilter("all")
+                          setDirectoryFilter(null)
+                        }}
+                      >
+                        Clear filters
+                      </button>
+                    </div>
+                  )}
+                  {filteredFiles.length > FILE_INDEX_VISIBLE_LIMIT && (
+                    <p className="code-map-list-hint">
+                      Refine your search to find more files.
+                    </p>
+                  )}
                 </div>
               </>
             )}
@@ -342,11 +653,22 @@ export function filterWorkspaceMapFiles(
   filter: { query: string; kind: CodeMapKindFilter; directory?: string | null }
 ): WorkspaceMapFile[] {
   const terms = filter.query.trim().toLowerCase().split(/\s+/g).filter(Boolean)
-  const directory = filter.directory == null ? null : normalizeWorkspaceMapPath(filter.directory).replace(/\/+$/, "").toLowerCase()
+  const directory =
+    filter.directory == null
+      ? null
+      : normalizeWorkspaceMapPath(filter.directory)
+          .replace(/\/+$/, "")
+          .toLowerCase()
   const filtered = files.filter((file) => {
     if (directory !== null) {
-      const parent = normalizeWorkspaceMapPath(file.directory).replace(/\/+$/, "").toLowerCase()
-      if (parent !== directory && !(directory && parent.startsWith(`${directory}/`))) return false
+      const parent = normalizeWorkspaceMapPath(file.directory)
+        .replace(/\/+$/, "")
+        .toLowerCase()
+      if (
+        parent !== directory &&
+        !(directory && parent.startsWith(`${directory}/`))
+      )
+        return false
     }
     if (filter.kind !== "all" && file.kind !== filter.kind) return false
     if (terms.length === 0) return true
@@ -494,30 +816,102 @@ function comparableModuleStem(fileName: string): string {
     .replace(/[-_.](component|view|page|styles|style)$/u, "")
 }
 
-function CodeMapSection({ title, count, children, defaultOpen = true }: { title: string; count?: number; children: ReactNode; defaultOpen?: boolean }) {
+function CodeMapSection({
+  title,
+  count,
+  children,
+  defaultOpen = true,
+}: {
+  title: string
+  count?: number
+  children: ReactNode
+  defaultOpen?: boolean
+}) {
   return (
     <details className="code-map-section" open={defaultOpen}>
-      <summary><ChevronRightIcon className="size-3.5" /><span>{title}</span>{count !== undefined && <span className="code-map-section-count">{count.toLocaleString()}</span>}</summary>
+      <summary>
+        <ChevronRightIcon className="size-3.5" />
+        <span>{title}</span>
+        {count !== undefined && (
+          <span className="code-map-section-count">
+            {count.toLocaleString()}
+          </span>
+        )}
+      </summary>
       <div className="code-map-section-body">{children}</div>
     </details>
   )
 }
 
-function CodeMapMetric({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: number | string }) {
-  return <div className="code-map-metric"><p className="code-map-metric-value" title={String(value)}>{typeof value === "number" ? value.toLocaleString() : value}</p><p className="code-map-metric-label"><Icon className="size-3" />{label}</p></div>
+function CodeMapMetric({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: LucideIcon
+  label: string
+  value: number | string
+}) {
+  return (
+    <div className="code-map-metric">
+      <p className="code-map-metric-value" title={String(value)}>
+        {typeof value === "number" ? value.toLocaleString() : value}
+      </p>
+      <p className="code-map-metric-label">
+        <Icon className="size-3" />
+        {label}
+      </p>
+    </div>
+  )
 }
 
-function CodeMapFileButton({ file, detail, isActive = false, onOpen, onReveal }: {
-  file: WorkspaceMapFile; detail?: string; isActive?: boolean; onOpen: (file: WorkspaceMapFile) => void; onReveal: (file: WorkspaceMapFile) => void
+function CodeMapFileButton({
+  file,
+  detail,
+  isActive = false,
+  onOpen,
+  onReveal,
+}: {
+  file: WorkspaceMapFile
+  detail?: string
+  isActive?: boolean
+  onOpen: (file: WorkspaceMapFile) => void
+  onReveal: (file: WorkspaceMapFile) => void
 }) {
   return (
     <div className={cn("code-map-file", isActive && "is-active")}>
-      <button type="button" onClick={() => onOpen(file)} className="code-map-file-open" aria-label={`Open ${file.path}`} aria-current={isActive ? "page" : undefined} title={file.path}>
-        <img src={getFileIconUrl(file.path)} alt="" className="size-4 shrink-0" />
-        <span className="min-w-0 flex-1"><span className="code-map-file-name">{file.name}</span><span className="code-map-file-path">{file.directory || "Project root"}</span></span>
-        <span className="code-map-file-detail" title={detail ?? file.kind}>{detail ?? file.kind}</span>
+      <button
+        type="button"
+        onClick={() => onOpen(file)}
+        className="code-map-file-open"
+        aria-label={`Open ${file.path}`}
+        aria-current={isActive ? "page" : undefined}
+        title={file.path}
+      >
+        <img
+          src={getFileIconUrl(file.path)}
+          alt=""
+          className="size-4 shrink-0"
+        />
+        <span className="min-w-0 flex-1">
+          <span className="code-map-file-name">{file.name}</span>
+          <span className="code-map-file-path">
+            {file.directory || "Project root"}
+          </span>
+        </span>
+        <span className="code-map-file-detail" title={detail ?? file.kind}>
+          {detail ?? file.kind}
+        </span>
       </button>
-      <button type="button" onClick={() => onReveal(file)} className="code-map-reveal" aria-label={`Reveal ${file.name} in Explorer`} title="Reveal in Explorer"><FolderOpenIcon className="size-3.5" strokeWidth={1.75} /></button>
+      <button
+        type="button"
+        onClick={() => onReveal(file)}
+        className="code-map-reveal"
+        aria-label={`Reveal ${file.name} in Explorer`}
+        title="Reveal in Explorer"
+      >
+        <FolderOpenIcon className="size-3.5" strokeWidth={1.75} />
+      </button>
     </div>
   )
 }
@@ -544,18 +938,35 @@ function CodeMapEmpty() {
     <div className="code-map-state">
       <LayoutGridIcon className="size-5 text-muted-foreground/55" />
       <p className="text-xs font-medium">Nothing to map yet</p>
-      <p className="text-[11px] text-muted-foreground">No indexable files were found in this workspace.</p>
+      <p className="text-[11px] text-muted-foreground">
+        No indexable files were found in this workspace.
+      </p>
     </div>
   )
 }
 
-function CodeMapError({ message, onRetry }: { message: string; onRetry: () => void }) {
+function CodeMapError({
+  message,
+  onRetry,
+}: {
+  message: string
+  onRetry: () => void
+}) {
   return (
     <div className="code-map-state" role="alert">
       <AlertCircleIcon className="size-5 text-muted-foreground" />
       <p className="text-xs font-medium">Could not load the code map</p>
-      <p className="max-w-full break-words text-[11px] leading-relaxed text-muted-foreground">{message}</p>
-      <button type="button" className="code-map-text-action gap-1.5" onClick={onRetry}><RefreshCwIcon className="size-3" />Try again</button>
+      <p className="max-w-full text-[11px] leading-relaxed break-words text-muted-foreground">
+        {message}
+      </p>
+      <button
+        type="button"
+        className="code-map-text-action gap-1.5"
+        onClick={onRetry}
+      >
+        <RefreshCwIcon className="size-3" />
+        Try again
+      </button>
     </div>
   )
 }

@@ -35,7 +35,11 @@ describe("runWindowsTaskkill", () => {
     expect(spawnProcess).toHaveBeenCalledWith(
       "taskkill.exe",
       ["/pid", "4242", "/T", "/F"],
-      expect.objectContaining({ stdio: "ignore", windowsHide: true, shell: false })
+      expect.objectContaining({
+        stdio: "ignore",
+        windowsHide: true,
+        shell: false,
+      })
     )
 
     killer.emit("close", 0, null)
@@ -143,7 +147,9 @@ describe("isNoSuchProcessError", () => {
       isNoSuchProcessError(Object.assign(new Error("gone"), { code: "ESRCH" }))
     ).toBe(true)
     expect(
-      isNoSuchProcessError(Object.assign(new Error("denied"), { code: "EPERM" }))
+      isNoSuchProcessError(
+        Object.assign(new Error("denied"), { code: "EPERM" })
+      )
     ).toBe(false)
     expect(isNoSuchProcessError(null)).toBe(false)
     expect(isNoSuchProcessError(undefined)).toBe(false)

@@ -1,10 +1,6 @@
 import path from "node:path"
-import {
-  closeShellSessionsForWorkspace,
-} from "./shell"
-import {
-  shutdownTerminalPtySessionsForWorkspace,
-} from "./terminalPty"
+import { closeShellSessionsForWorkspace } from "./shell"
+import { shutdownTerminalPtySessionsForWorkspace } from "./terminalPty"
 import {
   workspaceRecoveryGate,
   type WorkspaceRecoveryLease,
@@ -53,10 +49,7 @@ export async function withExclusiveWorkspaceMaintenance<T>(
   operation: () => Promise<T> | T,
   options: { readonly timeoutMs?: number } = {}
 ): Promise<T> {
-  const lease = await acquireExclusiveWorkspaceMaintenance(
-    workspaces,
-    options
-  )
+  const lease = await acquireExclusiveWorkspaceMaintenance(workspaces, options)
   try {
     return await operation()
   } finally {

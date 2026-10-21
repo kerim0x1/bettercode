@@ -220,7 +220,9 @@ export function beginResourceManagerShutdowns(): void {
  * Wraps an async shutdown so concurrent callers share one in-flight promise
  * and a later caller (after it settled either way) starts a fresh run.
  */
-export function singleFlight(run: () => Promise<number>): () => Promise<number> {
+export function singleFlight(
+  run: () => Promise<number>
+): () => Promise<number> {
   let inFlight: Promise<number> | null = null
   return () => {
     if (inFlight) return inFlight

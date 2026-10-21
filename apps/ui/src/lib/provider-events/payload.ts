@@ -3,10 +3,7 @@
  * canonical item flattening, usage and request kinds. Pure; no store access.
  */
 
-import {
-  asRecord,
-  readString,
-} from "@betterc0de/schema"
+import { asRecord, readString } from "@betterc0de/schema"
 import { deriveProviderToolActivityPresentation } from "@betterc0de/schema/tool-activity"
 
 function compactProvider(value: string | undefined): string {
@@ -59,7 +56,9 @@ export function providerKindFromPayload(payload: Record<string, unknown>) {
   )
 }
 
-export function providerInstanceIdFromPayload(payload: Record<string, unknown>) {
+export function providerInstanceIdFromPayload(
+  payload: Record<string, unknown>
+) {
   return readString(payload, "providerInstanceId", "provider_instance_id")
 }
 
@@ -244,7 +243,9 @@ export function toolUpdateActivityKey(
   return isCumulativeToolOutputPayload(payload) ? toolId : sequence
 }
 
-export function outputDetail(payload: Record<string, unknown>): string | undefined {
+export function outputDetail(
+  payload: Record<string, unknown>
+): string | undefined {
   return truncateDetail(
     readString(
       payload,

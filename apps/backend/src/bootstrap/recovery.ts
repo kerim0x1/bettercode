@@ -50,8 +50,9 @@ export function recoverProviderRuntime(
   const providerRuntimeEventJournal = new ProviderRuntimeEventJournal(
     eventStore
   )
-  const providerRuntimeSpoolReplay =
-    providerRuntimeJournalRecoveryStore.replay(providerRuntimeEventJournal)
+  const providerRuntimeSpoolReplay = providerRuntimeJournalRecoveryStore.replay(
+    providerRuntimeEventJournal
+  )
   if (
     providerRuntimeSpoolReplay.replayed > 0 ||
     providerRuntimeSpoolReplay.quarantined > 0 ||
@@ -62,9 +63,7 @@ export function recoverProviderRuntime(
       "provider runtime journal filesystem recovery completed"
     )
   }
-  if (
-    providerRuntimeJournalRecoveryBlocksStartup(providerRuntimeSpoolReplay)
-  ) {
+  if (providerRuntimeJournalRecoveryBlocksStartup(providerRuntimeSpoolReplay)) {
     throw new Error(
       `Provider runtime journal recovery is blocked by ${providerRuntimeSpoolReplay.pending} pending and ${providerRuntimeSpoolReplay.quarantined} quarantined record(s).`
     )
@@ -148,8 +147,7 @@ export function recoverProviderRuntime(
       "provider runtime journal startup replay skipped the rest of a thread at a row that could not be projected; other threads were replayed, continuing startup, the row is retried on the next start"
     )
   }
-  const abandonedSourcePlanLinks =
-    sourceProposedPlanImplementations.clearAll()
+  const abandonedSourcePlanLinks = sourceProposedPlanImplementations.clearAll()
   if (abandonedSourcePlanLinks > 0) {
     logger.warn(
       { abandonedSourcePlanLinks },

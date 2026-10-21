@@ -82,7 +82,8 @@ export function WorkspaceStatusBar({
         isRepo: true,
         branch: status.branch,
         changes:
-          status.staged.length + status.modified.length +
+          status.staged.length +
+          status.modified.length +
           status.untracked.length,
         ahead: status.ahead,
         behind: status.behind,
@@ -136,7 +137,10 @@ export function WorkspaceStatusBar({
         className="flex min-w-0 items-center gap-1.5"
         title={projectPath ?? undefined}
       >
-        <FolderIcon className="size-3 shrink-0 text-muted-foreground/60" strokeWidth={1.75} />
+        <FolderIcon
+          className="size-3 shrink-0 text-muted-foreground/60"
+          strokeWidth={1.75}
+        />
         <span className="truncate font-medium text-foreground">
           {projectName}
         </span>
@@ -189,16 +193,17 @@ export function WorkspaceStatusBar({
               )}
             />
             <span className="tabular-nums">
-              {clean
-                ? "Clean"
-                : `${changes} change${changes === 1 ? "" : "s"}`}
+              {clean ? "Clean" : `${changes} change${changes === 1 ? "" : "s"}`}
             </span>
           </span>
 
           {/* Upstream drift. No tracking branch is worth calling out — it's
               why Push shows "Publish" over in the Git tab. */}
           {!upstream ? (
-            <span className="shrink-0 text-muted-foreground/60" title="This branch has no upstream yet">
+            <span
+              className="shrink-0 text-muted-foreground/60"
+              title="This branch has no upstream yet"
+            >
               No upstream
             </span>
           ) : (

@@ -155,8 +155,7 @@ export function ToolCallItem({
   const isBash =
     action === "command" || (action === "other" && isShellToolName(toolName))
   const isSearch = action === "search"
-  const isGenericTool =
-    !isWrite && !isEdit && !isRead && !isBash && !isSearch
+  const isGenericTool = !isWrite && !isEdit && !isRead && !isBash && !isSearch
   const canShowPreview = !isGenericTool || showGenericOutput || isError
   const hasCodePreview =
     canShowPreview &&
@@ -182,11 +181,13 @@ export function ToolCallItem({
 
   const oldContent = isEdit ? String(inp?.old_string || "") : ""
   const failureText = toolFailureText(tc.error)
-  const failureDetail = failureText && !/^tool failed\.?$/i.test(failureText)
-    ? failureText
-    : toolFailureText(tc.output) || outputText
-  const failureSummary = failureDetail?.split(/\r?\n/, 1)[0]?.slice(0, 240)
-    || "The tool reported a failure without an error message. Expand the step to inspect its input and output."
+  const failureDetail =
+    failureText && !/^tool failed\.?$/i.test(failureText)
+      ? failureText
+      : toolFailureText(tc.output) || outputText
+  const failureSummary =
+    failureDetail?.split(/\r?\n/, 1)[0]?.slice(0, 240) ||
+    "The tool reported a failure without an error message. Expand the step to inspect its input and output."
   const lang = filePath ? getLanguage(filePath) : isBash ? "shell" : "plaintext"
 
   return (
@@ -197,7 +198,9 @@ export function ToolCallItem({
           <button
             type="button"
             onClick={() => hasCodePreview && setExpanded(!expanded)}
-            title={[providerLabel, filePath || displayDetail || pattern].filter(Boolean).join(" · ")}
+            title={[providerLabel, filePath || displayDetail || pattern]
+              .filter(Boolean)
+              .join(" · ")}
             aria-expanded={hasCodePreview ? expanded : undefined}
             className={cn(
               "flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-left text-[11px] transition-colors duration-150",
@@ -294,9 +297,18 @@ export function ToolCallItem({
         </div>
 
         {isError && (
-          <ExecutionFailure title="Tool failed" message={failureSummary}
-            details={failureDetail && failureDetail !== failureSummary ? failureDetail : undefined}
-            context={[providerLabel, command || filePath || displayDetail].filter(Boolean).join("\n")} />
+          <ExecutionFailure
+            title="Tool failed"
+            message={failureSummary}
+            details={
+              failureDetail && failureDetail !== failureSummary
+                ? failureDetail
+                : undefined
+            }
+            context={[providerLabel, command || filePath || displayDetail]
+              .filter(Boolean)
+              .join("\n")}
+          />
         )}
 
         {/* Inline code preview */}

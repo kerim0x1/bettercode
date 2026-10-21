@@ -70,9 +70,9 @@ process.on("uncaughtException", (error, origin) => {
 })
 process.on("message", (msg: unknown) => {
   if (
-    msg
-    && typeof msg === "object"
-    && (msg as { type?: string }).type === "shutdown"
+    msg &&
+    typeof msg === "object" &&
+    (msg as { type?: string }).type === "shutdown"
   ) {
     requestShutdown("IPC")
   }
@@ -121,7 +121,10 @@ async function main(): Promise<void> {
     )
   } catch (err) {
     if (fatalError) {
-      logger.error({ err: fatalError }, "Backend startup aborted by fatal error")
+      logger.error(
+        { err: fatalError },
+        "Backend startup aborted by fatal error"
+      )
       process.exit(1)
     }
     if (shutdownSignal && startupAbort.signal.aborted) {
@@ -132,9 +135,7 @@ async function main(): Promise<void> {
       process.exit(0)
     }
     const message = err instanceof Error ? err.message : String(err)
-    process.stderr.write(
-      `${JSON.stringify({ status: "error", message })}\n`
-    )
+    process.stderr.write(`${JSON.stringify({ status: "error", message })}\n`)
     process.exit(1)
   }
 }

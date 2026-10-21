@@ -25,7 +25,10 @@ if (typeof globalThis.crypto === "undefined") {
   }
 }
 
-import { autoCheckpointFromToolCalls, useCheckpointStore } from "@/lib/checkpoint-store"
+import {
+  autoCheckpointFromToolCalls,
+  useCheckpointStore,
+} from "@/lib/checkpoint-store"
 
 function resetStore() {
   useCheckpointStore.setState({
@@ -119,22 +122,48 @@ describe("checkpoint-store git turn checkpoints", () => {
 
   it("uses the captured chat workspace for automatic file checkpoint branch reads", async () => {
     const cwd = "C:\\Users\\MaxiN\\Documents\\GitHub\\kittycord"
-    const id = await autoCheckpointFromToolCalls("thread-1", "message-1", [{
-      id: "edit-1", name: "Edit", state: "output-available",
-      input: { file_path: `${cwd}\\src\\app.ts` },
-    }], cwd)
+    const id = await autoCheckpointFromToolCalls(
+      "thread-1",
+      "message-1",
+      [
+        {
+          id: "edit-1",
+          name: "Edit",
+          state: "output-available",
+          input: { file_path: `${cwd}\\src\\app.ts` },
+        },
+      ],
+      cwd
+    )
     expect(id).toBeTruthy()
-    await vi.waitFor(() => expect(useCheckpointStore.getState().checkpoints[0].gitBranch).toBe("main"))
+    await vi.waitFor(() =>
+      expect(useCheckpointStore.getState().checkpoints[0].gitBranch).toBe(
+        "main"
+      )
+    )
     expect(backend.gitStatus).toHaveBeenCalledExactlyOnceWith(cwd)
     expect(useCheckpointStore.getState().checkpoints[0].projectPath).toBe(cwd)
   })
 
-  it.each([undefined, null, "", "   ", "."])("never probes the IDE directory when the checkpoint workspace is %j", async cwd => {
-    useCheckpointStore.getState().createCheckpoint("thread-1", "message-1", "Files", { "app.ts": "old" }, cwd)
-    await Promise.resolve()
-    expect(backend.gitStatus).not.toHaveBeenCalled()
-    expect(useCheckpointStore.getState().checkpoints[0].gitBranch).toBe("unknown")
-  })
+  it.each([undefined, null, "", "   ", "."])(
+    "never probes the IDE directory when the checkpoint workspace is %j",
+    async (cwd) => {
+      useCheckpointStore
+        .getState()
+        .createCheckpoint(
+          "thread-1",
+          "message-1",
+          "Files",
+          { "app.ts": "old" },
+          cwd
+        )
+      await Promise.resolve()
+      expect(backend.gitStatus).not.toHaveBeenCalled()
+      expect(useCheckpointStore.getState().checkpoints[0].gitBranch).toBe(
+        "unknown"
+      )
+    }
+  )
 
   it("skips git checkpoints when the project is not a git repo", async () => {
     backend.isGitRepo.mockResolvedValue(false)

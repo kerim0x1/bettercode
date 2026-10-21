@@ -42,7 +42,7 @@ export function AutonomousWorkDialog({
   const [rows, setRows] = useState<AutonomousTask[]>([])
   const [maxIter, setMaxIter] = useState<number>(AUTONOMOUS_MAX_ITERATIONS)
   const [timeBudget, setTimeBudget] = useState<number>(
-    AUTONOMOUS_DEFAULT_TIME_BUDGET_MIN,
+    AUTONOMOUS_DEFAULT_TIME_BUDGET_MIN
   )
 
   // Hydrate from store every time the dialog opens. This lets the user
@@ -55,13 +55,13 @@ export function AutonomousWorkDialog({
     setRows(
       existing && existing.length > 0
         ? existing.map((t) => ({ ...t }))
-        : [{ id: crypto.randomUUID(), text: "", done: false }],
+        : [{ id: crypto.randomUUID(), text: "", done: false }]
     )
     setMaxIter(s.autonomousMaxIterations || AUTONOMOUS_MAX_ITERATIONS)
     setTimeBudget(
       typeof s.autonomousTimeBudgetMin === "number"
         ? s.autonomousTimeBudgetMin
-        : AUTONOMOUS_DEFAULT_TIME_BUDGET_MIN,
+        : AUTONOMOUS_DEFAULT_TIME_BUDGET_MIN
     )
   }, [open])
 
@@ -73,7 +73,7 @@ export function AutonomousWorkDialog({
 
   const removeRow = (id: string) =>
     setRows((prev) =>
-      prev.length <= 1 ? prev : prev.filter((r) => r.id !== id),
+      prev.length <= 1 ? prev : prev.filter((r) => r.id !== id)
     )
 
   const updateRow = (id: string, text: string) =>
@@ -91,7 +91,8 @@ export function AutonomousWorkDialog({
     }))
 
     const s = useChatStore.getState()
-    const threadId = s.activeThreadId ?? s.createThread("New Chat", "BetterC0de")
+    const threadId =
+      s.activeThreadId ?? s.createThread("New Chat", "BetterC0de")
     s.setAutonomousTaskList(cleaned)
     s.setAutonomousMaxIterations(maxIter)
     s.setAutonomousTimeBudget(timeBudget)
@@ -143,8 +144,8 @@ export function AutonomousWorkDialog({
       <DialogContent className="sm:max-w-lg">
         <DialogTitle>Autonomous Work</DialogTitle>
         <DialogDescription>
-          Run a structured task list autonomously. The assistant iterates
-          turn by turn until every task is done or a limit is hit.
+          Run a structured task list autonomously. The assistant iterates turn
+          by turn until every task is done or a limit is hit.
         </DialogDescription>
 
         <div className="flex flex-col gap-4 py-1">
@@ -160,7 +161,7 @@ export function AutonomousWorkDialog({
             <div className="flex flex-col gap-1.5">
               {rows.map((row, i) => (
                 <div key={row.id} className="flex items-center gap-1.5">
-                  <span className="w-5 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground/60">
+                  <span className="w-5 shrink-0 text-right text-[10px] text-muted-foreground/60 tabular-nums">
                     {i + 1}.
                   </span>
                   <Input
@@ -185,7 +186,7 @@ export function AutonomousWorkDialog({
             <Button
               variant="ghost"
               size="sm"
-              className="self-start gap-1.5 text-xs"
+              className="gap-1.5 self-start text-xs"
               onClick={addRow}
             >
               <PlusIcon className="size-3.5" />

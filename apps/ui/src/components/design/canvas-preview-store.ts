@@ -67,14 +67,22 @@ interface CanvasPreviewStore {
   setSelectionMode: (value: boolean) => void
   setInspectorOpen: (value: boolean) => void
   focusViewport: (threadId: string, deviceId: string, pageUrl: string) => void
-  reportDomTree: (threadId: string, deviceId: string, tree: DomNode | null) => void
+  reportDomTree: (
+    threadId: string,
+    deviceId: string,
+    tree: DomNode | null
+  ) => void
   reportElement: (
     threadId: string,
     deviceId: string,
     pageUrl: string,
     element: SelectedElement
   ) => void
-  reportNavigation: (threadId: string, deviceId: string, pageUrl: string) => void
+  reportNavigation: (
+    threadId: string,
+    deviceId: string,
+    pageUrl: string
+  ) => void
   forgetViewport: (threadId: string, deviceId: string) => void
   clearSelection: () => void
   setTab: (tab: InspectorTab) => void
@@ -85,14 +93,16 @@ interface CanvasPreviewStore {
   takeCssChanges: () => CssChange[]
 }
 
-function post(focus: CanvasViewportFocus | null, command: PreviewCommand | null) {
+function post(
+  focus: CanvasViewportFocus | null,
+  command: PreviewCommand | null
+) {
   if (!focus || !command) return
   canvasViewport(focus.key)?.postToPreview(command)
 }
 
 export const useCanvasPreviewStore = create<CanvasPreviewStore>((set, get) => ({
-  selectionMode:
-    typeof window !== "undefined" && Boolean(window.electronAPI),
+  selectionMode: typeof window !== "undefined" && Boolean(window.electronAPI),
   inspectorOpen: false,
   focus: null,
   inspector: EMPTY_INSPECTOR_STATE,
@@ -104,7 +114,8 @@ export const useCanvasPreviewStore = create<CanvasPreviewStore>((set, get) => ({
   focusViewport: (threadId, deviceId, pageUrl) =>
     set((state) => {
       const key = canvasViewportKey(threadId, deviceId)
-      if (state.focus?.key === key && state.focus.pageUrl === pageUrl) return state
+      if (state.focus?.key === key && state.focus.pageUrl === pageUrl)
+        return state
       const tree = state.treesByViewport[key] ?? null
       // Style edits belong to the page they were made on; switching the
       // inspected preview keeps them until sent.
@@ -124,7 +135,8 @@ export const useCanvasPreviewStore = create<CanvasPreviewStore>((set, get) => ({
       const next: Partial<CanvasPreviewStore> = {
         treesByViewport: { ...state.treesByViewport, [key]: tree },
       }
-      if (state.focus?.key === key) next.inspector = withDomTree(state.inspector, tree)
+      if (state.focus?.key === key)
+        next.inspector = withDomTree(state.inspector, tree)
       return next
     }),
 
@@ -167,7 +179,8 @@ export const useCanvasPreviewStore = create<CanvasPreviewStore>((set, get) => ({
 
   clearSelection: () =>
     set((state) => ({ inspector: withoutSelection(state.inspector) })),
-  setTab: (tab) => set((state) => ({ inspector: withTab(state.inspector, tab) })),
+  setTab: (tab) =>
+    set((state) => ({ inspector: withTab(state.inspector, tab) })),
 
   applyStyle: (property, value) => {
     const current = get()

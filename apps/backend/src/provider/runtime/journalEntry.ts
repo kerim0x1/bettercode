@@ -72,12 +72,18 @@ export function legacyJournalEntry(
   return { shape: "legacy", event }
 }
 
-export function journalEntryThreadId(entry: ProviderRuntimeJournalEntry): string {
-  return entry.shape === "canonical" ? entry.event.threadId : entry.event.thread_id
+export function journalEntryThreadId(
+  entry: ProviderRuntimeJournalEntry
+): string {
+  return entry.shape === "canonical"
+    ? entry.event.threadId
+    : entry.event.thread_id
 }
 
 /** The bare type name; the row envelope is `ProviderRuntime:<this>`. */
-export function journalEntryEventType(entry: ProviderRuntimeJournalEntry): string {
+export function journalEntryEventType(
+  entry: ProviderRuntimeJournalEntry
+): string {
   return entry.shape === "canonical" ? entry.event.type : entry.event.event_type
 }
 
@@ -94,7 +100,9 @@ export function journalEntryEventType(entry: ProviderRuntimeJournalEntry): strin
  * has to reach the hub too, or the turn would settle as recorded when its
  * last event never made it to the journal.
  */
-export function isTerminalJournalEntry(entry: ProviderRuntimeJournalEntry): boolean {
+export function isTerminalJournalEntry(
+  entry: ProviderRuntimeJournalEntry
+): boolean {
   return isTerminalJournalEventType(journalEntryEventType(entry))
 }
 
@@ -216,4 +224,3 @@ export function decorateLegacyViewWithTruncation(
     },
   }
 }
-

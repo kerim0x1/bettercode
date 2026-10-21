@@ -51,35 +51,42 @@ describe("ProviderSessionReaper", () => {
     [Number.NaN, 5 * 60 * 1000],
     [Number.POSITIVE_INFINITY, 5 * 60 * 1000],
     [30 * 24 * 60 * 60 * 1000, 2 ** 31 - 1],
-  ])("keeps invalid or overflowing sweep delay %s from becoming a busy loop", async (sweepIntervalMs, expectedDelay) => {
-    vi.useFakeTimers()
-    const db = openDatabase(":memory:")
-    runMigrations(db)
-    const reaper = new ProviderSessionReaper({
-      bindings: new ProviderSessionBindingStore(db),
-      providerHub: makeProviderHub(async () => undefined),
-      logger: makeLogger(),
-      sweepIntervalMs,
-    })
-    const sweep = vi.spyOn(reaper, "sweep").mockResolvedValue({
-      totalBindings: 0, reapedCount: 0, skippedActiveCount: 0,
-      skippedFreshCount: 0, skippedStoppedCount: 0, failedCount: 0,
-    })
-    try {
-      reaper.start()
-      await vi.advanceTimersByTimeAsync(expectedDelay - 1)
-      expect(sweep).not.toHaveBeenCalled()
-      await vi.advanceTimersByTimeAsync(1)
-      expect(sweep).toHaveBeenCalledTimes(1)
-      await reaper.stop()
-      await vi.advanceTimersByTimeAsync(expectedDelay)
-      expect(sweep).toHaveBeenCalledTimes(1)
-    } finally {
-      await reaper.stop()
-      db.close()
-      vi.useRealTimers()
+  ])(
+    "keeps invalid or overflowing sweep delay %s from becoming a busy loop",
+    async (sweepIntervalMs, expectedDelay) => {
+      vi.useFakeTimers()
+      const db = openDatabase(":memory:")
+      runMigrations(db)
+      const reaper = new ProviderSessionReaper({
+        bindings: new ProviderSessionBindingStore(db),
+        providerHub: makeProviderHub(async () => undefined),
+        logger: makeLogger(),
+        sweepIntervalMs,
+      })
+      const sweep = vi.spyOn(reaper, "sweep").mockResolvedValue({
+        totalBindings: 0,
+        reapedCount: 0,
+        skippedActiveCount: 0,
+        skippedFreshCount: 0,
+        skippedStoppedCount: 0,
+        failedCount: 0,
+      })
+      try {
+        reaper.start()
+        await vi.advanceTimersByTimeAsync(expectedDelay - 1)
+        expect(sweep).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(1)
+        expect(sweep).toHaveBeenCalledTimes(1)
+        await reaper.stop()
+        await vi.advanceTimersByTimeAsync(expectedDelay)
+        expect(sweep).toHaveBeenCalledTimes(1)
+      } finally {
+        await reaper.stop()
+        db.close()
+        vi.useRealTimers()
+      }
     }
-  })
+  )
 
   it("reaps stale provider sessions without active turns", async () => {
     const db = openDatabase(tmpDbPath("stale"))

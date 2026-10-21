@@ -175,10 +175,26 @@ describe("chat pane composer", () => {
     expect(html).toContain("ultra")
     expect(html).not.toContain("GPT-5.6 Sol")
     expect(html).not.toContain("data-editor-empty-chat")
-    useChatStore.setState({ threads: [{ id: "b", title: "B", projectName: "B", projectPath: "/repo-b", messages: [], createdAt: "2026-09-13T00:00:00Z", updatedAt: "2026-09-13T00:00:00Z" }] })
-    const emptyEditor = renderToStaticMarkup(createElement(ChatColumn, { ...props, appMode: "editor" }))
+    useChatStore.setState({
+      threads: [
+        {
+          id: "b",
+          title: "B",
+          projectName: "B",
+          projectPath: "/repo-b",
+          messages: [],
+          createdAt: "2026-09-13T00:00:00Z",
+          updatedAt: "2026-09-13T00:00:00Z",
+        },
+      ],
+    })
+    const emptyEditor = renderToStaticMarkup(
+      createElement(ChatColumn, { ...props, appMode: "editor" })
+    )
     expect(emptyEditor).toContain("data-editor-empty-chat")
-    expect(emptyEditor.indexOf("data-editor-empty-chat")).toBeLessThan(emptyEditor.indexOf('aria-label="GPT-6 Astra"'))
+    expect(emptyEditor.indexOf("data-editor-empty-chat")).toBeLessThan(
+      emptyEditor.indexOf('aria-label="GPT-6 Astra"')
+    )
     useChatStore.setState({ threads: [] })
     expect(rendered.input?.permissionLevel).toBe("read-only")
     expect(rendered.input?.composerProps.fastMode).toBe(true)
@@ -193,10 +209,12 @@ describe("chat pane composer", () => {
     ).toBe("medium")
     expect(useChatStore.getState().settingsByThread.a).toBe(otherSettings)
     rendered.input?.setPlanModalContent("Implement this plan")
-    expect(props.setPlanModalContent).toHaveBeenCalledWith(expect.objectContaining({
-      content: "Implement this plan",
-      threadId: "b",
-    }))
+    expect(props.setPlanModalContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "Implement this plan",
+        threadId: "b",
+      })
+    )
     await rendered.input?.composerProps.handleSubmit({
       text: "Hello",
       files: [],
@@ -207,13 +225,17 @@ describe("chat pane composer", () => {
       files: [],
     })
     rendered.input = null
-    const unavailable = renderToStaticMarkup(createElement(ChatColumn, { ...props, appMode: "editor" }))
+    const unavailable = renderToStaticMarkup(
+      createElement(ChatColumn, { ...props, appMode: "editor" })
+    )
     expect(unavailable).toContain("Conversation unavailable")
     expect(rendered.input).toBeNull()
 
     // Canvas mode mounts this same column: per-thread settings, the shared
     // composer, no editor-only chrome or gate.
-    const design = renderToStaticMarkup(createElement(ChatColumn, { ...props, appMode: "design" }))
+    const design = renderToStaticMarkup(
+      createElement(ChatColumn, { ...props, appMode: "design" })
+    )
     expect(design).toContain('aria-label="GPT-6 Astra"')
     expect(design).not.toContain("Conversation unavailable")
     expect(design).not.toContain("data-editor-empty-chat")

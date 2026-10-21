@@ -362,9 +362,7 @@ describe("ProviderHub harness integration", () => {
               dispatchTurnId: input.turnId,
               provider_kind: input.providerKind,
               provider_instance_id: input.providerInstanceId,
-              ...(input.projectPath
-                ? { project_path: input.projectPath }
-                : {}),
+              ...(input.projectPath ? { project_path: input.projectPath } : {}),
             },
           }),
         afterTurn: async (event) => {
@@ -539,9 +537,7 @@ describe("ProviderHub harness integration", () => {
               dispatchTurnId: input.turnId,
               provider_kind: input.providerKind,
               provider_instance_id: input.providerInstanceId,
-              ...(input.projectPath
-                ? { project_path: input.projectPath }
-                : {}),
+              ...(input.projectPath ? { project_path: input.projectPath } : {}),
             },
           }),
         afterTurn: async (event) => {
@@ -744,9 +740,7 @@ describe("ProviderHub harness integration", () => {
               dispatchTurnId: input.turnId,
               provider_kind: input.providerKind,
               provider_instance_id: input.providerInstanceId,
-              ...(input.projectPath
-                ? { project_path: input.projectPath }
-                : {}),
+              ...(input.projectPath ? { project_path: input.projectPath } : {}),
             },
           }),
         afterTurn: async (event) => {
@@ -1413,7 +1407,9 @@ describe("ProviderHub harness integration", () => {
  */
 describe("ProviderHub canonical journaling through the bus", () => {
   function openJournalDb(label: string) {
-    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), `betterc0de-${label}-`))
+    const rootDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), `betterc0de-${label}-`)
+    )
     const db = openDatabase(path.join(rootDir, "test.sqlite"))
     runMigrations(db)
     return { rootDir, db }
@@ -1490,7 +1486,11 @@ describe("ProviderHub canonical journaling through the bus", () => {
       {
         event_type: "tool_result",
         thread_id: threadId,
-        payload: { tool_id: "legacy-tool-1", tool_name: "read_file", output: "x" },
+        payload: {
+          tool_id: "legacy-tool-1",
+          tool_name: "read_file",
+          output: "x",
+        },
       },
       {
         event_type: "turn_completed",
@@ -1500,7 +1500,9 @@ describe("ProviderHub canonical journaling through the bus", () => {
     ]
   }
 
-  function withoutCreatedAt(activities: ReadonlyArray<ThreadActivityProjection>) {
+  function withoutCreatedAt(
+    activities: ReadonlyArray<ThreadActivityProjection>
+  ) {
     return activities.map(({ created_at: _createdAt, ...rest }) => rest)
   }
 
@@ -1519,7 +1521,9 @@ describe("ProviderHub canonical journaling through the bus", () => {
     const ingestion = new ProviderRuntimeIngestion({
       eventBus: bus,
       eventJournal: journal,
-      activityStore: { upsert: (activity) => liveActivities.push(structuredClone(activity)) },
+      activityStore: {
+        upsert: (activity) => liveActivities.push(structuredClone(activity)),
+      },
       broadcaster,
       logger,
       sequenceStart: 900,
@@ -1538,7 +1542,11 @@ describe("ProviderHub canonical journaling through the bus", () => {
         `SELECT stream_id, event_type, metadata_json FROM orchestration_events
          WHERE aggregate_kind = 'provider_runtime' ORDER BY sequence`
       )
-      .all() as Array<{ stream_id: string; event_type: string; metadata_json: string }>
+      .all() as Array<{
+      stream_id: string
+      event_type: string
+      metadata_json: string
+    }>
     const hubRows = rows.filter((row) => row.stream_id === threadId)
     const legacyRows = rows.filter((row) => row.stream_id === legacyThreadId)
     expect(hubRows.map((row) => row.event_type)).toEqual([
@@ -1581,16 +1589,24 @@ describe("ProviderHub canonical journaling through the bus", () => {
       eventJournal: journal,
       projectionReceipts: receipts,
       activityStore: {
-        upsert: (activity) => replayedActivities.push(structuredClone(activity)),
+        upsert: (activity) =>
+          replayedActivities.push(structuredClone(activity)),
       },
       broadcaster: makeBroadcaster(),
       logger,
       sequenceStart: 900,
     })
     expect(
-      new ProviderRuntimeJournalReplayer(events, receipts, restarted, logger).replayAll()
+      new ProviderRuntimeJournalReplayer(
+        events,
+        receipts,
+        restarted,
+        logger
+      ).replayAll()
     ).toEqual({ replayed: rows.length, discarded: 0, blocked: null })
-    expect(withoutCreatedAt(replayedActivities)).toEqual(withoutCreatedAt(liveActivities))
+    expect(withoutCreatedAt(replayedActivities)).toEqual(
+      withoutCreatedAt(liveActivities)
+    )
     expect(logger.error).not.toHaveBeenCalled()
     db.close()
   })
@@ -1673,7 +1689,9 @@ describe("ProviderHub canonical journaling through the bus", () => {
       eventBus: bus,
       eventJournal: journal,
       projectionReceipts: receipts,
-      activityStore: { upsert: (activity) => activities.push(structuredClone(activity)) },
+      activityStore: {
+        upsert: (activity) => activities.push(structuredClone(activity)),
+      },
       broadcaster: makeBroadcaster(),
       logger,
       sequenceStart: 3_000,
@@ -1683,8 +1701,14 @@ describe("ProviderHub canonical journaling through the bus", () => {
     // A native-style adapter: `turn.started`, then the process goes quiet.
     // No terminal arrives until the hub interrupts or stops it, which is
     // exactly the state a turn is in when the user quits mid-run.
-    const harness = makeTestProviderAdapterHarness({ provider: "codex" as ProviderKind })
-    const listeners = new Set<(event: Parameters<Parameters<typeof harness.adapter.subscribe>[0]>[0]) => void>()
+    const harness = makeTestProviderAdapterHarness({
+      provider: "codex" as ProviderKind,
+    })
+    const listeners = new Set<
+      (
+        event: Parameters<Parameters<typeof harness.adapter.subscribe>[0]>[0]
+      ) => void
+    >()
     const openTurnAdapter: typeof harness.adapter = {
       ...harness.adapter,
       subscribe: (listener) => {
@@ -1741,7 +1765,9 @@ describe("ProviderHub canonical journaling through the bus", () => {
       history: [],
       projectPath: "/repo",
     })
-    expect(activities.map((activity) => activity.kind)).toEqual(["turn.started"])
+    expect(activities.map((activity) => activity.kind)).toEqual([
+      "turn.started",
+    ])
 
     await hub.stopAll()
     stopHubEvents()
@@ -1752,17 +1778,27 @@ describe("ProviderHub canonical journaling through the bus", () => {
         `SELECT event_type, stream_version, payload_json FROM orchestration_events
          WHERE aggregate_kind = 'provider_runtime' AND stream_id = ? ORDER BY sequence`
       )
-      .all(threadId) as Array<{ event_type: string; stream_version: number; payload_json: string }>
+      .all(threadId) as Array<{
+      event_type: string
+      stream_version: number
+      payload_json: string
+    }>
     expect(rows.map((row) => row.event_type)).toEqual([
       "ProviderRuntime:turn.started",
       "ProviderRuntime:turn.aborted",
       "ProviderRuntime:session.exited",
     ])
-    const [, aborted, exited] = rows.map((row) => JSON.parse(row.payload_json) as Record<string, unknown>)
+    const [, aborted, exited] = rows.map(
+      (row) => JSON.parse(row.payload_json) as Record<string, unknown>
+    )
     expect(aborted).toMatchObject({
       type: "turn.aborted",
       turnId: "turn-open",
-      payload: { reason: "provider.stopAll", status: "interrupted", dispatchTurnId: expect.any(String) },
+      payload: {
+        reason: "provider.stopAll",
+        status: "interrupted",
+        dispatchTurnId: expect.any(String),
+      },
     })
     expect(exited).toMatchObject({
       type: "session.exited",
@@ -1775,9 +1811,14 @@ describe("ProviderHub canonical journaling through the bus", () => {
       "session.exited",
     ])
     for (const row of rows) {
-      expect(receipts.get(
-        (events.readProviderRuntimeByStreamVersion(threadId, row.stream_version)[0]!).sequence
-      )).toMatchObject({ status: "projected" })
+      expect(
+        receipts.get(
+          events.readProviderRuntimeByStreamVersion(
+            threadId,
+            row.stream_version
+          )[0]!.sequence
+        )
+      ).toMatchObject({ status: "projected" })
     }
     expect(events.readUnprojectedProviderRuntimeEvents(10)).toEqual([])
     expect(logger.error).not.toHaveBeenCalled()
@@ -1835,7 +1876,11 @@ describe("ProviderHub canonical journaling through the bus", () => {
         `SELECT event_type, stream_version, metadata_json FROM orchestration_events
          WHERE aggregate_kind = 'provider_runtime' ORDER BY sequence`
       )
-      .all() as Array<{ event_type: string; stream_version: number; metadata_json: string }>
+      .all() as Array<{
+      event_type: string
+      stream_version: number
+      metadata_json: string
+    }>
     expect(rows.map((row) => [row.event_type, row.stream_version])).toEqual([
       ["ProviderRuntime:session.started", 2_001],
       ["ProviderRuntime:turn.started", 2_002],
@@ -1858,9 +1903,16 @@ describe("ProviderHub canonical journaling through the bus", () => {
       sequenceStart: 2_000,
     })
     expect(
-      new ProviderRuntimeJournalReplayer(events, receipts, restarted, logger).replayAll()
+      new ProviderRuntimeJournalReplayer(
+        events,
+        receipts,
+        restarted,
+        logger
+      ).replayAll()
     ).toEqual({ replayed: 6, discarded: 0, blocked: null })
-    expect(activities.map((activity) => [activity.kind, activity.sequence])).toEqual([
+    expect(
+      activities.map((activity) => [activity.kind, activity.sequence])
+    ).toEqual([
       ["session.started", 2_001],
       ["turn.started", 2_002],
       ["tool.started", 2_004],

@@ -99,7 +99,11 @@ export function currentAgentPermissionRuntimeContext(
     return contextsByThread.get(threadId)?.context ?? null
   }
   const context = contextStorage.getStore()
-  return (context && contextsByThread.get(context.threadId)?.context) ?? context ?? null
+  return (
+    (context && contextsByThread.get(context.threadId)?.context) ??
+    context ??
+    null
+  )
 }
 
 /** Preserve the turn's ownership token and chat-mode ceiling during a live switch. */
@@ -142,17 +146,20 @@ export function evaluateConfiguredAgentToolPermission(
   const paths = explicitPath
     ? [explicitPath]
     : extractAgentToolPaths(input.toolInput)
-  const decisions = (paths.length > 0 ? paths : [undefined]).map((candidatePath) =>
-    policy.evaluateTool({
-      workspacePath: context.workspacePath!,
-      toolName: input.toolName,
-      path: candidatePath,
-    })
+  const decisions = (paths.length > 0 ? paths : [undefined]).map(
+    (candidatePath) =>
+      policy.evaluateTool({
+        workspacePath: context.workspacePath!,
+        toolName: input.toolName,
+        path: candidatePath,
+      })
   )
   if (sessionDecision) {
     // Session approvals can replace the default prompt, but never a durable
     // restriction, workspace trust decision, or path-confinement denial.
-    const restrictions = decisions.filter((decision) => decision.source !== "default")
+    const restrictions = decisions.filter(
+      (decision) => decision.source !== "default"
+    )
     restrictions.push({
       decision: sessionDecision,
       source: "session",
@@ -181,12 +188,15 @@ export function configuredAgentAllowMayAutoApprove(
     chatMode === "plan" ||
     chatMode === "ask" ||
     chatMode === "security"
-  if (!knownMode || chatMode === "plan" || chatMode === "ask" || chatMode === "security") {
+  if (
+    !knownMode ||
+    chatMode === "plan" ||
+    chatMode === "ask" ||
+    chatMode === "security"
+  ) {
     return false
   }
-  return (
-    normalizeLevel(context?.permissionLevel) !== "read-only"
-  )
+  return normalizeLevel(context?.permissionLevel) !== "read-only"
 }
 
 export function listConfiguredAgentPermissionGrants(

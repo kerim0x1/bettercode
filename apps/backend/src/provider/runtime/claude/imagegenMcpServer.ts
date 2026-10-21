@@ -30,10 +30,7 @@ export interface SdkMcpCapableModule {
     name: string,
     description: string,
     inputSchema: Record<string, unknown>,
-    handler: (
-      args: Record<string, unknown>,
-      extra: unknown
-    ) => Promise<unknown>
+    handler: (args: Record<string, unknown>, extra: unknown) => Promise<unknown>
   ): unknown
 }
 

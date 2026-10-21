@@ -26,24 +26,33 @@ function status(
 describe("describeTailscaleConnection", () => {
   it("shows the tailnet address as the zero-config path once hosting is on", () => {
     const on = describeTailscaleConnection(status(), true)
-    expect(on).toMatchObject({ headline: "Connected · 100.101.102.103", tone: "ok" })
+    expect(on).toMatchObject({
+      headline: "Connected · 100.101.102.103",
+      tone: "ok",
+    })
     expect(on.detail).toContain("http://100.101.102.103")
     expect(on.detail).toContain("no certificate")
     expect(on.canToggle).toBe(false)
 
     const off = describeTailscaleConnection(status(), false)
-    expect(off).toMatchObject({ headline: "Connected · 100.101.102.103", tone: "muted" })
+    expect(off).toMatchObject({
+      headline: "Connected · 100.101.102.103",
+      tone: "muted",
+    })
     expect(off.detail).toContain("Turn on Remote Access")
   })
 
   it("explains what is missing before the address can be used", () => {
     expect(
-      describeTailscaleConnection(status({ installed: false, state: "unavailable" }), true)
-        .headline
+      describeTailscaleConnection(
+        status({ installed: false, state: "unavailable" }),
+        true
+      ).headline
     ).toBe("Not installed")
-    expect(describeTailscaleConnection(status({ state: "needs-login" }), true).headline).toBe(
-      "Not signed in"
-    )
+    expect(
+      describeTailscaleConnection(status({ state: "needs-login" }), true)
+        .headline
+    ).toBe("Not signed in")
     expect(
       describeTailscaleConnection(status({ tailnetIpv4Addresses: [] }), true)
     ).toMatchObject({ headline: "No address", tone: "warn" })
@@ -58,14 +67,21 @@ describe("describeTailscaleServe", () => {
       canToggle: false,
     })
     expect(
-      describeTailscaleServe(status({ installed: false, state: "unavailable" }), true)
+      describeTailscaleServe(
+        status({ installed: false, state: "unavailable" }),
+        true
+      )
     ).toMatchObject({ headline: "Not installed", canToggle: false })
     expect(
       describeTailscaleServe(status({ state: "needs-login" }), true)
-    ).toMatchObject({ headline: "Not signed in", canToggle: false, tone: "warn" })
-    expect(describeTailscaleServe(status({ state: "stopped" }), true)).toMatchObject(
-      { headline: "Not running", canToggle: false }
-    )
+    ).toMatchObject({
+      headline: "Not signed in",
+      canToggle: false,
+      tone: "warn",
+    })
+    expect(
+      describeTailscaleServe(status({ state: "stopped" }), true)
+    ).toMatchObject({ headline: "Not running", canToggle: false })
     expect(describeTailscaleServe(status(), false)).toMatchObject({
       headline: "Hosting off",
       canToggle: false,
@@ -74,7 +90,11 @@ describe("describeTailscaleServe", () => {
 
   it("offers the tailnet URL when ready and warns when certificates are off", () => {
     const ready = describeTailscaleServe(status(), true)
-    expect(ready).toMatchObject({ headline: "Off", canToggle: true, tone: "muted" })
+    expect(ready).toMatchObject({
+      headline: "Off",
+      canToggle: true,
+      tone: "muted",
+    })
     expect(ready.detail).toContain("https://desk.tail1234.ts.net")
     expect(ready.detail).not.toContain("HTTPS certificates")
 
@@ -98,17 +118,29 @@ describe("describeTailscaleServe", () => {
       status({ serveEnabled: true, serveActive: true }),
       true
     )
-    expect(serving).toMatchObject({ headline: "Serving", tone: "ok", canToggle: true })
+    expect(serving).toMatchObject({
+      headline: "Serving",
+      tone: "ok",
+      canToggle: true,
+    })
     expect(serving.detail).toContain("https://desk.tail1234.ts.net")
 
     const stale = describeTailscaleServe(
       status({ serveEnabled: true, serveActive: false }),
       true
     )
-    expect(stale).toMatchObject({ headline: "Not active", tone: "warn", canToggle: true })
+    expect(stale).toMatchObject({
+      headline: "Not active",
+      tone: "warn",
+      canToggle: true,
+    })
 
     const servingNoCerts = describeTailscaleServe(
-      status({ serveEnabled: true, serveActive: true, httpsCertificates: false }),
+      status({
+        serveEnabled: true,
+        serveActive: true,
+        httpsCertificates: false,
+      }),
       true
     )
     expect(servingNoCerts.tone).toBe("warn")

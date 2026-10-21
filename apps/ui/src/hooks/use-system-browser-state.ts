@@ -80,13 +80,17 @@ export const useSystemBrowserState = create<SystemBrowserState>((set) => ({
   setMode: (mode) => set({ mode }),
   setCurrentPath: (currentPath) => set({ currentPath }),
   setEntries: (entries, truncated) => set({ entries, truncated }),
-  setLoadState: (loadState, errorMessage = null) => set({ loadState, errorMessage }),
+  setLoadState: (loadState, errorMessage = null) =>
+    set({ loadState, errorMessage }),
   setSearchQuery: (searchQuery) => set({ searchQuery }),
-  setSearchResults: (searchResults, searchTookMs) => set({ searchResults, searchTookMs }),
+  setSearchResults: (searchResults, searchTookMs) =>
+    set({ searchResults, searchTookMs }),
   setSearchLoadState: (searchLoadState) => set({ searchLoadState }),
   toggleHidden: () => set((s) => ({ showHidden: !s.showHidden })),
   setSelectedIndex: (selectedIndex) => set({ selectedIndex }),
   rememberSelection: (dir, name) =>
-    set((s) => ({ lastSelectedByDir: { ...s.lastSelectedByDir, [dir]: name } })),
+    set((s) => ({
+      lastSelectedByDir: { ...s.lastSelectedByDir, [dir]: name },
+    })),
   reset: () => set({ ...INITIAL }),
 }))

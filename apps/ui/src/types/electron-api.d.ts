@@ -137,18 +137,22 @@ export interface ElectronAPI {
   openExternal: (url: string) => Promise<void>
   openPath: (path: string) => Promise<void>
   pickFolder: () => Promise<string | null>
-  openHtmlPreview: (input: { projectPath: string; relativePath?: string }) => Promise<import("@/lib/canvas-preview-source").HtmlPreviewResult>
+  openHtmlPreview: (input: {
+    projectPath: string
+    relativePath?: string
+  }) => Promise<import("@/lib/canvas-preview-source").HtmlPreviewResult>
   writeClipboardText?: (text: string) => Promise<void>
   confirmDialog: (opts: { title: string; message: string }) => Promise<boolean>
-  requestShellCapability: (scope:
-    | { operation: "run"; command: string; cwd: string }
-    | {
-        operation: "pty-open"
-        cwd: string
-        sessionId?: string
-        command?: string
-      }
-    | { operation: "pty-write"; sessionId: string; data: string }
+  requestShellCapability: (
+    scope:
+      | { operation: "run"; command: string; cwd: string }
+      | {
+          operation: "pty-open"
+          cwd: string
+          sessionId?: string
+          command?: string
+        }
+      | { operation: "pty-write"; sessionId: string; data: string }
   ) => Promise<string>
 
   // NOTE: the `claude:*` main-process bridge was removed — it took its

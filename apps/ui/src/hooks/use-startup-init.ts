@@ -22,7 +22,9 @@ export function useStartupInit(gitCwd?: string | null) {
     usePluginStore
       .getState()
       .init()
-      .catch(() => { console.warn("Failed to initialize plugin store") })
+      .catch(() => {
+        console.warn("Failed to initialize plugin store")
+      })
   }, [])
   useEffect(() => {
     useAppearanceStore.getState().load()

@@ -1,9 +1,5 @@
 import { CheckIcon, FolderOpenIcon, Loader2Icon, XIcon } from "lucide-react"
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
@@ -227,11 +223,7 @@ export function NewProjectDialog({
                           : "border-border/30"
                       )}
                     >
-                      <img
-                        src={pm.icon}
-                        alt={pm.name}
-                        className="size-5"
-                      />
+                      <img src={pm.icon} alt={pm.name} className="size-5" />
                       <span className="text-xs font-medium">{pm.name}</span>
                     </button>
                   ))}
@@ -254,9 +246,7 @@ export function NewProjectDialog({
                 </Button>
                 <Button
                   size="sm"
-                  disabled={
-                    !newProjectName.trim() || !newProjectPath.trim()
-                  }
+                  disabled={!newProjectName.trim() || !newProjectPath.trim()}
                   onClick={() => setNewProjectStep(1)}
                 >
                   Next
@@ -633,20 +623,12 @@ export function NewProjectDialog({
                         newProjectTemplate || ""
                       )
                     ) {
-                      await run(
-                        "Installing dependencies",
-                        install,
-                        fullPath
-                      )
+                      await run("Installing dependencies", install, fullPath)
                     }
 
                     // 4. UI library
                     if (uiCmd) {
-                      await run(
-                        `Installing ${newProjectUI}`,
-                        uiCmd,
-                        fullPath
-                      )
+                      await run(`Installing ${newProjectUI}`, uiCmd, fullPath)
                     }
 
                     // 5. Git init
@@ -672,10 +654,7 @@ export function NewProjectDialog({
         {/* Step 3: Progress */}
         {newProjectStep === 3 && (
           <div
-            className={cn(
-              "space-y-3",
-              minimalChat ? "px-4 py-3" : "px-6 py-5"
-            )}
+            className={cn("space-y-3", minimalChat ? "px-4 py-3" : "px-6 py-5")}
           >
             <div className="flex items-center gap-2">
               {newProjectStatus === "running" && (

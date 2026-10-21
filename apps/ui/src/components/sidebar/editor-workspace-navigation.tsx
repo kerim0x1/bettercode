@@ -58,8 +58,8 @@ export function EditorWorkspaceNavigation({
   const navRef = useRef<HTMLElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
   const moreRef = useRef<HTMLButtonElement>(null)
-  const [visibleViews, setVisibleViews] = useState<readonly string[]>(
-    () => primaryViews.map(({ id }) => id)
+  const [visibleViews, setVisibleViews] = useState<readonly string[]>(() =>
+    primaryViews.map(({ id }) => id)
   )
   useLayoutEffect(() => {
     const nav = navRef.current
@@ -70,11 +70,14 @@ export function EditorWorkspaceNavigation({
     const fitViews = () => {
       const style = getComputedStyle(nav)
       const gap = parseFloat(style.columnGap) || 0
-      let remaining = nav.clientWidth -
-        parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) -
+      let remaining =
+        nav.clientWidth -
+        parseFloat(style.paddingLeft) -
+        parseFloat(style.paddingRight) -
         more.getBoundingClientRect().width
-      const widths = Array.from(measure.children, (child) =>
-        child.getBoundingClientRect().width
+      const widths = Array.from(
+        measure.children,
+        (child) => child.getBoundingClientRect().width
       )
       const activeIndex = primaryViews.findIndex(({ id }) => id === view)
       const priority = activeIndex >= 0 ? activeIndex : 0
@@ -88,10 +91,14 @@ export function EditorWorkspaceNavigation({
         fitted.add(primaryViews[index].id)
         remaining -= width
       }
-      const next = primaryViews.filter(({ id }) => fitted.has(id)).map(({ id }) => id)
+      const next = primaryViews
+        .filter(({ id }) => fitted.has(id))
+        .map(({ id }) => id)
       setVisibleViews((previous) =>
-        previous.length === next.length && previous.every((id, index) => id === next[index])
-          ? previous : next
+        previous.length === next.length &&
+        previous.every((id, index) => id === next[index])
+          ? previous
+          : next
       )
     }
 
@@ -104,7 +111,9 @@ export function EditorWorkspaceNavigation({
     observer.observe(measure)
     return () => observer.disconnect()
   }, [view])
-  const overflowViews = primaryViews.filter(({ id }) => !visibleViews.includes(id))
+  const overflowViews = primaryViews.filter(
+    ({ id }) => !visibleViews.includes(id)
+  )
   const threads = useChatStore((state) => state.threads)
   const workspaces = useMemo(() => {
     const seen = new Set<string>()
@@ -197,7 +206,10 @@ export function EditorWorkspaceNavigation({
         aria-label="Editor views"
         className="relative mt-2 flex min-w-0 items-center gap-0.5 rounded-lg bg-sidebar-accent/35 p-0.5"
       >
-        <div aria-hidden="true" className="pointer-events-none invisible absolute inset-0 overflow-hidden">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none invisible absolute inset-0 overflow-hidden"
+        >
           <div ref={measureRef} className="flex w-max">
             {primaryViews.map(({ id, label, icon: Icon }) => (
               <span key={id} className={viewButtonClassName}>
@@ -207,28 +219,27 @@ export function EditorWorkspaceNavigation({
             ))}
           </div>
         </div>
-        {primaryViews.filter(({ id }) => visibleViews.includes(id)).map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            aria-current={view === id ? "page" : undefined}
-            title={label}
-            onClick={() => onViewChange(id)}
-            className={cn(
-              viewButtonClassName,
-              "transition-colors focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none",
-              view === id
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-            )}
-          >
-            <Icon
-              className={viewIconClassName}
-              strokeWidth={1.75}
-            />
-            <span className="truncate">{label}</span>
-          </button>
-        ))}
+        {primaryViews
+          .filter(({ id }) => visibleViews.includes(id))
+          .map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              aria-current={view === id ? "page" : undefined}
+              title={label}
+              onClick={() => onViewChange(id)}
+              className={cn(
+                viewButtonClassName,
+                "transition-colors focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none",
+                view === id
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+              )}
+            >
+              <Icon className={viewIconClassName} strokeWidth={1.75} />
+              <span className="truncate">{label}</span>
+            </button>
+          ))}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button

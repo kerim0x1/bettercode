@@ -94,7 +94,7 @@ export function SidebarThreadList({
     description: string
     action: () => void
   }) => void
-  }) {
+}) {
   const threads = useChatStore((s) => s.threads)
   const prompt = usePrompt()
   const messagesLoadedByThread = useChatStore((s) => s.messagesLoadedByThread)

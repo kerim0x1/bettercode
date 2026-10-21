@@ -498,7 +498,11 @@ class WalkIgnore {
     const cacheKey = `${relDir}\0${ignorePath}`
     const cached = nestedGitignoreCache.get(cacheKey)
     let patterns: string[]
-    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    if (
+      cached &&
+      cached.mtimeMs === stat.mtimeMs &&
+      cached.size === stat.size
+    ) {
       patterns = cached.patterns
     } else {
       let content: string
@@ -669,7 +673,11 @@ export async function searchContentDetailed(
   limits: ContentSearchLimits = {}
 ): Promise<ContentSearchDetailedResult> {
   if (activeContentSearches >= 4) {
-    throw new HttpError(503, "Content search capacity exhausted.", "search_capacity")
+    throw new HttpError(
+      503,
+      "Content search capacity exhausted.",
+      "search_capacity"
+    )
   }
   activeContentSearches += 1
   try {
@@ -1143,7 +1151,13 @@ async function searchFileContent(
   absPath: string,
   searchNeedle: string,
   remainingLimit: number,
-  options: { caseSensitive: boolean; wholeWord: boolean; regex: RegExp | null; regexSearch: RegexSearch | null; root: string },
+  options: {
+    caseSensitive: boolean
+    wholeWord: boolean
+    regex: RegExp | null
+    regexSearch: RegexSearch | null
+    root: string
+  },
   budget: {
     scannedFiles: number
     scannedBytes: number
@@ -1173,7 +1187,13 @@ async function searchFileContent(
 
   let buffer: Buffer
   try {
-    buffer = (await readWorkspaceFile(options.root, path.relative(options.root, absPath), CONTENT_SEARCH_MAX_FILE_BYTES)).content
+    buffer = (
+      await readWorkspaceFile(
+        options.root,
+        path.relative(options.root, absPath),
+        CONTENT_SEARCH_MAX_FILE_BYTES
+      )
+    ).content
   } catch {
     return []
   }
@@ -1189,9 +1209,19 @@ async function searchFileContent(
 
   const lines = text.split(/\r\n|\r|\n/g)
   if (options.regex && options.regexSearch) {
-    const found = await options.regexSearch.match(text, options.regex, maxMatches, options.wholeWord, budget.deadline)
+    const found = await options.regexSearch.match(
+      text,
+      options.regex,
+      maxMatches,
+      options.wholeWord,
+      budget.deadline
+    )
     return found.map((match) => {
-      const preview = makeSearchPreview(lines[match.line] ?? "", match.index, match.length)
+      const preview = makeSearchPreview(
+        lines[match.line] ?? "",
+        match.index,
+        match.length
+      )
       return {
         line: match.line + 1,
         column: match.index + 1,

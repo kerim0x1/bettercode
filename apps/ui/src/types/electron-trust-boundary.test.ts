@@ -42,8 +42,14 @@ const {
 
 describe("Electron renderer trust boundary", () => {
   it("allows issued HTML preview URL shapes without allowing raw local files", () => {
-    expect(isAllowedWebviewUrl("betterc0de-html://28c28eaf-00a7-45c8-91c2-75957ab2ed68/pages/index.html")).toBe(true)
-    expect(isAllowedWebviewUrl("betterc0de-html://arbitrary/path.html")).toBe(false)
+    expect(
+      isAllowedWebviewUrl(
+        "betterc0de-html://28c28eaf-00a7-45c8-91c2-75957ab2ed68/pages/index.html"
+      )
+    ).toBe(true)
+    expect(isAllowedWebviewUrl("betterc0de-html://arbitrary/path.html")).toBe(
+      false
+    )
     expect(isAllowedWebviewUrl("file:///C:/private/index.html")).toBe(false)
     expect(isAllowedWebviewUrl("javascript:alert(1)")).toBe(false)
     expect(isAllowedWebviewUrl("http://localhost:3000")).toBe(true)
@@ -56,7 +62,9 @@ describe("Electron renderer trust boundary", () => {
   // authenticated backend, which owns the policy.
   it("exposes no main-process provider bridge to the renderer", () => {
     const shellDir = path.resolve(import.meta.dirname, "../../../shell")
-    expect(fs.existsSync(path.join(shellDir, "claude-provider.cjs"))).toBe(false)
+    expect(fs.existsSync(path.join(shellDir, "claude-provider.cjs"))).toBe(
+      false
+    )
     expect(fs.existsSync(path.join(shellDir, "claude-ipc.cjs"))).toBe(false)
 
     const preload = fs.readFileSync(path.join(shellDir, "preload.cjs"), "utf8")

@@ -318,8 +318,13 @@ export function MonacoEditorWrapper({
   const monacoTheme = customTheme
     ? `betterc0de-editor-custom-${customTheme.id}`
     : workbench
-      ? (templateMode(appearanceTemplate) ?? (isDark ? "dark" : "light")) === "dark" ? "betterc0de-editor-dark" : "betterc0de-editor-light"
-      : isDark ? "vs-dark" : "vs"
+      ? (templateMode(appearanceTemplate) ?? (isDark ? "dark" : "light")) ===
+        "dark"
+        ? "betterc0de-editor-dark"
+        : "betterc0de-editor-light"
+      : isDark
+        ? "vs-dark"
+        : "vs"
   const defineThemes = useCallback(
     (monaco: Parameters<typeof defineWorkbenchThemes>[0]) => {
       defineWorkbenchThemes(monaco)
@@ -449,10 +454,7 @@ export function MonacoEditorWrapper({
       if (!detail.preserveNavigation) {
         useEditorStore.getState().recordNavigationPoint()
       }
-      if (
-        endColumn !== null &&
-        (endLine > lineNumber || endColumn > column)
-      ) {
+      if (endColumn !== null && (endLine > lineNumber || endColumn > column)) {
         const range = {
           startLineNumber: lineNumber,
           startColumn: column,
@@ -859,12 +861,20 @@ export function MonacoEditorWrapper({
       // is already in the tab store even when the one-shot event was missed.
       if (workbench) {
         editor.onDidDispose(enableWorkbenchJsx(monaco.languages.typescript))
-        const tab = useEditorStore.getState().tabs.find((item) => item.filePath === filePathRef.current)
+        const tab = useEditorStore
+          .getState()
+          .tabs.find((item) => item.filePath === filePathRef.current)
         const model = editor.getModel()
         if (tab && model) {
-          const position = model.validatePosition({ lineNumber: tab.cursorLine, column: tab.cursorColumn })
+          const position = model.validatePosition({
+            lineNumber: tab.cursorLine,
+            column: tab.cursorColumn,
+          })
           editor.setPosition(position)
-          editor.revealPositionInCenter(position, monaco.editor.ScrollType.Immediate)
+          editor.revealPositionInCenter(
+            position,
+            monaco.editor.ScrollType.Immediate
+          )
         }
       }
 
@@ -1074,7 +1084,8 @@ export function MonacoEditorWrapper({
           return
         }
         const result = await renameSymbolInOpenFiles({
-          monaco, model,
+          monaco,
+          model,
           expectedModelVersion: renameAnchor.modelVersion,
           projectPath: projectPathRef.current,
           filePath: filePathRef.current,
@@ -1086,10 +1097,14 @@ export function MonacoEditorWrapper({
           return
         }
         if (result.status === "conflict") {
-          setRenameError(`Documents changed during Rename: ${result.filePaths.join(", ")}. Nothing was changed.`)
+          setRenameError(
+            `Documents changed during Rename: ${result.filePaths.join(", ")}. Nothing was changed.`
+          )
           return
         }
-        toast.success(`Renamed ${result.replacements} references in ${result.changedTabIds.length} open files. Review and save the changes.`)
+        toast.success(
+          `Renamed ${result.replacements} references in ${result.changedTabIds.length} open files. Review and save the changes.`
+        )
         setRenameAnchor(null)
         editor.focus()
       } catch (err) {
@@ -1464,7 +1479,9 @@ function RenameSymbolPopup({
     >
       <div className="inline-edit-header">
         <PencilLineIcon className="size-3.5 text-primary" />
-        <span className="inline-edit-header-title">Rename Symbol in Open Files</span>
+        <span className="inline-edit-header-title">
+          Rename Symbol in Open Files
+        </span>
         <span className="inline-edit-header-range">{symbol}</span>
         <div className="flex-1" />
         <button

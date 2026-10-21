@@ -85,7 +85,8 @@ export const settingsTabs = [
     id: "betterc0de",
     label: "Compatibility",
     icon: PuzzleIcon,
-    description: "BetterC0de config, commands, permissions, and provider policy",
+    description:
+      "BetterC0de config, commands, permissions, and provider policy",
   },
   {
     id: "experimental",

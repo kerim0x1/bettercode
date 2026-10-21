@@ -106,7 +106,9 @@ describe("ProviderHub structure", () => {
     expect(hub).not.toMatch(/function isResumableBinding\(/)
     expect(hub).not.toMatch(/function normalizeRuntimeMode\(/)
     // Maintenance: update bookkeeping lives in the coordinator.
-    expect(hub).not.toMatch(/updateLockTails|runningUpdateTargets|updateStates\b/)
+    expect(hub).not.toMatch(
+      /updateLockTails|runningUpdateTargets|updateStates\b/
+    )
     expect(hub).not.toMatch(/withProviderUpdateLock/)
     expect(hub).not.toMatch(/function providerUpdateFailureMessage/)
     expect(hub).not.toMatch(/class ProviderUpdateError/)
@@ -120,7 +122,9 @@ describe("ProviderHub structure", () => {
       "../permissions",
       "../shared/chat-mode-tools",
     ]) {
-      expect(modules, `ProviderHub.ts still imports ${gone}`).not.toContain(gone)
+      expect(modules, `ProviderHub.ts still imports ${gone}`).not.toContain(
+        gone
+      )
     }
     for (const module of EXTRACTED_MODULES) {
       expect(modules).toContain(`./${module.replace(/\.ts$/, "")}`)

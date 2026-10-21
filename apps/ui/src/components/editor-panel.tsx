@@ -21,7 +21,10 @@ import {
 } from "@/lib/editor-breadcrumbs"
 import { confirmCloseDirtyEditorTabs } from "@/lib/editor-close-confirmation"
 import { dispatchEditorRevealFile } from "@/lib/editor-reveal-event"
-import { EDITOR_FILE_ACTIVATE_EVENT, EDITOR_PREVIEW_TOGGLE_EVENT } from "@/lib/preview-events"
+import {
+  EDITOR_FILE_ACTIVATE_EVENT,
+  EDITOR_PREVIEW_TOGGLE_EVENT,
+} from "@/lib/preview-events"
 import { previewTabLabel } from "./browser-preview/url"
 import { cn } from "@/lib/utils"
 import { editorDiffLabel } from "@/lib/editor-diff"
@@ -58,7 +61,11 @@ const FilePreview = lazy(() =>
     default: m.FilePreview,
   }))
 )
-const DiffPanel = lazy(() => import("@/components/diff-panel").then(module => ({ default: module.DiffPanel })))
+const DiffPanel = lazy(() =>
+  import("@/components/diff-panel").then((module) => ({
+    default: module.DiffPanel,
+  }))
+)
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -151,7 +158,9 @@ export function EditorPanel({
   }, [])
   const activeOutline = useMemo(
     () =>
-      activeTab !== null && !activeTab.diff && (activeTab.fileKind ?? "text") === "text"
+      activeTab !== null &&
+      !activeTab.diff &&
+      (activeTab.fileKind ?? "text") === "text"
         ? buildCodeOutline({
             content: activeTab.content,
             language: activeTab.language,
@@ -182,9 +191,12 @@ export function EditorPanel({
   useEffect(() => {
     const showFile = () => setViewMode("editor")
     window.addEventListener(EDITOR_FILE_ACTIVATE_EVENT, showFile)
-    return () => window.removeEventListener(EDITOR_FILE_ACTIVATE_EVENT, showFile)
+    return () =>
+      window.removeEventListener(EDITOR_FILE_ACTIVATE_EVENT, showFile)
   }, [])
-  useEffect(() => { if (viewMode === "preview") setPreviewOpen(true) }, [viewMode])
+  useEffect(() => {
+    if (viewMode === "preview") setPreviewOpen(true)
+  }, [viewMode])
   const previousFileTab = useRef(activeTabId)
   useEffect(() => {
     if (activeTabId !== previousFileTab.current) setViewMode("editor")
@@ -362,7 +374,8 @@ export function EditorPanel({
       prevStreamingRef.current &&
       !isStreaming &&
       activeTab !== null &&
-      !activeTab.diff && (activeTab.fileKind ?? "text") === "text" &&
+      !activeTab.diff &&
+      (activeTab.fileKind ?? "text") === "text" &&
       !activeTab.isDirty
     ) {
       readFile(activeTab.filePath)
@@ -387,7 +400,8 @@ export function EditorPanel({
     () => {
       if (
         !activeTab ||
-        activeTab.diff || (activeTab.fileKind ?? "text") !== "text" ||
+        activeTab.diff ||
+        (activeTab.fileKind ?? "text") !== "text" ||
         activeTab.isDirty
       )
         return
@@ -412,7 +426,8 @@ export function EditorPanel({
       enabled:
         isStreaming &&
         activeTab !== null &&
-        !activeTab.diff && (activeTab.fileKind ?? "text") === "text" &&
+        !activeTab.diff &&
+        (activeTab.fileKind ?? "text") === "text" &&
         !activeTab.isDirty,
     }
   )
@@ -424,7 +439,8 @@ export function EditorPanel({
       const changedPath = detail?.path
       if (
         !activeTab ||
-        activeTab.diff || (activeTab.fileKind ?? "text") !== "text" ||
+        activeTab.diff ||
+        (activeTab.fileKind ?? "text") !== "text" ||
         activeTab.isDirty ||
         !changedPath
       )
@@ -622,7 +638,10 @@ export function EditorPanel({
               key={tab.id}
               tab={tab}
               isActive={viewMode === "editor" && tab.id === activeTabId}
-              onClick={() => { setActiveTab(tab.id); setViewMode("editor") }}
+              onClick={() => {
+                setActiveTab(tab.id)
+                setViewMode("editor")
+              }}
               onContextMenu={(event) => handleTabContextMenu(event, tab.id)}
               onTogglePin={(e) => {
                 e.stopPropagation()
@@ -631,15 +650,44 @@ export function EditorPanel({
               onClose={(e) => handleCloseTab(e, tab.id)}
             />
           ))}
-          {previewOpen && <div role="tab" aria-label="Browser preview" aria-selected={viewMode === "preview"} tabIndex={viewMode === "preview" ? 0 : -1}
-            onClick={() => setViewMode("preview")}
-            onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setViewMode("preview") } }}
-            className={cn("group flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 text-[11px]", viewMode === "preview" ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/40")}>
-            <GlobeIcon className="size-3.5 shrink-0" />
-            <span className="max-w-48 truncate">{previewTabLabel(previewUrl)}</span>
-            <button type="button" aria-label="Close browser tab" className="ml-1 grid size-5 place-items-center rounded hover:bg-background/60"
-              onClick={event => { event.stopPropagation(); setPreviewOpen(false); setViewMode("editor") }}><XIcon className="size-3" /></button>
-          </div>}
+          {previewOpen && (
+            <div
+              role="tab"
+              aria-label="Browser preview"
+              aria-selected={viewMode === "preview"}
+              tabIndex={viewMode === "preview" ? 0 : -1}
+              onClick={() => setViewMode("preview")}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault()
+                  setViewMode("preview")
+                }
+              }}
+              className={cn(
+                "group flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 text-[11px]",
+                viewMode === "preview"
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:bg-muted/40"
+              )}
+            >
+              <GlobeIcon className="size-3.5 shrink-0" />
+              <span className="max-w-48 truncate">
+                {previewTabLabel(previewUrl)}
+              </span>
+              <button
+                type="button"
+                aria-label="Close browser tab"
+                className="ml-1 grid size-5 place-items-center rounded hover:bg-background/60"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setPreviewOpen(false)
+                  setViewMode("editor")
+                }}
+              >
+                <XIcon className="size-3" />
+              </button>
+            </div>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-0.5 px-1">
           <TooltipProvider>
@@ -688,12 +736,27 @@ export function EditorPanel({
         />
       )}
 
-      {previewOpen && <div className={cn("min-h-0 flex-1 flex-col", viewMode === "preview" ? "flex" : "hidden")}>
-        <Suspense fallback={<div className="min-h-0 flex-1 bg-muted/20" />}>
-          <BrowserPreviewPanel key={projectPath} projectPath={projectPath} onUrlChange={setPreviewUrl}
-            className="min-h-0 flex-1" onClose={() => { setPreviewOpen(false); setViewMode("editor") }} />
-        </Suspense>
-      </div>}
+      {previewOpen && (
+        <div
+          className={cn(
+            "min-h-0 flex-1 flex-col",
+            viewMode === "preview" ? "flex" : "hidden"
+          )}
+        >
+          <Suspense fallback={<div className="min-h-0 flex-1 bg-muted/20" />}>
+            <BrowserPreviewPanel
+              key={projectPath}
+              projectPath={projectPath}
+              onUrlChange={setPreviewUrl}
+              className="min-h-0 flex-1"
+              onClose={() => {
+                setPreviewOpen(false)
+                setViewMode("editor")
+              }}
+            />
+          </Suspense>
+        </div>
+      )}
 
       {/* Editor Area */}
       <div className={cn("min-h-0 flex-1", viewMode === "preview" && "hidden")}>
@@ -779,11 +842,20 @@ export function EditorPanel({
               onInlineEditModelChange={onInlineEditModelChange}
             />
           )
-        ) : (
-          projectPath ? <CodebaseOverview projectPath={projectPath}
+        ) : projectPath ? (
+          <CodebaseOverview
+            projectPath={projectPath}
             onOpenBrowser={() => setViewMode("preview")}
-            onOpenFile={relativePath => useEditorStore.getState().openFile(resolveWorkspaceFilePath(projectPath, relativePath))} />
-            : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Select a file to edit</div>
+            onOpenFile={(relativePath) =>
+              useEditorStore
+                .getState()
+                .openFile(resolveWorkspaceFilePath(projectPath, relativePath))
+            }
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+            Select a file to edit
+          </div>
         )}
       </div>
 
@@ -808,13 +880,15 @@ export function EditorPanel({
                     label: "Keep Preview Open",
                     hint: contextTab.fileName,
                     run: () =>
-                      contextTab.diff ? useEditorStore.getState().openDiff(contextTab.diff) : void useEditorStore
-                        .getState()
-                        .openFile(contextTab.filePath, {
-                          preview: false,
-                          reloadExisting: false,
-                          preserveNavigation: true,
-                        }),
+                      contextTab.diff
+                        ? useEditorStore.getState().openDiff(contextTab.diff)
+                        : void useEditorStore
+                            .getState()
+                            .openFile(contextTab.filePath, {
+                              preview: false,
+                              reloadExisting: false,
+                              preserveNavigation: true,
+                            }),
                   },
                 ]
               : []),
@@ -916,9 +990,24 @@ function EditorPaneContent({
 }) {
   if (tab.diff) {
     return (
-      <div className="h-full min-h-0 min-w-0 flex-1 overflow-hidden" data-editor-diff={tab.diff.source}>
-        <Suspense fallback={<p role="status" className="p-4 text-xs text-muted-foreground">Loading comparison…</p>}>
-          <DiffPanel key={`${tab.id}:${tab.diff.source}`} open cwd={tab.diff.cwd} fileTarget={tab.diff} onClose={() => useEditorStore.getState().closeTab(tab.id)} />
+      <div
+        className="h-full min-h-0 min-w-0 flex-1 overflow-hidden"
+        data-editor-diff={tab.diff.source}
+      >
+        <Suspense
+          fallback={
+            <p role="status" className="p-4 text-xs text-muted-foreground">
+              Loading comparison…
+            </p>
+          }
+        >
+          <DiffPanel
+            key={`${tab.id}:${tab.diff.source}`}
+            open
+            cwd={tab.diff.cwd}
+            fileTarget={tab.diff}
+            onClose={() => useEditorStore.getState().closeTab(tab.id)}
+          />
         </Suspense>
       </div>
     )
@@ -1006,7 +1095,11 @@ function SplitEditorGroupHeader({
               role="tab"
               aria-selected={isSelected}
               onClick={() => onSelectTab(tab.id)}
-              title={tab.diff ? `${tab.filePath} (${editorDiffLabel(tab.diff)})` : tab.filePath}
+              title={
+                tab.diff
+                  ? `${tab.filePath} (${editorDiffLabel(tab.diff)})`
+                  : tab.filePath
+              }
               className={cn(
                 "flex h-full max-w-[180px] min-w-[92px] shrink-0 items-center gap-1.5 border-r border-border/35 px-2 text-[11px] transition-colors",
                 isSelected
@@ -1027,7 +1120,11 @@ function SplitEditorGroupHeader({
               >
                 {tab.fileName}
               </span>
-              {tab.diff && <span className="shrink-0 text-[10px] text-muted-foreground">{editorDiffLabel(tab.diff)}</span>}
+              {tab.diff && (
+                <span className="shrink-0 text-[10px] text-muted-foreground">
+                  {editorDiffLabel(tab.diff)}
+                </span>
+              )}
               {tab.isDirty && (
                 <span
                   className="size-1.5 shrink-0 rounded-full bg-amber-400"
@@ -1272,7 +1369,9 @@ function EditorStatusBar({
         </button>
         <div className="flex-1" />
         <span className="shrink-0 capitalize">
-          {activeTab.diff ? `${editorDiffLabel(activeTab.diff)} · Read-only comparison` : `${activeTab.fileKind ?? "file"} preview`}
+          {activeTab.diff
+            ? `${editorDiffLabel(activeTab.diff)} · Read-only comparison`
+            : `${activeTab.fileKind ?? "file"} preview`}
         </span>
       </div>
     )
@@ -1445,7 +1544,10 @@ function TabItem({
       onClick={onClick}
       onDoubleClick={() => {
         if (tab.diff) useEditorStore.getState().openDiff(tab.diff)
-        else void useEditorStore.getState().openFile(tab.filePath, { reloadExisting: false })
+        else
+          void useEditorStore
+            .getState()
+            .openFile(tab.filePath, { reloadExisting: false })
       }}
       onContextMenu={onContextMenu}
       onKeyDown={(e) => {
@@ -1461,16 +1563,19 @@ function TabItem({
           onClose(e as unknown as React.MouseEvent)
         }
       }}
-      title={tab.diff ? `${tab.filePath} (${editorDiffLabel(tab.diff)})` : tab.filePath}
+      title={
+        tab.diff
+          ? `${tab.filePath} (${editorDiffLabel(tab.diff)})`
+          : tab.filePath
+      }
       className={cn(
-        "group relative flex h-7 min-w-32 max-w-60 shrink-0 cursor-pointer items-center gap-1.5 rounded-md pr-1 pl-2 text-[11px] outline-none transition-colors select-none 2xl:min-w-40 2xl:max-w-72",
+        "group relative flex h-7 max-w-60 min-w-32 shrink-0 cursor-pointer items-center gap-1.5 rounded-md pr-1 pl-2 text-[11px] transition-colors outline-none select-none 2xl:max-w-72 2xl:min-w-40",
         "focus-visible:ring-1 focus-visible:ring-ring/25 focus-visible:ring-inset",
         isActive
           ? "bg-muted/70 text-foreground"
           : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
       )}
     >
-
       {tab.isPinned && (
         <button
           type="button"
@@ -1499,7 +1604,11 @@ function TabItem({
       >
         {tab.fileName}
       </span>
-      {tab.diff && <span className="shrink-0 text-[10px] text-muted-foreground">{editorDiffLabel(tab.diff)}</span>}
+      {tab.diff && (
+        <span className="shrink-0 text-[10px] text-muted-foreground">
+          {editorDiffLabel(tab.diff)}
+        </span>
+      )}
       {/* Close / dirty — dirty tabs show a dot in the close slot by default,
           hover swaps to X so the user always has a one-click close. */}
       <button

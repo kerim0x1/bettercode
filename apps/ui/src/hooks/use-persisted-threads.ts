@@ -2,7 +2,9 @@ import { useChatStore, type ChatThread } from "@/lib/chat-store"
 import { loadThreads } from "@/services/backend"
 import { useEffect, useState } from "react"
 
-type ThreadSettingsMap = ReturnType<typeof useChatStore.getState>["settingsByThread"]
+type ThreadSettingsMap = ReturnType<
+  typeof useChatStore.getState
+>["settingsByThread"]
 
 /** Backend snapshots restore goals without overwriting live updates received during loading. */
 export function mergePersistedThreadGoals(
@@ -14,7 +16,11 @@ export function mergePersistedThreadGoals(
   for (const thread of persisted) {
     if (thread.goal === undefined) continue
     const settings = current[thread.id]
-    if ((settings?.goalRevision ?? 0) !== (beforeLoad[thread.id]?.goalRevision ?? 0)) continue
+    if (
+      (settings?.goalRevision ?? 0) !==
+      (beforeLoad[thread.id]?.goalRevision ?? 0)
+    )
+      continue
     if (next === current) next = { ...current }
     next[thread.id] = { ...settings, goal: thread.goal }
   }
@@ -72,12 +78,11 @@ export function usePersistedThreads() {
 
           useChatStore.setState((state) => ({
             settingsByThread: mergePersistedThreadGoals(
-              state.settingsByThread, threads, settingsBeforeLoad
+              state.settingsByThread,
+              threads,
+              settingsBeforeLoad
             ),
-            threads: mergePersistedThreadSkeletons(
-              state.threads,
-              threads
-            ),
+            threads: mergePersistedThreadSkeletons(state.threads, threads),
           }))
           setReady(true)
           return

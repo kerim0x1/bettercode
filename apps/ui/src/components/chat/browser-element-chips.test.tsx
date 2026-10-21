@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
-import { BrowserElementChips, BrowserElementDetails } from "./browser-element-chips"
+import {
+  BrowserElementChips,
+  BrowserElementDetails,
+} from "./browser-element-chips"
 import { BrowserElementMessage } from "./browser-element-message"
 
 const elements = [
@@ -41,17 +44,43 @@ describe("browser element chips", () => {
     expect(renderToStaticMarkup(<BrowserElementChips elements={[]} />)).toBe("")
   })
   it("renders captured details as inert text", () => {
-    const html = renderToStaticMarkup(<BrowserElementDetails element={{ ...elements[0], id: "buy", className: "cta primary", childCount: 2,
-      rect: { x: 10, y: 20, w: 100, h: 30 }, viewport: { width: 1200, height: 800 },
-      text: "<script>run()</script>", styles: { color: "rgb(1, 2, 3)" },
-    }} />)
-    for (const value of ["#buy", "https://example.com/", "cta primary", "100 x 30 px", "1200 x 800 px", "Computed styles", "rgb(1, 2, 3)"]) expect(html).toContain(value)
+    const html = renderToStaticMarkup(
+      <BrowserElementDetails
+        element={{
+          ...elements[0],
+          id: "buy",
+          className: "cta primary",
+          childCount: 2,
+          rect: { x: 10, y: 20, w: 100, h: 30 },
+          viewport: { width: 1200, height: 800 },
+          text: "<script>run()</script>",
+          styles: { color: "rgb(1, 2, 3)" },
+        }}
+      />
+    )
+    for (const value of [
+      "#buy",
+      "https://example.com/",
+      "cta primary",
+      "100 x 30 px",
+      "1200 x 800 px",
+      "Computed styles",
+      "rgb(1, 2, 3)",
+    ])
+      expect(html).toContain(value)
     expect(html).toContain("&lt;script&gt;")
     expect(html).not.toContain("<script>")
   })
   it("keeps a sent component mention inside the message text", () => {
-    const html = renderToStaticMarkup(<BrowserElementMessage content="Change @Button please" elements={[{ ...elements[0], mentionName: "Button" }]} />)
-    expect(html.indexOf("Change ")).toBeLessThan(html.indexOf('aria-label="Inspect @Button'))
+    const html = renderToStaticMarkup(
+      <BrowserElementMessage
+        content="Change @Button please"
+        elements={[{ ...elements[0], mentionName: "Button" }]}
+      />
+    )
+    expect(html.indexOf("Change ")).toBeLessThan(
+      html.indexOf('aria-label="Inspect @Button')
+    )
     expect(html.indexOf("</button>")).toBeLessThan(html.indexOf(" please"))
     expect(html).not.toContain("Remove mention")
   })

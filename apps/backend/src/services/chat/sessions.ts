@@ -17,35 +17,42 @@ export async function interruptChatTurn(
   body: z.output<typeof chatInterruptSchema>
 ): Promise<{ status: "interrupted" }> {
   threadGoals.get(state)?.pauseForMessage(body.threadId)
-  const interrupt = () => withChatRecoveryMutation(state, body.threadId, async (): Promise<{ status: "interrupted" }> => {
-    const hubKind = asHubProviderKind(body.providerKind)
-    if (
-      hubKind &&
-      (state.providerHub.has(hubKind) || body.providerInstanceId)
-    ) {
-      const providerInstanceId = resolveHubInstanceId({
-        state,
-        providerKind: hubKind,
-        threadId: body.threadId,
-        explicitInstanceId: body.providerInstanceId,
-        operation: "interrupt",
-        requireBinding: true,
-      })
-      await state.providerHub.interruptTurnForInstance(
-        hubKind,
-        toThreadId(body.threadId),
-        providerInstanceId,
-        state.providerSessionBindings
-      )
-      markActiveDispatchInterrupted(state, body.threadId)
-      return { status: "interrupted" }
-    }
-    const kind = state.providers.resolveProviderKind(body.providerKind)
-    await state.providers.interrupt(kind, body.threadId)
-    markActiveDispatchInterrupted(state, body.threadId)
-    return { status: "interrupted" }
-  })
-  return state.orchestrator ? state.orchestrator.withInterruptedChildren(body.threadId, interrupt) : interrupt()
+  const interrupt = () =>
+    withChatRecoveryMutation(
+      state,
+      body.threadId,
+      async (): Promise<{ status: "interrupted" }> => {
+        const hubKind = asHubProviderKind(body.providerKind)
+        if (
+          hubKind &&
+          (state.providerHub.has(hubKind) || body.providerInstanceId)
+        ) {
+          const providerInstanceId = resolveHubInstanceId({
+            state,
+            providerKind: hubKind,
+            threadId: body.threadId,
+            explicitInstanceId: body.providerInstanceId,
+            operation: "interrupt",
+            requireBinding: true,
+          })
+          await state.providerHub.interruptTurnForInstance(
+            hubKind,
+            toThreadId(body.threadId),
+            providerInstanceId,
+            state.providerSessionBindings
+          )
+          markActiveDispatchInterrupted(state, body.threadId)
+          return { status: "interrupted" }
+        }
+        const kind = state.providers.resolveProviderKind(body.providerKind)
+        await state.providers.interrupt(kind, body.threadId)
+        markActiveDispatchInterrupted(state, body.threadId)
+        return { status: "interrupted" }
+      }
+    )
+  return state.orchestrator
+    ? state.orchestrator.withInterruptedChildren(body.threadId, interrupt)
+    : interrupt()
 }
 
 export async function rotateChatSession(

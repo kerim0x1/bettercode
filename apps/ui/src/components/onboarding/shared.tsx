@@ -21,7 +21,13 @@ export const STEPS = [
 export const MARKETPLACE = MARKETPLACE_CATALOG
 
 /** Icon with fallback per category */
-export function ItemIcon({ icon, category }: { icon?: string; category: string }) {
+export function ItemIcon({
+  icon,
+  category,
+}: {
+  icon?: string
+  category: string
+}) {
   const [failed, setFailed] = useState(false)
   if (icon && !failed) {
     return (

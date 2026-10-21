@@ -390,7 +390,9 @@ describe("generateImage", () => {
 
   it("kills the process tree and reports timeout when codex hangs", async () => {
     const workspaceDir = makeTempDir("betterc0de-imagegen-ws-")
-    const binary = makeFakeCodexBinary(`setTimeout(() => process.exit(0), 30000)`)
+    const binary = makeFakeCodexBinary(
+      `setTimeout(() => process.exit(0), 30000)`
+    )
     const result = await generateImage(
       { prompt: "x", savePath: "a.png", workspaceDir, timeoutMs: 750 },
       { detect: fakeDetect(binary) }
@@ -526,12 +528,16 @@ describe("image generation filesystem and cancellation races", () => {
       }
       return await originalOpen(...args)
     })
-    await expect(generateImage(
-      { prompt: "x", savePath: "a.png", workspaceDir },
-      { detect: fakeDetect(binary) }
-    )).resolves.toMatchObject({ ok: false, code: "target_exists" })
+    await expect(
+      generateImage(
+        { prompt: "x", savePath: "a.png", workspaceDir },
+        { detect: fakeDetect(binary) }
+      )
+    ).resolves.toMatchObject({ ok: false, code: "target_exists" })
     expect(collisionPath).not.toBeNull()
-    expect(await fs.promises.readFile(collisionPath!, "utf8")).toBe("belongs to another writer")
+    expect(await fs.promises.readFile(collisionPath!, "utf8")).toBe(
+      "belongs to another writer"
+    )
   })
 
   it("does not spawn when shutdown begins while staging-directory creation is pending", async () => {
@@ -542,7 +548,9 @@ describe("image generation filesystem and cancellation races", () => {
     )
     const originalMkdtemp = fs.promises.mkdtemp.bind(fs.promises)
     let release!: () => void
-    const held = new Promise<void>(resolve => { release = resolve })
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
     let entered = false
     vi.spyOn(fs.promises, "mkdtemp").mockImplementation(async (...args) => {
       const directory = await originalMkdtemp(...args)
@@ -568,10 +576,16 @@ describe("image generation filesystem and cancellation races", () => {
   it("observes stdin errors when a CLI rejects a large prompt before reading it", async () => {
     const workspaceDir = makeTempDir("betterc0de-imagegen-stdin-")
     const binary = makeFakeCodexBinary("process.exit(1)")
-    await expect(generateImage(
-      { prompt: "x".repeat(2 * 1024 * 1024), savePath: "a.png", workspaceDir },
-      { detect: fakeDetect(binary) }
-    )).resolves.toMatchObject({ ok: false, code: "generation_failed" })
+    await expect(
+      generateImage(
+        {
+          prompt: "x".repeat(2 * 1024 * 1024),
+          savePath: "a.png",
+          workspaceDir,
+        },
+        { detect: fakeDetect(binary) }
+      )
+    ).resolves.toMatchObject({ ok: false, code: "generation_failed" })
   })
 })
 
@@ -593,6 +607,8 @@ describe("image generation Codex home", () => {
       { detect: fakeDetect(binary), codexHome: { homePath: codexHome } }
     )
     expect(result).toMatchObject({ ok: false, code: "generation_failed" })
-    expect((result as { message: string }).message).toContain(`HOME=${codexHome}`)
+    expect((result as { message: string }).message).toContain(
+      `HOME=${codexHome}`
+    )
   }, 30_000)
 })

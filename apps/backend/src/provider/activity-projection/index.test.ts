@@ -9,22 +9,31 @@ describe("provider activity projection", () => {
   it.each([NaN, Infinity, -Infinity, 1e100])(
     "ignores invalid numeric activity timestamps (%s)",
     (startedAt) => {
-      const activity = projectProviderEventToThreadActivity({
-        event_type: "turn_completed",
-        thread_id: "thread-1",
-        payload: { started_at: startedAt, completed_at: 0 },
-      }, 1)
+      const activity = projectProviderEventToThreadActivity(
+        {
+          event_type: "turn_completed",
+          thread_id: "thread-1",
+          payload: { started_at: startedAt, completed_at: 0 },
+        },
+        1
+      )
       expect(activity).toMatchObject({
         kind: "turn.completed",
         created_at: "1970-01-01T00:00:00.000Z",
       })
-      const fallback = projectProviderEventToThreadActivity({
-        event_type: "turn_completed",
-        thread_id: "thread-1",
-        payload: { completed_at: startedAt, createdAt: "2026-01-01T00:00:00.000Z" },
-      }, 2)
+      const fallback = projectProviderEventToThreadActivity(
+        {
+          event_type: "turn_completed",
+          thread_id: "thread-1",
+          payload: {
+            completed_at: startedAt,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+        2
+      )
       expect(fallback?.created_at).toBe("2026-01-01T00:00:00.000Z")
-    },
+    }
   )
 
   it("projects tool lifecycle events into durable thread activities", () => {
@@ -392,7 +401,11 @@ describe("provider activity projection", () => {
           data: {
             toolCallId: "call-1",
             kind: "search",
-            rawInput: { variant: "Grep", pattern: "readFile", glob: "apps/**/*.ts" },
+            rawInput: {
+              variant: "Grep",
+              pattern: "readFile",
+              glob: "apps/**/*.ts",
+            },
           },
         },
       },
@@ -409,7 +422,6 @@ describe("provider activity projection", () => {
       },
     })
   })
-
 
   it("projects approval requests and resolved route acknowledgements", () => {
     const requested = projectProviderEventToThreadActivity(

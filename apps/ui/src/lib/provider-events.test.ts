@@ -131,42 +131,104 @@ describe("provider-events: handleProviderEvent", () => {
     vi.useRealTimers()
   })
 
-  it.each([undefined, { message: "Tool not available" }])("keeps canonical failed tools failed when the error is %j", (error) => {
-    handleProviderEvent(threadId, "tool_call", { tool_id: "failed-tool", tool_name: "Bash", input: { command: "npm test" } })
-    handleProviderEvent(threadId, "tool.failed", { toolId: "failed-tool", toolName: "Bash", error })
-    expect(useChatStore.getState().streamingByThread[threadId]?.streamingTools).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "failed-tool", state: "output-error", error: error ? "Tool not available" : "Tool failed" }),
-    ]))
-  })
+  it.each([undefined, { message: "Tool not available" }])(
+    "keeps canonical failed tools failed when the error is %j",
+    (error) => {
+      handleProviderEvent(threadId, "tool_call", {
+        tool_id: "failed-tool",
+        tool_name: "Bash",
+        input: { command: "npm test" },
+      })
+      handleProviderEvent(threadId, "tool.failed", {
+        toolId: "failed-tool",
+        toolName: "Bash",
+        error,
+      })
+      expect(
+        useChatStore.getState().streamingByThread[threadId]?.streamingTools
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "failed-tool",
+            state: "output-error",
+            error: error ? "Tool not available" : "Tool failed",
+          }),
+        ])
+      )
+    }
+  )
 
   it("leaves composer plan mode after an interactive approval from any client", () => {
     useChatStore.getState().setThreadSetting(threadId, "chatMode", "plan")
-    handleProviderEvent(threadId, "plan_approval_resolved", { requestId: "plan", decision: "deny" })
-    expect(useChatStore.getState().settingsByThread[threadId]?.chatMode).toBe("plan")
-    handleProviderEvent(threadId, "plan_approval_resolved", { requestId: "plan", decision: "approve" })
-    expect(useChatStore.getState().settingsByThread[threadId]?.chatMode).toBe("agent")
+    handleProviderEvent(threadId, "plan_approval_resolved", {
+      requestId: "plan",
+      decision: "deny",
+    })
+    expect(useChatStore.getState().settingsByThread[threadId]?.chatMode).toBe(
+      "plan"
+    )
+    handleProviderEvent(threadId, "plan_approval_resolved", {
+      requestId: "plan",
+      decision: "approve",
+    })
+    expect(useChatStore.getState().settingsByThread[threadId]?.chatMode).toBe(
+      "agent"
+    )
   })
 
-  it.each([true, false])("recognizes hook and task lifecycle events without unhandled debug output (projection=%s)", projectActivities => {
-    const debug = vi.spyOn(console, "debug").mockImplementation(() => {})
-    const events = ["hook.started", "hook.progress", "hook.completed", "task.started", "task.progress", "task.completed"]
-    try {
-      for (const type of events) handleProviderEvent(threadId, type, {
-        providerKind: "claude", providerInstanceId: "claude",
-        hookId: "hook-1", hookName: "SessionStart:resume", taskId: "task-1",
-        taskType: "local_bash", outcome: "success", status: "completed",
-        output: "Hook warning remains inspectable", summary: "Preview server ready",
-      }, { projectActivities })
-      expect(debug).not.toHaveBeenCalled()
-      const activities = useChatStore.getState().activitiesByThread[threadId] ?? []
-      expect(activities.map(activity => activity.kind)).toEqual(projectActivities ? events : [])
-      if (projectActivities) expect(activities.find(activity => activity.kind === "hook.completed")).toMatchObject({ payload: { output: "Hook warning remains inspectable" } })
-      handleProviderEvent(threadId, "unknown.future.event", {})
-      expect(debug).toHaveBeenCalledWith("[BetterC0de] unhandled event: unknown.future.event", expect.any(Object))
-    } finally {
-      debug.mockRestore()
+  it.each([true, false])(
+    "recognizes hook and task lifecycle events without unhandled debug output (projection=%s)",
+    (projectActivities) => {
+      const debug = vi.spyOn(console, "debug").mockImplementation(() => {})
+      const events = [
+        "hook.started",
+        "hook.progress",
+        "hook.completed",
+        "task.started",
+        "task.progress",
+        "task.completed",
+      ]
+      try {
+        for (const type of events)
+          handleProviderEvent(
+            threadId,
+            type,
+            {
+              providerKind: "claude",
+              providerInstanceId: "claude",
+              hookId: "hook-1",
+              hookName: "SessionStart:resume",
+              taskId: "task-1",
+              taskType: "local_bash",
+              outcome: "success",
+              status: "completed",
+              output: "Hook warning remains inspectable",
+              summary: "Preview server ready",
+            },
+            { projectActivities }
+          )
+        expect(debug).not.toHaveBeenCalled()
+        const activities =
+          useChatStore.getState().activitiesByThread[threadId] ?? []
+        expect(activities.map((activity) => activity.kind)).toEqual(
+          projectActivities ? events : []
+        )
+        if (projectActivities)
+          expect(
+            activities.find((activity) => activity.kind === "hook.completed")
+          ).toMatchObject({
+            payload: { output: "Hook warning remains inspectable" },
+          })
+        handleProviderEvent(threadId, "unknown.future.event", {})
+        expect(debug).toHaveBeenCalledWith(
+          "[BetterC0de] unhandled event: unknown.future.event",
+          expect.any(Object)
+        )
+      } finally {
+        debug.mockRestore()
+      }
     }
-  })
+  )
 
   // -----------------------------------------------------------------------
   // 1. content_delta
@@ -272,38 +334,41 @@ describe("provider-events: handleProviderEvent", () => {
       ).toBeUndefined()
     })
 
-    it.each(["assistant_message", "agentMessage"])("finalizes assistant text when a canonical %s item completes", (itemType) => {
-      handleProviderEvent(threadId, "turn.started", { turnId: "turn-item" })
-      handleProviderEvent(threadId, "content.delta", {
-        turnId: "turn-item",
-        itemId: "item-answer",
-        streamKind: "assistant_text",
-        delta: "Buffered answer",
-      })
-      handleProviderEvent(threadId, "item.completed", {
-        turnId: "turn-item",
-        itemId: "item-answer",
-        payload: {
-          itemType,
-          status: "completed",
-        },
-      })
+    it.each(["assistant_message", "agentMessage"])(
+      "finalizes assistant text when a canonical %s item completes",
+      (itemType) => {
+        handleProviderEvent(threadId, "turn.started", { turnId: "turn-item" })
+        handleProviderEvent(threadId, "content.delta", {
+          turnId: "turn-item",
+          itemId: "item-answer",
+          streamKind: "assistant_text",
+          delta: "Buffered answer",
+        })
+        handleProviderEvent(threadId, "item.completed", {
+          turnId: "turn-item",
+          itemId: "item-answer",
+          payload: {
+            itemType,
+            status: "completed",
+          },
+        })
 
-      const assistantMessages =
-        useChatStore
-          .getState()
-          .threads.find((thread) => thread.id === threadId)
-          ?.messages.filter((message) => message.role === "assistant") ?? []
+        const assistantMessages =
+          useChatStore
+            .getState()
+            .threads.find((thread) => thread.id === threadId)
+            ?.messages.filter((message) => message.role === "assistant") ?? []
 
-      expect(assistantMessages).toHaveLength(1)
-      expect(assistantMessages[0]).toMatchObject({
-        content: "Buffered answer",
-        turnId: "turn-item",
-      })
-      expect(
-        useChatStore.getState().streamingByThread[threadId]
-      ).toMatchObject({ isStreaming: true })
-    })
+        expect(assistantMessages).toHaveLength(1)
+        expect(assistantMessages[0]).toMatchObject({
+          content: "Buffered answer",
+          turnId: "turn-item",
+        })
+        expect(
+          useChatStore.getState().streamingByThread[threadId]
+        ).toMatchObject({ isStreaming: true })
+      }
+    )
 
     it("uses assistant item detail when no text delta was streamed", () => {
       handleProviderEvent(threadId, "turn.started", { turnId: "turn-detail" })
@@ -382,26 +447,59 @@ describe("provider-events: handleProviderEvent", () => {
 
       expect(assistantMessages).toHaveLength(1)
       expect(assistantMessages[0].content).toBe("Done")
-      expect(useChatStore.getState().streamingByThread[threadId]).toBeUndefined()
+      expect(
+        useChatStore.getState().streamingByThread[threadId]
+      ).toBeUndefined()
     })
 
     it("keeps the turn busy between commentary, tools and the final answer", () => {
       handleProviderEvent(threadId, "turn.started", { turnId: "busy-turn" })
       handleProviderEvent(threadId, "item.completed", {
-        turnId: "busy-turn", itemType: "assistant_message", detail: "Checking the project",
+        turnId: "busy-turn",
+        itemType: "assistant_message",
+        detail: "Checking the project",
       })
-      expect(useChatStore.getState().streamingByThread[threadId]).toMatchObject({
-        isStreaming: true, activeTurnId: "busy-turn",
+      expect(useChatStore.getState().streamingByThread[threadId]).toMatchObject(
+        {
+          isStreaming: true,
+          activeTurnId: "busy-turn",
+        }
+      )
+      handleProviderEvent(threadId, "tool.started", {
+        turnId: "busy-turn",
+        toolId: "read",
+        toolName: "shell",
       })
-      handleProviderEvent(threadId, "tool.started", { turnId: "busy-turn", toolId: "read", toolName: "shell" })
-      handleProviderEvent(threadId, "tool.completed", { turnId: "busy-turn", toolId: "read", output: "read done" })
-      expect(useChatStore.getState().streamingByThread[threadId]?.isStreaming).toBe(true)
-      handleProviderEvent(threadId, "content.delta", { turnId: "busy-turn", streamKind: "assistant_text", delta: "Finished" })
-      handleProviderEvent(threadId, "item.completed", { turnId: "busy-turn", itemType: "assistant_message" })
-      expect(useChatStore.getState().streamingByThread[threadId]?.isStreaming).toBe(true)
+      handleProviderEvent(threadId, "tool.completed", {
+        turnId: "busy-turn",
+        toolId: "read",
+        output: "read done",
+      })
+      expect(
+        useChatStore.getState().streamingByThread[threadId]?.isStreaming
+      ).toBe(true)
+      handleProviderEvent(threadId, "content.delta", {
+        turnId: "busy-turn",
+        streamKind: "assistant_text",
+        delta: "Finished",
+      })
+      handleProviderEvent(threadId, "item.completed", {
+        turnId: "busy-turn",
+        itemType: "assistant_message",
+      })
+      expect(
+        useChatStore.getState().streamingByThread[threadId]?.isStreaming
+      ).toBe(true)
       handleProviderEvent(threadId, "turn.completed", { turnId: "busy-turn" })
-      expect(useChatStore.getState().streamingByThread[threadId]).toBeUndefined()
-      expect(useChatStore.getState().threads.find(t => t.id === threadId)?.messages.some(m => m.content.startsWith("Error:"))).toBe(false)
+      expect(
+        useChatStore.getState().streamingByThread[threadId]
+      ).toBeUndefined()
+      expect(
+        useChatStore
+          .getState()
+          .threads.find((t) => t.id === threadId)
+          ?.messages.some((m) => m.content.startsWith("Error:"))
+      ).toBe(false)
     })
   })
 
@@ -476,16 +574,24 @@ describe("provider-events: handleProviderEvent", () => {
   describe("turn_completed", () => {
     it("does not confuse a completed Claude turn with an achieved goal", () => {
       const goal = {
-        objective: "Finish all migration steps", status: "active" as const,
-        startedAt: 100, updatedAt: 100, providerKind: "claude",
+        objective: "Finish all migration steps",
+        status: "active" as const,
+        startedAt: 100,
+        updatedAt: 100,
+        providerKind: "claude",
       }
       useChatStore.getState().setThreadSetting(threadId, "goal", goal)
       handleProviderEvent(threadId, "turn_completed", {})
-      expect(useChatStore.getState().getThreadSettings(threadId).goal).toEqual(goal)
+      expect(useChatStore.getState().getThreadSettings(threadId).goal).toEqual(
+        goal
+      )
       handleProviderEvent(threadId, "thread.metadata.updated", {
-        providerKind: "claude", metadata: { goal: { objective: goal.objective, status: "complete" } },
+        providerKind: "claude",
+        metadata: { goal: { objective: goal.objective, status: "complete" } },
       })
-      expect(useChatStore.getState().getThreadSettings(threadId).goal?.status).toBe("achieved")
+      expect(
+        useChatStore.getState().getThreadSettings(threadId).goal?.status
+      ).toBe("achieved")
     })
     it("finalizes stream and creates assistant message", () => {
       handleProviderEvent(threadId, "content_delta", { delta: "Final answer" })
@@ -879,9 +985,9 @@ describe("provider-events: handleProviderEvent", () => {
         content: "first half",
         turnId: "turn-approval",
       })
-      expect(
-        useChatStore.getState().streamingByThread[threadId]
-      ).toMatchObject({ isStreaming: true })
+      expect(useChatStore.getState().streamingByThread[threadId]).toMatchObject(
+        { isStreaming: true }
+      )
 
       handleProviderEvent(threadId, "content.delta", {
         turnId: "turn-approval",
@@ -933,9 +1039,9 @@ describe("provider-events: handleProviderEvent", () => {
       expect(
         activities?.some((activity) => activity.kind === "approval.requested")
       ).toBe(true)
-      expect(
-        useChatStore.getState().streamingByThread[threadId]
-      ).toMatchObject({ isStreaming: true })
+      expect(useChatStore.getState().streamingByThread[threadId]).toMatchObject(
+        { isStreaming: true }
+      )
     })
   })
 
@@ -1618,9 +1724,9 @@ describe("provider-events: handleProviderEvent", () => {
 
       const activities = useChatStore
         .getState()
-        .activitiesByThread[threadId].filter(
-          (activity) => activity.kind === "tool.updated"
-        )
+        .activitiesByThread[
+          threadId
+        ].filter((activity) => activity.kind === "tool.updated")
       expect(activities).toHaveLength(3)
       expect(new Set(activities.map((activity) => activity.id)).size).toBe(3)
       expect(
@@ -1653,9 +1759,9 @@ describe("provider-events: handleProviderEvent", () => {
       }
       const activities = useChatStore
         .getState()
-        .activitiesByThread[threadId].filter(
-          (activity) => activity.kind === "tool.updated"
-        )
+        .activitiesByThread[
+          threadId
+        ].filter((activity) => activity.kind === "tool.updated")
       expect(activities).toHaveLength(1)
       expect(activities[0]).toMatchObject({
         id: `${threadId}::tool.updated::grep-1`,
@@ -1669,7 +1775,9 @@ describe("provider-events: handleProviderEvent", () => {
         id: "grep-1",
         output: "Searching\nFound 3",
       })
-      expect(stream.streamingTools[0].output).not.toContain("SearchingSearching")
+      expect(stream.streamingTools[0].output).not.toContain(
+        "SearchingSearching"
+      )
     })
 
     it("replaces the streaming output for a bridged cumulative snapshot whose detail differs", () => {
@@ -1691,9 +1799,9 @@ describe("provider-events: handleProviderEvent", () => {
       }
       const activities = useChatStore
         .getState()
-        .activitiesByThread[threadId].filter(
-          (activity) => activity.kind === "tool.updated"
-        )
+        .activitiesByThread[
+          threadId
+        ].filter((activity) => activity.kind === "tool.updated")
       expect(activities).toHaveLength(1)
       expect(activities[0].id).toBe(`${threadId}::tool.updated::patch-1`)
       const stream = useChatStore.getState().streamingByThread[threadId]

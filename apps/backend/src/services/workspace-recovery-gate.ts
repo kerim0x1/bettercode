@@ -79,10 +79,7 @@ export class WorkspaceRecoveryGate {
       this.waiting.push(waiter)
       this.drain()
     })
-    const timeoutMs = Math.max(
-      1,
-      Math.floor(options.timeoutMs ?? 30_000)
-    )
+    const timeoutMs = Math.max(1, Math.floor(options.timeoutMs ?? 30_000))
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null
     const timeout = new Promise<never>((_, reject) => {
       timeoutHandle = setTimeout(

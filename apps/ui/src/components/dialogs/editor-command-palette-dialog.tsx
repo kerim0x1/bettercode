@@ -787,7 +787,11 @@ export function EditorCommandPaletteDialog({
         if (wasOpen) {
           const threadId = useChatStore.getState().activeThreadId
           window.setTimeout(() => {
-            dispatchTerminalNewSession({ mode: appMode, cwd: projectPath, threadId })
+            dispatchTerminalNewSession({
+              mode: appMode,
+              cwd: projectPath,
+              threadId,
+            })
           }, 0)
         }
       },

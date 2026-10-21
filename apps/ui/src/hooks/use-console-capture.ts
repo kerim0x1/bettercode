@@ -75,12 +75,21 @@ export function useConsoleCapture(
       let message = args.map(formatArg).join(" ")
       if (message.length > MAX_MESSAGE_CHARS)
         message = message.slice(0, MAX_MESSAGE_CHARS) + "…"
-      const stack = args.filter((arg): arg is Error => arg instanceof Error)
-        .map((error) => error.stack || `${error.name}: ${error.message}`).join("\n\n").slice(0, 16_000)
-      const entry = { type, message, ...(stack ? { stack } : {}), timestamp: new Date() }
+      const stack = args
+        .filter((arg): arg is Error => arg instanceof Error)
+        .map((error) => error.stack || `${error.name}: ${error.message}`)
+        .join("\n\n")
+        .slice(0, 16_000)
+      const entry = {
+        type,
+        message,
+        ...(stack ? { stack } : {}),
+        timestamp: new Date(),
+      }
       buffer.push(entry)
       recentLogs.push(entry)
-      if (recentLogs.length > MAX_LOGS) recentLogs.splice(0, recentLogs.length - MAX_LOGS)
+      if (recentLogs.length > MAX_LOGS)
+        recentLogs.splice(0, recentLogs.length - MAX_LOGS)
       scheduleFlush()
     }
 
@@ -105,19 +114,34 @@ export function useConsoleCapture(
       addLog("debug", args)
     }
 
-    const reportError = (reason: unknown, fallback = "Unhandled renderer error") => {
-      const error = reason instanceof Error ? reason : new Error(typeof reason === "string" ? reason : fallback)
-      void ipcApi.bugReport.send({
-        automatic: true,
-        message: (error.message || fallback).slice(0, 128_000),
-        stack: (error.stack || "").slice(0, 32_000),
-        logs: recentLogs.map((log) => `[${log.timestamp.toISOString()}] [${log.type}] ${log.message}`).join("\n").slice(-64_000),
-      }).catch(() => {})
+    const reportError = (
+      reason: unknown,
+      fallback = "Unhandled renderer error"
+    ) => {
+      const error =
+        reason instanceof Error
+          ? reason
+          : new Error(typeof reason === "string" ? reason : fallback)
+      void ipcApi.bugReport
+        .send({
+          automatic: true,
+          message: (error.message || fallback).slice(0, 128_000),
+          stack: (error.stack || "").slice(0, 32_000),
+          logs: recentLogs
+            .map(
+              (log) =>
+                `[${log.timestamp.toISOString()}] [${log.type}] ${log.message}`
+            )
+            .join("\n")
+            .slice(-64_000),
+        })
+        .catch(() => {})
     }
     const onError = (event: ErrorEvent) => {
       if (event.message) reportError(event.error, event.message)
     }
-    const onRejection = (event: PromiseRejectionEvent) => reportError(event.reason, "Unhandled renderer promise rejection")
+    const onRejection = (event: PromiseRejectionEvent) =>
+      reportError(event.reason, "Unhandled renderer promise rejection")
     if (typeof window !== "undefined") {
       window.addEventListener("error", onError)
       window.addEventListener("unhandledrejection", onRejection)

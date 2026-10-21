@@ -23,9 +23,11 @@ function tempWorkspace(label: string): {
   workspace: string
   dbPath: string
 } {
-  const directory = fs.realpathSync.native(fs.mkdtempSync(
-    path.join(os.tmpdir(), `betterc0de-agent-permissions-${label}-`)
-  ))
+  const directory = fs.realpathSync.native(
+    fs.mkdtempSync(
+      path.join(os.tmpdir(), `betterc0de-agent-permissions-${label}-`)
+    )
+  )
   cleanupDirectories.push(directory)
   const workspace = path.join(directory, "workspace")
   fs.mkdirSync(workspace)
@@ -44,16 +46,35 @@ afterEach(() => {
 
 describe("AgentPermissionPolicy", () => {
   it("matches durable deny scopes using the host path case semantics", () => {
-    const { workspace, dbPath } = tempWorkspace("scope-case");
-    const db = openDatabase(dbPath);
-    runMigrations(db);
-    const policy = new AgentPermissionPolicy(db);
+    const { workspace, dbPath } = tempWorkspace("scope-case")
+    const db = openDatabase(dbPath)
+    runMigrations(db)
+    const policy = new AgentPermissionPolicy(db)
     try {
-      policy.upsertGrant({ destination: "user", toolName: "read", pathScope: "SRC", behavior: "allow" });
-      policy.upsertGrant({ destination: "workspace", workspacePath: workspace, toolName: "read", pathScope: "src/private", behavior: "deny" });
-      expect(policy.evaluateTool({ workspacePath: workspace, toolName: "Read", path: "SRC/PRIVATE/secret.txt" }).decision).toBe(process.platform === "win32" ? "deny" : "allow");
-    } finally { db.close(); }
-  });
+      policy.upsertGrant({
+        destination: "user",
+        toolName: "read",
+        pathScope: "SRC",
+        behavior: "allow",
+      })
+      policy.upsertGrant({
+        destination: "workspace",
+        workspacePath: workspace,
+        toolName: "read",
+        pathScope: "src/private",
+        behavior: "deny",
+      })
+      expect(
+        policy.evaluateTool({
+          workspacePath: workspace,
+          toolName: "Read",
+          path: "SRC/PRIVATE/secret.txt",
+        }).decision
+      ).toBe(process.platform === "win32" ? "deny" : "allow")
+    } finally {
+      db.close()
+    }
+  })
 
   it("preserves durable grants and explicit trust across a database restart", () => {
     const { workspace, dbPath } = tempWorkspace("restart")
@@ -282,9 +303,19 @@ describe("AgentPermissionPolicy", () => {
     })
     policy.setWorkspaceTrust({ workspacePath: workspace, state: "trusted" })
 
-    const memoryFile = path.join(configRoot, "projects", "slug", "memory", "MEMORY.md")
+    const memoryFile = path.join(
+      configRoot,
+      "projects",
+      "slug",
+      "memory",
+      "MEMORY.md"
+    )
     expect(
-      policy.evaluateTool({ workspacePath: workspace, toolName: "read", path: memoryFile })
+      policy.evaluateTool({
+        workspacePath: workspace,
+        toolName: "read",
+        path: memoryFile,
+      })
     ).toEqual({
       decision: "ask",
       source: "default",
@@ -302,7 +333,11 @@ describe("AgentPermissionPolicy", () => {
     ).toMatchObject({ decision: "deny", source: "path_confinement" })
     // The config root itself, and a traversal that ends outside it.
     expect(
-      policy.evaluateTool({ workspacePath: workspace, toolName: "read", path: configRoot })
+      policy.evaluateTool({
+        workspacePath: workspace,
+        toolName: "read",
+        path: configRoot,
+      })
     ).toMatchObject({ decision: "ask", source: "default" })
     expect(
       policy.evaluateTool({
@@ -314,7 +349,11 @@ describe("AgentPermissionPolicy", () => {
     // Untrusted workspaces stay closed regardless.
     policy.setWorkspaceTrust({ workspacePath: workspace, state: "untrusted" })
     expect(
-      policy.evaluateTool({ workspacePath: workspace, toolName: "read", path: memoryFile })
+      policy.evaluateTool({
+        workspacePath: workspace,
+        toolName: "read",
+        path: memoryFile,
+      })
     ).toMatchObject({ decision: "deny", source: "workspace_trust" })
     db.close()
   })
@@ -335,8 +374,12 @@ describe("AgentPermissionPolicy", () => {
     expect(custom[0]).toBe(path.join(home, "claude-cfg"))
     expect(custom[1]).toBe(path.join(home, ".codex"))
     expect(isAgentConfigPath("relative/inside", roots)).toBe(false)
-    expect(isAgentConfigPath(path.join(home, ".claude", "settings.json"), roots)).toBe(true)
-    expect(isAgentConfigPath(path.join(home, ".claudex", "settings.json"), roots)).toBe(false)
+    expect(
+      isAgentConfigPath(path.join(home, ".claude", "settings.json"), roots)
+    ).toBe(true)
+    expect(
+      isAgentConfigPath(path.join(home, ".claudex", "settings.json"), roots)
+    ).toBe(false)
   })
 
   // Regression: untrusted state used to be enforced ONLY when appMode was
@@ -372,8 +415,7 @@ describe("AgentPermissionPolicy", () => {
         decision: "deny",
         source: "workspace_trust",
         toolName: "AgentMode",
-        reason:
-          "This workspace is marked untrusted; agent turns are disabled.",
+        reason: "This workspace is marked untrusted; agent turns are disabled.",
       })
     }
     expect(
@@ -433,7 +475,9 @@ describe("AgentPermissionPolicy", () => {
     const { workspace, dbPath } = tempWorkspace("ensure-trust")
     const db = openDatabase(dbPath)
     runMigrations(db)
-    const policy = new AgentPermissionPolicy(db, { autoTrustWorkspaces: () => true })
+    const policy = new AgentPermissionPolicy(db, {
+      autoTrustWorkspaces: () => true,
+    })
 
     expect(policy.ensureWorkspaceTrusted(workspace)).toMatchObject({
       state: "trusted",
@@ -454,19 +498,38 @@ describe("AgentPermissionPolicy", () => {
     try {
       runMigrations(db)
       let automatic = false
-      const agentPermissions = new AgentPermissionPolicy(db, { autoTrustWorkspaces: () => automatic })
+      const agentPermissions = new AgentPermissionPolicy(db, {
+        autoTrustWorkspaces: () => automatic,
+      })
       const state = { db, agentPermissions } as AppState
       await openWorkspaceRoot(state, workspace)
       expect(agentPermissions.getWorkspaceTrust(workspace).explicit).toBe(false)
-      expect(agentPermissions.evaluateTurnTrust({ workspacePath: workspace, appMode: "agent" }).decision).toBe("deny")
+      expect(
+        agentPermissions.evaluateTurnTrust({
+          workspacePath: workspace,
+          appMode: "agent",
+        }).decision
+      ).toBe("deny")
       automatic = true
       await openWorkspaceRoot(state, workspace)
       expect(agentPermissions.getWorkspaceTrust(workspace).explicit).toBe(true)
-      expect(agentPermissions.evaluateTurnTrust({ workspacePath: workspace, appMode: "agent" }).decision).toBe("allow")
-      agentPermissions.setWorkspaceTrust({ workspacePath: workspace, state: "untrusted" })
+      expect(
+        agentPermissions.evaluateTurnTrust({
+          workspacePath: workspace,
+          appMode: "agent",
+        }).decision
+      ).toBe("allow")
+      agentPermissions.setWorkspaceTrust({
+        workspacePath: workspace,
+        state: "untrusted",
+      })
       await openWorkspaceRoot(state, workspace)
-      expect(agentPermissions.getWorkspaceTrust(workspace).state).toBe("untrusted")
-    } finally { db.close() }
+      expect(agentPermissions.getWorkspaceTrust(workspace).state).toBe(
+        "untrusted"
+      )
+    } finally {
+      db.close()
+    }
   })
 
   it("defaults and normalizes app mode fail-closed for turn trust", () => {
@@ -686,7 +749,6 @@ function statementSource(owner: object, name: string): string {
   return statement.source
 }
 
-
 describe("AgentPermissionPolicy grant listing", () => {
   it("filters grants in SQL by destination and workspace", () => {
     const { workspace, dbPath, directory } = tempWorkspace("list-grants")
@@ -699,7 +761,11 @@ describe("AgentPermissionPolicy grant listing", () => {
       createId: () => `grant-${(counter += 1)}`,
       now: () => new Date("2026-07-24T10:00:00.000Z"),
     })
-    policy.upsertGrant({ destination: "user", toolName: "bash", behavior: "ask" })
+    policy.upsertGrant({
+      destination: "user",
+      toolName: "bash",
+      behavior: "ask",
+    })
     policy.upsertGrant({
       destination: "workspace",
       workspacePath: workspace,
@@ -715,7 +781,8 @@ describe("AgentPermissionPolicy grant listing", () => {
       behavior: "deny",
     })
 
-    const ids = (grants: Array<{ id: string }>) => grants.map((grant) => grant.id)
+    const ids = (grants: Array<{ id: string }>) =>
+      grants.map((grant) => grant.id)
     // ORDER BY destination, workspace_path: the "other" workspace sorts first.
     expect(ids(policy.listGrants())).toEqual(["grant-1", "grant-3", "grant-2"])
     expect(ids(policy.listGrants({ workspacePath: workspace }))).toEqual([
@@ -729,7 +796,12 @@ describe("AgentPermissionPolicy grant listing", () => {
       ids(policy.listGrants({ workspacePath: workspace, destination: "user" }))
     ).toEqual(["grant-1"])
     expect(
-      ids(policy.listGrants({ workspacePath: workspace, destination: "workspace" }))
+      ids(
+        policy.listGrants({
+          workspacePath: workspace,
+          destination: "workspace",
+        })
+      )
     ).toEqual(["grant-2"])
     expect(ids(policy.listGrants({ destination: "workspace" }))).toEqual([
       "grant-3",
@@ -737,15 +809,27 @@ describe("AgentPermissionPolicy grant listing", () => {
     ])
     expect(policy.hasRestrictiveGrants(workspace)).toBe(true)
     expect(
-      policy.evaluateTool({ workspacePath: workspace, toolName: "edit", path: "src/a.ts" })
+      policy.evaluateTool({
+        workspacePath: workspace,
+        toolName: "edit",
+        path: "src/a.ts",
+      })
     ).toMatchObject({ decision: "allow", grant: { id: "grant-2" } })
 
-    for (const name of ["listWorkspaceGrantsStmt", "listGrantsByDestinationStmt"]) {
+    for (const name of [
+      "listWorkspaceGrantsStmt",
+      "listGrantsByDestinationStmt",
+    ]) {
       const plan = explainPlan(db, statementSource(policy, name))
-      expect(plan, name).toMatch(/agent_permission_grants USING (COVERING )?INDEX/)
+      expect(plan, name).toMatch(
+        /agent_permission_grants USING (COVERING )?INDEX/
+      )
       expect(plan, name).not.toContain("USE TEMP B-TREE")
     }
-    const trustPlan = explainPlan(db, statementSource(policy, "findWorkspaceTrustStmt"))
+    const trustPlan = explainPlan(
+      db,
+      statementSource(policy, "findWorkspaceTrustStmt")
+    )
     expect(trustPlan).toMatch(/agent_workspace_trust USING (COVERING )?INDEX/)
     db.close()
   })

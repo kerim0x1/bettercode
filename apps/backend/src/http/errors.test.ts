@@ -4,7 +4,11 @@ import { HttpError, sanitizeError } from "./errors"
 describe("sanitizeError", () => {
   it("preserves the message of a nominal HttpError", () => {
     const result = sanitizeError(
-      new HttpError(409, "Thread already has active provider work.", "turn_active"),
+      new HttpError(
+        409,
+        "Thread already has active provider work.",
+        "turn_active"
+      ),
       "chat send"
     )
     expect(result).toEqual({

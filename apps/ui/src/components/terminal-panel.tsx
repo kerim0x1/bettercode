@@ -429,7 +429,14 @@ export function TerminalPanel({
     const onNewSession = (event: Event) => {
       const detail = (event as CustomEvent<TerminalNewSessionEventDetail>)
         .detail
-      if (!terminalSessionTargetsPanel(detail ?? {}, { id: instanceIdRef.current, mode: _mode, threadId })) return
+      if (
+        !terminalSessionTargetsPanel(detail ?? {}, {
+          id: instanceIdRef.current,
+          mode: _mode,
+          threadId,
+        })
+      )
+        return
       const shell = detail?.shell as ShellType | undefined
       addTab(shell, detail?.cwd || resolvedCwd, detail?.initialCommand)
     }
@@ -482,7 +489,7 @@ export function TerminalPanel({
       .filter((l) => l.type === "output" || l.type === "error")
       .map((l) => l.text)
       .join("\n")
-    if (!await copyText(text)) return
+    if (!(await copyText(text))) return
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }, [activeTab])

@@ -81,11 +81,26 @@ export function classifyTailscaleStderr(
   if (!stderr.trim()) return
   // CLI output may wrap lines or include terminal styling. Normalize only for
   // classification; neither raw text nor normalized text may reach the client.
-  const words = stripVTControlCharacters(stderr).toLowerCase().split(/\s+/).join(" ")
+  const words = stripVTControlCharacters(stderr)
+    .toLowerCase()
+    .split(/\s+/)
+    .join(" ")
   const contains = (phrase: string) => words.includes(phrase)
   if (contains("handler does not exist")) return "no-existing-handler"
-  if (["not logged in", "logged out", "need login", "needs login"].some(contains)) return "not-logged-in"
-  if (["permission denied", "access denied", "access is denied", "must be root", "operation not permitted"].some(contains)) return "permission-denied"
+  if (
+    ["not logged in", "logged out", "need login", "needs login"].some(contains)
+  )
+    return "not-logged-in"
+  if (
+    [
+      "permission denied",
+      "access denied",
+      "access is denied",
+      "must be root",
+      "operation not permitted",
+    ].some(contains)
+  )
+    return "permission-denied"
   return "unknown"
 }
 
@@ -154,7 +169,7 @@ export function createTailscaleCommandRunner(
             }
             const exitCode =
               typeof (error as { code?: unknown }).code === "number"
-                ? ((error as { code: number }).code)
+                ? (error as { code: number }).code
                 : -1
             const diagnostic = classifyTailscaleStderr(String(stderr ?? ""))
             return resolve({
@@ -210,8 +225,8 @@ export function normalizeSocketAddress(address: string): string {
 export function isTailscaleAddress(address: string): boolean {
   const normalized = normalizeSocketAddress(address)
   return (
-    isTailscaleIpv4Address(normalized)
-    || (isIP(normalized) === 6 && normalized.startsWith("fd7a:115c:a1e0:"))
+    isTailscaleIpv4Address(normalized) ||
+    (isIP(normalized) === 6 && normalized.startsWith("fd7a:115c:a1e0:"))
   )
 }
 
@@ -300,11 +315,18 @@ export function findTailscaleServeMapping(
     )) {
       const handlers = (entry as { Handlers?: unknown } | null)?.Handlers
       if (!handlers || typeof handlers !== "object") continue
-      for (const handler of Object.values(handlers as Record<string, unknown>)) {
+      for (const handler of Object.values(
+        handlers as Record<string, unknown>
+      )) {
         const proxy = (handler as { Proxy?: unknown } | null)?.Proxy
         if (typeof proxy !== "string" || !target.test(proxy.trim())) continue
-        const port = Number.parseInt(hostPort.slice(hostPort.lastIndexOf(":") + 1), 10)
-        return Number.isInteger(port) && port > 0 ? port : DEFAULT_TAILSCALE_SERVE_PORT
+        const port = Number.parseInt(
+          hostPort.slice(hostPort.lastIndexOf(":") + 1),
+          10
+        )
+        return Number.isInteger(port) && port > 0
+          ? port
+          : DEFAULT_TAILSCALE_SERVE_PORT
       }
     }
     return null
@@ -444,7 +466,9 @@ export function createTailscaleRemoteAccess(
           ...NOT_INSTALLED,
           installed: true,
           state:
-            result.diagnostic === "not-logged-in" ? "needs-login" : "unavailable",
+            result.diagnostic === "not-logged-in"
+              ? "needs-login"
+              : "unavailable",
         }
       }
       cachedStatus = { at: now(), value }
@@ -498,7 +522,10 @@ export function createTailscaleRemoteAccess(
       if (!result.ok) throw new TailscaleCommandError("serve", result)
     },
     async disableServe() {
-      const result = await run(tailscaleServeOffArgs(servePort), SERVE_TIMEOUT_MS)
+      const result = await run(
+        tailscaleServeOffArgs(servePort),
+        SERVE_TIMEOUT_MS
+      )
       cachedStatus = null
       // Nothing to remove is the state we wanted.
       if (!result.ok && result.diagnostic !== "no-existing-handler") {

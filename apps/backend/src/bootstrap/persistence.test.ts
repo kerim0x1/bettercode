@@ -19,10 +19,18 @@ beforeEach(() => {
   const legacy = path.join(home, ".betterc0de")
   fs.mkdirSync(legacy)
   const source = new Database(path.join(legacy, "betterc0de.db"))
-  source.exec("CREATE TABLE legacy_profile_marker (value TEXT); INSERT INTO legacy_profile_marker VALUES ('production history')")
+  source.exec(
+    "CREATE TABLE legacy_profile_marker (value TEXT); INSERT INTO legacy_profile_marker VALUES ('production history')"
+  )
   source.close()
-  fs.writeFileSync(path.join(legacy, "settings.json"), JSON.stringify({ custom_rules: "production settings" }))
-  fs.writeFileSync(path.join(legacy, "settings-key.bin"), "production wrapped key")
+  fs.writeFileSync(
+    path.join(legacy, "settings.json"),
+    JSON.stringify({ custom_rules: "production settings" })
+  )
+  fs.writeFileSync(
+    path.join(legacy, "settings-key.bin"),
+    "production wrapped key"
+  )
 })
 
 afterEach(async () => {
@@ -53,15 +61,29 @@ it.each(["dataDir option", "BETTERC0DE_HOME", "BETTERC0DE_DATA_DIR"])(
   (selection) => {
     const custom = path.join(home, "isolated")
     if (selection !== "dataDir option") vi.stubEnv(selection, custom)
-    const { db, config } = open(selection === "dataDir option" ? { dataDir: custom } : {})
-    expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'legacy_profile_marker'").get()).toBeUndefined()
+    const { db, config } = open(
+      selection === "dataDir option" ? { dataDir: custom } : {}
+    )
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE name = 'legacy_profile_marker'"
+        )
+        .get()
+    ).toBeUndefined()
     expect(fs.existsSync(config.settingsPath)).toBe(false)
-    expect(fs.existsSync(path.join(config.dataDir, "settings-key.bin"))).toBe(false)
+    expect(fs.existsSync(path.join(config.dataDir, "settings-key.bin"))).toBe(
+      false
+    )
   }
 )
 
 it("continues automatically migrating the standard production profile", () => {
   const { db, config } = open()
-  expect(db.prepare("SELECT value FROM legacy_profile_marker").get()).toEqual({ value: "production history" })
-  expect(fs.readFileSync(config.settingsPath, "utf8")).toContain("production settings")
+  expect(db.prepare("SELECT value FROM legacy_profile_marker").get()).toEqual({
+    value: "production history",
+  })
+  expect(fs.readFileSync(config.settingsPath, "utf8")).toContain(
+    "production settings"
+  )
 })

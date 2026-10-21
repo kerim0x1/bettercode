@@ -81,10 +81,7 @@ export function createCliStatusReader(
     deadlineMs: CLI_STATUS_DEADLINE_MS,
     ...overrides,
   }
-  const ttlMs = positiveDuration(
-    dependencies.ttlMs,
-    CLI_STATUS_CACHE_TTL_MS
-  )
+  const ttlMs = positiveDuration(dependencies.ttlMs, CLI_STATUS_CACHE_TTL_MS)
   const deadlineMs = positiveDuration(
     dependencies.deadlineMs,
     CLI_STATUS_DEADLINE_MS
@@ -224,7 +221,5 @@ function waitForCliStatus(
 }
 
 function positiveDuration(value: number, fallback: number): number {
-  return Number.isFinite(value) && value > 0
-    ? Math.floor(value)
-    : fallback
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback
 }

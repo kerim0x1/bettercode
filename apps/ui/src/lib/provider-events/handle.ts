@@ -3,15 +3,9 @@
  * plugin events. Owns the delta barrier and the chat store mutations.
  */
 
-import {
-  asRecord,
-  readString,
-} from "@betterc0de/schema"
+import { asRecord, readString } from "@betterc0de/schema"
 import { toolFailureText } from "@/lib/execution-diagnostics"
-import {
-  useChatStore,
-  emptyStreamState,
-} from "@/lib/chat-store"
+import { useChatStore, emptyStreamState } from "@/lib/chat-store"
 import { maybeMarkBetterC0deAutoShare } from "@/lib/betterc0de-auto-share"
 import {
   buildBetterC0dePlanJson,
@@ -124,9 +118,11 @@ export function handleProviderEvent(
   if (
     (type === "tool_call_delta" || type === "tool_result") &&
     typeof payload.tool_id === "string" &&
-    !useChatStore.getState().streamingByThread[threadId]?.streamingTools.some(
-      (tool) => tool.id === payload.tool_id
-    )
+    !useChatStore
+      .getState()
+      .streamingByThread[
+        threadId
+      ]?.streamingTools.some((tool) => tool.id === payload.tool_id)
   ) {
     store.addToolCall(threadId, {
       id: payload.tool_id,
@@ -423,11 +419,7 @@ export function handleProviderEvent(
       break
 
     case "turn.proposed.completed": {
-      const planContent = readString(
-        payload,
-        "planMarkdown",
-        "plan_markdown"
-      )
+      const planContent = readString(payload, "planMarkdown", "plan_markdown")
       if (planContent) {
         clearContentPlanCapture(threadId)
         store.replacePlanStreamText(threadId, planContent)
@@ -500,10 +492,14 @@ export function handleProviderEvent(
           !stream.streamingText &&
           !stream.reasoningText &&
           stream.streamingTools.length === 0 &&
-          !store.threads.find((thread) => thread.id === threadId)?.messages.some(
-            (message) => message.role === "assistant" &&
-              message.turnId === (payloadTurnId(payload) ?? stream.activeTurnId)
-          )
+          !store.threads
+            .find((thread) => thread.id === threadId)
+            ?.messages.some(
+              (message) =>
+                message.role === "assistant" &&
+                message.turnId ===
+                  (payloadTurnId(payload) ?? stream.activeTurnId)
+            )
         if (completedEmpty) {
           store.addMessage(threadId, {
             id: crypto.randomUUID(),

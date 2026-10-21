@@ -170,7 +170,10 @@ function StreamingMessageInner({
         ) : streamingText ? (
           <>
             {streamingDiffs.length > 0 && (
-              <ChatFileChanges diffs={streamingDiffs} workspaceRoot={workspaceRoot} />
+              <ChatFileChanges
+                diffs={streamingDiffs}
+                workspaceRoot={workspaceRoot}
+              />
             )}
             {streamingTasks.length > 0 && (
               <Queue className="mb-3">
@@ -214,7 +217,10 @@ function StreamingMessageInner({
             </MessageResponse>
           </>
         ) : !reasoning.text && !isReasoning && streamingTools.length === 0 ? (
-          <AgentActivity state="breathing" label={shimmerPhase >= 2 ? "Still working..." : "Thinking..."} />
+          <AgentActivity
+            state="breathing"
+            label={shimmerPhase >= 2 ? "Still working..." : "Thinking..."}
+          />
         ) : null}
       </MessageContent>
     </Message>

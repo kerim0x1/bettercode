@@ -21,7 +21,10 @@ import { workspaceRecoveryGate } from "../services/workspace-recovery-gate"
 import { registerChatRoutes } from "./routes/chat"
 import { RemoteProviderTurnOwnership } from "../remote/providerTurnOwnership"
 import { ThreadTurnCoordinator } from "../provider/threadTurnCoordinator"
-import { browserElementAttachment, withBrowserElementContext } from "@betterc0de/schema"
+import {
+  browserElementAttachment,
+  withBrowserElementContext,
+} from "@betterc0de/schema"
 
 const tempDirs: string[] = []
 
@@ -49,19 +52,43 @@ describe("durable chat dispatch HTTP lifecycle", () => {
   })
 
   it("persists browser tags through dispatch and history without treating them as provider files", async () => {
-    const attachment = browserElementAttachment({ url: "https://example.com/", selector: "#buy", tagName: "button", text: "Buy", label: "Buy" })
-    const startTurn = vi.fn((_provider: string, _input: unknown, options: AcceptedOptions) => {
-      options.onAccepted?.("browser-turn")
-      return testTurnHandle("browser-turn", neverSettles())
+    const attachment = browserElementAttachment({
+      url: "https://example.com/",
+      selector: "#buy",
+      tagName: "button",
+      text: "Buy",
+      label: "Buy",
     })
+    const startTurn = vi.fn(
+      (_provider: string, _input: unknown, options: AcceptedOptions) => {
+        options.onAccepted?.("browser-turn")
+        return testTurnHandle("browser-turn", neverSettles())
+      }
+    )
     const app = appWithHub(startTurn)
     const content = "Make this smaller"
-    const result = await send(app, { ...requestBody(), message: withBrowserElementContext(content, [attachment]), userMessageContent: content, attachments: [attachment] })
+    const result = await send(app, {
+      ...requestBody(),
+      message: withBrowserElementContext(content, [attachment]),
+      userMessageContent: content,
+      attachments: [attachment],
+    })
     expect(result.status, await result.clone().text()).toBe(200)
-    expect(startTurn.mock.calls[0][1]).toMatchObject({ message: expect.stringContaining('"selector":"#buy"') })
+    expect(startTurn.mock.calls[0][1]).toMatchObject({
+      message: expect.stringContaining('"selector":"#buy"'),
+    })
     expect(startTurn.mock.calls[0][1]).not.toHaveProperty("attachments")
-    expect(threads.listMessages("thread-1")).toEqual(expect.arrayContaining([expect.objectContaining({ content, attachments: [attachment] })]))
-    expect(threads.buildProviderHistory("thread-1")).toEqual([{ role: "user", content: withBrowserElementContext(content, [attachment]) }])
+    expect(threads.listMessages("thread-1")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ content, attachments: [attachment] }),
+      ])
+    )
+    expect(threads.buildProviderHistory("thread-1")).toEqual([
+      {
+        role: "user",
+        content: withBrowserElementContext(content, [attachment]),
+      },
+    ])
   })
 
   it("replays an identical send that races the original admission instead of 409 turn_active", async () => {
@@ -113,55 +140,76 @@ describe("durable chat dispatch HTTP lifecycle", () => {
   it.each([
     ["thread-1", "message-1", "thread-2", "message-1"],
     ["a:b", "c", "a", "b:c"],
-  ])("keeps in-flight admission %s/%s distinct from %s/%s", async (firstThread, firstMessage, secondThread, secondMessage) => {
-    const startTurn = vi.fn(
-      (_provider: string, _input: unknown, options: AcceptedOptions) => {
-        const turnId = `turn-${startTurn.mock.calls.length}`
-        options.onAccepted?.(turnId)
-        return testTurnHandle(turnId, neverSettles())
-      }
-    )
-    const app = new Hono()
-    registerChatRoutes(
-      app,
-      state({
-        // Auto-save off keeps the durable dispatch store — keyed by message
-        // id alone — out of the picture; the in-memory admission map is
-        // what this exercises.
-        settings: { get: () => ({ auto_save_conversations: false }) },
-        threadTurnCoordinator: new ThreadTurnCoordinator(),
-        providerHub: {
-          has: vi.fn(() => true),
-          assertCanStartTurn: vi.fn(),
-          startTurn,
-        },
-        projectProjections: { listAll: () => [] },
-        worktreeRegistry: { listAll: () => [] },
+  ])(
+    "keeps in-flight admission %s/%s distinct from %s/%s",
+    async (firstThread, firstMessage, secondThread, secondMessage) => {
+      const startTurn = vi.fn(
+        (_provider: string, _input: unknown, options: AcceptedOptions) => {
+          const turnId = `turn-${startTurn.mock.calls.length}`
+          options.onAccepted?.(turnId)
+          return testTurnHandle(turnId, neverSettles())
+        }
+      )
+      const app = new Hono()
+      registerChatRoutes(
+        app,
+        state({
+          // Auto-save off keeps the durable dispatch store — keyed by message
+          // id alone — out of the picture; the in-memory admission map is
+          // what this exercises.
+          settings: { get: () => ({ auto_save_conversations: false }) },
+          threadTurnCoordinator: new ThreadTurnCoordinator(),
+          providerHub: {
+            has: vi.fn(() => true),
+            assertCanStartTurn: vi.fn(),
+            startTurn,
+          },
+          projectProjections: { listAll: () => [] },
+          worktreeRegistry: { listAll: () => [] },
+        })
+      )
+      // Thread 1 admits `message-1`, thread 2 reuses the same client-chosen id,
+      // and a retry of thread 1's send races the original for its turn token.
+      // All three walk the same await chain, so they reach the reservation in
+      // start order: the original registers, thread 2 registers (keyed by id
+      // alone this overwrote the original), and the retry's reservation fails
+      // and looks the original up — it must find it, not thread 2's, not 409.
+      const [first, second, replayed] = await Promise.all([
+        send(app, {
+          ...requestBody(),
+          threadId: firstThread,
+          userMessageId: firstMessage,
+        }),
+        send(app, {
+          ...requestBody(),
+          threadId: secondThread,
+          userMessageId: secondMessage,
+        }),
+        send(app, {
+          ...requestBody(),
+          threadId: firstThread,
+          userMessageId: firstMessage,
+        }),
+      ])
+      expect(first.status).toBe(200)
+      expect(second.status).toBe(200)
+      expect(replayed.status, await replayed.clone().text()).toBe(200)
+      expect(await first.json()).toEqual({
+        status: "streaming",
+        turnId: "turn-1",
       })
-    )
-    // Thread 1 admits `message-1`, thread 2 reuses the same client-chosen id,
-    // and a retry of thread 1's send races the original for its turn token.
-    // All three walk the same await chain, so they reach the reservation in
-    // start order: the original registers, thread 2 registers (keyed by id
-    // alone this overwrote the original), and the retry's reservation fails
-    // and looks the original up — it must find it, not thread 2's, not 409.
-    const [first, second, replayed] = await Promise.all([
-      send(app, { ...requestBody(), threadId: firstThread, userMessageId: firstMessage }),
-      send(app, { ...requestBody(), threadId: secondThread, userMessageId: secondMessage }),
-      send(app, { ...requestBody(), threadId: firstThread, userMessageId: firstMessage }),
-    ])
-    expect(first.status).toBe(200)
-    expect(second.status).toBe(200)
-    expect(replayed.status, await replayed.clone().text()).toBe(200)
-    expect(await first.json()).toEqual({ status: "streaming", turnId: "turn-1" })
-    expect(await second.json()).toEqual({ status: "streaming", turnId: "turn-2" })
-    expect(await replayed.json()).toEqual({
-      status: "streaming",
-      turnId: "turn-1",
-      replayed: true,
-    })
-    expect(startTurn).toHaveBeenCalledTimes(2)
-  })
+      expect(await second.json()).toEqual({
+        status: "streaming",
+        turnId: "turn-2",
+      })
+      expect(await replayed.json()).toEqual({
+        status: "streaming",
+        turnId: "turn-1",
+        replayed: true,
+      })
+      expect(startTurn).toHaveBeenCalledTimes(2)
+    }
+  )
 
   it("returns the accepted turn for an HTTP retry without redispatching", async () => {
     const startTurn = vi.fn(
@@ -686,10 +734,7 @@ describe("durable chat dispatch HTTP lifecycle", () => {
     expect(summaryInput.transcript).not.toContain(
       "current request is dispatched separately"
     )
-    const providerInput = startTurn.mock.calls[0]![1] as Record<
-      string,
-      unknown
-    >
+    const providerInput = startTurn.mock.calls[0]![1] as Record<string, unknown>
     const history = providerInput.history as Array<{
       role: string
       content: string
@@ -807,38 +852,84 @@ describe("durable chat dispatch HTTP lifecycle", () => {
   })
 
   it.each([
-    ["claude", "codex"], ["codex", "claude"],
-    ["claude", "grok_cli"], ["grok_cli", "claude"],
-    ["codex", "grok_cli"], ["grok_cli", "codex"],
-  ] as const)("hands off %s to %s using the previous model before launching the target", async (source, target) => {
-    const fixture = handoffFixture(source, target)
-    const response = await send(fixture.app, fixture.body)
-    expect(response.status, await response.clone().text()).toBe(200)
-    expect(await response.json()).toMatchObject({ providerHandoff: {
-      sourceProvider: source, targetProvider: target, sourceModel: "previous-model", generation: 1,
-    } })
-    expect(fixture.summarize).toHaveBeenCalledWith(expect.objectContaining({
-      modelSelection: { instanceId: `${source}-source`, model: "previous-model" },
-      transcript: expect.stringContaining("Keep the public API stable"),
-      targetProvider: target,
-    }))
-    expect(fixture.summarize.mock.calls[0]?.[0].transcript).not.toContain("new provider request")
-    expect(fixture.startTurn).toHaveBeenCalledWith(target, expect.objectContaining({
-      message: "new provider request",
-      history: [{ role: "assistant", content: expect.stringContaining("Handoff: keep API; tests passed; next add retry.") }],
-    }), expect.anything())
-    expect(fixture.events).toEqual(["summary", "stop", "start"])
-    const reloadedMessages = new ThreadService(db).listMessages("thread-1")
-    expect(reloadedMessages.filter(message => message !== null && typeof message === "object" &&
-      "internalContext" in message && message.internalContext === "provider-handoff"))
-      .toEqual([expect.objectContaining({ role: "user" }), expect.objectContaining({ role: "assistant", compactedContext: true })])
-    expect(threads.buildProviderHistory("thread-1", { excludeMessageId: "message-1" }))
-      .toEqual([{ role: "assistant", content: expect.stringContaining("# Provider Handoff") }])
-    // Retrying an accepted send must not pay for a second summary or dispatch.
-    expect((await send(fixture.app, fixture.body)).status).toBe(200)
-    expect(fixture.summarize).toHaveBeenCalledTimes(1)
-    expect(fixture.startTurn).toHaveBeenCalledTimes(1)
-  })
+    ["claude", "codex"],
+    ["codex", "claude"],
+    ["claude", "grok_cli"],
+    ["grok_cli", "claude"],
+    ["codex", "grok_cli"],
+    ["grok_cli", "codex"],
+  ] as const)(
+    "hands off %s to %s using the previous model before launching the target",
+    async (source, target) => {
+      const fixture = handoffFixture(source, target)
+      const response = await send(fixture.app, fixture.body)
+      expect(response.status, await response.clone().text()).toBe(200)
+      expect(await response.json()).toMatchObject({
+        providerHandoff: {
+          sourceProvider: source,
+          targetProvider: target,
+          sourceModel: "previous-model",
+          generation: 1,
+        },
+      })
+      expect(fixture.summarize).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelSelection: {
+            instanceId: `${source}-source`,
+            model: "previous-model",
+          },
+          transcript: expect.stringContaining("Keep the public API stable"),
+          targetProvider: target,
+        })
+      )
+      expect(fixture.summarize.mock.calls[0]?.[0].transcript).not.toContain(
+        "new provider request"
+      )
+      expect(fixture.startTurn).toHaveBeenCalledWith(
+        target,
+        expect.objectContaining({
+          message: "new provider request",
+          history: [
+            {
+              role: "assistant",
+              content: expect.stringContaining(
+                "Handoff: keep API; tests passed; next add retry."
+              ),
+            },
+          ],
+        }),
+        expect.anything()
+      )
+      expect(fixture.events).toEqual(["summary", "stop", "start"])
+      const reloadedMessages = new ThreadService(db).listMessages("thread-1")
+      expect(
+        reloadedMessages.filter(
+          (message) =>
+            message !== null &&
+            typeof message === "object" &&
+            "internalContext" in message &&
+            message.internalContext === "provider-handoff"
+        )
+      ).toEqual([
+        expect.objectContaining({ role: "user" }),
+        expect.objectContaining({ role: "assistant", compactedContext: true }),
+      ])
+      expect(
+        threads.buildProviderHistory("thread-1", {
+          excludeMessageId: "message-1",
+        })
+      ).toEqual([
+        {
+          role: "assistant",
+          content: expect.stringContaining("# Provider Handoff"),
+        },
+      ])
+      // Retrying an accepted send must not pay for a second summary or dispatch.
+      expect((await send(fixture.app, fixture.body)).status).toBe(200)
+      expect(fixture.summarize).toHaveBeenCalledTimes(1)
+      expect(fixture.startTurn).toHaveBeenCalledTimes(1)
+    }
+  )
 
   it("does not summarize for a different model/instance within one provider", async () => {
     const fixture = handoffFixture("claude", "claude")
@@ -853,54 +944,95 @@ describe("durable chat dispatch HTTP lifecycle", () => {
     const fixture = handoffFixture("claude", "codex")
     expect((await send(fixture.app, fixture.body)).status).toBe(200)
     fixture.finishTurn()
-    const response = await send(fixture.app, { ...fixture.body,
-      userMessageId: "return-message", providerKind: "claude", providerInstanceId: "claude-source",
-      modelId: "previous-model", message: "switch back",
+    const response = await send(fixture.app, {
+      ...fixture.body,
+      userMessageId: "return-message",
+      providerKind: "claude",
+      providerInstanceId: "claude-source",
+      modelId: "previous-model",
+      message: "switch back",
     })
     expect(response.status, await response.clone().text()).toBe(200)
-    expect(fixture.summarize).toHaveBeenLastCalledWith(expect.objectContaining({
-      modelSelection: { instanceId: "codex-target", model: "new-model" },
-      transcript: expect.stringContaining("Handoff: keep API; tests passed; next add retry."),
-    }))
+    expect(fixture.summarize).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        modelSelection: { instanceId: "codex-target", model: "new-model" },
+        transcript: expect.stringContaining(
+          "Handoff: keep API; tests passed; next add retry."
+        ),
+      })
+    )
     expect(bindings.getThreadGeneration("thread-1")).toBe(2)
   })
 
   it("reuses a committed handoff after a failed target launch", async () => {
     const fixture = handoffFixture("claude", "codex")
-    fixture.startTurn.mockImplementationOnce(() => { throw new Error("target not ready") })
-    expect((await send(fixture.app, fixture.body)).status).toBeGreaterThanOrEqual(400)
-    const response = await send(fixture.app, { ...fixture.body, userMessageId: "retry-message" })
+    fixture.startTurn.mockImplementationOnce(() => {
+      throw new Error("target not ready")
+    })
+    expect(
+      (await send(fixture.app, fixture.body)).status
+    ).toBeGreaterThanOrEqual(400)
+    const response = await send(fixture.app, {
+      ...fixture.body,
+      userMessageId: "retry-message",
+    })
     expect(response.status, await response.clone().text()).toBe(200)
     expect(fixture.summarize).toHaveBeenCalledTimes(1)
-    expect(fixture.startTurn).toHaveBeenLastCalledWith("codex", expect.objectContaining({
-      history: [{ role: "assistant", content: expect.stringContaining("# Provider Handoff") }],
-    }), expect.anything())
+    expect(fixture.startTurn).toHaveBeenLastCalledWith(
+      "codex",
+      expect.objectContaining({
+        history: [
+          {
+            role: "assistant",
+            content: expect.stringContaining("# Provider Handoff"),
+          },
+        ],
+      }),
+      expect.anything()
+    )
   })
 
-  it.each(["failure", "empty"])("does not stop the source or start the target on summary %s", async (mode) => {
-    const fixture = handoffFixture("grok_cli", "codex")
-    fixture.summarize.mockImplementationOnce(async () => {
-      if (mode === "failure") throw new Error("upstream unavailable")
-      return { summary: " " }
-    })
-    const response = await send(fixture.app, fixture.body)
-    expect(response.status).toBe(503)
-    expect(await response.json()).toMatchObject({ code: "provider_handoff_failed" })
-    expect(fixture.startTurn).not.toHaveBeenCalled()
-    expect(fixture.events).not.toContain("stop")
-    expect(bindings.getThreadGeneration("thread-1")).toBe(0)
-    expect(bindings.getLatestForThread("thread-1")?.providerThreadId).toBe("native-source")
-    expect(new ThreadActivityProjectionQuery(db).listByThread("thread-1").find(row => row.kind === "context.provider-handoff")?.payload)
-      .toMatchObject({ status: "failed" })
-  })
+  it.each(["failure", "empty"])(
+    "does not stop the source or start the target on summary %s",
+    async (mode) => {
+      const fixture = handoffFixture("grok_cli", "codex")
+      fixture.summarize.mockImplementationOnce(async () => {
+        if (mode === "failure") throw new Error("upstream unavailable")
+        return { summary: " " }
+      })
+      const response = await send(fixture.app, fixture.body)
+      expect(response.status).toBe(503)
+      expect(await response.json()).toMatchObject({
+        code: "provider_handoff_failed",
+      })
+      expect(fixture.startTurn).not.toHaveBeenCalled()
+      expect(fixture.events).not.toContain("stop")
+      expect(bindings.getThreadGeneration("thread-1")).toBe(0)
+      expect(bindings.getLatestForThread("thread-1")?.providerThreadId).toBe(
+        "native-source"
+      )
+      expect(
+        new ThreadActivityProjectionQuery(db)
+          .listByThread("thread-1")
+          .find((row) => row.kind === "context.provider-handoff")?.payload
+      ).toMatchObject({ status: "failed" })
+    }
+  )
 
   it("rejects a summary if an existing message changed while it was generated", async () => {
     const fixture = handoffFixture("claude", "codex")
     fixture.summarize.mockImplementationOnce(async () => {
-      threads.upsertMessage({ thread_id: "thread-1", message: {
-        message_id: "prior-answer", turn_id: null, role: "assistant",
-        content: "A new unresolved failure", created_at: "2026-01-01T00:00:01.000Z", extra: {},
-      } })
+      threads.upsertMessage({
+        thread_id: "thread-1",
+        message: {
+          message_id: "prior-answer",
+          turn_id: null,
+          role: "assistant",
+          content: "A new unresolved failure",
+          created_at: "2026-01-01T00:00:01.000Z",
+          extra: {},
+        },
+      })
       return { summary: "stale summary" }
     })
     const response = await send(fixture.app, fixture.body)
@@ -912,7 +1044,9 @@ describe("durable chat dispatch HTTP lifecycle", () => {
   it("broadcasts real handoff progress before the target is started and settles the same activity", async () => {
     const fixture = handoffFixture("claude", "codex")
     let releaseSummary!: () => void
-    const summaryGate = new Promise<void>(resolve => { releaseSummary = resolve })
+    const summaryGate = new Promise<void>((resolve) => {
+      releaseSummary = resolve
+    })
     fixture.summarize.mockImplementationOnce(async () => {
       await summaryGate
       return { summary: "Verified context" }
@@ -922,36 +1056,86 @@ describe("durable chat dispatch HTTP lifecycle", () => {
     try {
       const responsePromise = send(fixture.app, fixture.body)
       try {
-        await vi.waitFor(() => expect(fixture.summarize).toHaveBeenCalledTimes(1))
+        await vi.waitFor(() =>
+          expect(fixture.summarize).toHaveBeenCalledTimes(1)
+        )
         expect(fixture.startTurn).not.toHaveBeenCalled()
-        expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({ channel: "thread.activity", data: expect.objectContaining({
-          kind: "context.provider-handoff", payload: expect.objectContaining({ status: "compacting", requestMessageId: "message-1" }),
-        }) }))
+        expect(broadcast).toHaveBeenCalledWith(
+          expect.objectContaining({
+            channel: "thread.activity",
+            data: expect.objectContaining({
+              kind: "context.provider-handoff",
+              payload: expect.objectContaining({
+                status: "compacting",
+                requestMessageId: "message-1",
+              }),
+            }),
+          })
+        )
       } finally {
         releaseSummary()
       }
       expect((await responsePromise).status).toBe(200)
-      const activity = new ThreadActivityProjectionQuery(db).listByThread("thread-1").find(row => row.kind === "context.provider-handoff")
-      expect(activity?.payload).toMatchObject({ status: "completed", sourceProvider: "claude", targetProvider: "codex" })
-      expect(broadcast).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({
-        payload: expect.objectContaining({ status: "completed" }),
-      }) }))
+      const activity = new ThreadActivityProjectionQuery(db)
+        .listByThread("thread-1")
+        .find((row) => row.kind === "context.provider-handoff")
+      expect(activity?.payload).toMatchObject({
+        status: "completed",
+        sourceProvider: "claude",
+        targetProvider: "codex",
+      })
+      expect(broadcast).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            payload: expect.objectContaining({ status: "completed" }),
+          }),
+        })
+      )
     } finally {
       unregister()
     }
   })
 
-  function handoffFixture(source: "claude" | "codex" | "grok_cli", target: "claude" | "codex" | "grok_cli") {
-    threads.save(parseThreadSaveRequest({
-      id: "thread-1", title: "Handoff", projectName: "project", projectPath: "",
-      createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:02.000Z",
-      messages: [
-        { id: "prior-user", role: "user", content: "Keep the public API stable", modelId: "previous-model", createdAt: "2026-01-01T00:00:00.000Z" },
-        { id: "prior-answer", role: "assistant", content: "Tests passed; retry remains open", createdAt: "2026-01-01T00:00:01.000Z" },
-      ],
-    }))
-    bindings.upsert({ threadId: "thread-1", providerKind: source, providerInstanceId: `${source}-source`,
-      providerThreadId: "native-source", status: "ready", modelSelection: { instanceId: `${source}-source`, model: "previous-model" } })
+  function handoffFixture(
+    source: "claude" | "codex" | "grok_cli",
+    target: "claude" | "codex" | "grok_cli"
+  ) {
+    threads.save(
+      parseThreadSaveRequest({
+        id: "thread-1",
+        title: "Handoff",
+        projectName: "project",
+        projectPath: "",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:02.000Z",
+        messages: [
+          {
+            id: "prior-user",
+            role: "user",
+            content: "Keep the public API stable",
+            modelId: "previous-model",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+          {
+            id: "prior-answer",
+            role: "assistant",
+            content: "Tests passed; retry remains open",
+            createdAt: "2026-01-01T00:00:01.000Z",
+          },
+        ],
+      })
+    )
+    bindings.upsert({
+      threadId: "thread-1",
+      providerKind: source,
+      providerInstanceId: `${source}-source`,
+      providerThreadId: "native-source",
+      status: "ready",
+      modelSelection: {
+        instanceId: `${source}-source`,
+        model: "previous-model",
+      },
+    })
     const events: string[] = []
     const coordinator = new ThreadTurnCoordinator()
     let admittedToken: symbol | undefined
@@ -959,38 +1143,81 @@ describe("durable chat dispatch HTTP lifecycle", () => {
       events.push("summary")
       return { summary: "Handoff: keep API; tests passed; next add retry." }
     })
-    const startTurn = vi.fn((provider: ProviderKind, input: ProviderSendTurnInput, options: AcceptedOptions) => {
-      events.push("start")
-      admittedToken = options.sharedToken
-      const instanceId = input.modelSelection?.instanceId ?? (provider === target ? `${target}-target` : `${source}-source`)
-      const turnId = `handoff-turn-${startTurn.mock.calls.length}`
-      bindings.upsert({ threadId: "thread-1", providerKind: provider, providerInstanceId: instanceId,
-        providerThreadId: `native-${instanceId}`, status: "ready", modelSelection: { instanceId, model: input.modelSelection?.model ?? input.modelId ?? "new-model" } })
-      options.onAccepted?.(turnId, instanceId)
-      return testTurnHandle(turnId, Promise.resolve())
-    })
+    const startTurn = vi.fn(
+      (
+        provider: ProviderKind,
+        input: ProviderSendTurnInput,
+        options: AcceptedOptions
+      ) => {
+        events.push("start")
+        admittedToken = options.sharedToken
+        const instanceId =
+          input.modelSelection?.instanceId ??
+          (provider === target ? `${target}-target` : `${source}-source`)
+        const turnId = `handoff-turn-${startTurn.mock.calls.length}`
+        bindings.upsert({
+          threadId: "thread-1",
+          providerKind: provider,
+          providerInstanceId: instanceId,
+          providerThreadId: `native-${instanceId}`,
+          status: "ready",
+          modelSelection: {
+            instanceId,
+            model: input.modelSelection?.model ?? input.modelId ?? "new-model",
+          },
+        })
+        options.onAccepted?.(turnId, instanceId)
+        return testTurnHandle(turnId, Promise.resolve())
+      }
+    )
     const app = new Hono()
-    registerChatRoutes(app, state({
-      threadTurnCoordinator: coordinator,
-      chatHelpers: { generateProviderHandoffSummary: summarize },
-      threadActivities: new ThreadActivityProjectionQuery(db),
-      providerHub: { has: () => true, assertCanStartTurn: vi.fn(), startTurn,
-        withThreadMaintenance: async (_id: string, run: () => unknown) => run(),
-        stopSession: async () => { events.push("stop") },
-      },
-      providers: { resolveProviderKind: () => target,
-        withThreadMaintenance: async (_id: string, run: () => unknown) => run(),
-      },
-    }))
+    registerChatRoutes(
+      app,
+      state({
+        threadTurnCoordinator: coordinator,
+        chatHelpers: { generateProviderHandoffSummary: summarize },
+        threadActivities: new ThreadActivityProjectionQuery(db),
+        providerHub: {
+          has: () => true,
+          assertCanStartTurn: vi.fn(),
+          startTurn,
+          withThreadMaintenance: async (_id: string, run: () => unknown) =>
+            run(),
+          stopSession: async () => {
+            events.push("stop")
+          },
+        },
+        providers: {
+          resolveProviderKind: () => target,
+          withThreadMaintenance: async (_id: string, run: () => unknown) =>
+            run(),
+        },
+      })
+    )
     const finishTurn = () => {
       if (!admittedToken) throw new Error("No admitted handoff turn")
       coordinator.releaseTurn("thread-1", admittedToken)
-      dispatches.markCompleted({ dispatchId: "message-1", providerTurnId: "handoff-turn-1", providerInstanceId: `${target}-target` })
+      dispatches.markCompleted({
+        dispatchId: "message-1",
+        providerTurnId: "handoff-turn-1",
+        providerInstanceId: `${target}-target`,
+      })
     }
-    return { app, summarize, startTurn, events, finishTurn, body: {
-      ...requestBody(), providerKind: target, providerInstanceId: `${target}-target`,
-      modelId: "new-model", message: "new provider request", userMessageCreatedAt: "2026-01-01T00:00:03.000Z",
-    } }
+    return {
+      app,
+      summarize,
+      startTurn,
+      events,
+      finishTurn,
+      body: {
+        ...requestBody(),
+        providerKind: target,
+        providerInstanceId: `${target}-target`,
+        modelId: "new-model",
+        message: "new provider request",
+        userMessageCreatedAt: "2026-01-01T00:00:03.000Z",
+      },
+    }
   }
 
   function appWithHub(

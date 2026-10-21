@@ -429,7 +429,9 @@ const PROTECTED_GIT_ENV_KEYS = [
   "PAGER",
 ] as const
 
-function gitProcessEnvironment(overrides?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function gitProcessEnvironment(
+  overrides?: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...HARDENED_GIT_ENV, ...overrides }
   for (const key of PROTECTED_GIT_ENV_KEYS) env[key] = HARDENED_GIT_ENV[key]
   return env
@@ -477,22 +479,26 @@ function gitArgsWithoutRepositoryHelpers(
   if (!command) return args
 
   const prefix = args.slice(0, commandIndex)
-  const filterKeys = localGitConfigList(cwd, [
-    ...prefix,
-    "config",
-    "--local",
-    "--null",
-    "--name-only",
-    "--get-regexp",
-    "^filter\\..*\\.(clean|process|required)$",
-  ], opts)
-  const localSshCommand = localGitConfigList(cwd, [
-    ...prefix,
-    "config",
-    "--local",
-    "--get",
-    "core.sshCommand",
-  ], opts).join("").trim()
+  const filterKeys = localGitConfigList(
+    cwd,
+    [
+      ...prefix,
+      "config",
+      "--local",
+      "--null",
+      "--name-only",
+      "--get-regexp",
+      "^filter\\..*\\.(clean|process|required)$",
+    ],
+    opts
+  )
+  const localSshCommand = localGitConfigList(
+    cwd,
+    [...prefix, "config", "--local", "--get", "core.sshCommand"],
+    opts
+  )
+    .join("")
+    .trim()
   const overrides = [
     "core.fsmonitor=false",
     "log.showSignature=false",

@@ -100,7 +100,8 @@ function providerRequestFailure(
     },
     `${input.operation} failed`
   )
-  recordRouteActivity(state,
+  recordRouteActivity(
+    state,
     makeFailedRequestActivity({
       threadId: input.threadId,
       providerKind: input.providerKind,
@@ -203,7 +204,8 @@ export async function respondToChatApproval(
         )
         // A rejected or stale request must not change durable/session grants.
         persistApprovedPermissions()
-        recordRouteActivity(state,
+        recordRouteActivity(
+          state,
           makeResolvedRequestActivity({
             threadId: body.threadId,
             providerKind: hubKind,
@@ -235,7 +237,8 @@ export async function respondToChatApproval(
       decision
     )
     persistApprovedPermissions()
-    recordRouteActivity(state,
+    recordRouteActivity(
+      state,
       makeResolvedRequestActivity({
         threadId: body.threadId,
         providerKind: kind,
@@ -288,7 +291,8 @@ export async function respondToChatPlan(
         providerInstanceId,
         state.providerSessionBindings
       )
-      recordRouteActivity(state,
+      recordRouteActivity(
+        state,
         makeResolvedRequestActivity({
           threadId: body.threadId,
           providerKind: hubKind,
@@ -399,7 +403,8 @@ export async function respondToChatInput(
           providerInstanceId,
           state.providerSessionBindings
         )
-        recordRouteActivity(state,
+        recordRouteActivity(
+          state,
           makeResolvedRequestActivity({
             threadId: body.threadId,
             providerKind: hubKind,
@@ -431,7 +436,8 @@ export async function respondToChatInput(
       body.requestId,
       body.answers
     )
-    recordRouteActivity(state,
+    recordRouteActivity(
+      state,
       makeResolvedRequestActivity({
         threadId: body.threadId,
         providerKind: kind,
@@ -473,7 +479,8 @@ export async function rejectChatInput(
           providerInstanceId,
           state.providerSessionBindings
         )
-        recordRouteActivity(state,
+        recordRouteActivity(
+          state,
           makeResolvedRequestActivity({
             threadId: body.threadId,
             providerKind: hubKind,
@@ -504,7 +511,8 @@ export async function rejectChatInput(
       body.requestId,
       {}
     )
-    recordRouteActivity(state,
+    recordRouteActivity(
+      state,
       makeResolvedRequestActivity({
         threadId: body.threadId,
         providerKind: kind,

@@ -625,9 +625,7 @@ export function SettingsBetterC0deSection() {
               plugin.kind,
               [
                 plugin.message ?? plugin.sourcePath,
-                plugin.metaLoadCount
-                  ? `loaded ${plugin.metaLoadCount}x`
-                  : "",
+                plugin.metaLoadCount ? `loaded ${plugin.metaLoadCount}x` : "",
                 plugin.metaVersion ? `v${plugin.metaVersion}` : "",
               ]
                 .filter(Boolean)
@@ -762,10 +760,7 @@ function formatProviderModelCost(
   const base = formatCostRecord(model.cost)
   const over200k = formatCostRecord(model.contextOver200kCost)
   if (!base && !over200k) return ""
-  return [
-    base ? `cost ${base}` : "",
-    over200k ? `>200k ${over200k}` : "",
-  ]
+  return [base ? `cost ${base}` : "", over200k ? `>200k ${over200k}` : ""]
     .filter(Boolean)
     .join(" · ")
 }

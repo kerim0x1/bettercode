@@ -352,7 +352,6 @@ const MessageResponseRenderContext = createContext({
   workspaceRoot: undefined as string | null | undefined,
 })
 
-
 /** Mermaid diagram renderer.
  * [SECURITY] sanitizeSvg lives in @/lib/sanitize (DOMPurify w/ SVG profile). The
  * prior regex-based sanitizer missed xlink:href="javascript:", <animate to=...>,
@@ -404,7 +403,8 @@ const MermaidBlock = memo(({ code }: { code: string }) => {
         const { svg: rendered } = await mermaid.render(id, code)
         if (!cancelled) setSvg(rendered)
       } catch (e) {
-        if (!cancelled) setError((e as Error).message || "Mermaid render failed")
+        if (!cancelled)
+          setError((e as Error).message || "Mermaid render failed")
       }
     })()
     return () => {
@@ -447,7 +447,7 @@ const CopyBtn = ({ code }: { code: string }) => {
     <button
       type="button"
       onClick={async () => {
-        if (!await copyText(code)) return
+        if (!(await copyText(code))) return
         setCopied(true)
         setTimeout(() => setCopied(false), 2000)
       }}
@@ -723,11 +723,19 @@ function sourceTargetFromChildren(
   if (typeof children !== "string") return null
   // Bare dotted identifiers and IP addresses are also valid file names. Only
   // turn inline code into a button when its text supplies a path or location.
-  if (requirePathSignal && !/[\\/]|:\d+(?::\d+)?$|#L\d+/.test(children)) return null
+  if (requirePathSignal && !/[\\/]|:\d+(?::\d+)?$|#L\d+/.test(children))
+    return null
   const target = parseSourceReference(children, { requirePathSignal })
   if (requirePathSignal && target && target.kind !== "external") {
     const basename = target.filePath.split(/[\\/]/).pop() ?? ""
-    if (!target.line && !/\.[a-z0-9]+$/i.test(basename) && !/^(?:readme|license|dockerfile|makefile|gemfile|procfile|rakefile)$/i.test(basename)) return null
+    if (
+      !target.line &&
+      !/\.[a-z0-9]+$/i.test(basename) &&
+      !/^(?:readme|license|dockerfile|makefile|gemfile|procfile|rakefile)$/i.test(
+        basename
+      )
+    )
+      return null
   }
   return target
 }
@@ -739,10 +747,9 @@ function SourceMarkdownLink({
   node: _node,
 }: ComponentProps<"a"> & { node?: unknown }) {
   const { workspaceRoot } = useContext(MessageResponseRenderContext)
-  const target =
-    typeof href === "string" ? parseSourceReference(href) : null
+  const target = typeof href === "string" ? parseSourceReference(href) : null
   const linkClassName = cn(
-    "wrap-anywhere font-medium text-primary underline",
+    "font-medium wrap-anywhere text-primary underline",
     className
   )
 
@@ -782,13 +789,7 @@ function SourceInlineCode({
   const target = sourceTargetFromChildren(children, true)
   if (!target) {
     return (
-      <code
-        className={cn(
-          "message-inline-code",
-          className
-        )}
-        {...props}
-      >
+      <code className={cn("message-inline-code", className)} {...props}>
         {children}
       </code>
     )
@@ -796,10 +797,7 @@ function SourceInlineCode({
   return (
     <button
       type="button"
-      className={cn(
-        "message-inline-code message-source-link",
-        className
-      )}
+      className={cn("message-inline-code message-source-link", className)}
       onClick={() => {
         void openSourceTarget(target, {
           workspacePath: workspaceRoot,

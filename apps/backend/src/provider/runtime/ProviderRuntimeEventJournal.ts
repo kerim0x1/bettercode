@@ -31,7 +31,12 @@ const JOURNAL_STRING_CAP_INITIAL_BYTES = 64 * 1024
 const JOURNAL_STRING_CAP_FLOOR_BYTES = 256
 const JOURNAL_TRUNCATION_MAX_DEPTH = 32
 /** Patch fields of a `turn.diff.updated` event; dropped whole, never cut. */
-const DIFF_PATCH_KEYS = ["unifiedDiff", "unified_diff", "diff", "patch"] as const
+const DIFF_PATCH_KEYS = [
+  "unifiedDiff",
+  "unified_diff",
+  "diff",
+  "patch",
+] as const
 /**
  * Identity and correlation keys that are never cut at any depth, whatever
  * the cap. The hub injects `payload.dispatchTurnId`, adapters nest
@@ -199,8 +204,10 @@ export class ProviderRuntimeEventJournal implements ProviderRuntimeEventJournalP
     sequence: number
   ): OrchestrationEvent | null {
     const candidates =
-      this.events.readProviderRuntimeByStreamVersion?.(row.streamId, sequence) ??
-      []
+      this.events.readProviderRuntimeByStreamVersion?.(
+        row.streamId,
+        sequence
+      ) ?? []
     return (
       candidates.find(
         (candidate) =>
@@ -364,7 +371,9 @@ function prepareCanonicalRow(
   }
 }
 
-function oversizedError(bytes: number): ProviderRuntimeJournalSerializationError {
+function oversizedError(
+  bytes: number
+): ProviderRuntimeJournalSerializationError {
   return new ProviderRuntimeJournalSerializationError(
     `Provider runtime event is ${bytes} bytes and could not be bounded to the recoverable journal limit of ${MAX_JOURNALED_PROVIDER_EVENT_BYTES} bytes.`
   )

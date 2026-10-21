@@ -32,7 +32,7 @@ export function useProviderStatus(): {
   refetch: () => void
 } {
   const [status, setStatus] = useState<Map<string, ProviderStatus>>(
-    () => new Map(),
+    () => new Map()
   )
 
   const refetch = useCallback(async () => {
@@ -52,12 +52,9 @@ export function useProviderStatus(): {
     void refetch()
   }, [refetch])
 
-  useVisibilityInterval(
-    () => {
-      void refetch()
-    },
-    POLL_INTERVAL_MS,
-  )
+  useVisibilityInterval(() => {
+    void refetch()
+  }, POLL_INTERVAL_MS)
 
   useEffect(() => {
     const handler = () => {

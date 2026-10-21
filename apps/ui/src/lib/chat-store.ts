@@ -1,5 +1,8 @@
 import { create } from "zustand"
-import { mergeHandoffSnapshot, retainNewerHandoff } from "@/lib/provider-handoff"
+import {
+  mergeHandoffSnapshot,
+  retainNewerHandoff,
+} from "@/lib/provider-handoff"
 import { usePreferencesStore } from "@/lib/preferences-store"
 import { snapshotComposerModelSettings } from "@/lib/composer-settings"
 import {
@@ -369,7 +372,8 @@ function cloneMessageForFork(message: ChatMessage): ChatMessage {
   if (message.usage !== undefined) cloned.usage = clonePlain(message.usage)
   if (message.modelId !== undefined) cloned.modelId = message.modelId
   if (message.compactedContext === true) cloned.compactedContext = true
-  if (message.internalContext === "provider-handoff") cloned.internalContext = "provider-handoff"
+  if (message.internalContext === "provider-handoff")
+    cloned.internalContext = "provider-handoff"
   if (message.compactionGeneration !== undefined) {
     cloned.compactionGeneration = message.compactionGeneration
   }
@@ -608,7 +612,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
           activitiesByThread: {
             ...state.activitiesByThread,
             [threadId]: Array.isArray(activities)
-              ? capThreadActivities(mergeHandoffSnapshot(activities, state.activitiesByThread[threadId] ?? [], s.activitiesByThread[threadId] ?? []))
+              ? capThreadActivities(
+                  mergeHandoffSnapshot(
+                    activities,
+                    state.activitiesByThread[threadId] ?? [],
+                    s.activitiesByThread[threadId] ?? []
+                  )
+                )
               : [],
           },
           activitiesLoadedByThread: {
@@ -683,7 +693,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         [threadId]: {
           ...prev,
           [key]: value,
-          ...(key === "goal" ? { goalRevision: (prev.goalRevision ?? 0) + 1 } : {}),
+          ...(key === "goal"
+            ? { goalRevision: (prev.goalRevision ?? 0) + 1 }
+            : {}),
         },
       }
       persistThreadSettings(updated as Record<string, Record<string, unknown>>)
@@ -1045,23 +1057,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
   closeReasoningSegment: (threadId) => {
     set((state) => {
       const cur = state.streamingByThread[threadId]
-      if (!cur || (!cur.isReasoning && cur.reasoningText.length === 0)) return state
+      if (!cur || (!cur.isReasoning && cur.reasoningText.length === 0))
+        return state
       return {
         streamingByThread: {
           ...state.streamingByThread,
           [threadId]: {
             ...cur,
-            reasoningSegments: cur.reasoningText.trim().length > 0
-              ? [
-                  ...cur.reasoningSegments,
-                  {
-                    id: `reasoning-${cur.reasoningSegments.length}-${cur.reasoningStartedAt ?? 0}`,
-                    text: cur.reasoningText,
-                    startedAt: cur.reasoningStartedAt,
-                    endedAt: cur.reasoningEndedAt,
-                  },
-                ]
-              : cur.reasoningSegments,
+            reasoningSegments:
+              cur.reasoningText.trim().length > 0
+                ? [
+                    ...cur.reasoningSegments,
+                    {
+                      id: `reasoning-${cur.reasoningSegments.length}-${cur.reasoningStartedAt ?? 0}`,
+                      text: cur.reasoningText,
+                      startedAt: cur.reasoningStartedAt,
+                      endedAt: cur.reasoningEndedAt,
+                    },
+                  ]
+                : cur.reasoningSegments,
             reasoningText: "",
             isReasoning: false,
             reasoningStartedAt: null,
@@ -1600,9 +1614,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     void deleteThreadDb(threadId)
       .then(() => {
         // Only discard queued drafts after the backend confirms deletion.
-        void import("@/lib/message-queue-store").then(({ useMessageQueueStore }) => {
-          useMessageQueueStore.getState().discardThread(threadId)
-        }).catch(error => log.warn("Failed to clear deleted chat's queued drafts", describeError(error)))
+        void import("@/lib/message-queue-store")
+          .then(({ useMessageQueueStore }) => {
+            useMessageQueueStore.getState().discardThread(threadId)
+          })
+          .catch((error) =>
+            log.warn(
+              "Failed to clear deleted chat's queued drafts",
+              describeError(error)
+            )
+          )
         set((state) => {
           const restStreaming = { ...state.streamingByThread }
           const restActivities = { ...state.activitiesByThread }
@@ -1625,12 +1646,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
           )
           return {
             threads: state.threads.filter((t) => t.id !== threadId),
-            ...(state.autonomousThreadId === threadId ? {
-              autonomousMode: false,
-              autonomousThreadId: null,
-              autonomousStatus: "idle" as const,
-              autonomousStopReason: "user" as const,
-            } : {}),
+            ...(state.autonomousThreadId === threadId
+              ? {
+                  autonomousMode: false,
+                  autonomousThreadId: null,
+                  autonomousStatus: "idle" as const,
+                  autonomousStopReason: "user" as const,
+                }
+              : {}),
             settingsByThread: restSettings,
             activeThreadId:
               state.activeThreadId === threadId ? null : state.activeThreadId,

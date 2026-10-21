@@ -7,7 +7,9 @@ import type {
 import { ProviderHub } from "./ProviderHub"
 import { HttpError } from "../../errors"
 
-function policyTestAdapter(sendTurn: () => Promise<void>): ProviderAdapterShape {
+function policyTestAdapter(
+  sendTurn: () => Promise<void>
+): ProviderAdapterShape {
   const sessions = new Map<string, ProviderSession>()
   return {
     provider: "claude",
@@ -55,20 +57,40 @@ describe("ProviderHub pre-dispatch policy", () => {
   it("restarts a session with unknown mode before applying an explicit permission mode", async () => {
     const sendTurn = vi.fn(async () => {})
     const adapter = policyTestAdapter(sendTurn)
-    const threadId = "unknown-mode" as Parameters<typeof adapter.startSession>[0]["threadId"]
+    const threadId = "unknown-mode" as Parameters<
+      typeof adapter.startSession
+    >[0]["threadId"]
     await adapter.startSession({ threadId })
     const stop = vi.spyOn(adapter, "stopSession")
     const start = vi.spyOn(adapter, "startSession")
     const stopBeforeQuery = new Error("stop after session policy preparation")
-    const hub = new ProviderHub({ adapters: [adapter], projectProviderPolicyLoader: async () => null, beforeTurn: async () => { throw stopBeforeQuery } })
+    const hub = new ProviderHub({
+      adapters: [adapter],
+      projectProviderPolicyLoader: async () => null,
+      beforeTurn: async () => {
+        throw stopBeforeQuery
+      },
+    })
     try {
       for (let i = 0; i < 2; i++) {
-        await expect(hub.startTurn("claude", { threadId, message: "inspect", modelId: "test-model", history: [], permissionLevel: "read-only" }).settled).rejects.toBe(stopBeforeQuery)
+        await expect(
+          hub.startTurn("claude", {
+            threadId,
+            message: "inspect",
+            modelId: "test-model",
+            history: [],
+            permissionLevel: "read-only",
+          }).settled
+        ).rejects.toBe(stopBeforeQuery)
       }
       expect(stop).toHaveBeenCalledTimes(1)
       expect(start).toHaveBeenCalledTimes(1)
-      expect(start).toHaveBeenCalledWith(expect.objectContaining({ runtimeMode: "read-only" }))
-      expect((await adapter.listSessions?.())?.[0]?.runtimeMode).toBe("read-only")
+      expect(start).toHaveBeenCalledWith(
+        expect.objectContaining({ runtimeMode: "read-only" })
+      )
+      expect((await adapter.listSessions?.())?.[0]?.runtimeMode).toBe(
+        "read-only"
+      )
       expect(sendTurn).not.toHaveBeenCalled()
     } finally {
       await hub.stopAll()
@@ -77,19 +99,32 @@ describe("ProviderHub pre-dispatch policy", () => {
 
   it("surfaces an actionable operational rejection without entering the provider", async () => {
     const sendTurn = vi.fn(async () => {})
-    const error = new HttpError(403, "workspace root is not registered", "workspace_not_registered")
+    const error = new HttpError(
+      403,
+      "workspace root is not registered",
+      "workspace_not_registered"
+    )
     const hub = new ProviderHub({
       adapters: [policyTestAdapter(sendTurn)],
       projectProviderPolicyLoader: async () => null,
-      beforeTurn: async () => { throw error },
+      beforeTurn: async () => {
+        throw error
+      },
     })
     const events: ProviderRuntimeEvent[] = []
     hub.subscribe((event) => events.push(event))
-    const turn = hub.startTurn("claude", { threadId: "thread-failed", message: "implement", modelId: "test-model", history: [] })
+    const turn = hub.startTurn("claude", {
+      threadId: "thread-failed",
+      message: "implement",
+      modelId: "test-model",
+      history: [],
+    })
     await expect(turn.completion).rejects.toBe(error)
     await expect(turn.settled).rejects.toBe(error)
     expect(sendTurn).not.toHaveBeenCalled()
-    expect(events).toContainEqual(expect.objectContaining({ type: "runtime.error", message: error.message }))
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "runtime.error", message: error.message })
+    )
     await hub.stopAll()
   })
   it("emits tool.denied and settles normally without entering the adapter", async () => {

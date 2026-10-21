@@ -181,9 +181,13 @@ export function DiffPanel({
   /** Server capped the diff payload; the view is showing a prefix. */
   const [diffTruncated, setDiffTruncated] = useState(false)
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<DiffViewMode>(fileTarget ? "split" : "unified")
+  const [viewMode, setViewMode] = useState<DiffViewMode>(
+    fileTarget ? "split" : "unified"
+  )
   const [stagedSelected, setShowStaged] = useState(false)
-  const showStaged = fileTarget ? fileTarget.source === "staged" : stagedSelected
+  const showStaged = fileTarget
+    ? fileTarget.source === "staged"
+    : stagedSelected
   useEffect(() => {
     if (listOnly && selectedDiff && selectedDiff.cwd === cwd) {
       setShowStaged(selectedDiff.source === "staged")
@@ -248,7 +252,9 @@ export function DiffPanel({
         }
       } catch (error) {
         if (inFlightRef.current !== request) return
-        setLoadError(error instanceof Error ? error.message : "Could not load changes.")
+        setLoadError(
+          error instanceof Error ? error.message : "Could not load changes."
+        )
       } finally {
         if (inFlightRef.current === request) {
           inFlightRef.current = null
@@ -269,7 +275,9 @@ export function DiffPanel({
       lastStagedTextRef.current = ""
       refresh()
     }
-    return () => { inFlightRef.current = null }
+    return () => {
+      inFlightRef.current = null
+    }
   }, [open, cwd, refresh])
 
   const isStreaming = useChatStore((s) => {
@@ -320,7 +328,11 @@ export function DiffPanel({
       if (!cwd) return
       try {
         await gitStage(cwd, [filePath])
-        window.dispatchEvent(new CustomEvent("betterc0de:file-changed", { detail: { cwd, path: filePath, source: "diff-review" } }))
+        window.dispatchEvent(
+          new CustomEvent("betterc0de:file-changed", {
+            detail: { cwd, path: filePath, source: "diff-review" },
+          })
+        )
         refresh()
       } catch (e) {
         log.warn("Failed to stage file:", filePath, e)
@@ -334,7 +346,11 @@ export function DiffPanel({
       if (!cwd) return
       try {
         await gitUnstage(cwd, [filePath])
-        window.dispatchEvent(new CustomEvent("betterc0de:file-changed", { detail: { cwd, path: filePath, source: "diff-review" } }))
+        window.dispatchEvent(
+          new CustomEvent("betterc0de:file-changed", {
+            detail: { cwd, path: filePath, source: "diff-review" },
+          })
+        )
         refresh()
       } catch (e) {
         log.warn("Failed to unstage file:", filePath, e)
@@ -410,8 +426,10 @@ export function DiffPanel({
   }, [displayFiles, filter])
 
   const activeFile = fileTarget
-    ? displayFiles.find(file => file.name === fileTarget.path)
-    : (selectedFile && displayFiles.find((f) => f.name === selectedFile)) || filteredFiles[0] || displayFiles[0]
+    ? displayFiles.find((file) => file.name === fileTarget.path)
+    : (selectedFile && displayFiles.find((f) => f.name === selectedFile)) ||
+      filteredFiles[0] ||
+      displayFiles[0]
   const totalAdd = displayFiles.reduce((s, f) => s + f.additions, 0)
   const totalDel = displayFiles.reduce((s, f) => s + f.deletions, 0)
 
@@ -421,8 +439,11 @@ export function DiffPanel({
     ? activeFile.name.slice(0, activeFile.name.lastIndexOf("/") + 1)
     : ""
   const effectiveViewMode = diffStyle === "stacked" ? "unified" : viewMode
-  const fileListVisible = !fileTarget && (listOnly || (fileListOpen && displayFiles.length > 0))
-  const fileListResize = useDiffFileListResize(open && fileListVisible && !listOnly)
+  const fileListVisible =
+    !fileTarget && (listOnly || (fileListOpen && displayFiles.length > 0))
+  const fileListResize = useDiffFileListResize(
+    open && fileListVisible && !listOnly
+  )
 
   // All hunks of the active file collapsed?
   const allCollapsed = useMemo(() => {
@@ -484,7 +505,11 @@ export function DiffPanel({
 
   return (
     <section
-      className={cn("diff-panel", listOnly && "diff-panel-files", fileTarget && "diff-panel-document")}
+      className={cn(
+        "diff-panel",
+        listOnly && "diff-panel-files",
+        fileTarget && "diff-panel-document"
+      )}
       aria-label="File changes"
       aria-busy={loading}
     >
@@ -494,69 +519,78 @@ export function DiffPanel({
             <FileDiffIcon className="size-3.5" aria-hidden="true" />
             <span>{showStaged ? "HEAD → Index" : "Index → Working tree"}</span>
           </div>
-        ) : <div className="diff-tabs" role="group" aria-label="Change set">
-          <button
-            type="button"
-            aria-pressed={!showStaged}
-            onClick={() => setShowStaged(false)}
-          >
-            Unstaged <span>{files.length}</span>
-          </button>
-          <button
-            type="button"
-            aria-pressed={showStaged}
-            onClick={() => setShowStaged(true)}
-          >
-            Staged <span>{stagedFiles.length}</span>
-          </button>
-        </div>}
-        {!listOnly && !fileTarget && <div
-          className="diff-total"
-          aria-label={`${totalAdd} added, ${totalDel} removed lines`}
-        >
-          <StatPill kind="add" value={totalAdd} />
-          <StatPill kind="del" value={totalDel} />
-        </div>}
-        <div className="diff-view-controls">
-          {!listOnly && <><div
-            className="diff-layout-control"
-            role="group"
-            aria-label="Diff layout"
-          >
-            <ToolbarButton
-              title="Unified view"
-              active={effectiveViewMode === "unified"}
-              onClick={() => setViewMode("unified")}
+        ) : (
+          <div className="diff-tabs" role="group" aria-label="Change set">
+            <button
+              type="button"
+              aria-pressed={!showStaged}
+              onClick={() => setShowStaged(false)}
             >
-              <AlignJustifyIcon className="size-3.5" />
-              <span>Unified</span>
-            </ToolbarButton>
-            <ToolbarButton
-              title="Split view"
-              active={effectiveViewMode === "split"}
-              onClick={() => {
-                setViewMode("split")
-                if (diffStyle === "stacked")
-                  void updateSettings({ diff_style: "auto" })
-              }}
+              Unstaged <span>{files.length}</span>
+            </button>
+            <button
+              type="button"
+              aria-pressed={showStaged}
+              onClick={() => setShowStaged(true)}
             >
-              <SplitIcon className="size-3.5" />
-              <span>Split</span>
-            </ToolbarButton>
+              Staged <span>{stagedFiles.length}</span>
+            </button>
           </div>
-          <ToolbarButton
-            className="diff-wrap-control"
-            title={
-              diffWordWrap ? "Disable diff wrapping" : "Enable diff wrapping"
-            }
-            active={diffWordWrap}
-            onClick={() => {
-              void updateSettings({ diff_word_wrap: !diffWordWrap })
-            }}
+        )}
+        {!listOnly && !fileTarget && (
+          <div
+            className="diff-total"
+            aria-label={`${totalAdd} added, ${totalDel} removed lines`}
           >
-            <span>Wrap</span>
-          </ToolbarButton>
-          </>}
+            <StatPill kind="add" value={totalAdd} />
+            <StatPill kind="del" value={totalDel} />
+          </div>
+        )}
+        <div className="diff-view-controls">
+          {!listOnly && (
+            <>
+              <div
+                className="diff-layout-control"
+                role="group"
+                aria-label="Diff layout"
+              >
+                <ToolbarButton
+                  title="Unified view"
+                  active={effectiveViewMode === "unified"}
+                  onClick={() => setViewMode("unified")}
+                >
+                  <AlignJustifyIcon className="size-3.5" />
+                  <span>Unified</span>
+                </ToolbarButton>
+                <ToolbarButton
+                  title="Split view"
+                  active={effectiveViewMode === "split"}
+                  onClick={() => {
+                    setViewMode("split")
+                    if (diffStyle === "stacked")
+                      void updateSettings({ diff_style: "auto" })
+                  }}
+                >
+                  <SplitIcon className="size-3.5" />
+                  <span>Split</span>
+                </ToolbarButton>
+              </div>
+              <ToolbarButton
+                className="diff-wrap-control"
+                title={
+                  diffWordWrap
+                    ? "Disable diff wrapping"
+                    : "Enable diff wrapping"
+                }
+                active={diffWordWrap}
+                onClick={() => {
+                  void updateSettings({ diff_word_wrap: !diffWordWrap })
+                }}
+              >
+                <span>Wrap</span>
+              </ToolbarButton>
+            </>
+          )}
           <ToolbarButton
             title="Refresh changes"
             disabled={loading}
@@ -568,8 +602,17 @@ export function DiffPanel({
           </ToolbarButton>
         </div>
       </div>
-      {loadError && <Alert variant="destructive" className="m-3 w-auto"><AlertTitle>Could not load changes</AlertTitle><AlertDescription>{loadError}</AlertDescription></Alert>}
-      {listOnly && diffTruncated && <p role="status" className="px-3 py-2 text-xs text-muted-foreground">Change list truncated. More changes may exist in this checkout.</p>}
+      {loadError && (
+        <Alert variant="destructive" className="m-3 w-auto">
+          <AlertTitle>Could not load changes</AlertTitle>
+          <AlertDescription>{loadError}</AlertDescription>
+        </Alert>
+      )}
+      {listOnly && diffTruncated && (
+        <p role="status" className="px-3 py-2 text-xs text-muted-foreground">
+          Change list truncated. More changes may exist in this checkout.
+        </p>
+      )}
       <div
         ref={fileListResize.bodyRef}
         className="diff-panel-body"
@@ -597,7 +640,16 @@ export function DiffPanel({
             <ul>
               {filteredFiles.map((file) => {
                 const selected = listOnly
-                  ? Boolean(cwd && selectedDiff && editorDiffKey(selectedDiff) === editorDiffKey({ cwd, path: file.name, source: showStaged ? "staged" : "unstaged" }))
+                  ? Boolean(
+                      cwd &&
+                      selectedDiff &&
+                      editorDiffKey(selectedDiff) ===
+                        editorDiffKey({
+                          cwd,
+                          path: file.name,
+                          source: showStaged ? "staged" : "unstaged",
+                        })
+                    )
                   : activeFile?.name === file.name
                 const name = file.name.split("/").pop() || file.name
                 const dir = file.name.includes("/")
@@ -612,16 +664,30 @@ export function DiffPanel({
                     <button
                       type="button"
                       className="diff-file-select"
-                      aria-current={
-                        selected ? "true" : undefined
-                      }
+                      aria-current={selected ? "true" : undefined}
                       title={file.name}
                       onClick={() => {
-                        if (onSelectDiff && cwd) onSelectDiff({ cwd, path: file.name, source: showStaged ? "staged" : "unstaged" }, true)
+                        if (onSelectDiff && cwd)
+                          onSelectDiff(
+                            {
+                              cwd,
+                              path: file.name,
+                              source: showStaged ? "staged" : "unstaged",
+                            },
+                            true
+                          )
                         else setSelectedFile(file.name)
                       }}
                       onDoubleClick={() => {
-                        if (onSelectDiff && cwd) onSelectDiff({ cwd, path: file.name, source: showStaged ? "staged" : "unstaged" }, false)
+                        if (onSelectDiff && cwd)
+                          onSelectDiff(
+                            {
+                              cwd,
+                              path: file.name,
+                              source: showStaged ? "staged" : "unstaged",
+                            },
+                            false
+                          )
                         else openDiffFile(file)
                       }}
                     >
@@ -665,7 +731,17 @@ export function DiffPanel({
                 )
               })}
               {!filteredFiles.length && (
-                <li className="diff-no-matches" role="status">{loading ? "Loading changes…" : loadError ? "Changes are unavailable." : filter.trim() ? "No files match your search." : showStaged ? "Nothing staged yet." : "Working tree is clean."}</li>
+                <li className="diff-no-matches" role="status">
+                  {loading
+                    ? "Loading changes…"
+                    : loadError
+                      ? "Changes are unavailable."
+                      : filter.trim()
+                        ? "No files match your search."
+                        : showStaged
+                          ? "Nothing staged yet."
+                          : "Working tree is clean."}
+                </li>
               )}
             </ul>
             <div className="diff-file-count">
@@ -681,228 +757,246 @@ export function DiffPanel({
             {...fileListResize.handleProps}
           />
         )}
-        {!listOnly && <div className="diff-main">
-          {activeFile && (
-            <div className="diff-file-header">
-              {!fileListVisible && !fileTarget && fileListToggle}
-              <img
-                src={getFileIconUrl(activeFileName ?? "")}
-                alt=""
-                className="size-4 shrink-0"
-              />
-              <div className="diff-active-path" title={activeFile.name}>
-                <span>{activeFileName}</span>
-                {activeFileDir && <small>{activeFileDir.slice(0, -1)}</small>}
-              </div>
-              <div className="diff-header-stats">
-                <StatPill kind="add" value={activeFile.additions} />
-                <StatPill kind="del" value={activeFile.deletions} />
-              </div>
-              <span className="diff-hunk-count">
-                {activeFile.hunks.length} change
-                {activeFile.hunks.length !== 1 && "s"}
-              </span>
-              <div className="diff-header-actions">
-                {activeFile.hunks.length > 0 && (
+        {!listOnly && (
+          <div className="diff-main">
+            {activeFile && (
+              <div className="diff-file-header">
+                {!fileListVisible && !fileTarget && fileListToggle}
+                <img
+                  src={getFileIconUrl(activeFileName ?? "")}
+                  alt=""
+                  className="size-4 shrink-0"
+                />
+                <div className="diff-active-path" title={activeFile.name}>
+                  <span>{activeFileName}</span>
+                  {activeFileDir && <small>{activeFileDir.slice(0, -1)}</small>}
+                </div>
+                <div className="diff-header-stats">
+                  <StatPill kind="add" value={activeFile.additions} />
+                  <StatPill kind="del" value={activeFile.deletions} />
+                </div>
+                <span className="diff-hunk-count">
+                  {activeFile.hunks.length} change
+                  {activeFile.hunks.length !== 1 && "s"}
+                </span>
+                <div className="diff-header-actions">
+                  {activeFile.hunks.length > 0 && (
+                    <ToolbarButton
+                      title={
+                        allCollapsed ? "Expand all hunks" : "Collapse all hunks"
+                      }
+                      onClick={toggleAllHunks}
+                    >
+                      {allCollapsed ? (
+                        <ChevronsUpDownIcon className="size-3.5" />
+                      ) : (
+                        <ChevronsDownUpIcon className="size-3.5" />
+                      )}
+                    </ToolbarButton>
+                  )}
                   <ToolbarButton
                     title={
-                      allCollapsed ? "Expand all hunks" : "Collapse all hunks"
+                      activeFile.isDeleted
+                        ? "Deleted files cannot be opened"
+                        : "Open file in editor"
                     }
-                    onClick={toggleAllHunks}
+                    disabled={activeFile.isDeleted}
+                    onClick={() => openDiffFile(activeFile)}
                   >
-                    {allCollapsed ? (
-                      <ChevronsUpDownIcon className="size-3.5" />
+                    <FileCode2Icon className="size-3.5" />
+                  </ToolbarButton>
+                  <ToolbarButton
+                    title="Copy diff to clipboard"
+                    onClick={copyDiff}
+                  >
+                    {copied ? (
+                      <CheckIcon className="size-3.5 text-success" />
                     ) : (
-                      <ChevronsDownUpIcon className="size-3.5" />
+                      <CopyIcon className="size-3.5" />
                     )}
                   </ToolbarButton>
-                )}
-                <ToolbarButton
-                  title={
-                    activeFile.isDeleted
-                      ? "Deleted files cannot be opened"
-                      : "Open file in editor"
-                  }
-                  disabled={activeFile.isDeleted}
-                  onClick={() => openDiffFile(activeFile)}
-                >
-                  <FileCode2Icon className="size-3.5" />
-                </ToolbarButton>
-                <ToolbarButton
-                  title="Copy diff to clipboard"
-                  onClick={copyDiff}
-                >
-                  {copied ? (
-                    <CheckIcon className="size-3.5 text-success" />
-                  ) : (
-                    <CopyIcon className="size-3.5" />
-                  )}
-                </ToolbarButton>
-              </div>
-            </div>
-          )}
-          <div className="diff-scroll" tabIndex={0} aria-label="Code diff">
-            {hunkConflict && (
-              <Alert variant="destructive" className="m-3 w-auto">
-                <AlertTitle>Diff changed</AlertTitle>
-                <AlertDescription>{hunkConflict}</AlertDescription>
-              </Alert>
-            )}
-            {diffTruncated && (
-              <Alert className="m-3 w-auto">
-                <AlertTitle>Diff truncated</AlertTitle>
-                <AlertDescription>
-                  This change set is too large to display in full. Actions apply
-                  to the visible hunks; review the complete diff in the
-                  terminal.
-                </AlertDescription>
-              </Alert>
-            )}
-            {!activeFile && loading && (
-              <div className="diff-empty" role="status">
-                <RefreshCwIcon className="size-5" />
-                <p>Loading changes...</p>
-              </div>
-            )}
-            {!activeFile && !loading && !loadError && (
-              <div className="diff-empty">
-                <div className="diff-empty-icon">
-                  {showStaged ? (
-                    <FileDiffIcon className="size-6" />
-                  ) : (
-                    <CheckIcon className="size-6" />
-                  )}
                 </div>
-                <h3>
-                  {fileTarget ? (diffTruncated ? "File not in the displayed diff" : "No changes in this comparison") : showStaged ? "Nothing staged yet" : "Working tree is clean"}
-                </h3>
-                <p>
-                  {fileTarget ? `${fileTarget.path} has no displayed ${showStaged ? "staged" : "unstaged"} changes.` : showStaged
-                    ? "Stage changes to prepare your next commit."
-                    : "Your local changes will appear here."}
-                </p>
-                {!fileTarget && showStaged && files.length > 0 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowStaged(false)}
-                  >
-                    View unstaged changes
-                  </Button>
-                )}
               </div>
             )}
-            {activeFile?.isBinary ? (
-              <div className="diff-empty">
-                <FileDiffIcon className="size-6" />
-                <h3>Binary file changed</h3>
-                <p>This file has no text diff.</p>
-              </div>
-            ) : (
-              activeFile?.hunks.map((hunk, index) => {
-                const key = `${activeFile.name}:${index}`
-                const collapsed = collapsedHunks.has(key)
-                return (
-                  <div key={key} className="diff-hunk">
-                    <div className="diff-hunk-header">
-                      <button
-                        type="button"
-                        className="diff-hunk-toggle"
-                        aria-expanded={!collapsed}
-                        aria-label={`${collapsed ? "Expand" : "Collapse"} change ${index + 1}`}
-                        title={hunk.header}
-                        onClick={() => toggleHunk(key)}
-                      >
-                        <ChevronDownIcon
-                          className={cn(
-                            "size-3.5 shrink-0",
-                            collapsed && "-rotate-90"
-                          )}
-                        />
-                        <span>Change {index + 1}</span>
-                        <small>Line {hunk.newStart || hunk.oldStart}</small>
-                      </button>
-                      <div className="diff-hunk-actions">
-                        {showStaged ? (
-                          <button
-                            type="button"
-                            disabled={pendingHunkAction !== null || Boolean(loadError)}
-                            onClick={() => {
-                              void handleHunkAction(
-                                activeFile.name,
-                                hunk,
-                                index,
-                                "unstage"
-                              )
-                            }}
-                            title="Move this change back to unstaged files"
-                          >
-                            <Undo2Icon className="size-3.5" />
-                            Unstage
-                          </button>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              disabled={pendingHunkAction !== null || Boolean(loadError)}
-                              onClick={() => {
-                                void handleHunkAction(
-                                  activeFile.name,
-                                  hunk,
-                                  index,
-                                  "accept"
-                                )
-                              }}
-                              title="Accept and stage this change"
-                            >
-                              <CheckIcon className="size-3.5" />
-                              Stage
-                            </button>
-                            <button
-                              type="button"
-                              className="diff-discard"
-                              disabled={pendingHunkAction !== null || Boolean(loadError)}
-                              onClick={() => {
-                                void handleHunkAction(
-                                  activeFile.name,
-                                  hunk,
-                                  index,
-                                  "reject"
-                                )
-                              }}
-                              title="Discard this change and restore the original"
-                            >
-                              <XIcon className="size-3.5" />
-                              Discard
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    {!collapsed && (
-                      <>
-                        {effectiveViewMode === "split" && (
-                          <div className="diff-revision-labels">
-                            <span>Original</span>
-                            <span>
-                              {showStaged ? "Staged" : "Working tree"}
-                            </span>
-                          </div>
-                        )}
-                        <DiffHunkLines
-                          hunk={hunk}
-                          mode={effectiveViewMode}
-                          wrap={diffWordWrap}
-                          syntax={syntax}
-                        />
-                      </>
+            <div className="diff-scroll" tabIndex={0} aria-label="Code diff">
+              {hunkConflict && (
+                <Alert variant="destructive" className="m-3 w-auto">
+                  <AlertTitle>Diff changed</AlertTitle>
+                  <AlertDescription>{hunkConflict}</AlertDescription>
+                </Alert>
+              )}
+              {diffTruncated && (
+                <Alert className="m-3 w-auto">
+                  <AlertTitle>Diff truncated</AlertTitle>
+                  <AlertDescription>
+                    This change set is too large to display in full. Actions
+                    apply to the visible hunks; review the complete diff in the
+                    terminal.
+                  </AlertDescription>
+                </Alert>
+              )}
+              {!activeFile && loading && (
+                <div className="diff-empty" role="status">
+                  <RefreshCwIcon className="size-5" />
+                  <p>Loading changes...</p>
+                </div>
+              )}
+              {!activeFile && !loading && !loadError && (
+                <div className="diff-empty">
+                  <div className="diff-empty-icon">
+                    {showStaged ? (
+                      <FileDiffIcon className="size-6" />
+                    ) : (
+                      <CheckIcon className="size-6" />
                     )}
                   </div>
-                )
-              })
-            )}
+                  <h3>
+                    {fileTarget
+                      ? diffTruncated
+                        ? "File not in the displayed diff"
+                        : "No changes in this comparison"
+                      : showStaged
+                        ? "Nothing staged yet"
+                        : "Working tree is clean"}
+                  </h3>
+                  <p>
+                    {fileTarget
+                      ? `${fileTarget.path} has no displayed ${showStaged ? "staged" : "unstaged"} changes.`
+                      : showStaged
+                        ? "Stage changes to prepare your next commit."
+                        : "Your local changes will appear here."}
+                  </p>
+                  {!fileTarget && showStaged && files.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowStaged(false)}
+                    >
+                      View unstaged changes
+                    </Button>
+                  )}
+                </div>
+              )}
+              {activeFile?.isBinary ? (
+                <div className="diff-empty">
+                  <FileDiffIcon className="size-6" />
+                  <h3>Binary file changed</h3>
+                  <p>This file has no text diff.</p>
+                </div>
+              ) : (
+                activeFile?.hunks.map((hunk, index) => {
+                  const key = `${activeFile.name}:${index}`
+                  const collapsed = collapsedHunks.has(key)
+                  return (
+                    <div key={key} className="diff-hunk">
+                      <div className="diff-hunk-header">
+                        <button
+                          type="button"
+                          className="diff-hunk-toggle"
+                          aria-expanded={!collapsed}
+                          aria-label={`${collapsed ? "Expand" : "Collapse"} change ${index + 1}`}
+                          title={hunk.header}
+                          onClick={() => toggleHunk(key)}
+                        >
+                          <ChevronDownIcon
+                            className={cn(
+                              "size-3.5 shrink-0",
+                              collapsed && "-rotate-90"
+                            )}
+                          />
+                          <span>Change {index + 1}</span>
+                          <small>Line {hunk.newStart || hunk.oldStart}</small>
+                        </button>
+                        <div className="diff-hunk-actions">
+                          {showStaged ? (
+                            <button
+                              type="button"
+                              disabled={
+                                pendingHunkAction !== null || Boolean(loadError)
+                              }
+                              onClick={() => {
+                                void handleHunkAction(
+                                  activeFile.name,
+                                  hunk,
+                                  index,
+                                  "unstage"
+                                )
+                              }}
+                              title="Move this change back to unstaged files"
+                            >
+                              <Undo2Icon className="size-3.5" />
+                              Unstage
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                disabled={
+                                  pendingHunkAction !== null ||
+                                  Boolean(loadError)
+                                }
+                                onClick={() => {
+                                  void handleHunkAction(
+                                    activeFile.name,
+                                    hunk,
+                                    index,
+                                    "accept"
+                                  )
+                                }}
+                                title="Accept and stage this change"
+                              >
+                                <CheckIcon className="size-3.5" />
+                                Stage
+                              </button>
+                              <button
+                                type="button"
+                                className="diff-discard"
+                                disabled={
+                                  pendingHunkAction !== null ||
+                                  Boolean(loadError)
+                                }
+                                onClick={() => {
+                                  void handleHunkAction(
+                                    activeFile.name,
+                                    hunk,
+                                    index,
+                                    "reject"
+                                  )
+                                }}
+                                title="Discard this change and restore the original"
+                              >
+                                <XIcon className="size-3.5" />
+                                Discard
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      {!collapsed && (
+                        <>
+                          {effectiveViewMode === "split" && (
+                            <div className="diff-revision-labels">
+                              <span>Original</span>
+                              <span>
+                                {showStaged ? "Staged" : "Working tree"}
+                              </span>
+                            </div>
+                          )}
+                          <DiffHunkLines
+                            hunk={hunk}
+                            mode={effectiveViewMode}
+                            wrap={diffWordWrap}
+                            syntax={syntax}
+                          />
+                        </>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+            </div>
           </div>
-        </div>}
+        )}
       </div>
     </section>
   )

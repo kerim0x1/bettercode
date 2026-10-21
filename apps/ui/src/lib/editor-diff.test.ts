@@ -10,13 +10,24 @@ vi.mock("@/services/backend", () => ({
   writeFile: vi.fn(async () => undefined),
 }))
 
-const changes: EditorDiffTarget = { cwd: "C:/repo", path: "src/app.ts", source: "unstaged" }
+const changes: EditorDiffTarget = {
+  cwd: "C:/repo",
+  path: "src/app.ts",
+  source: "unstaged",
+}
 const staged: EditorDiffTarget = { ...changes, source: "staged" }
 const store = () => useEditorStore.getState()
-const active = () => store().tabs.find(tab => tab.id === store().activeTabId)!
+const active = () => store().tabs.find((tab) => tab.id === store().activeTabId)!
 
 beforeEach(() => {
-  useEditorStore.setState({ tabs: [], activeTabId: null, recentlyClosedTabs: [], recentFiles: [], navigationBackStack: [], navigationForwardStack: [] })
+  useEditorStore.setState({
+    tabs: [],
+    activeTabId: null,
+    recentlyClosedTabs: [],
+    recentFiles: [],
+    navigationBackStack: [],
+    navigationForwardStack: [],
+  })
   vi.clearAllMocks()
 })
 
@@ -31,7 +42,11 @@ describe("editor diff documents", () => {
     expect(store().tabs).toHaveLength(3)
     expect(active().diff).toEqual(changes)
     await store().openFile(file.filePath)
-    expect(active()).toMatchObject({ id: file.id, content: "unsaved edit", isDirty: true })
+    expect(active()).toMatchObject({
+      id: file.id,
+      content: "unsaved edit",
+      isDirty: true,
+    })
     expect(readFile).toHaveBeenCalledTimes(1)
   })
 
@@ -59,7 +74,7 @@ describe("editor diff documents", () => {
     store().togglePinTab(pinned)
     store().openDiff(changes, { preview: true })
     store().closeAllTabs()
-    expect(store().tabs.map(tab => tab.id)).toEqual([pinned])
+    expect(store().tabs.map((tab) => tab.id)).toEqual([pinned])
   })
 
   it("restores the comparison source through back, forward and reopening", async () => {
@@ -86,7 +101,9 @@ describe("editor diff documents", () => {
     expect(store().recentlyClosedTabs).toHaveLength(2)
     await store().reopenClosedTab()
     await store().reopenClosedTab()
-    expect(new Set(store().tabs.map(tab => tab.diff?.source))).toEqual(new Set(["staged", "unstaged"]))
+    expect(new Set(store().tabs.map((tab) => tab.diff?.source))).toEqual(
+      new Set(["staged", "unstaged"])
+    )
     expect(readFile).not.toHaveBeenCalled()
   })
 
@@ -94,7 +111,10 @@ describe("editor diff documents", () => {
     store().openDiff(changes)
     store().openDiff({ ...changes, cwd: "C:/worktrees/test" })
     expect(store().tabs).toHaveLength(2)
-    store().handlePathMoved("C:/worktrees/test/src/app.ts", "C:/worktrees/test/src/new.ts")
+    store().handlePathMoved(
+      "C:/worktrees/test/src/app.ts",
+      "C:/worktrees/test/src/new.ts"
+    )
     expect(active().filePath).toBe("C:/worktrees/test/src/app.ts")
     expect(active().diff?.path).toBe("src/app.ts")
     expect(editorDiffKey(changes)).not.toBe(editorDiffKey(active().diff!))
@@ -103,18 +123,33 @@ describe("editor diff documents", () => {
   it("does not let a comparison's empty buffer hide source search results", () => {
     store().openDiff(changes)
     const input = { projectPath: changes.cwd, tabs: store().tabs }
-    expect(buildOpenEditorContentSearch({ ...input, query: "title" }).searchedPathKeys.size).toBe(0)
-    expect(buildOpenEditorReferenceSearch({ ...input, symbol: "title" }).searchedPathKeys.size).toBe(0)
+    expect(
+      buildOpenEditorContentSearch({ ...input, query: "title" })
+        .searchedPathKeys.size
+    ).toBe(0)
+    expect(
+      buildOpenEditorReferenceSearch({ ...input, symbol: "title" })
+        .searchedPathKeys.size
+    ).toBe(0)
   })
 
   it("ignores late file reads when a diff replaces a loading file preview", async () => {
     let resolve!: (value: { path: string; content: string }) => void
-    vi.mocked(readFile).mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    vi.mocked(readFile).mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done
+        })
+    )
     const opening = store().openFile("C:/repo/src/slow.ts", { preview: true })
     store().openDiff(changes, { preview: true })
     resolve({ path: "C:/repo/src/slow.ts", content: "late response" })
     await opening
-    expect(active()).toMatchObject({ diff: changes, content: "", isDirty: false })
+    expect(active()).toMatchObject({
+      diff: changes,
+      content: "",
+      isDirty: false,
+    })
     expect(store().tabs).toHaveLength(1)
   })
 })
