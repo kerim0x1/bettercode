@@ -658,7 +658,8 @@ export class ChatResumeScheduler {
   private async fire(threadId: string, generation: number): Promise<void> {
     this.timers.delete(threadId)
     if (this.closed || this.shuttingDown) return
-    if (this.generations.get(threadId) !== generation) return
+    // `arm` reads a chat without a generation yet (one a restart left) as 0.
+    if ((this.generations.get(threadId) ?? 0) !== generation) return
     const record = this.ports.store.readRecord(threadId)
     if (!record || record.mode !== "auto" || record.status !== "waiting") return
     if (!this.ports.store.hasThread(threadId)) return

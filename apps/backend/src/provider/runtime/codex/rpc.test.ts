@@ -80,6 +80,10 @@ describe("CodexRpcClient close lifecycle", () => {
 })
 
 describe("CodexRpcClient child stream lifecycle", () => {
+  beforeEach(() => {
+    terminateProviderChildProcessTree.mockReset()
+  })
+
   function attachFakeChild(client: CodexRpcClient) {
     const child = Object.assign(new EventEmitter(), {
       pid: 7_303,

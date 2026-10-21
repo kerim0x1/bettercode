@@ -298,7 +298,7 @@ describe("experimental orchestrator", () => {
         models: [{ ...selected, reasoningEffort: "high" }],
       },
     })
-    f.service.spawn(body.thread_id, member.id, "Check it", "manual")
+    f.service.spawn(body.thread_id, member.id, "Check it", "auto")
     await flush()
     expect(f.dispatch).toHaveBeenLastCalledWith(
       expect.objectContaining({

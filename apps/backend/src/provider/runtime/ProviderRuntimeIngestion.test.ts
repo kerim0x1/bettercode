@@ -4121,15 +4121,26 @@ describe("canonical fixtures through the legacy bridge path (goldens)", () => {
     const payload = activity.payload as {
       output: string
       payloadTruncated?: boolean
+      outputTruncated?: boolean
+      outputBytes?: number
       journal_truncation?: {
         truncated: boolean
         fields: string[]
         originalBytes: number
       }
     }
+    // The journal cuts the output clean; the activity then keeps only the
+    // head and tail of that copy within the activity budget.
+    const journaledOutput = JSON.parse(row.payload_json).payload
+      .output as string
+    expect(journaledOutput).toMatch(/^x+$/)
     expect(activity.kind).toBe("tool.completed")
-    expect(payload.output).toMatch(/^x+$/)
-    expect(payload.output.length).toBeLessThan(2 * 1024 * 1024)
+    expect(
+      Buffer.byteLength(JSON.stringify(payload), "utf8")
+    ).toBeLessThanOrEqual(64 * 1024)
+    expect(payload.output).toMatch(/^x+\n… \[output truncated: .+\] …\nx+$/)
+    expect(payload.outputTruncated).toBe(true)
+    expect(payload.outputBytes).toBe(journaledOutput.length)
     expect(payload.payloadTruncated).toBe(true)
     expect(payload.journal_truncation).toMatchObject({
       truncated: true,
@@ -4137,8 +4148,21 @@ describe("canonical fixtures through the legacy bridge path (goldens)", () => {
     })
     const [frame] = runtimeFrames(harness.frames)
     expect(frame!.event_type).toBe("tool_result")
-    expect((frame!.payload as { output: string }).output).toBe(payload.output)
-    expect(JSON.parse(row.payload_json).payload.output).toBe(payload.output)
+    // The wire copy is bounded like the activity, from the same journaled
+    // copy.
+    const framePayload = frame!.payload as {
+      output: string
+      outputTruncated?: boolean
+      outputBytes?: number
+    }
+    expect(
+      Buffer.byteLength(JSON.stringify(framePayload), "utf8")
+    ).toBeLessThanOrEqual(64 * 1024)
+    expect(framePayload.output).toMatch(
+      /^x+\n… \[output truncated: .+\] …\nx+$/
+    )
+    expect(framePayload.outputTruncated).toBe(true)
+    expect(framePayload.outputBytes).toBe(journaledOutput.length)
     expect(harness.receipts.markProjected).toHaveBeenCalledWith(501)
   })
 })
@@ -4420,6 +4444,8 @@ describe("canonical ingestion behind the journal", () => {
     const livePayload = liveActivity.payload as {
       output: string
       payloadTruncated?: boolean
+      outputTruncated?: boolean
+      outputBytes?: number
       journal_truncation?: {
         truncated: boolean
         fields: string[]
@@ -4427,17 +4453,26 @@ describe("canonical ingestion behind the journal", () => {
       }
     }
     expect(liveActivity.kind).toBe("tool.completed")
-    expect(livePayload.output).toMatch(/^x+$/)
-    expect(livePayload.output.length).toBeLessThan(2 * 1024 * 1024)
+    expect(
+      Buffer.byteLength(JSON.stringify(livePayload), "utf8")
+    ).toBeLessThanOrEqual(64 * 1024)
+    expect(livePayload.output).toMatch(/^x+\n… \[output truncated: .+\] …\nx+$/)
+    expect(livePayload.outputTruncated).toBe(true)
     expect(livePayload.payloadTruncated).toBe(true)
     expect(livePayload.journal_truncation).toMatchObject({
       truncated: true,
       fields: ["output"],
     })
     const [liveFrame] = runtimeFrames(live.frames)
-    expect((liveFrame!.payload as { output: string }).output).toBe(
-      livePayload.output
+    const liveFramePayload = liveFrame!.payload as {
+      output: string
+      outputTruncated?: boolean
+      outputBytes?: number
+    }
+    expect(liveFramePayload.output).toMatch(
+      /^x+\n… \[output truncated: .+\] …\nx+$/
     )
+    expect(liveFramePayload.outputTruncated).toBe(true)
     // The row is canonical and pure: the markers live in metadata.
     const [row] = live.events.readUnprojectedProviderRuntimeEvents(10)
     expect(JSON.parse(row!.metadata_json)).toMatchObject({
@@ -4448,7 +4483,11 @@ describe("canonical ingestion behind the journal", () => {
     const stored = JSON.parse(row!.payload_json) as Record<string, unknown>
     expect(stored).not.toHaveProperty("payloadTruncated")
     expect(stored).not.toHaveProperty("journal_truncation")
-    expect(stored.output).toBe(livePayload.output)
+    // The journal cuts the output clean; the activity and the frame keep the
+    // head and tail of that copy and record its size.
+    expect(stored.output).toMatch(/^x+$/)
+    expect(livePayload.outputBytes).toBe((stored.output as string).length)
+    expect(liveFramePayload.outputBytes).toBe((stored.output as string).length)
 
     // Same DB, fresh ingestion: replay projects the identical activity.
     const activitiesBeforeReplay = live.activities.length
@@ -5056,19 +5095,37 @@ describe("canonical ingestion behind the journal", () => {
       payloadTruncated: true,
       stringCapBytes: 32 * 1024,
     })
+    const stored = JSON.parse(row.payload_json) as {
+      output: { content: Array<{ text: string }> }
+    }
+    expect(stored.output.content).toHaveLength(25)
+    expect(Buffer.byteLength(stored.output.content[0]!.text, "utf8")).toBe(
+      32 * 1024
+    )
     expect(harness.receipts.markProjected).toHaveBeenCalledWith(501)
-    // Projected and broadcast from the bounded copy, with the markers.
+    // Projected and broadcast from the bounded copy, with the markers. The
+    // activity then keeps only the head and tail of each journaled block
+    // within the activity budget, and records the journaled output's size.
     expect(harness.activities.map((activity) => activity.kind)).toEqual([
       "tool.completed",
     ])
     const payload = harness.activities[0]!.payload as {
       output: { content: Array<{ text: string }> }
       payloadTruncated?: boolean
+      outputTruncated?: boolean
+      outputBytes?: number
       journal_truncation?: { fields: string[] }
     }
+    expect(
+      Buffer.byteLength(JSON.stringify(payload), "utf8")
+    ).toBeLessThanOrEqual(64 * 1024)
     expect(payload.output.content).toHaveLength(25)
-    expect(Buffer.byteLength(payload.output.content[0]!.text, "utf8")).toBe(
-      32 * 1024
+    expect(payload.output.content[0]!.text).toMatch(
+      /^a+\n… \[output truncated: .+\] …\na+$/
+    )
+    expect(payload.outputTruncated).toBe(true)
+    expect(payload.outputBytes).toBe(
+      Buffer.byteLength(JSON.stringify(stored.output), "utf8")
     )
     expect(payload.payloadTruncated).toBe(true)
     expect(payload.journal_truncation?.fields).toHaveLength(25)

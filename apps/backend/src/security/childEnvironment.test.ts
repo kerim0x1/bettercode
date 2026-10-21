@@ -226,7 +226,12 @@ describe("shell environment", () => {
     expect(env.SSH_AUTH_SOCK).toBe("/tmp/ssh-agent.sock")
     expect(env.DBUS_SESSION_BUS_ADDRESS).toBe("unix:path=/run/user/1000/bus")
     expect(env.XDG_RUNTIME_DIR).toBe("/run/user/1000")
-    expect(env.NUMBER_OF_PROCESSORS).toBe("8")
+    // Windows answers a lookup of NUMBER_OF_PROCESSORS with the processor
+    // count it computes for the process, not the environment block's value,
+    // so the stub cannot be observed there; the real value must pass through.
+    expect(env.NUMBER_OF_PROCESSORS).toBe(
+      process.platform === "win32" ? process.env.NUMBER_OF_PROCESSORS : "8"
+    )
     expect(env.PROGRAMDATA).toBe("C:\\ProgramData")
   })
 

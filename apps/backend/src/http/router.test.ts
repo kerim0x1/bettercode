@@ -11,7 +11,11 @@ import {
   HTTP_REQUEST_DURATION_MS,
   HTTP_REQUESTS_TOTAL,
 } from "../observability/metrics"
-import { checkpointRefForThreadTurn } from "@betterc0de/schema"
+import {
+  checkpointRefForThreadTurn,
+  type ApiKeyPoolView,
+  type ApiKeyProvider,
+} from "@betterc0de/schema"
 import * as git from "../services/git"
 import { buildApp as buildAppUnfilled } from "./router"
 import { recoverPendingCheckpointReverts as recoverPendingCheckpointRevertsUnfilled } from "../services/checkpoint-revert-saga"
@@ -95,16 +99,32 @@ describe("stored API-key probe limits", () => {
   it("shares the desktop probe budget across all three providers before calling upstream", async () => {
     const config = makeConfig()
     const key = { id: "test-key", key: "synthetic-secret" }
-    const view = {
-      provider: "openai",
-      keys: [{ ...key, status: "untested", retryAt: null }],
-    }
+    // The route answers through the `apiKeysTest` contract, so the double
+    // returns a complete key list (without the secret, like the real pool).
+    const view = (provider: ApiKeyProvider): ApiKeyPoolView => ({
+      provider,
+      enabled: true,
+      managed: true,
+      keys: [
+        {
+          id: key.id,
+          label: "Key",
+          enabled: true,
+          source: "settings",
+          secret: { configured: true, storage: "encrypted" },
+          status: "untested",
+          message: null,
+          retryAt: null,
+          checkedAt: null,
+        },
+      ],
+    })
     const app = buildApp(config, {
       ...makeState(),
       config,
       apiKeyPool: {
         requireKey: () => key,
-        view: () => view,
+        view,
         version: () => 0,
         success: vi.fn(),
       },

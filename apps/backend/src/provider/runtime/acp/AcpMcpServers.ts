@@ -375,12 +375,18 @@ function parseImportedRuntimeMcpServer(
   const url = boundedNonEmptyString(value.url, MAX_COMMAND_OR_URL_CHARS) ?? null
   if (type === "command" ? !command : !url) return null
 
-  const args = boundedStringArray(value.args, MAX_ARGS, MAX_ARG_CHARS)
+  // `args` and `env` are optional in a stored entry; like the desktop
+  // (mcp-ipc `normalizeMcpArgs`/`normalizeMcpEnv`), a missing one is empty.
+  const args =
+    value.args === undefined
+      ? []
+      : boundedStringArray(value.args, MAX_ARGS, MAX_ARG_CHARS)
   // The desktop encrypts env and header values at rest with the settings key
   // this process also holds. A value it cannot decrypt (key unavailable or a
   // profile copied from another machine) drops the server: connecting with a
   // missing credential could silently use a different identity.
-  const decryptedEnv = decryptImportedSecrets(value.env)
+  const decryptedEnv =
+    value.env === undefined ? {} : decryptImportedSecrets(value.env)
   const decryptedHeaders =
     value.headers === undefined ? {} : decryptImportedSecrets(value.headers)
   if (decryptedEnv === UNDECRYPTABLE || decryptedHeaders === UNDECRYPTABLE) {

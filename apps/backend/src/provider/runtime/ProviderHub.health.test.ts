@@ -157,8 +157,10 @@ describe("native permission alias admission", () => {
   it.each([
     ["full", "auto-accept-edits"],
     ["allow-edits", "auto-accept-edits"],
+    // `full-access` is the old "Full Access" label for allow-edits; only an
+    // explicit `bypass` reaches the full-access runtime mode.
     ["bypass", "full-access"],
-    ["full-access", "full-access"],
+    ["full-access", "auto-accept-edits"],
   ])(
     "maps permission %s to runtime %s without widening it",
     async (permissionLevel, runtimeMode) => {

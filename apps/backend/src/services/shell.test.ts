@@ -351,16 +351,19 @@ describe("shell command output and settlement", () => {
   }, 30_000)
 
   it("settles once the root exits even if a detached descendant keeps the output pipes", async () => {
+    // The descendant outlives the test, so it runs outside the temporary
+    // folder: Windows cannot remove a running process's working directory.
     const script = writeScript(
       "detach.cjs",
       [
         "const { spawn } = require('node:child_process')",
         "const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 15000)'], {",
+        "  cwd: require('node:os').tmpdir(),",
         "  stdio: 'inherit',",
         "  detached: true,",
         "})",
         "child.unref()",
-        "process.stdout.write('started\n')",
+        "process.stdout.write('started\\n')",
       ].join("\n")
     )
     const startedAt = Date.now()

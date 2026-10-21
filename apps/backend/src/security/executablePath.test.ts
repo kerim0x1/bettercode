@@ -43,17 +43,26 @@ describe("resolveExecutableOnPath", () => {
     writeFakeExecutable(workspace, gitFileName)
     writeFakeExecutable(workspace, "git.com")
     const realGit = writeFakeExecutable(tools, gitFileName)
-    // A relative entry that would reach the planted binary if it were
-    // resolved against the process cwd, plus an empty entry (POSIX: ".").
-    const relativeWorkspace = path.relative(process.cwd(), workspace) || "."
-    const pathValue = [relativeWorkspace, ".", "", tools].join(path.delimiter)
+    // Run from inside the planted repository, as Git spawns do, so a
+    // relative entry, "." and an empty entry (POSIX: ".") would each reach
+    // the planted binary if they were searched. The relative entry is not
+    // derived with path.relative: across Windows drives (CI checks out on
+    // D:, the temp directory is on C:) that returns an absolute path.
+    const relativeWorkspace = path.join("..", path.basename(workspace))
+    const previousCwd = process.cwd()
+    process.chdir(workspace)
+    try {
+      const pathValue = [relativeWorkspace, ".", "", tools].join(path.delimiter)
 
-    expect(resolveExecutableOnPath("git", { pathValue })).toBe(realGit)
-    expect(
-      resolveExecutableOnPath("git", {
-        pathValue: [relativeWorkspace, "."].join(path.delimiter),
-      })
-    ).toBeNull()
+      expect(resolveExecutableOnPath("git", { pathValue })).toBe(realGit)
+      expect(
+        resolveExecutableOnPath("git", {
+          pathValue: [relativeWorkspace, "."].join(path.delimiter),
+        })
+      ).toBeNull()
+    } finally {
+      process.chdir(previousCwd)
+    }
   })
 
   it("refuses relative names with a path separator", () => {

@@ -211,7 +211,14 @@ describe("owner API-key routes", () => {
     vi.stubGlobal("fetch", upstream)
     await request(`/${id}/test`, "POST")
     expect((await request(`/${id}/test`, "POST")).status).toBe(409)
-    expect((await request(`/${id}/retry`, "POST")).status).toBe(409)
     expect(upstream).toHaveBeenCalledTimes(1)
+    // The delay is advisory: Retry now is the owner's explicit override. It
+    // clears the wait without calling the provider, and the next check runs.
+    expect(
+      (await keyResponse(await request(`/${id}/retry`, "POST"))).keys[0]
+    ).toMatchObject({ status: "untested", retryAt: null })
+    expect(upstream).toHaveBeenCalledTimes(1)
+    expect((await request(`/${id}/test`, "POST")).status).toBe(200)
+    expect(upstream).toHaveBeenCalledTimes(2)
   })
 })

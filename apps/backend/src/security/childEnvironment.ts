@@ -115,7 +115,9 @@ const SHELL_BASE_ENV_KEYS = [
   "XDG_CURRENT_DESKTOP",
   "__CF_USER_TEXT_ENCODING",
   // Network settings the user's own terminal has; integrated terminals
-  // already received them before this list was widened.
+  // already received them before this list was widened. On Windows each
+  // lower-case name is the same variable as its upper-case one, and the
+  // copy keeps a single spelling.
   "SSL_CERT_FILE",
   "SSL_CERT_DIR",
   "NODE_EXTRA_CA_CERTS",
@@ -328,7 +330,7 @@ export function restrictedChildEnvironment(
   for (const key of RESTRICTED_CHILD_ENV_KEYS) {
     const value = process.env[key]
     if (value !== undefined && !isUnsafeChildEnvironmentKey(key)) {
-      env[key] = value
+      assignEnvironmentValue(env, key, value)
     }
   }
   applyWindowsExecutableSearchHardening(env)
@@ -357,7 +359,7 @@ export function sanitizedShellEnvironment(
   const env: NodeJS.ProcessEnv = {}
   for (const key of SHELL_BASE_ENV_KEYS) {
     const value = process.env[key]
-    if (value !== undefined) env[key] = value
+    if (value !== undefined) assignEnvironmentValue(env, key, value)
   }
   for (const [key, value] of Object.entries(overrides)) {
     if (value !== undefined && isSafeShellEnvironmentOverrideKey(key)) {
