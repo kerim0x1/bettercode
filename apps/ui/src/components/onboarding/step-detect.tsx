@@ -64,6 +64,14 @@ export function DetectStep() {
           status={cliStatus?.cursor}
           scanning={scanning}
         />
+
+        {/* opencode ships no logo asset in the repo either — same fallback. */}
+        <CliCard
+          name="OpenCode CLI"
+          icon={<TerminalIcon className="size-5 text-muted-foreground" />}
+          status={cliStatus?.["opencode-cli"]}
+          scanning={scanning}
+        />
       </div>
 
       <NavFooter onBack={prevStep} onNext={nextStep} />

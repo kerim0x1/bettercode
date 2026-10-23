@@ -504,6 +504,9 @@ const BUILTIN_PROVIDER_KINDS = new Set([
   "grok_cli",
   "grok-cli",
   "grokcli",
+  "opencode-cli",
+  "opencode_cli",
+  "opencodecli",
   "openrouter",
   "lmstudio",
 ])

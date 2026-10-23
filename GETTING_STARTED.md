@@ -34,6 +34,7 @@ Select the connection you want to use and follow the instructions shown. For pro
 | OpenAI Codex | [OpenAI Codex](https://openai.com/codex/) |
 | Cursor | [Cursor](https://cursor.com) |
 | Grok | [xAI](https://x.ai) |
+| OpenCode | [OpenCode](https://opencode.ai) |
 
 Available models and capabilities depend on your connection and account. BetterC0de does not replace the provider's subscription, usage limits, or API billing.
 

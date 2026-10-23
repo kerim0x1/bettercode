@@ -11,20 +11,21 @@
  * No other file in the codebase needs to change.
  */
 
-import type { ProviderDefinition } from "./types";
-import { anthropic } from "./anthropic";
-import { openai } from "./openai";
-import { grok } from "./grok";
-import { openrouter } from "./openrouter";
-import { deepseek } from "./deepseek";
-import { lmstudio } from "./lmstudio";
-import { claudeCli } from "./claude-cli";
-import { codexCli } from "./codex-cli";
-import { grokCli } from "./grok-cli";
-import { cursorCli } from "./cursor-cli";
+import type { ProviderDefinition } from "./types"
+import { anthropic } from "./anthropic"
+import { openai } from "./openai"
+import { grok } from "./grok"
+import { openrouter } from "./openrouter"
+import { deepseek } from "./deepseek"
+import { lmstudio } from "./lmstudio"
+import { claudeCli } from "./claude-cli"
+import { codexCli } from "./codex-cli"
+import { grokCli } from "./grok-cli"
+import { cursorCli } from "./cursor-cli"
+import { opencodeCli } from "./opencode-cli"
 
 // Order shapes the Settings UI:
-//   1. CLI-backed (claude, codex, grok, cursor) — most common "I already have a CLI logged in"
+//   1. CLI-backed (claude, codex, grok, cursor, opencode) — most common "I already have a CLI logged in"
 //   2. API-key-only providers (anthropic, openai, grok)
 //   3. Aggregators (openrouter, deepseek)
 //   4. Local servers (lmstudio)
@@ -35,25 +36,32 @@ export const PROVIDERS: readonly ProviderDefinition[] = [
   codexCli,
   grokCli,
   cursorCli,
+  opencodeCli,
   anthropic,
   openai,
   grok,
   openrouter,
   deepseek,
   lmstudio,
-];
+]
 
 const BY_ID: ReadonlyMap<string, ProviderDefinition> = new Map(
-  PROVIDERS.map((p) => [p.id, p]),
-);
+  PROVIDERS.map((p) => [p.id, p])
+)
 
 export function getProvider(id: string): ProviderDefinition | undefined {
-  return BY_ID.get(id);
+  return BY_ID.get(id)
 }
 
 export function listProviders(): readonly ProviderDefinition[] {
-  return PROVIDERS;
+  return PROVIDERS
 }
 
-export type { ProviderDefinition, AuthMethod, AuthPrompt, ResolvedApiKey, KeySource } from "./types";
-export { resolveProviderApiKey } from "./types";
+export type {
+  ProviderDefinition,
+  AuthMethod,
+  AuthPrompt,
+  ResolvedApiKey,
+  KeySource,
+} from "./types"
+export { resolveProviderApiKey } from "./types"

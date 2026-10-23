@@ -38,8 +38,18 @@ import {
   resolveAcpAdvertisedModelId,
   resolveAcpConfigUpdates,
 } from "../provider/runtime/acp/AcpSessionConfig"
+import {
+  createOpenCodeAcpRuntime,
+  type OpenCodeAcpRuntime,
+  type OpenCodeAcpRuntimeOptions,
+} from "../provider/runtime/opencode/OpenCodeAcpRuntime"
+import { resolveOpenCodeBinaryAsync } from "../provider/runtime/opencode/OpenCodeBinaryResolution"
 import { createBetterC0deCompatHttpClient } from "../provider/runtime/BetterC0deCompatHttpClient"
 import { parseBetterC0deModelSlug } from "../provider/runtime/betterc0deCompat/BetterC0deCompatRuntimeSupport"
+import {
+  BETTERC0DE_COMPAT_PROFILE,
+  type OpenCodeCompatProfile,
+} from "../provider/runtime/betterc0deCompat/OpenCodeCompatProfile"
 import { extractJsonObject } from "./text-generation"
 import { logger } from "../observability/logger"
 import {
@@ -93,7 +103,8 @@ export interface NativeTextGenerationRunner {
     input: BetterC0deServerConnectorInput
   ) => Promise<BetterC0deServerConnection>
   readonly createBetterC0deClient?: (
-    input: BetterC0deClientFactoryInput
+    input: BetterC0deClientFactoryInput,
+    profile?: OpenCodeCompatProfile
   ) => Promise<BetterC0deTextClient> | BetterC0deTextClient
   readonly createCursorRuntime?: (
     input: CursorAcpRuntimeOptions
@@ -101,6 +112,9 @@ export interface NativeTextGenerationRunner {
   readonly createGrokRuntime?: (
     input: GrokAcpRuntimeOptions
   ) => CursorAcpRuntime
+  readonly createOpenCodeRuntime?: (
+    input: OpenCodeAcpRuntimeOptions
+  ) => OpenCodeAcpRuntime
 }
 
 const DEFAULT_TIMEOUT_MS = 180_000
@@ -115,10 +129,6 @@ const NATIVE_PROCESS_FINALIZE_GRACE_MS = 2_000
 // traversal and permanently quarantining the request's private files.
 const NATIVE_TASKKILL_TIMEOUT_MS = 5_000
 const BETTERC0DE_EMPTY_CONFIG_CONTENT = "{}"
-const BETTERC0DE_SERVER_READY_PREFIXES = [
-  "betterc0de server listening",
-  "BetterC0de server listening",
-] as const
 const CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT = "low"
 /**
  * Values `codex exec --config model_reasoning_effort=...` accepts. The value
@@ -502,6 +512,16 @@ export class NativeTextGenerationService {
           driver
         )
       }
+      if (driver === "opencode") {
+        return await this.runAcpTextGeneration(
+          input,
+          providerConfig,
+          modelSelection,
+          runner,
+          operation.controller.signal,
+          driver
+        )
+      }
       return null
     } finally {
       this.releaseNativeTextGenerationSlot(operation)
@@ -814,6 +834,7 @@ export class NativeTextGenerationService {
     runner: NativeTextGenerationRunner,
     lifecycleSignal: AbortSignal
   ): Promise<string> {
+    const profile = BETTERC0DE_COMPAT_PROFILE
     const parsedModel = parseBetterC0deModelSlug(modelSelection.model)
     if (!parsedModel) {
       throw new Error(
@@ -821,12 +842,12 @@ export class NativeTextGenerationService {
       )
     }
 
-    const binaryPath = configString(config.config, "binaryPath") ?? "betterc0de"
+    const binaryPath =
+      configString(config.config, "binaryPath") ?? profile.defaultBinaryPath
     const serverUrl = configString(config.config, "serverUrl")
     const serverUsername =
       configString(config.config, "serverUsername") ??
-      process.env.BETTERC0DE_SERVER_USERNAME ??
-      process.env.BetterC0de_SERVER_USERNAME
+      firstDefinedEnv(profile.serverUsernameEnvVars)
     const serverPassword = configString(config.config, "serverPassword")
     const serverConnector =
       runner.connectBetterC0deServer ??
@@ -843,6 +864,7 @@ export class NativeTextGenerationService {
         env: providerEnvironment(config),
         serverConnector,
         signal: lifecycleSignal,
+        profile,
       })
     } catch (error) {
       this.releaseBetterC0deSessionCleanupCapacity()
@@ -883,13 +905,16 @@ export class NativeTextGenerationService {
           path.join(os.tmpdir(), "betterc0de-compat-text-generation-")
         )
       }
-      client = await createClient({
-        baseUrl: server.url,
-        directory: resolveCwd(input.cwd, scratchDirectory ?? ""),
-        ...(server.external && serverPassword
-          ? { serverUsername, serverPassword }
-          : {}),
-      })
+      client = await createClient(
+        {
+          baseUrl: server.url,
+          directory: resolveCwd(input.cwd, scratchDirectory ?? ""),
+          ...(server.external && serverPassword
+            ? { serverUsername, serverPassword }
+            : {}),
+        },
+        profile
+      )
       if (server.external && !client.session.delete) {
         throw Object.assign(
           new Error(
@@ -1061,7 +1086,7 @@ export class NativeTextGenerationService {
     modelSelection: ModelSelection,
     runner: NativeTextGenerationRunner,
     lifecycleSignal: AbortSignal,
-    driver: "cursor" | "grok"
+    driver: "cursor" | "grok" | "opencode"
   ): Promise<string> {
     // Native text-generation prompts already contain the required repository
     // context. Do not give the external ACP agent the repository as its cwd:
@@ -1069,12 +1094,13 @@ export class NativeTextGenerationService {
     const tempDir = await fs.mkdtemp(
       path.join(os.tmpdir(), `betterc0de-${driver}-text-generation-`)
     )
-    const createRuntime =
+    const label =
       driver === "grok"
-        ? (runner.createGrokRuntime ?? createGrokAcpRuntime)
-        : (runner.createCursorRuntime ?? createCursorAcpRuntime)
-    const label = driver === "grok" ? "Grok" : "Cursor Agent"
-    let runtime: CursorAcpRuntime | null = null
+        ? "Grok"
+        : driver === "opencode"
+          ? "OpenCode"
+          : "Cursor Agent"
+    let runtime: CursorAcpRuntime | OpenCodeAcpRuntime | null = null
     let unsubscribe = () => {}
     const output = new BoundedOutputBuffer(NATIVE_PROCESS_MAX_OUTPUT_BYTES)
     let outputExceeded = false
@@ -1086,12 +1112,24 @@ export class NativeTextGenerationService {
     try {
       let binaryPath =
         configString(config.config, "binaryPath") ??
-        (driver === "grok" ? "grok" : CURSOR_BINARY_NAME)
+        (driver === "grok"
+          ? "grok"
+          : driver === "opencode"
+            ? "opencode"
+            : CURSOR_BINARY_NAME)
       if (driver === "grok" && !runner.createGrokRuntime) {
         const resolved = await resolveGrokBinaryAsync(binaryPath)
         if (!resolved)
           throw new Error(
             "xAI Grok CLI is unavailable for the provider handoff."
+          )
+        binaryPath = resolved.binaryPath
+      }
+      if (driver === "opencode" && !runner.createOpenCodeRuntime) {
+        const resolved = await resolveOpenCodeBinaryAsync(binaryPath)
+        if (!resolved)
+          throw new Error(
+            "OpenCode CLI is unavailable for the provider handoff."
           )
         binaryPath = resolved.binaryPath
       }
@@ -1104,11 +1142,7 @@ export class NativeTextGenerationService {
         binaryPath = resolved.binaryPath
       }
       this.throwIfNativeTextGenerationUnavailable(lifecycleSignal)
-      runtime = createRuntime({
-        settings: {
-          binaryPath,
-          apiEndpoint: configString(config.config, "apiEndpoint") ?? undefined,
-        },
+      const runtimeOptions = {
         cwd: tempDir,
         env: providerEnvironment(config),
         clientInfo: {
@@ -1116,7 +1150,26 @@ export class NativeTextGenerationService {
           title: "BetterC0de",
           version: "0.0.0",
         },
-      })
+      }
+      runtime =
+        driver === "grok"
+          ? (runner.createGrokRuntime ?? createGrokAcpRuntime)({
+              ...runtimeOptions,
+              settings: { binaryPath },
+            })
+          : driver === "opencode"
+            ? (runner.createOpenCodeRuntime ?? createOpenCodeAcpRuntime)({
+                ...runtimeOptions,
+                settings: { binaryPath, permissionPolicy: "deny" },
+              })
+            : (runner.createCursorRuntime ?? createCursorAcpRuntime)({
+                ...runtimeOptions,
+                settings: {
+                  binaryPath,
+                  apiEndpoint:
+                    configString(config.config, "apiEndpoint") ?? undefined,
+                },
+              })
       onLifecycleAbort = () => {
         if (cancellationRequested) return
         cancellationRequested = true
@@ -1280,6 +1333,7 @@ export class NativeTextGenerationService {
     readonly serverUrl?: string | null
     readonly env: NodeJS.ProcessEnv
     readonly signal: AbortSignal
+    readonly profile: OpenCodeCompatProfile
     readonly serverConnector: (
       input: BetterC0deServerConnectorInput
     ) => Promise<BetterC0deServerConnection>
@@ -1291,6 +1345,7 @@ export class NativeTextGenerationService {
         binaryPath: input.binaryPath,
         serverUrl,
         env: input.env,
+        profile: input.profile,
       })
       if (!this.admissionsOpen || input.signal.aborted) {
         const admissionFailure =
@@ -1319,6 +1374,7 @@ export class NativeTextGenerationService {
       env: input.env,
       serverConnector: input.serverConnector,
       signal: input.signal,
+      profile: input.profile,
     })
     return {
       server: entry.server,
@@ -1332,13 +1388,15 @@ export class NativeTextGenerationService {
     readonly binaryPath: string
     readonly env: NodeJS.ProcessEnv
     readonly signal: AbortSignal
+    readonly profile: OpenCodeCompatProfile
     readonly serverConnector: (
       input: BetterC0deServerConnectorInput
     ) => Promise<BetterC0deServerConnection>
   }): Promise<SharedBetterC0deTextServer> {
     const fingerprint = betterC0deTextServerFingerprint(
       input.binaryPath,
-      input.env
+      input.env,
+      input.profile.providerKind
     )
     return await this.withSharedBetterC0deAcquireLock(async () => {
       this.throwIfNativeTextGenerationUnavailable(input.signal)
@@ -1357,6 +1415,7 @@ export class NativeTextGenerationService {
       const server = await input.serverConnector({
         binaryPath: input.binaryPath,
         env: input.env,
+        profile: input.profile,
       })
       const entry: SharedBetterC0deTextServer = {
         fingerprint,
@@ -1471,13 +1530,17 @@ export class NativeTextGenerationService {
   private async startBetterC0deServerProcess(input: {
     readonly binaryPath: string
     readonly env: NodeJS.ProcessEnv
+    readonly profile?: OpenCodeCompatProfile
   }): Promise<BetterC0deServerConnection> {
+    const profile = input.profile ?? BETTERC0DE_COMPAT_PROFILE
     const port = await findAvailablePort()
     const spawnInput = nativeProcessSpawnInput(input.binaryPath, [
-      "serve",
-      `--hostname=${DEFAULT_BETTERC0DE_HOSTNAME}`,
-      `--port=${port}`,
+      ...profile.serveArgs(port, DEFAULT_BETTERC0DE_HOSTNAME),
     ])
+    const configEnv: NodeJS.ProcessEnv = {}
+    for (const name of profile.configContentEnv) {
+      configEnv[name] = BETTERC0DE_EMPTY_CONFIG_CONTENT
+    }
     const child = spawn(spawnInput.command, [...spawnInput.args], {
       detached: process.platform !== "win32",
       shell: false,
@@ -1485,8 +1548,7 @@ export class NativeTextGenerationService {
       windowsVerbatimArguments: spawnInput.windowsVerbatimArguments,
       env: {
         ...input.env,
-        BETTERC0DE_CONFIG_CONTENT: BETTERC0DE_EMPTY_CONFIG_CONTENT,
-        BetterC0de_CONFIG_CONTENT: BETTERC0DE_EMPTY_CONFIG_CONTENT,
+        ...configEnv,
       },
     })
     this.children.add(child)
@@ -1537,7 +1599,7 @@ export class NativeTextGenerationService {
         }
         if (
           settled ||
-          !BETTERC0DE_SERVER_READY_PREFIXES.some((prefix) =>
+          !profile.serverReadyPrefixes.some((prefix) =>
             stdout.text.toLowerCase().includes(prefix)
           )
         )
@@ -1927,11 +1989,13 @@ function normalizeNativeDriver(
     key === "bettercode" ||
     key === "betterc0decli" ||
     key === "bettercodecli" ||
-    key === "opencode" ||
-    key === "opencodecli"
+    key === "opencode"
   ) {
     return "betterc0de"
   }
+  // The upstream `opencode` binary's ACP server. Bare `opencode` above is the
+  // legacy BetterC0de compatibility spelling and must stay there.
+  if (key === "opencodecli") return "opencode"
   if (key === "cursor" || key === "cursoragent" || key === "cursoracp") {
     return "cursor"
   }
@@ -1988,6 +2052,7 @@ interface BetterC0deServerConnectorInput {
   readonly binaryPath: string
   readonly serverUrl?: string | null
   readonly env: NodeJS.ProcessEnv
+  readonly profile?: OpenCodeCompatProfile
 }
 
 interface BetterC0deServerConnection {
@@ -2031,14 +2096,24 @@ interface BetterC0deTextClient {
 }
 
 async function defaultBetterC0deClientFactory(
-  input: BetterC0deClientFactoryInput
+  input: BetterC0deClientFactoryInput,
+  profile: OpenCodeCompatProfile = BETTERC0DE_COMPAT_PROFILE
 ): Promise<BetterC0deTextClient> {
   return createBetterC0deCompatHttpClient<BetterC0deTextClient>({
     baseUrl: input.baseUrl,
     directory: input.directory,
     serverUsername: input.serverUsername,
     serverPassword: input.serverPassword,
+    v2Envelope: profile.v2Envelope,
   })
+}
+
+function firstDefinedEnv(names: ReadonlyArray<string>): string | undefined {
+  for (const name of names) {
+    const value = process.env[name]
+    if (value) return value
+  }
+  return undefined
 }
 
 function cancelSharedBetterC0deIdleClose(
@@ -2051,7 +2126,8 @@ function cancelSharedBetterC0deIdleClose(
 
 function betterC0deTextServerFingerprint(
   binaryPath: string,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  profileKind: string = BETTERC0DE_COMPAT_PROFILE.providerKind
 ): string {
   const hash = createHash("sha256")
   const updateField = (value: string) => {
@@ -2060,6 +2136,7 @@ function betterC0deTextServerFingerprint(
     hash.update(":")
     hash.update(bytes)
   }
+  updateField(profileKind)
   updateField(binaryPath)
   for (const key of Object.keys(env).sort()) {
     updateField(key)

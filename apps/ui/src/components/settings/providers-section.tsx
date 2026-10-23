@@ -90,7 +90,12 @@ import {
 const log = createLogger("settings-providers")
 
 type ProviderInstancesMap = Record<string, ProviderInstanceConfig>
-type ProviderInstanceDriver = "codex" | "claude" | "cursor" | "betterc0de"
+type ProviderInstanceDriver =
+  | "codex"
+  | "claude"
+  | "cursor"
+  | "betterc0de"
+  | "opencode-cli"
 type KeyStatus = "idle" | "checking" | "valid" | "invalid" | "unverified"
 
 /** What a CLI card knows about its CLI: install, sign-in and version. */
@@ -1079,6 +1084,11 @@ const INSTANCE_DRIVERS: ReadonlyArray<{
     driver: "betterc0de",
     label: "BetterC0de server",
     hint: "A compatibility server by URL",
+  },
+  {
+    driver: "opencode-cli",
+    label: "OpenCode CLI",
+    hint: "Another local OpenCode binary (ACP)",
   },
 ]
 
@@ -2183,6 +2193,8 @@ function defaultBinaryPath(driver: string): string {
       return "agent"
     case "betterc0de":
       return "betterc0de"
+    case "opencode-cli":
+      return "opencode"
     case "codex":
       return "codex"
     default:
@@ -2198,6 +2210,8 @@ function providerDriverLabel(driver: string | ProviderInstanceDriver): string {
       return "Cursor"
     case "betterc0de":
       return "BetterC0de"
+    case "opencode-cli":
+      return "OpenCode"
     case "codex":
       return "Codex"
     default:
@@ -2259,7 +2273,8 @@ function isDefaultInstance(instanceId: string): boolean {
     instanceId === "claude" ||
     instanceId === "cursor" ||
     instanceId === "betterc0de" ||
-    instanceId === "BetterC0de"
+    instanceId === "BetterC0de" ||
+    instanceId === "opencode-cli"
   )
 }
 
@@ -2269,5 +2284,6 @@ function instanceSortRank(instanceId: string): number {
   if (instanceId === "cursor") return 2
   if (instanceId === "betterc0de") return 3
   if (instanceId === "BetterC0de") return 4
+  if (instanceId === "opencode-cli") return 5
   return 10
 }

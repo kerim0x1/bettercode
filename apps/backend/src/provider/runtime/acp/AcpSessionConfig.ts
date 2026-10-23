@@ -64,6 +64,43 @@ export function findAcpModelConfigOption(
   )
 }
 
+/**
+ * Some ACP agents (OpenCode) expose their build/plan selector as a session
+ * config option instead of the older `modes` field. Treat it as the mode
+ * state so plan intent reaches `session/set_config_option`.
+ */
+export function findAcpModeConfigOption(
+  configOptions: ReadonlyArray<AcpSessionConfigOption>
+): AcpSessionConfigOption | undefined {
+  return configOptions.find(
+    (option) =>
+      option.type === "select" &&
+      (getConfigOptionCategory(option) === "mode" ||
+        option.id.trim().toLowerCase() === "mode")
+  )
+}
+
+export function modeStateFromConfigOptions(
+  configOptions: ReadonlyArray<AcpSessionConfigOption>
+):
+  | {
+      currentModeId: string
+      availableModes: ReadonlyArray<{ id: string; name: string }>
+    }
+  | undefined {
+  const option = findAcpModeConfigOption(configOptions)
+  if (!option || option.type !== "select") return undefined
+  const currentModeId = option.currentValue?.trim()
+  const availableModes = flattenSessionConfigSelectOptions(option).map(
+    (entry) => ({
+      id: entry.value.trim(),
+      name: entry.name.trim() || entry.value.trim(),
+    })
+  )
+  if (!currentModeId || availableModes.length === 0) return undefined
+  return { currentModeId, availableModes }
+}
+
 export function resolveAcpAdvertisedModelId(
   model: string | null | undefined,
   configOptions: ReadonlyArray<AcpSessionConfigOption>

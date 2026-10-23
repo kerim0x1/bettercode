@@ -80,7 +80,7 @@ holds two row shapes, told apart by `metadata_json.$.schema`:
 | `schema`            | Row shape                                              | Written by                                                     |
 | ------------------- | ------------------------------------------------------ | -------------------------------------------------------------- |
 | `1`, `2` (or absent)| Legacy `{event_type, thread_id, payload}` (`LegacyProviderEvent`, `provider/types.ts`) | Every row before canonical journaling; the frozen in-process provider stack (`provider/adapters/`, `provider/service.ts`); the checkpoint reactor's own emissions (`turn.diff.updated`, `checkpoint.captured`) |
-| `3`                 | Canonical `ProviderRuntimeEvent` (`packages/schema`)   | The provider hub, for every runtime adapter (Claude, Codex, Cursor, Grok, BetterC0deCompat) |
+| `3`                 | Canonical `ProviderRuntimeEvent` (`packages/schema`)   | The provider hub, for every runtime adapter (Claude, Codex, Cursor, Grok, OpenCode, BetterC0deCompat) |
 
 Migration 51 stamps `schema: 1` onto rows that had no marker so every row
 carries an explicit shape; the replayer still treats a missing marker as

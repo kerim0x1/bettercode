@@ -148,6 +148,8 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Record<
   claudeAgent: "claude-haiku-4-5",
   cursor: "composer-2",
   betterc0de: "openai/gpt-5",
+  "opencode-cli": "opencode/big-pickle",
+  opencodecli: "opencode/big-pickle",
 }
 
 const CODEX_MODEL_SLUG_ALIASES: Record<string, string> = {

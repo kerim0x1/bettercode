@@ -73,7 +73,7 @@ backend/src/
 │   │   ├── codex/             Codex app-server adapter
 │   │   │   └── translator/    Codex notifications → runtime events, per family
 │   │   ├── acp/               Shared ACP code: JSON-RPC client, MCP servers, session config, bases
-│   │   ├── cursor/  grok-cli/ What is specific to each ACP CLI
+│   │   ├── cursor/  grok-cli/  opencode/  What is specific to each ACP CLI
 │   │   ├── betterc0deCompat/  BetterC0de-server compatibility adapter
 │   │   ├── claudeTerminal/    Backend-only, opt-in
 │   │   └── legacyBridge.ts    `canonicalToLegacy`: canonical → `LegacyProviderEvent`

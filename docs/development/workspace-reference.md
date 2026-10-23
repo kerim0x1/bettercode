@@ -3,9 +3,9 @@
 For contributor setup, use the [development guide](README.md). These notes describe the desktop workspace in more detail.
 
 BetterC0de is a desktop AI coding environment. It puts the coding CLIs you
-already have — Claude Code, OpenAI Codex, Cursor Agent, Grok — behind one
-editor, one chat surface, and one set of permissions, so you can run several
-agents side by side on the same repository.
+already have — Claude Code, OpenAI Codex, Cursor Agent, Grok, OpenCode —
+behind one editor, one chat surface, and one set of permissions, so you can run
+several agents side by side on the same repository.
 
 - **Multi-pane agent workspace** — split the window into panes, each with its
   own chat, terminal, plan, diff, files, or git tab.
@@ -195,6 +195,14 @@ its own and shows their status under **Settings → Providers**:
 | OpenAI Codex | `npm i -g @openai/codex`                       | `codex login`        |
 | Cursor Agent | Windows: `irm 'https://cursor.com/install?win32=true' \| iex`; macOS/Linux/WSL: `curl https://cursor.com/install -fsS \| bash` | `agent login` |
 | Grok         | `npm i -g @xai-official/grok`                  | `grok login`         |
+| OpenCode     | `npm i -g opencode-ai`, or `curl -fsSL https://opencode.ai/install \| bash` | `opencode auth login` |
+
+BetterC0de drives OpenCode 2.1 or newer over the Agent Client Protocol
+(`opencode acp`), not a local HTTP server. Models, reasoning effort and the
+build/plan mode come from the CLI's ACP session configuration, approvals
+arrive as ACP permission requests, sessions resume through ACP `session/load`,
+and the CLI reports token usage. A provider key in the instance environment
+works instead of `opencode auth login`.
 
 The initial model selection uses **Claude CLI**, then **Codex**, **Cursor**, and
 **Grok CLI**, depending on availability. Other configured providers follow.
@@ -206,9 +214,9 @@ Desktop and mobile use the same default provider priority.
 API-key providers (Claude API, OpenAI, xAI, OpenRouter, LM Studio, and others)
 are configured in the same place. Claude API, OpenAI, and xAI show models
 available to the configured account. Claude CLI reads its SDK initialization
-list, Codex uses `model/list`, Cursor uses its signed-in ACP session, and Grok
-uses ACP and its CLI cache. Catalogs
-refresh every 15 minutes. **Settings → Model Visibility → Refresh API models**
+list, Codex uses `model/list`, Cursor uses its signed-in ACP session, Grok
+uses ACP and its CLI cache, and OpenCode uses its ACP session configuration.
+Catalogs refresh every 15 minutes. **Settings → Model Visibility → Refresh API models**
 starts a fresh API lookup, and provider-instance refresh updates a CLI. The last
 successful account-specific list is saved without credentials. If a first
 refresh fails, only explicitly added custom models are offered. A model
@@ -556,7 +564,7 @@ TypeScript + Node 22 + Hono + `better-sqlite3` + `ws` + `pino`. Key modules:
 - `apps/backend/src/inProcess.ts` — the ordered list of startup phases (implemented in `apps/backend/src/bootstrap/`); returns a handle with `{ port, token, stop() }`. Tests and smoke scripts call it directly.
 - `apps/backend/src/appState.ts` — shared service container
 - `apps/backend/src/persistence/` — SQLite (migrations, EventStore, CommandReceiptStore, projection queries)
-- `apps/backend/src/provider/` — the provider hub and the CLI runtime adapters in `runtime/` (Claude Code, Codex, Cursor, Grok CLI, Claude Terminal, BetterC0de compatibility), and the frozen legacy stack for API-key providers: Claude via `@anthropic-ai/sdk`; OpenAI + Grok + OpenRouter + LMStudio via the `openai` SDK with a `baseURL` override. See [Provider Pipeline](../architecture/overview.md#provider-pipeline)
+- `apps/backend/src/provider/` — the provider hub and the CLI runtime adapters in `runtime/` (Claude Code, Codex, Cursor, Grok CLI, OpenCode CLI, Claude Terminal, BetterC0de compatibility), and the frozen legacy stack for API-key providers: Claude via `@anthropic-ai/sdk`; OpenAI + Grok + OpenRouter + LMStudio via the `openai` SDK with a `baseURL` override. See [Provider Pipeline](../architecture/overview.md#provider-pipeline)
 - `apps/backend/src/services/desktop-config/` — MCP servers, hooks, rules, skills and subagents in the runtime home, written only through `/api/v1/config/*` by the desktop's main process
 - `apps/backend/src/services/` — shell (subprocess wrappers), git (21 ops via `execFile`), workspace (search/read/write with path-traversal guards), project. Workspace searches are capped (result count, visited entries, scanned files/bytes, and a deadline); `/workspace/search` and `/workspace/search-content` answer with `{ entries|results, truncated, truncatedReason }` so a cut-short list never looks complete. Every surface that lists those results (file tree, @-mentions, search sidebar, references, symbols, `/find`, `/debug-rg`) ends a cut-short list with a static "cut short" row, and a rename whose search was cut short warns that files past the cut still hold the old name.
 - `apps/backend/src/auth/` — API key resolution (settings → env → CLI config), the backup-key pool, and removal of the retired `auth.json` credential store; CLI detection is in `apps/backend/src/cli/`

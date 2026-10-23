@@ -18,6 +18,7 @@ export type CanonicalProviderKindAlias =
   | "cursor"
   | "grok_cli"
   | "betterc0de"
+  | "opencode_cli"
   | "openai"
   | "anthropic"
   | "openrouter"
@@ -70,6 +71,15 @@ export function canonicalProviderKindAlias(
     case "betterc0deagent":
     case "bettercodeagent":
       return "betterc0de"
+    // Legacy spelling: an "open-code" alias compacts to "opencode" and
+    // predates the upstream opencode driver kind.
+    case "opencode":
+      return "betterc0de"
+    // The local `opencode` binary's ACP server. Distinct from `betterc0de`
+    // even though both drive OpenCode-family protocols. Bare `opencode` is
+    // the legacy BetterC0de compatibility spelling (see below), not this kind.
+    case "opencodecli":
+      return "opencode_cli"
     case "openai":
     case "anthropic":
     case "openrouter":
@@ -97,5 +107,6 @@ export function providerKindFromDriver(
     return "claude"
   }
   if (key === "anthropiccli") return "anthropic_cli"
+  if (key === "opencodecli") return "opencode_cli"
   return value
 }

@@ -37,6 +37,8 @@ Key health is kept in memory and refreshed while the settings screen is open. Re
 
 Account model lists come from the provider API and stay cached separately for each credential. **Refresh models** reloads them; **Visible Models** controls which IDs appear in the picker, and **Custom Models** accepts an additional model ID. Model access still depends on the account and selected key.
 
+OpenCode CLI is a CLI account as well: it needs OpenCode 2.1 or newer and `opencode auth login` (or a provider key in the instance environment). BetterC0de drives it over the Agent Client Protocol (`opencode acp`), which supplies its model, effort and build/plan choices, approvals and token usage.
+
 Direct API billing is separate from a ChatGPT, Claude, or Grok subscription. Subscription logins remain under the existing CLI account entries. API-key management does not change the CLI harness, approvals, permissions, or tools.
 
 Provider error references: [OpenAI](https://developers.openai.com/api/docs/guides/error-codes), [Anthropic](https://platform.claude.com/docs/en/api/errors), and [xAI](https://docs.x.ai/developers/debugging).

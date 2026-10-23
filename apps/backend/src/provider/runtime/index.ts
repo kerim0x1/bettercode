@@ -58,6 +58,7 @@ export {
 } from "./ProviderSessionBindingStore"
 export { CodexAdapter } from "./codex/CodexAdapter"
 export { CodexSessionRuntime } from "./codex/CodexSessionRuntime"
+export { OpenCodeAcpAdapter } from "./opencode/OpenCodeAcpAdapter"
 export { ClaudeAdapter } from "./claude/ClaudeAdapter"
 export { ClaudeTerminalAdapter } from "./claudeTerminal/ClaudeTerminalAdapter"
 export { canonicalToLegacy, type LegacyProviderEvent } from "./legacyBridge"

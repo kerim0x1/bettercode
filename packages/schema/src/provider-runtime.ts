@@ -41,6 +41,8 @@ export const providerKindSchema = z.enum([
   "cursor",
   "betterc0de",
   "BetterC0de",
+  // The local `opencode` binary's headless server (v1 + v2 HTTP surfaces).
+  "opencode_cli",
   "openai",
   "anthropic",
   "openrouter",
@@ -82,6 +84,7 @@ export const runtimeEventRawSourceSchema = z.union([
     "codex.sdk.thread-event",
     "betterc0de.sdk.event",
     "BetterC0de.sdk.event",
+    "opencode.sdk.event",
     "acp.jsonrpc",
   ]),
   z.string().regex(/^acp\..*\.extension$/),
