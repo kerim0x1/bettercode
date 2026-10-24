@@ -4,11 +4,24 @@ import {
   PLAN_MODE_DENY_MESSAGE,
   classifyToolPermission,
   createClaudePreToolUseApprovalHook,
+  getClaudeCodeMaxTurnsForMode,
+  getMaxTurnsForMode,
   isImagegenAutoAllowed,
   getToolsForMode,
 } from "./chat-mode-tools"
 
 describe("chat-mode tool rules", () => {
+  it("caps API agent loops at 200 turns and leaves Claude Code's agent work uncapped", () => {
+    expect(getMaxTurnsForMode("agent")).toBe(200)
+    expect(getMaxTurnsForMode(null)).toBe(200)
+    expect(getMaxTurnsForMode("plan")).toBe(20)
+    expect(getMaxTurnsForMode("ask")).toBe(10)
+    expect(getClaudeCodeMaxTurnsForMode("agent")).toBeUndefined()
+    expect(getClaudeCodeMaxTurnsForMode(null)).toBeUndefined()
+    expect(getClaudeCodeMaxTurnsForMode("plan")).toBe(20)
+    expect(getClaudeCodeMaxTurnsForMode("ask")).toBe(10)
+  })
+
   it("keeps plan mode on explicit read-only planning tools", () => {
     expect(getToolsForMode("Plan")).toEqual(getToolsForMode("plan"))
     expect(getToolsForMode("nope")).toEqual(getToolsForMode("plan"))

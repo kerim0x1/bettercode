@@ -205,11 +205,26 @@ export function classifyToolPermission(
 /**
  * Mode-specific turn caps. Plan mode wraps up quickly (the model just needs
  * to propose a plan, not iterate). Ask mode is even tighter — Q&A only.
+ * Agent mode's cap applies to the loops BetterC0de runs itself against an API
+ * key, where every step is billed; 50 cut real coding turns off mid-task.
  */
 export function getMaxTurnsForMode(mode: string | null | undefined): number {
   if (mode === "ask") return 10
   if (mode === "plan") return 20
-  return 50
+  return 200
+}
+
+/**
+ * Claude Code's turn cap. Agent work has none, like the Claude Code CLI
+ * itself: Stop and the inactivity timeout (`provider/turnLimits.ts`) end a
+ * runaway turn. Ask and Plan keep their caps.
+ */
+export function getClaudeCodeMaxTurnsForMode(
+  mode: string | null | undefined
+): number | undefined {
+  return mode === "ask" || mode === "plan"
+    ? getMaxTurnsForMode(mode)
+    : undefined
 }
 
 export function maxTurnsExhaustedMessage(maxTurns: number): string {

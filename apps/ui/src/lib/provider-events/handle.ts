@@ -64,6 +64,13 @@ export interface ProviderEventCallbacks {
   ) => void
 }
 
+/**
+ * The turn whose error each chat shows last. A provider can report one
+ * failure twice (a runtime error, then the failed turn itself), and the chat
+ * shows it once.
+ */
+const erroredTurnByThread = new Map<string, string>()
+
 export function handleProviderEvent(
   threadId: string,
   type: string,
@@ -548,12 +555,16 @@ export function handleProviderEvent(
 
     case "turn_error": {
       const errorMsg = (payload.error as string) || "Connection error"
-      store.addMessage(threadId, {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: `Error: ${errorMsg}`,
-        createdAt: new Date().toISOString(),
-      })
+      const turnId = payloadTurnId(payload)
+      if (!turnId || erroredTurnByThread.get(threadId) !== turnId) {
+        store.addMessage(threadId, {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `Error: ${errorMsg}`,
+          createdAt: new Date().toISOString(),
+        })
+      }
+      if (turnId) erroredTurnByThread.set(threadId, turnId)
       store.clearStreaming(threadId)
       store.setActiveTurnId(threadId, null)
       clearContentPlanCapture(threadId)
@@ -580,6 +591,7 @@ export function handleProviderEvent(
     case "turn_started":
       {
         const turnId = payloadTurnId(payload) ?? crypto.randomUUID()
+        erroredTurnByThread.delete(threadId)
         clearContentPlanCapture(threadId)
         store.setActiveTurnId(threadId, turnId)
         store.appendStreamDelta(threadId, "")
