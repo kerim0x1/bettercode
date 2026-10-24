@@ -81,7 +81,7 @@ import {
   getToolsForMode,
   isImagegenAutoAllowed,
   classifyToolPermission,
-  getMaxTurnsForMode,
+  getClaudeCodeMaxTurnsForMode,
   createClaudePreToolUseApprovalHook,
   ASK_MODE_DENY_MESSAGE,
   PLAN_MODE_DENY_MESSAGE,
@@ -2923,13 +2923,12 @@ export class ClaudeAdapter implements ProviderAdapterShape {
             ? { disallowedTools: [IMAGEGEN_TOOL_NAME] }
             : {}),
         // Interactive plan mode can roll straight into implementation after
-        // approval — keep checkpointing on and budget implementation turns.
+        // approval — keep checkpointing on and run it like agent work.
         enableFileCheckpointing:
           !isPlanMode || planApprovalMode === "interactive",
-        maxTurns:
-          isPlanMode && planApprovalMode === "interactive"
-            ? 50
-            : getMaxTurnsForMode(chatMode),
+        maxTurns: getClaudeCodeMaxTurnsForMode(
+          interactivePlan ? "agent" : chatMode
+        ),
         includePartialMessages: true,
         canUseTool,
         hooks: {
@@ -4408,9 +4407,12 @@ export class ClaudeAdapter implements ProviderAdapterShape {
         readString(resultEnvelope, "result") ??
         "Claude SDK reported a failure"
       const rejection = t.ctx?.rateLimitRejection ?? null
+      // The turn id lets the chat show this error and the failed
+      // `turn.completed` below as one message instead of two.
       out.push({
         ...eventBase(threadId),
         type: "runtime.error",
+        turnId,
         message: errMsg,
         class: "provider_error",
         ...(rejection

@@ -927,9 +927,10 @@ describe("ClaudeAdapter plan mode", () => {
       append: "PLAN MODE SYSTEM",
     })
     // Interactive plan mode keeps checkpointing ON (an approved plan can
-    // roll into implementation within the same turn) and budgets extra turns.
+    // roll into implementation within the same turn) and, like agent work,
+    // has no turn cap.
     expect(queryArgs?.options?.enableFileCheckpointing).toBe(true)
-    expect(queryArgs?.options?.maxTurns).toBe(50)
+    expect(queryArgs?.options?.maxTurns).toBeUndefined()
     expect(queryArgs?.options?.permissionMode).toBe("plan")
     expect(queryArgs?.options?.tools).toEqual(
       expect.arrayContaining(["Write", "Edit", "Bash", "Agent"])
@@ -2113,9 +2114,41 @@ describe("ClaudeAdapter stream event tools", () => {
     expect(events.filter((event) => event.type === "turn.completed")).toEqual([
       expect.objectContaining({ status: "failed", error: "SDK limit reached" }),
     ])
+    // The runtime error names the failed turn, so the chat shows one error.
+    const turnId = events.find(
+      (event) => event.type === "turn.completed"
+    )?.turnId
+    expect(turnId).toEqual(expect.any(String))
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "runtime.error", turnId })
+    )
     expect(
       (await adapter.readThread("native-error" as ThreadId)).turns
     ).toEqual([])
+    await adapter.stopAll()
+  })
+
+  it("runs agent turns without a turn cap, like the Claude Code CLI", async () => {
+    queryMock.mockReturnValueOnce(
+      makeQuery([
+        {
+          type: "result",
+          subtype: "success",
+          usage: { input_tokens: 7, output_tokens: 3 },
+        },
+      ])
+    )
+    const adapter = new ClaudeAdapter()
+    await adapter.sendTurn({
+      threadId: "agent-no-turn-cap",
+      message: "hello",
+      modelId: "claude-opus-4-7",
+      history: [],
+      chatMode: "agent",
+    })
+    const queryArgs = queryMock.mock.calls[0]?.[0]
+    expect(queryArgs?.options).toBeDefined()
+    expect(queryArgs?.options?.maxTurns).toBeUndefined()
     await adapter.stopAll()
   })
 

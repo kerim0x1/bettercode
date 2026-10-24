@@ -709,6 +709,36 @@ describe("provider-events: handleProviderEvent", () => {
       ).toBeUndefined()
     })
 
+    it("shows one error when a failed turn also reports a runtime error", () => {
+      const limit = "Reached maximum number of turns (50)"
+      handleProviderEvent(threadId, "turn.started", { turnId: "turn-limit" })
+      handleProviderEvent(threadId, "runtime.error", {
+        turnId: "turn-limit",
+        message: limit,
+      })
+      handleProviderEvent(threadId, "turn.completed", {
+        turnId: "turn-limit",
+        status: "failed",
+        error: limit,
+      })
+      // The next turn's failure is its own message again.
+      handleProviderEvent(threadId, "turn.started", { turnId: "turn-next" })
+      handleProviderEvent(threadId, "turn_error", {
+        turn_id: "turn-next",
+        error: limit,
+      })
+      vi.advanceTimersByTime(10)
+
+      const errors = useChatStore
+        .getState()
+        .threads.find((t) => t.id === threadId)!
+        .messages.filter((m) => m.content.startsWith("Error:"))
+      expect(errors.map((m) => m.content)).toEqual([
+        `Error: ${limit}`,
+        `Error: ${limit}`,
+      ])
+    })
+
     it("uses default error message when none provided", () => {
       handleProviderEvent(threadId, "turn_error", {})
       vi.advanceTimersByTime(10)

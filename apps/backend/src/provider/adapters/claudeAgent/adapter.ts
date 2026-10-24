@@ -14,7 +14,7 @@ import { BaseProviderAdapter } from "../baseAdapter"
 import {
   createClaudePreToolUseApprovalHook,
   getToolsForMode,
-  getMaxTurnsForMode,
+  getClaudeCodeMaxTurnsForMode,
 } from "../../shared/chat-mode-tools"
 import {
   filterToolsForBetterC0deProjectPolicy,
@@ -162,7 +162,7 @@ export class ClaudeAgentAdapter extends BaseProviderAdapter {
             : {}),
           ...getThinkingOptions(input.reasoning_effort, input.model_id ?? ""),
           includePartialMessages: true,
-          maxTurns: getMaxTurnsForMode(chatMode),
+          maxTurns: getClaudeCodeMaxTurnsForMode(chatMode),
           tools,
           hooks: {
             PreToolUse: [{ hooks: [createClaudePreToolUseApprovalHook()] }],

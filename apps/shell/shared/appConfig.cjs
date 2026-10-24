@@ -114,10 +114,6 @@ module.exports = Object.freeze({
     XHIGH: 24000,
     ULTRA: 32000,
   }),
-  /** `maxTurns` cap for Plan mode (read-only, structured planning). */
-  SDK_MAX_TURNS_PLAN: 20,
-  /** `maxTurns` cap for regular chat mode. */
-  SDK_MAX_TURNS_CHAT: 50,
   /** Messages to include from renderer history when SDK has no session to resume. */
   HISTORY_PREFIX_MAX_TURNS: 12,
   /** Per-message char cap in the history prefix — keeps long threads manageable. */
