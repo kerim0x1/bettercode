@@ -73,7 +73,12 @@ const PIDFILE_WRITE_DELAY_MS = 250
 /** Allowed gap between the recorded spawn time and the OS start time. */
 const START_TIME_TOLERANCE_MS = 3_000
 const EXIT_TASKKILL_TIMEOUT_MS = 3_000
-const IDENTITY_QUERY_TIMEOUT_MS = 5_000
+/**
+ * Windows starts PowerShell and CIM for this query, which can take more than
+ * 5 s while the machine is busy starting the app. Reaping runs in the
+ * background, so a longer wait delays nothing.
+ */
+const IDENTITY_QUERY_TIMEOUT_MS = 15_000
 
 const entries = new Map<number, RegistryEntry>()
 let pidfilePath: string | null = null

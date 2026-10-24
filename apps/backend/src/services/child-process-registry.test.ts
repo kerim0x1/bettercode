@@ -114,7 +114,7 @@ describe("child process registry", () => {
     expect(await exited(leftover, 10_000)).toBe(true)
     expect(reused.exitCode).toBeNull()
     expect(reused.signalCode).toBeNull()
-  }, 30_000)
+  }, 45_000)
 
   it("leaves the children of a backend that is still running alone", async () => {
     const dataDir = makeTempDir("betterc0de-registry-live-")
