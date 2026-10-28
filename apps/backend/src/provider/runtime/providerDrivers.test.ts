@@ -25,9 +25,12 @@ describe("provider driver registry", () => {
     expect(normalizeProviderDriver("claude-pty")).toBe("claude-terminal")
     expect(normalizeProviderDriver("cursor_agent")).toBe("cursor")
     expect(normalizeProviderDriver("grok-build")).toBe("grok-cli")
+    expect(normalizeProviderDriver("opencode_cli")).toBe("opencode-cli")
     expect(normalizeProviderDriver("BetterCode-Agent")).toBe("betterc0de")
     // Bare `grok` is the legacy xAI API-key provider, never the CLI driver.
     expect(normalizeProviderDriver("grok")).toBe("grok")
+    // Bare `opencode` is the legacy BetterC0de compatibility spelling.
+    expect(normalizeProviderDriver("opencode")).toBe("betterc0de")
     expect(normalizeProviderDriver(" my-driver ")).toBe("my-driver")
   })
 
@@ -49,14 +52,22 @@ describe("provider driver registry", () => {
         "betterc0de",
         "BetterC0de",
         "grok-cli",
+        "opencode-cli",
       ].map(defaultProviderInstanceRank)
-    ).toEqual([0, 1, 2, 3, 4, 5, 6])
+    ).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
     expect(defaultProviderInstanceRank("codex-work")).toBe(10)
   })
 
   it("derives the hub-served provider kinds", () => {
     expect([...HUB_PROVIDER_KINDS].sort()).toEqual(
-      ["betterc0de", "claude", "codex", "cursor", "grok_cli"].sort()
+      [
+        "betterc0de",
+        "claude",
+        "codex",
+        "cursor",
+        "grok_cli",
+        "opencode_cli",
+      ].sort()
     )
     expect(isHubProviderKind("grok_cli")).toBe(true)
     // The API-key providers still run on the legacy stack.
@@ -68,6 +79,7 @@ describe("provider driver registry", () => {
   it("gives only the ACP drivers the ACP session budgets", () => {
     expect(isAcpProviderDriver("cursor")).toBe(true)
     expect(isAcpProviderDriver("grok-cli")).toBe(true)
+    expect(isAcpProviderDriver("opencode-cli")).toBe(true)
     expect(isAcpProviderDriver("codex")).toBe(false)
     expect(isAcpProviderDriver("claude")).toBe(false)
     expect(isAcpProviderDriver("unknown")).toBe(false)
@@ -110,6 +122,7 @@ describe("provider driver registry", () => {
         "codex",
         "cursor",
         "grok-cli",
+        "opencode-cli",
       ].sort()
     )
     for (const [instanceId, config] of Object.entries(defaults)) {

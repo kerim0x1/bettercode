@@ -119,6 +119,28 @@ const PROVIDER_CATALOG = [
     ],
   },
   {
+    // CLI-backed: spawns the upstream `opencode` binary's Agent Client
+    // Protocol server (`opencode acp`). Kept distinct from the BetterC0de
+    // compatibility entry so both can show side by side.
+    // Backend runtime adapter: provider/runtime/opencode/OpenCodeAcpAdapter.ts.
+    id: "opencode-cli",
+    name: "OpenCode CLI",
+    description: "The local `opencode` binary — uses your CLI login (ACP).",
+    docsUrl: "https://opencode.ai/docs",
+    // Used only until the CLI's live inventory advertises its model picker.
+    defaultModels: ["opencode/big-pickle"],
+    authMethods: [
+      {
+        type: "cli",
+        label: "OpenCode CLI",
+        command: "opencode",
+        versionArgs: ["--version"],
+        installHint: "curl -fsSL https://opencode.ai/install | bash  (or: npm i -g opencode-ai)",
+        loginCommand: "opencode auth login",
+      },
+    ],
+  },
+  {
     id: "anthropic",
     name: "Claude API",
     description: "Anthropic's Claude family — Opus, Sonnet, Haiku.",

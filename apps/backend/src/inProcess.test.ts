@@ -58,6 +58,7 @@ const PROVIDER_SLOTS = [
   "google",
   "grok",
   "grok-cli",
+  "opencode-cli",
   "openrouter",
   "deepseek",
   "lmstudio",

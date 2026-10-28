@@ -15,6 +15,7 @@ import {
   type ProviderKind,
 } from "../../provider/runtime"
 import { isHubProviderKind } from "../../provider/runtime/providerDrivers"
+import { canonicalProviderKindAlias } from "../../provider/runtime/providerKindAliases"
 import type { ProviderSendTurnInput } from "../../provider/types"
 import type { RemoteProviderTurnReservation } from "../../remote/providerTurnOwnership"
 import {
@@ -131,6 +132,10 @@ function isTurnActiveError(error: unknown): boolean {
 export function asHubProviderKind(raw: string): ProviderKind | null {
   const normalized = raw.trim().toLowerCase()
   if (isHubProviderKind(normalized)) return normalized
+  // Non-default instances report their settings driver (`opencode-cli`,
+  // `grok-cli`); the alias table folds those onto the kind the hub routes.
+  const canonical = canonicalProviderKindAlias(normalized)
+  if (canonical && isHubProviderKind(canonical)) return canonical
   return null
 }
 

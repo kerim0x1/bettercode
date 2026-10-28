@@ -39,6 +39,7 @@ import {
   type AcpRuntimeProfile,
   type AcpRuntimeSettings,
   type AcpStarted,
+  type AcpUsageSnapshot,
 } from "./AcpRuntimeBase"
 import {
   redactAcpMcpSecrets,
@@ -245,6 +246,16 @@ export interface AcpProviderProfile<
     readonly runtimeMode: string | null | undefined
     readonly kind: string
   }) => { readonly reason: string } | null
+  /**
+   * Auto-approve this request without asking, as an "allow once" selection.
+   * Consulted after durable grants and before `full-access`: profiles whose
+   * CLI always asks (OpenCode, started with permission `ask`) use it to keep
+   * "allow edits" meaning what it says. `null` falls through to the approval.
+   */
+  readonly autoApprovePermission?: (input: {
+    readonly runtimeMode: string | null | undefined
+    readonly kind: string
+  }) => "once" | null
   /** Vendor `onExtRequest`/`onExtNotification` registrations. */
   readonly registerExtensions?: (
     runtime: AcpRuntime,
@@ -622,6 +633,21 @@ export class AcpAdapterBase<
         }
       }
       if (
+        this.profile.autoApprovePermission?.({
+          runtimeMode: context.permissionRuntimeMode,
+          kind: permissionRequest.kind,
+        }) === "once"
+      ) {
+        return {
+          outcome: {
+            outcome: "selected",
+            optionId:
+              selectAllowPermissionOption(permissionRequest.raw) ??
+              "allow-once",
+          },
+        }
+      }
+      if (
         context.permissionRuntimeMode === "full-access" &&
         (!durable || durable.source === "default")
       ) {
@@ -938,6 +964,39 @@ export class AcpAdapterBase<
       }
       context.activeTurnId = null
       this.updateSession(context, { status: "ready", activeTurnId: null })
+      const usage = acpTokenUsage(result, context.runtime.usageSnapshot?.())
+      if (usage) {
+        this.emitEvent({
+          ...this.eventBase(key),
+          turnId,
+          type: "token.usage",
+          usage,
+        })
+        this.emitEvent({
+          ...this.eventBase(key),
+          turnId,
+          type: "thread.token-usage.updated",
+          payload: {
+            usage: {
+              usedTokens: usage.totalTokens,
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              ...(usage.cachedInputTokens !== undefined
+                ? { cachedInputTokens: usage.cachedInputTokens }
+                : {}),
+              ...(usage.cacheReadTokens !== undefined
+                ? { cacheReadTokens: usage.cacheReadTokens }
+                : {}),
+              ...(usage.reasoningOutputTokens !== undefined
+                ? { reasoningOutputTokens: usage.reasoningOutputTokens }
+                : {}),
+              ...(usage.totalCostUsd !== undefined
+                ? { totalCostUsd: usage.totalCostUsd }
+                : {}),
+            },
+          },
+        })
+      }
       this.emitEvent({
         ...this.eventBase(key),
         turnId,
@@ -1644,6 +1703,63 @@ export class AcpAdapterBase<
     } catch {
       /* logger is best-effort */
     }
+  }
+}
+
+/**
+ * Combine the per-turn input/output split from `session/prompt` with the
+ * agent's last `usage_update` (running total + cost). Either source alone is
+ * incomplete: OpenCode reports the split on the prompt result and the cost on
+ * the notification. No report at all yields null rather than a fake zero turn.
+ */
+function acpTokenUsage(
+  result: Record<string, unknown>,
+  snapshot: AcpUsageSnapshot | undefined
+): NonNullable<
+  Extract<ProviderRuntimeEvent, { type: "token.usage" }>["usage"]
+> | null {
+  const usage = asRecord(result.usage)
+  const count = (value: unknown): number | undefined =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? Math.floor(value)
+      : undefined
+  const inputTokens = count(usage.inputTokens)
+  const outputTokens = count(usage.outputTokens)
+  const cacheReadTokens =
+    count(usage.cachedReadTokens) ?? count(usage.cacheReadTokens)
+  const cacheCreationTokens =
+    count(usage.cachedWriteTokens) ?? count(usage.cacheCreationTokens)
+  const reasoningOutputTokens =
+    count(usage.reasoningOutputTokens) ?? count(usage.reasoningTokens)
+  const totalTokens =
+    count(usage.totalTokens) ??
+    snapshot?.totalTokens ??
+    ((inputTokens ?? 0) + (outputTokens ?? 0) || undefined)
+  const totalCostUsd = snapshot?.totalCostUsd
+  if (
+    totalTokens === undefined &&
+    inputTokens === undefined &&
+    outputTokens === undefined &&
+    totalCostUsd === undefined
+  ) {
+    return null
+  }
+  const cachedInputTokens = (cacheReadTokens ?? 0) + (cacheCreationTokens ?? 0)
+  return {
+    inputTokens: inputTokens ?? 0,
+    outputTokens: outputTokens ?? 0,
+    totalTokens: totalTokens ?? (inputTokens ?? 0) + (outputTokens ?? 0),
+    ...(cachedInputTokens > 0
+      ? {
+          cachedInputTokens,
+          ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+          ...(cacheCreationTokens !== undefined ? { cacheCreationTokens } : {}),
+        }
+      : {}),
+    ...(reasoningOutputTokens !== undefined && reasoningOutputTokens > 0
+      ? { reasoningOutputTokens }
+      : {}),
+    ...(totalCostUsd !== undefined ? { totalCostUsd } : {}),
   }
 }
 

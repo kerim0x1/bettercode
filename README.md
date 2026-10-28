@@ -31,7 +31,7 @@
 
 ## Meet your workspace
 
-**BetterC0de is a desktop AI coding environment.** It brings coding assistants such as Claude Code, OpenAI Codex, Cursor Agent, and Grok into a shared workspace with an editor, terminal, Git tools, and browser previews.
+**BetterC0de is a desktop AI coding environment.** It brings coding assistants such as Claude Code, OpenAI Codex, Cursor Agent, Grok, and OpenCode into a shared workspace with an editor, terminal, Git tools, and browser previews.
 
 Open a project, choose an available provider, and describe what you want to build. Keep the conversation next to your files, inspect the results, and review the changes before you commit them.
 

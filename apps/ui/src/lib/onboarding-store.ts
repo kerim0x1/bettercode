@@ -93,6 +93,7 @@ export interface CliStatusMap {
   codex?: CliStatusInfo
   "grok-cli"?: CliStatusInfo
   cursor?: CliStatusInfo
+  "opencode-cli"?: CliStatusInfo
 }
 
 interface OnboardingState {
@@ -135,6 +136,7 @@ function toCliStatusMap(res: CliStatusResponse): CliStatusMap {
     codex: cli.codex ?? res.codex,
     "grok-cli": cli["grok-cli"],
     cursor: cli.cursor,
+    "opencode-cli": cli["opencode-cli"],
   }
 }
 

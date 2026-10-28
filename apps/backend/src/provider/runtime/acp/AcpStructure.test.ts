@@ -52,7 +52,9 @@ describe("ACP base structure", () => {
     "%s carries no vendor knowledge outside comments and imports",
     (file) => {
       const logic = logicOnly(read(file))
-      const hits = (logic.match(/\b\w*(cursor|grok)\w*\b/gi) ?? []).filter(
+      const hits = (
+        logic.match(/\b\w*(cursor|grok|opencode)\w*\b/gi) ?? []
+      ).filter(
         // `ProviderSession.resumeCursor` is the contract's name for a resume
         // position; it has nothing to do with the vendor.
         (hit) => hit !== "resumeCursor"
@@ -67,7 +69,7 @@ describe("ACP base structure", () => {
       // A vendor module under a generic one inverts the dependency: a
       // Cursor-only change could then break Grok and the API MCP path.
       const vendorImports = importSpecifiers(read(file)).filter((specifier) =>
-        /(^|\/)(cursor|grok-cli)\//.test(specifier)
+        /(^|\/)(cursor|grok-cli|opencode)\//.test(specifier)
       )
       expect(vendorImports).toEqual([])
     }
@@ -85,8 +87,10 @@ describe("ACP base structure", () => {
   it.each([
     "cursor/CursorAcpAdapter.ts",
     "grok-cli/GrokAcpAdapter.ts",
+    "opencode/OpenCodeAcpAdapter.ts",
     "cursor/CursorAcpRuntime.ts",
     "grok-cli/GrokAcpRuntime.ts",
+    "opencode/OpenCodeAcpRuntime.ts",
   ])("%s stays a thin profile file (under 250 lines)", (file) => {
     expect(lineCount(file)).toBeLessThan(250)
   })
@@ -95,6 +99,7 @@ describe("ACP base structure", () => {
     for (const file of [
       "cursor/CursorAcpAdapter.ts",
       "grok-cli/GrokAcpAdapter.ts",
+      "opencode/OpenCodeAcpAdapter.ts",
     ]) {
       const source = read(file)
       expect(source).toMatch(/extends AcpAdapterBase</)
@@ -104,6 +109,7 @@ describe("ACP base structure", () => {
     for (const file of [
       "cursor/CursorAcpRuntime.ts",
       "grok-cli/GrokAcpRuntime.ts",
+      "opencode/OpenCodeAcpRuntime.ts",
     ]) {
       const source = read(file)
       expect(source).toMatch(/createAcpRuntime\(/)

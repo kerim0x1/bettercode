@@ -114,6 +114,20 @@ export const GROK_CLI_MAINTENANCE_DEFINITION: PackageManagedProviderMaintenanceD
     nativeUpdate: null,
   }
 
+export const OPENCODE_CLI_MAINTENANCE_DEFINITION: PackageManagedProviderMaintenanceDefinition =
+  {
+    provider: "opencode-cli",
+    npmPackageName: "opencode-ai",
+    homebrewFormula: "sst/tap/opencode",
+    nativeUpdate: {
+      executable: "opencode",
+      args: ["upgrade"],
+      lockKey: "opencode-native",
+      isCommandPath: (commandPath) =>
+        /(^|[\\/])opencode(\.exe)?$/i.test(commandPath),
+    },
+  }
+
 export function resolveProviderMaintenanceCapabilities(input: {
   readonly driver: string
   readonly binaryPath?: string | null
@@ -145,6 +159,12 @@ export function resolveProviderMaintenanceCapabilities(input: {
   if (driver === "grok-cli") {
     return resolvePackageManagedProviderMaintenance(
       GROK_CLI_MAINTENANCE_DEFINITION,
+      input
+    )
+  }
+  if (driver === "opencode-cli") {
+    return resolvePackageManagedProviderMaintenance(
+      OPENCODE_CLI_MAINTENANCE_DEFINITION,
       input
     )
   }
@@ -676,5 +696,14 @@ function normalizeDriver(driver: string): string {
   ) {
     return "betterc0de"
   }
+  if (
+    normalized === "opencodecli" ||
+    normalized === "opencodeacp" ||
+    normalized === "opencodeserver"
+  ) {
+    return "opencode-cli"
+  }
+  // Bare `opencode` is the legacy BetterC0de compatibility driver spelling.
+  if (normalized === "opencode") return "betterc0de"
   return normalized || driver
 }

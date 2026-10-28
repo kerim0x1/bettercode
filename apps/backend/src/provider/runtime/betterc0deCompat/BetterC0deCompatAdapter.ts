@@ -14,6 +14,7 @@ import {
   type ProviderAgent,
   type ProviderCapabilities,
   type ProviderCatalogEntry,
+  type ProviderKind,
   type ProviderModel,
   type ProviderRuntimeEvent,
   type ProviderSendTurnInput,
@@ -65,19 +66,17 @@ import {
   resolveComSpec,
 } from "../../../security/windowsCommandLine"
 import { logger } from "../../../observability/logger"
+import {
+  BETTERC0DE_COMPAT_PROFILE,
+  type OpenCodeCompatProfile,
+} from "./OpenCodeCompatProfile"
 import { cliVersionAtLeast } from "../../../cli/versions"
 
-const PROVIDER = "betterc0de" as const
-const BETTERC0DE_SERVER_READY_PREFIXES = [
-  "betterc0de server listening",
-  "BetterC0de server listening",
-] as const
 const DEFAULT_HOSTNAME = "127.0.0.1"
 const DEFAULT_SERVER_TIMEOUT_MS = 5_000
 const METADATA_CACHE_TTL_MS = 5 * 60 * 1000
 const METADATA_ERROR_CACHE_TTL_MS = 10 * 1000
-const BETTERC0DE_EMPTY_CONFIG_CONTENT = "{}"
-const MINIMUM_BETTERC0DE_VERSION = "1.14.19"
+const EMPTY_CONFIG_CONTENT = "{}"
 
 // Covers failures before a server connection exists, including version probes.
 const compatProcessCleanups = new Map<
@@ -142,6 +141,13 @@ const CAPABILITIES: ProviderCapabilities = {
 }
 
 export interface BetterC0deCompatAdapterOptions {
+  /**
+   * Which OpenCode-family CLI this adapter drives. Defaults to BetterC0de's
+   * own compatibility CLI so existing call sites are unchanged. The OpenCode
+   * profile selects opencode branding, the v2 inventory envelopes, and the
+   * `opencode` provider kind.
+   */
+  readonly profile?: OpenCodeCompatProfile
   readonly providerInstanceId?: string
   readonly continuationKey?: string
   readonly binaryPath?: string | null
@@ -166,7 +172,8 @@ export interface BetterC0deClientFactoryInput {
 }
 
 export type BetterC0deClientFactory = (
-  input: BetterC0deClientFactoryInput
+  input: BetterC0deClientFactoryInput,
+  profile: OpenCodeCompatProfile
 ) => Promise<BetterC0deClient> | BetterC0deClient
 
 export interface BetterC0deServerConnection {
@@ -180,6 +187,7 @@ export type BetterC0deServerConnector = (input: {
   readonly binaryPath: string
   readonly serverUrl?: string | null
   readonly env: NodeJS.ProcessEnv
+  readonly profile?: OpenCodeCompatProfile
 }) => Promise<BetterC0deServerConnection>
 
 interface SessionContext {
@@ -363,8 +371,20 @@ interface BetterC0deProviderV2 {
         readonly data?: Record<string, unknown>
       }
   readonly env: ReadonlyArray<string>
-  readonly endpoint: {
+  readonly endpoint?: {
     readonly type: string
+    readonly url?: string
+    readonly package?: string
+    readonly websocket?: boolean
+  }
+  /**
+   * Current `opencode` replaces the flat `endpoint` object with a nested
+   * `api` descriptor on both providers and models. The legacy compatibility
+   * CLI keeps `endpoint`, so both are optional and normalised at read time.
+   */
+  readonly api?: {
+    readonly id?: string
+    readonly type?: string
     readonly url?: string
     readonly package?: string
     readonly websocket?: boolean
@@ -373,12 +393,19 @@ interface BetterC0deProviderV2 {
 
 interface BetterC0deModelV2 {
   readonly id: string
-  readonly apiID: string
+  readonly apiID?: string
   readonly providerID: string
   readonly family?: string
   readonly name: string
-  readonly endpoint: {
+  readonly endpoint?: {
     readonly type: string
+    readonly url?: string
+    readonly package?: string
+    readonly websocket?: boolean
+  }
+  readonly api?: {
+    readonly id?: string
+    readonly type?: string
     readonly url?: string
     readonly package?: string
     readonly websocket?: boolean
@@ -1275,9 +1302,10 @@ function buildBetterC0dePromptParts(
 }
 
 export class BetterC0deCompatAdapter implements ProviderAdapterShape {
-  readonly provider = PROVIDER
-  readonly displayName = "BetterC0de Compat"
+  readonly provider: ProviderKind
+  readonly displayName: string
   readonly capabilities = CAPABILITIES
+  private readonly profile: OpenCodeCompatProfile
 
   private readonly bus = new EventEmitter()
   private readonly sessions = new Map<string, SessionContext>()
@@ -1317,12 +1345,22 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     MetadataCache<ReadonlyArray<ProviderTool>>
   >()
 
-  constructor(private readonly options: BetterC0deCompatAdapterOptions = {}) {}
+  constructor(private readonly options: BetterC0deCompatAdapterOptions = {}) {
+    this.profile = options.profile ?? BETTERC0DE_COMPAT_PROFILE
+    this.provider = this.profile.providerKind
+    this.displayName = this.profile.displayName
+  }
 
   isConfigured(): boolean {
     // Reachability is verified asynchronously by probeStatus. This predicate
-    // only reports whether the instance has a configured transport.
-    return Boolean(this.serverUrl() || this.binaryPath().trim())
+    // only reports whether the instance has a configured transport. An
+    // explicitly empty binaryPath means "cleared by the user" and does not
+    // fall back to the profile's default binary.
+    const explicitBinaryPath =
+      this.options.binaryPath === undefined
+        ? this.profile.defaultBinaryPath
+        : (this.options.binaryPath ?? "").trim()
+    return Boolean(this.serverUrl() || explicitBinaryPath)
   }
 
   probeStatus(input: { readonly cwd?: string | null } = {}) {
@@ -1349,13 +1387,15 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (!isExternalServer) {
       const versionResult = await runBetterC0deCommand(
         this.binaryPath(),
-        ["--version"],
-        this.makeEnvironment()
+        this.profile.versionArgs,
+        this.makeEnvironment(),
+        this.brand()
       ).catch((error: unknown) => ({ error }))
       if ("error" in versionResult) {
         const failure = formatBetterC0deProbeError({
           cause: versionResult.error,
           isExternalServer,
+          brand: this.brand(),
         })
         return {
           configured: false,
@@ -1370,18 +1410,21 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       version = parseGenericCliVersion(
         `${versionResult.stdout}\n${versionResult.stderr}`
       )
-      if (!version) {
+      const minimumVersion = this.profile.minimumVersion
+      if (!version && minimumVersion) {
         return {
           configured: false,
           installed: true,
           version: null,
           status: "error",
           auth: { status: "unknown" },
-          message: `Unable to determine BetterC0de version from \`betterc0de --version\` output. BetterC0de requires v${MINIMUM_BETTERC0DE_VERSION} or newer.`,
+          message: `Unable to determine ${this.brand()} version from \`${this.binaryPath()} --version\` output. ${this.brand()} requires v${minimumVersion} or newer.`,
         }
       }
       if (
-        !cliVersionAtLeast(version, MINIMUM_BETTERC0DE_VERSION, {
+        minimumVersion &&
+        version &&
+        !cliVersionAtLeast(version, minimumVersion, {
           prereleaseMeetsRelease: true,
         })
       ) {
@@ -1391,7 +1434,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           version,
           status: "error",
           auth: { status: "unknown" },
-          message: `BetterC0de v${version} is too old. Upgrade to v${MINIMUM_BETTERC0DE_VERSION} or newer.`,
+          message: `${this.brand()} v${version} is too old. Upgrade to v${minimumVersion} or newer.`,
         }
       }
     }
@@ -1401,7 +1444,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       const connectedCount = inventory.providerList.connected.length
       const source = isExternalServer
         ? "the configured compatibility server"
-        : "BetterC0de Compat"
+        : `${this.brand()} Compat`
       return {
         configured: connectedCount > 0,
         installed: true,
@@ -1416,12 +1459,13 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
             ? `${connectedCount} upstream provider${connectedCount === 1 ? "" : "s"} connected through ${source}.`
             : isExternalServer
               ? "Connected to the configured compatibility server, but it did not report any connected upstream providers."
-              : "BetterC0de compatibility is available, but it did not report any connected upstream providers.",
+              : `${this.brand()} compatibility is available, but it did not report any connected upstream providers.`,
       }
     } catch (error) {
       const failure = formatBetterC0deProbeError({
         cause: error,
         isExternalServer,
+        brand: this.brand(),
       })
       return {
         configured: false,
@@ -1477,7 +1521,10 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         this.modelsCache = { checkedAt: Date.now(), value: models }
       return models
     } catch (error) {
-      logger.warn({ err: error }, "BetterC0de model inventory probe failed")
+      logger.warn(
+        { err: error },
+        `${this.brand()} model inventory probe failed`
+      )
       if (generation === this.metadataGeneration)
         this.modelsCache = {
           checkedAt: Date.now(),
@@ -1490,7 +1537,9 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
 
   private trackMetadataOperation<T>(operation: () => Promise<T>): Promise<T> {
     if (this.stopAllPromise)
-      return Promise.reject(new Error("BetterC0de shutdown is in progress."))
+      return Promise.reject(
+        new Error(`${this.brand()} shutdown is in progress.`)
+      )
     // Register before yielding so retirement also owns probes awaiting their
     // first native version check or temporary server connection.
     const pending = Promise.resolve().then(operation)
@@ -1565,7 +1614,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     } catch (error) {
       logger.warn(
         { err: error, cwd },
-        "BetterC0de provider catalog probe failed"
+        `${this.brand()} provider catalog probe failed`
       )
       this.storeMetadata(this.providerCatalogCache, cwd, generation, {
         checkedAt: Date.now(),
@@ -1604,7 +1653,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       })
       return agents
     } catch (error) {
-      logger.warn({ err: error, cwd }, "BetterC0de agents probe failed")
+      logger.warn({ err: error, cwd }, `${this.brand()} agents probe failed`)
       this.storeMetadata(this.agentsCache, cwd, generation, {
         checkedAt: Date.now(),
         value: [],
@@ -1640,7 +1689,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       })
       return tools
     } catch (error) {
-      logger.warn({ err: error, cwd }, "BetterC0de tools probe failed")
+      logger.warn({ err: error, cwd }, `${this.brand()} tools probe failed`)
       this.storeMetadata(this.toolsCache, cwd, generation, {
         checkedAt: Date.now(),
         value: [],
@@ -1697,7 +1746,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         await this.closeTrackedServer(server)
       }
     } catch (error) {
-      logger.warn({ err: error, cwd }, "BetterC0de skills probe failed")
+      logger.warn({ err: error, cwd }, `${this.brand()} skills probe failed`)
       this.storeMetadata(this.skillsCache, cwd, generation, {
         checkedAt: Date.now(),
         value: [],
@@ -1750,7 +1799,10 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         await this.closeTrackedServer(server)
       }
     } catch (error) {
-      logger.warn({ err: error, cwd }, "BetterC0de slash command probe failed")
+      logger.warn(
+        { err: error, cwd },
+        `${this.brand()} slash command probe failed`
+      )
       this.storeMetadata(this.commandsCache, cwd, generation, {
         checkedAt: Date.now(),
         value: [],
@@ -1766,7 +1818,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     const key = input.threadId as string
     if (this.stopAllPromise || this.pendingSessionStarts.has(key)) {
       throw new Error(
-        "BetterC0de session startup is already pending or shutdown is in progress."
+        `${this.brand()} session startup is already pending or shutdown is in progress.`
       )
     }
     const controller = new AbortController()
@@ -1812,7 +1864,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         await loadBetterC0deProjectPermissionInputs(directory)
       throwIfCompatStartupCancelled(signal)
       const created = await client.session.create({
-        title: `BetterC0de ${key}`,
+        title: `${this.brand()} ${key}`,
         permission: buildBetterC0deSessionPermissionRules({
           runtimeMode: input.runtimeMode,
           projectToolFlags,
@@ -1822,7 +1874,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       throwIfCompatStartupCancelled(signal)
       const betterC0deSession = unwrapData<{ id: string }>(
         created,
-        "BetterC0de session.create returned no session payload."
+        `${this.brand()} session.create returned no session payload.`
       )
       if (
         !betterC0deSession ||
@@ -1830,7 +1882,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         !betterC0deSession.id.trim()
       ) {
         throw new Error(
-          "BetterC0de session.create returned an invalid session ID."
+          `${this.brand()} session.create returned an invalid session ID.`
         )
       }
       const now = Date.now()
@@ -1877,7 +1929,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       this.emitEvent({
         ...this.eventBase(key),
         type: "session.started",
-        payload: { message: "BetterC0de session started" },
+        payload: { message: `${this.brand()} session started` },
       })
       this.emitEvent({
         ...this.eventBase(key),
@@ -1897,7 +1949,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       } catch (cleanupError) {
         throw new AggregateError(
           [err, cleanupError],
-          "BetterC0de session startup failed and its server cleanup also failed."
+          `${this.brand()} session startup failed and its server cleanup also failed.`
         )
       }
       throw err
@@ -1911,7 +1963,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
   async sendTurn(input: ProviderSendTurnInput): Promise<void> {
     const key = input.threadId as string
     const context = this.ensureContext(key)
-    const turnId = `betterc0de-turn-${randomUUID()}` as TurnId
+    const turnId = `${this.taskId("turn")}-${randomUUID()}` as TurnId
     const modelSelection =
       input.modelSelection ??
       ({
@@ -1923,19 +1975,19 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       modelSelection.instanceId !== this.providerInstanceId()
     ) {
       throw new Error(
-        `BetterC0de model selection is bound to instance '${modelSelection.instanceId}', expected '${this.providerInstanceId()}'.`
+        `${this.brand()} model selection is bound to instance '${modelSelection.instanceId}', expected '${this.providerInstanceId()}'.`
       )
     }
     const parsedModel = parseBetterC0deModelSlug(modelSelection.model)
     if (!parsedModel) {
       throw new Error(
-        "BetterC0de model selection must use the 'provider/model' format."
+        `${this.brand()} model selection must use the 'provider/model' format.`
       )
     }
 
     const text = input.message.trim()
     if (text.length === 0) {
-      throw new Error("BetterC0de compatibility turns require text input.")
+      throw new Error(`${this.brand()} compatibility turns require text input.`)
     }
 
     context.activeTurnId = turnId
@@ -1949,7 +2001,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       context.activeTurnId !== turnId
     ) {
       throw new Error(
-        "BetterC0de turn was stopped or cancelled during agent discovery."
+        `${this.brand()} turn was stopped or cancelled during agent discovery.`
       )
     }
     context.activeVariant =
@@ -1975,7 +2027,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         context.activeTurnId !== turnId
       ) {
         throw new Error(
-          "BetterC0de turn was stopped or cancelled before prompt dispatch."
+          `${this.brand()} turn was stopped or cancelled before prompt dispatch.`
         )
       }
       const currentPrompt = prependProviderHistoryForFreshSession({
@@ -1993,7 +2045,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       context.historySeedPending = false
     } catch (err) {
       if (context.stopped || context.activeTurnId !== turnId) throw err
-      const publicMessage = "BetterC0de compatibility provider turn failed."
+      const publicMessage = `${this.brand()} compatibility provider turn failed.`
       context.activeTurnId = null
       context.activeAgent = null
       context.activeVariant = null
@@ -2217,7 +2269,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (failures.length > 0) {
       throw new AggregateError(
         failures,
-        "Failed to stop all BetterC0de compatibility sessions"
+        `Failed to stop all ${this.brand()} compatibility sessions`
       )
     }
   }
@@ -2232,7 +2284,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
             .then((result: BetterC0deResult<ProviderListResponse>) =>
               unwrapData<ProviderListResponse>(
                 result,
-                "BetterC0de provider.list returned no payload."
+                `${this.brand()} provider.list returned no payload.`
               )
             ),
           client.app
@@ -2316,7 +2368,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       } catch (cleanupError) {
         throw new AggregateError(
           [err, cleanupError],
-          "BetterC0de temporary client creation failed and its server cleanup also failed."
+          `${this.brand()} temporary client creation failed and its server cleanup also failed.`
         )
       }
       throw err
@@ -2331,7 +2383,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     } catch (error) {
       throw Object.assign(
         new Error(
-          "BetterC0de server admission is quarantined until prior cleanup succeeds.",
+          `${this.brand()} server admission is quarantined until prior cleanup succeeds.`,
           { cause: error }
         ),
         {
@@ -2346,6 +2398,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       binaryPath: this.binaryPath(),
       serverUrl: this.serverUrl(),
       env: this.makeEnvironment(),
+      profile: this.profile,
     })
   }
 
@@ -2353,7 +2406,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     input: BetterC0deClientFactoryInput
   ): Promise<BetterC0deClient> {
     const factory = this.options.clientFactory ?? defaultBetterC0deClientFactory
-    return factory(input)
+    return factory(input, this.profile)
   }
 
   private startEventPump(context: SessionContext): void {
@@ -2369,14 +2422,14 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         if (!context.stopped && !context.eventAbort.signal.aborted) {
           await this.emitUnexpectedExit(
             context,
-            "BetterC0de compatibility event stream ended unexpectedly."
+            `${this.brand()} compatibility event stream ended unexpectedly.`
           )
         }
       } catch {
         if (context.stopped || context.eventAbort.signal.aborted) return
         await this.emitUnexpectedExit(
           context,
-          "BetterC0de compatibility event stream failed."
+          `${this.brand()} compatibility event stream failed.`
         )
       }
     })()
@@ -2400,8 +2453,12 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (this.handleWorkspaceEvent(context, event)) return
 
     // Everything below is scoped to the session this context subscribed.
-    const properties = event.properties as { sessionID?: unknown }
-    if (properties.sessionID !== context.betterC0deSessionId) return
+    // The compat CLI and current `opencode` both stamp the session id on
+    // the event envelope (`properties.sessionID`), but current `opencode`
+    // can also nest it inside `info`/`part` for message events.
+    if (readEventSessionId(event.properties) !== context.betterC0deSessionId) {
+      return
+    }
 
     if (this.handleMessageEvent(context, event)) return
     if (this.handleRequestEvent(context, event)) return
@@ -2430,13 +2487,13 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       this.toolsCache.clear()
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "provider.metadata.changed",
         payload: {
-          providerKind: PROVIDER,
+          providerKind: this.provider,
           providerInstanceId: this.providerInstanceId(),
           metadataKind: "models",
-          summary: "BetterC0de model catalog changed.",
+          summary: `${this.brand()} model catalog changed.`,
           cwd: context.directory,
         },
       })
@@ -2448,13 +2505,13 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       this.toolsCache.delete(context.directory)
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "provider.metadata.changed",
         payload: {
-          providerKind: PROVIDER,
+          providerKind: this.provider,
           providerInstanceId: this.providerInstanceId(),
           metadataKind: "tools",
-          summary: "BetterC0de compatibility MCP tools changed.",
+          summary: `${this.brand()} compatibility MCP tools changed.`,
           details: event.properties.server,
           cwd: context.directory,
         },
@@ -2471,10 +2528,10 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       this.invalidateMetadata({ cwd: context.directory })
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "provider.metadata.changed",
         payload: {
-          providerKind: PROVIDER,
+          providerKind: this.provider,
           providerInstanceId: this.providerInstanceId(),
           metadataKind: change.metadataKind,
           summary: change.summary,
@@ -2495,13 +2552,13 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       this.invalidateMetadata({ cwd: context.directory })
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "provider.metadata.changed",
         payload: {
-          providerKind: PROVIDER,
+          providerKind: this.provider,
           providerInstanceId: this.providerInstanceId(),
           metadataKind: "all",
-          summary: "BetterC0de project metadata changed.",
+          summary: `${this.brand()} project metadata changed.`,
           ...(worktree ? { details: worktree } : {}),
           cwd: context.directory,
         },
@@ -2512,11 +2569,11 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (event.type === "tui.prompt.append") {
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "task.progress",
         payload: {
           taskId: "betterc0de-tui-prompt",
-          description: "BetterC0de compatibility TUI prompt updated.",
+          description: `${this.brand()} compatibility TUI prompt updated.`,
           summary: betterC0deEventSummary(
             event.properties.text,
             "Prompt updated."
@@ -2529,12 +2586,12 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (event.type === "tui.command.execute") {
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "task.completed",
         payload: {
-          taskId: `betterc0de-tui-command:${event.id}`,
+          taskId: `${this.taskId("tui-command")}:${event.id}`,
           status: "completed",
-          summary: `BetterC0de compatibility TUI command: ${event.properties.command}`,
+          summary: `${this.brand()} compatibility TUI command: ${event.properties.command}`,
         },
       })
       return true
@@ -2544,7 +2601,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       if (event.properties.variant === "error") {
         this.emitEvent({
           ...this.eventBase(threadId),
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "runtime.error",
           payload: {
             message: event.properties.message,
@@ -2557,7 +2614,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       if (event.properties.variant === "warning") {
         this.emitEvent({
           ...this.eventBase(threadId),
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "runtime.warning",
           willRetry: false,
           payload: {
@@ -2569,10 +2626,10 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       }
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "task.completed",
         payload: {
-          taskId: `betterc0de-tui-toast:${event.id}`,
+          taskId: `${this.taskId("tui-toast")}:${event.id}`,
           status: "completed",
           summary: event.properties.title
             ? `${event.properties.title}: ${event.properties.message}`
@@ -2585,7 +2642,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (event.type === "tui.session.select") {
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "session.configured",
         payload: {
           config: {
@@ -2600,13 +2657,13 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       this.invalidateMetadata({ cwd: context.directory })
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "provider.metadata.changed",
         payload: {
-          providerKind: PROVIDER,
+          providerKind: this.provider,
           providerInstanceId: this.providerInstanceId(),
           metadataKind: "all",
-          summary: `BetterC0de compatibility installation updated to ${event.properties.version}.`,
+          summary: `${this.brand()} compatibility installation updated to ${event.properties.version}.`,
           details: event.properties.version,
           cwd: context.directory,
         },
@@ -2617,11 +2674,11 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (event.type === "installation.update-available") {
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "runtime.warning",
         willRetry: false,
         payload: {
-          message: `BetterC0de compatibility ${event.properties.version} is available.`,
+          message: `${this.brand()} compatibility ${event.properties.version} is available.`,
           detail: event.properties,
         },
       })
@@ -2631,11 +2688,11 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (event.type === "mcp.browser.open.failed") {
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "runtime.warning",
         willRetry: false,
         payload: {
-          message: `BetterC0de compatibility MCP browser open failed for ${event.properties.mcpName}.`,
+          message: `${this.brand()} compatibility MCP browser open failed for ${event.properties.mcpName}.`,
           detail: event.properties,
         },
       })
@@ -2645,7 +2702,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (event.type === "server.connected") {
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "session.configured",
         payload: {
           config: {
@@ -2662,10 +2719,10 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       this.retireDisposedContext(context)
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "session.exited",
         payload: {
-          reason: "BetterC0de compatibility global runtime disposed.",
+          reason: `${this.brand()} compatibility global runtime disposed.`,
           recoverable: true,
           exitKind: "graceful",
         },
@@ -2682,7 +2739,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       this.retireDisposedContext(context)
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "session.exited",
         payload: {
           reason: "compatibility server instance disposed.",
@@ -2697,8 +2754,8 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       this.emitEvent({
         ...this.eventBase(threadId),
         turnId,
-        itemId: `betterc0de-file:${event.properties.file}`,
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        itemId: `${this.taskId("file")}:${event.properties.file}`,
+        raw: { source: this.rawSource(), payload: event },
         type: "item.completed",
         payload: {
           itemType: "file_change",
@@ -2716,7 +2773,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (event.type === "vcs.branch.updated") {
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "session.configured",
         payload: {
           config: {
@@ -2732,11 +2789,11 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (event.type === "workspace.status") {
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "task.progress",
         payload: {
-          taskId: `betterc0de-workspace:${event.properties.workspaceID}`,
-          description: `BetterC0de compatibility workspace ${event.properties.status}.`,
+          taskId: `${this.taskId("workspace")}:${event.properties.workspaceID}`,
+          description: `${this.brand()} compatibility workspace ${event.properties.status}.`,
           summary: event.properties.status,
         },
       })
@@ -2746,12 +2803,12 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (event.type === "workspace.ready") {
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "task.completed",
         payload: {
-          taskId: `betterc0de-workspace:${event.properties.name}`,
+          taskId: `${this.taskId("workspace")}:${event.properties.name}`,
           status: "completed",
-          summary: `BetterC0de compatibility workspace ${event.properties.name} is ready.`,
+          summary: `${this.brand()} compatibility workspace ${event.properties.name} is ready.`,
         },
       })
       return true
@@ -2760,7 +2817,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (event.type === "workspace.failed") {
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "runtime.error",
         payload: {
           message: event.properties.message,
@@ -2774,14 +2831,14 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (event.type === "worktree.ready") {
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "task.completed",
         payload: {
-          taskId: `betterc0de-worktree:${event.properties.name}`,
+          taskId: `${this.taskId("worktree")}:${event.properties.name}`,
           status: "completed",
           summary: event.properties.branch
-            ? `BetterC0de compatibility worktree ${event.properties.name} is ready on ${event.properties.branch}.`
-            : `BetterC0de compatibility worktree ${event.properties.name} is ready.`,
+            ? `${this.brand()} compatibility worktree ${event.properties.name} is ready on ${event.properties.branch}.`
+            : `${this.brand()} compatibility worktree ${event.properties.name} is ready.`,
         },
       })
       return true
@@ -2790,7 +2847,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (event.type === "worktree.failed") {
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "runtime.error",
         payload: {
           message: event.properties.message,
@@ -2805,10 +2862,10 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       const pty = event.properties.info
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "task.started",
         payload: {
-          taskId: `betterc0de-pty:${pty.id}`,
+          taskId: `${this.taskId("pty")}:${pty.id}`,
           taskType: "pty",
           description: betterC0dePtySummary(pty),
         },
@@ -2820,10 +2877,10 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       const pty = event.properties.info
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "task.progress",
         payload: {
-          taskId: `betterc0de-pty:${pty.id}`,
+          taskId: `${this.taskId("pty")}:${pty.id}`,
           description: betterC0dePtySummary(pty),
           summary: pty.status,
         },
@@ -2834,12 +2891,12 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (event.type === "pty.exited") {
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "task.completed",
         payload: {
-          taskId: `betterc0de-pty:${event.properties.id}`,
+          taskId: `${this.taskId("pty")}:${event.properties.id}`,
           status: event.properties.exitCode === 0 ? "completed" : "failed",
-          summary: `BetterC0de compatibility PTY exited with code ${event.properties.exitCode}.`,
+          summary: `${this.brand()} compatibility PTY exited with code ${event.properties.exitCode}.`,
         },
       })
       return true
@@ -2848,12 +2905,12 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (event.type === "pty.deleted") {
       this.emitEvent({
         ...this.eventBase(threadId),
-        raw: { source: "betterc0de.sdk.event", payload: event },
+        raw: { source: this.rawSource(), payload: event },
         type: "task.completed",
         payload: {
-          taskId: `betterc0de-pty:${event.properties.id}`,
+          taskId: `${this.taskId("pty")}:${event.properties.id}`,
           status: "stopped",
-          summary: "BetterC0de compatibility PTY deleted.",
+          summary: `${this.brand()} compatibility PTY deleted.`,
         },
       })
       return true
@@ -2923,7 +2980,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           ...this.eventBase(threadId),
           turnId,
           itemId: event.properties.partID,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "content.delta",
           payload: {
             streamKind: resolveTextStreamKind(existingPart),
@@ -2948,7 +3005,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
             ...this.eventBase(threadId, toolStateCreatedAt(part)),
             turnId,
             itemId: part.callID,
-            raw: { source: "betterc0de.sdk.event", payload: event },
+            raw: { source: this.rawSource(), payload: event },
             type:
               part.state.status === "pending"
                 ? "item.started"
@@ -3007,7 +3064,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           ...this.eventBase(threadId),
           turnId,
           requestId: event.properties.id,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "request.opened",
           payload: {
             requestType: mapPermissionToRequestType(
@@ -3028,7 +3085,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           ...this.eventBase(threadId),
           turnId,
           requestId: event.properties.requestID,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "request.resolved",
           payload: {
             requestType: "unknown",
@@ -3043,7 +3100,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           ...this.eventBase(threadId),
           turnId,
           requestId: event.properties.id,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "user-input.requested",
           payload: {
             questions: normalizeQuestionRequest(event.properties),
@@ -3064,7 +3121,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           ...this.eventBase(threadId),
           turnId,
           requestId: event.properties.requestID,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "user-input.resolved",
           payload: { answers },
         })
@@ -3076,7 +3133,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           ...this.eventBase(threadId),
           turnId,
           requestId: event.properties.requestID,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "user-input.resolved",
           payload: { answers: {} },
         })
@@ -3106,7 +3163,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           ...this.eventBase(threadId),
           turnId,
           itemId: event.properties.messageID,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "item.completed",
           payload: {
             itemType: "dynamic_tool_call",
@@ -3139,7 +3196,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           this.emitEvent({
             ...this.eventBase(threadId),
             turnId,
-            raw: { source: "betterc0de.sdk.event", payload: event },
+            raw: { source: this.rawSource(), payload: event },
             type: "runtime.warning",
             willRetry: true,
             payload: {
@@ -3160,7 +3217,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           this.emitEvent({
             ...this.eventBase(threadId),
             turnId: completedTurnId,
-            raw: { source: "betterc0de.sdk.event", payload: event },
+            raw: { source: this.rawSource(), payload: event },
             type: "turn.completed",
             payload: { state: "completed" },
           })
@@ -3178,7 +3235,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         this.emitEvent({
           ...this.eventBase(threadId),
           turnId: completedTurnId,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "turn.completed",
           payload: { state: "completed" },
         })
@@ -3192,7 +3249,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           ...this.eventBase(threadId),
           turnId,
           itemId: event.id,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "turn.diff.updated",
           payload: {
             unifiedDiff,
@@ -3205,12 +3262,12 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         this.emitEvent({
           ...this.eventBase(threadId),
           turnId,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "task.completed",
           payload: {
-            taskId: `betterc0de-compaction:${context.betterC0deSessionId}`,
+            taskId: `${this.taskId("compaction")}:${context.betterC0deSessionId}`,
             status: "completed",
-            summary: "BetterC0de compatibility compacted the session context.",
+            summary: `${this.brand()} compatibility compacted the session context.`,
           },
         })
         break
@@ -3219,10 +3276,10 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         this.emitEvent({
           ...this.eventBase(threadId),
           turnId,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "turn.plan.updated",
           payload: {
-            explanation: "BetterC0de compatibility task list updated.",
+            explanation: `${this.brand()} compatibility task list updated.`,
             plan: event.properties.todos.map((todo) => ({
               step: todo.content,
               status: betterC0deTodoStatus(todo.status),
@@ -3234,11 +3291,11 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       case "session.created": {
         this.emitEvent({
           ...this.eventBase(threadId),
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "session.state.changed",
           payload: {
             state: "ready",
-            reason: "BetterC0de session created.",
+            reason: `${this.brand()} session created.`,
             detail: betterC0deSessionConfig(event.properties.info),
           },
         })
@@ -3248,7 +3305,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       case "session.updated": {
         this.emitEvent({
           ...this.eventBase(threadId),
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "session.configured",
           payload: {
             config: betterC0deSessionConfig(event.properties.info),
@@ -3263,10 +3320,10 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         this.retireDisposedContext(context)
         this.emitEvent({
           ...this.eventBase(threadId),
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "session.exited",
           payload: {
-            reason: "BetterC0de session deleted.",
+            reason: `${this.brand()} session deleted.`,
             recoverable: false,
             exitKind: "graceful",
           },
@@ -3274,7 +3331,10 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         break
       }
       case "session.error": {
-        const message = sessionErrorMessage(event.properties.error)
+        const message = sessionErrorMessage(
+          event.properties.error,
+          this.brand()
+        )
         const activeTurnId = context.activeTurnId
         context.activeTurnId = null
         context.activeAgent = null
@@ -3286,14 +3346,14 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           this.emitEvent({
             ...this.eventBase(threadId),
             turnId: activeTurnId,
-            raw: { source: "betterc0de.sdk.event", payload: event },
+            raw: { source: this.rawSource(), payload: event },
             type: "turn.completed",
             payload: { state: "failed", errorMessage: message },
           })
         }
         this.emitEvent({
           ...this.eventBase(threadId),
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "runtime.error",
           payload: {
             message,
@@ -3330,7 +3390,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
             isoFromEpochMs(event.properties.timestamp)
           ),
           turnId,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "session.configured",
           payload: {
             config: {
@@ -3348,7 +3408,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
             isoFromEpochMs(event.properties.timestamp)
           ),
           turnId,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "session.configured",
           payload: {
             config: {
@@ -3365,11 +3425,11 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
             isoFromEpochMs(event.properties.timestamp)
           ),
           turnId,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "thread.metadata.updated",
           payload: {
             metadata: {
-              betterc0de: {
+              [this.metadataNamespace()]: {
                 prompt: event.properties.prompt,
               },
             },
@@ -3381,14 +3441,14 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
             isoFromEpochMs(event.properties.timestamp)
           ),
           turnId,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "task.completed",
           payload: {
-            taskId: `betterc0de-prompt:${event.id}`,
+            taskId: `${this.taskId("prompt")}:${event.id}`,
             status: "completed",
             summary: betterC0deEventSummary(
               event.properties.prompt.text,
-              "BetterC0de compatibility prompt submitted."
+              `${this.brand()} compatibility prompt submitted.`
             ),
           },
         })
@@ -3401,14 +3461,14 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
             isoFromEpochMs(event.properties.timestamp)
           ),
           turnId,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "task.completed",
           payload: {
-            taskId: `betterc0de-synthetic:${event.id}`,
+            taskId: `${this.taskId("synthetic")}:${event.id}`,
             status: "completed",
             summary: betterC0deEventSummary(
               event.properties.text,
-              "BetterC0de compatibility synthetic prompt injected."
+              `${this.brand()} compatibility synthetic prompt injected.`
             ),
           },
         })
@@ -3427,7 +3487,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
             isoFromEpochMs(event.properties.timestamp)
           ),
           turnId,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "session.configured",
           payload: {
             config: {
@@ -3448,7 +3508,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
             isoFromEpochMs(event.properties.timestamp)
           ),
           turnId,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "token.usage",
           usage: {
             inputTokens: event.properties.tokens.input,
@@ -3471,14 +3531,14 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       case "session.next.step.failed": {
         const message =
           event.properties.error.message ??
-          "BetterC0de compatibility step failed."
+          `${this.brand()} compatibility step failed.`
         this.emitEvent({
           ...this.eventBase(
             threadId,
             isoFromEpochMs(event.properties.timestamp)
           ),
           turnId,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "runtime.error",
           payload: {
             message,
@@ -3497,7 +3557,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           ),
           turnId,
           itemId: event.id,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "content.delta",
           payload: {
             streamKind: "assistant_text",
@@ -3514,7 +3574,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           ),
           turnId,
           itemId: event.id,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "item.completed",
           payload: {
             itemType: "assistant_message",
@@ -3534,7 +3594,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           ),
           turnId,
           itemId: event.properties.reasoningID,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "reasoning.delta",
           payload: {
             streamKind: "reasoning_text",
@@ -3551,7 +3611,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
           ),
           turnId,
           itemId: event.properties.reasoningID,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "item.completed",
           payload: {
             itemType: "reasoning",
@@ -3678,7 +3738,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         state.provider = event.properties.provider
         const detail =
           event.properties.error.message ??
-          "BetterC0de compatibility tool failed."
+          `${this.brand()} compatibility tool failed.`
         this.emitNextToolItem(context, event, {
           lifecycle: "item.completed",
           status: "failed",
@@ -3701,7 +3761,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
             isoFromEpochMs(event.properties.timestamp)
           ),
           turnId,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "runtime.warning",
           willRetry: event.properties.error.isRetryable,
           payload: {
@@ -3721,12 +3781,12 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
             isoFromEpochMs(event.properties.timestamp)
           ),
           turnId,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "task.started",
           payload: {
-            taskId: `betterc0de-compaction:${context.betterC0deSessionId}`,
+            taskId: `${this.taskId("compaction")}:${context.betterC0deSessionId}`,
             taskType: "context_compaction",
-            description: `BetterC0de compatibility context compaction started (${event.properties.reason}).`,
+            description: `${this.brand()} compatibility context compaction started (${event.properties.reason}).`,
           },
         })
         break
@@ -3738,12 +3798,11 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
             isoFromEpochMs(event.properties.timestamp)
           ),
           turnId,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "task.progress",
           payload: {
-            taskId: `betterc0de-compaction:${context.betterC0deSessionId}`,
-            description:
-              "BetterC0de compatibility context compaction in progress.",
+            taskId: `${this.taskId("compaction")}:${context.betterC0deSessionId}`,
+            description: `${this.brand()} compatibility context compaction in progress.`,
             summary: event.properties.text,
           },
         })
@@ -3756,10 +3815,10 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
             isoFromEpochMs(event.properties.timestamp)
           ),
           turnId,
-          raw: { source: "betterc0de.sdk.event", payload: event },
+          raw: { source: this.rawSource(), payload: event },
           type: "task.completed",
           payload: {
-            taskId: `betterc0de-compaction:${context.betterC0deSessionId}`,
+            taskId: `${this.taskId("compaction")}:${context.betterC0deSessionId}`,
             status: "completed",
             ...(event.properties.text
               ? { summary: event.properties.text }
@@ -3830,14 +3889,14 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       return
     this.emitEvent({
       ...this.eventBase(context.session.threadId),
-      raw: { source: "betterc0de.sdk.event", payload: event },
+      raw: { source: this.rawSource(), payload: event },
       type: "thread.metadata.updated",
       payload: {
         ...(event.properties.info.title
           ? { name: event.properties.info.title }
           : {}),
         metadata: {
-          betterc0de: metadata,
+          [this.metadataNamespace()]: metadata,
         },
       },
     })
@@ -3851,7 +3910,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     if (!tokens) return
     this.emitEvent({
       ...this.eventBase(context.session.threadId),
-      raw: { source: "betterc0de.sdk.event", payload: event },
+      raw: { source: this.rawSource(), payload: event },
       type: "thread.token-usage.updated",
       payload: {
         usage: {
@@ -3919,7 +3978,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
       ...this.eventBase(threadId, isoFromEpochMs(event.properties.timestamp)),
       turnId,
       itemId: event.properties.callID,
-      raw: { source: "betterc0de.sdk.event", payload: event },
+      raw: { source: this.rawSource(), payload: event },
       type: input.lifecycle,
       payload,
     })
@@ -3950,7 +4009,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         ...this.eventBase(context.session.threadId, textPartStartedAt(part)),
         turnId,
         itemId: part.id,
-        raw: { source: "betterc0de.sdk.event", payload: rawEvent },
+        raw: { source: this.rawSource(), payload: rawEvent },
         type: "content.delta",
         payload: {
           streamKind: resolveTextStreamKind(part),
@@ -3971,7 +4030,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         ),
         turnId,
         itemId: part.id,
-        raw: { source: "betterc0de.sdk.event", payload: rawEvent },
+        raw: { source: this.rawSource(), payload: rawEvent },
         type: "item.completed",
         payload: {
           itemType: "assistant_message",
@@ -4078,13 +4137,13 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     const failures = await retryCleanupQuarantines({
       contexts,
       close: (context) => this.closeTrackedServer(context.server),
-      label: "BetterC0de server",
+      label: `${this.brand()} server`,
       logger,
     })
     if (failures.length > 0) {
       throw new AggregateError(
         failures,
-        "Failed to clean up quarantined BetterC0de servers"
+        `Failed to clean up quarantined ${this.brand()} servers`
       )
     }
   }
@@ -4092,7 +4151,9 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
   private ensureContext(threadId: string): SessionContext {
     const context = this.sessions.get(threadId)
     if (!context || context.stopped) {
-      throw new Error(`BetterC0de session not found for thread ${threadId}`)
+      throw new Error(
+        `${this.brand()} session not found for thread ${threadId}`
+      )
     }
     return context
   }
@@ -4134,7 +4195,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
   private eventBase(threadId: string, createdAt?: string): ProviderRuntimeBase {
     return {
       threadId,
-      providerKind: PROVIDER,
+      providerKind: this.provider,
       providerInstanceId: this.providerInstanceId(),
       eventId: randomUUID(),
       at: Date.now(),
@@ -4169,8 +4230,8 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         {
           observedAt,
           event: {
-            provider: PROVIDER,
-            providerKind: PROVIDER,
+            provider: this.provider,
+            providerKind: this.provider,
             providerInstanceId: this.providerInstanceId(),
             threadId: context.session.threadId,
             providerThreadId: context.betterC0deSessionId,
@@ -4196,7 +4257,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
   }
 
   private binaryPath(): string {
-    return this.options.binaryPath?.trim() || "betterc0de"
+    return this.options.binaryPath?.trim() || this.profile.defaultBinaryPath
   }
 
   private serverUrl(): string | null {
@@ -4207,27 +4268,56 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
   private serverPassword(): string | null {
     const value =
       this.options.serverPassword?.trim() ||
-      process.env.BETTERC0DE_SERVER_PASSWORD?.trim() ||
-      process.env.BetterC0de_SERVER_PASSWORD?.trim()
+      firstEnvValue(this.profile.serverPasswordEnvVars)
     return value ? value : null
   }
 
   private serverUsername(): string {
     return (
       this.options.serverUsername?.trim() ||
-      process.env.BETTERC0DE_SERVER_USERNAME?.trim() ||
-      process.env.BetterC0de_SERVER_USERNAME?.trim() ||
-      "betterc0de"
+      firstEnvValue(this.profile.serverUsernameEnvVars) ||
+      this.profile.serverAuthUsername
     )
   }
 
+  /** `raw.source` stamped on native protocol envelopes. */
+  private rawSource(): string {
+    return this.profile.rawSource
+  }
+
+  /** Product name of the driven CLI, e.g. `BetterC0de` or `OpenCode`. */
+  private brand(): string {
+    return this.profile.displayName
+  }
+
+  /** Synthesised task id namespace, e.g. `betterc0de` or `opencode`. */
+  private taskId(suffix: string): string {
+    return `${this.profile.taskIdPrefix}-${suffix}`
+  }
+
+  /** Metadata namespace for `thread.metadata.updated` payloads. */
+  private metadataNamespace(): string {
+    return this.profile.metadataNamespace
+  }
+
   private providerInstanceId(): string {
-    return this.options.providerInstanceId ?? "betterc0de"
+    return this.options.providerInstanceId ?? this.profile.providerKind
   }
 
   private continuationKey(): string {
-    return this.options.continuationKey ?? "betterc0de:instance:betterc0de"
+    return (
+      this.options.continuationKey ??
+      `${this.profile.providerKind}:instance:${this.profile.providerKind}`
+    )
   }
+}
+
+function firstEnvValue(names: ReadonlyArray<string>): string | null {
+  for (const name of names) {
+    const value = process.env[name]?.trim()
+    if (value) return value
+  }
+  return null
 }
 
 interface BetterC0deInventory {
@@ -4250,20 +4340,23 @@ type ProviderRuntimeBase = Pick<
 >
 
 async function defaultBetterC0deClientFactory(
-  input: BetterC0deClientFactoryInput
+  input: BetterC0deClientFactoryInput,
+  profile: OpenCodeCompatProfile
 ): Promise<BetterC0deClient> {
   return createBetterC0deCompatHttpClient<BetterC0deClient>({
     baseUrl: input.baseUrl,
     directory: input.directory,
     serverUsername: input.serverUsername,
     serverPassword: input.serverPassword,
+    v2Envelope: profile.v2Envelope,
   })
 }
 
 async function runBetterC0deCommand(
   binaryPath: string,
   args: ReadonlyArray<string>,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  brand = "BetterC0de"
 ): Promise<{
   readonly stdout: string
   readonly stderr: string
@@ -4279,7 +4372,7 @@ async function runBetterC0deCommand(
       if (appendBoundedProcessOutput(output, "stdout", chunk)) return
       beginTermination(
         processOutputLimitError(
-          "BetterC0de compatibility command",
+          `${brand} compatibility command`,
           output.byteCap
         )
       )
@@ -4288,7 +4381,7 @@ async function runBetterC0deCommand(
       if (appendBoundedProcessOutput(output, "stderr", chunk)) return
       beginTermination(
         processOutputLimitError(
-          "BetterC0de compatibility command",
+          `${brand} compatibility command`,
           output.byteCap
         )
       )
@@ -4339,7 +4432,7 @@ async function runBetterC0deCommand(
     }
     const timer = setTimeout(() => {
       beginTermination(
-        new Error("Timed out while running BetterC0de compatibility command.")
+        new Error(`Timed out while running ${brand} compatibility command.`)
       )
     }, DEFAULT_SERVER_TIMEOUT_MS)
 
@@ -4357,7 +4450,9 @@ function parseGenericCliVersion(output: string): string | null {
 function formatBetterC0deProbeError(input: {
   readonly cause: unknown
   readonly isExternalServer: boolean
+  readonly brand: string
 }): { readonly installed: boolean; readonly message: string } {
+  const brand = input.brand
   const detail = sdkErrorDetail(input.cause).toLowerCase()
   const rules: ReadonlyArray<readonly [RegExp, boolean, string]> =
     input.isExternalServer
@@ -4375,19 +4470,19 @@ function formatBetterC0deProbeError(input: {
         ]
       : [
           [
-            /enoent|notfound/,
+            /enoent|notfound|not recognized/,
             false,
-            "BetterC0de compatibility CLI is not installed or not on PATH.",
+            `${brand} compatibility CLI is not installed or not on PATH.`,
           ],
           [
             /quarantine/,
             true,
-            "macOS is blocking the BetterC0de compatibility binary (quarantine). Remove the quarantine attribute from the configured compatibility binary to fix this.",
+            `macOS is blocking the ${brand} compatibility binary (quarantine). Remove the quarantine attribute from the configured compatibility binary to fix this.`,
           ],
           [
             /invalid code signature|corrupted/,
             true,
-            "macOS killed the BetterC0de compatibility process due to an invalid code signature. The binary may be corrupted. Try reinstalling the compatibility CLI.",
+            `macOS killed the ${brand} compatibility process due to an invalid code signature. The binary may be corrupted. Try reinstalling the compatibility CLI.`,
           ],
         ]
   const matched = rules.find(([pattern]) => pattern.test(detail))
@@ -4405,6 +4500,7 @@ async function connectBetterC0deServer(input: {
   readonly binaryPath: string
   readonly serverUrl?: string | null
   readonly env: NodeJS.ProcessEnv
+  readonly profile: OpenCodeCompatProfile
 }): Promise<BetterC0deServerConnection> {
   const serverUrl = input.serverUrl?.trim()
   if (serverUrl) {
@@ -4417,6 +4513,7 @@ async function connectBetterC0deServer(input: {
   return startBetterC0deServerProcess({
     binaryPath: input.binaryPath,
     env: input.env,
+    profile: input.profile ?? BETTERC0DE_COMPAT_PROFILE,
   })
 }
 
@@ -4448,26 +4545,35 @@ export function spawnBetterC0deBinary(
 async function startBetterC0deServerProcess(input: {
   readonly binaryPath: string
   readonly env: NodeJS.ProcessEnv
+  readonly profile: OpenCodeCompatProfile
 }): Promise<BetterC0deServerConnection> {
   const port = await findAvailablePort()
   await retryCompatProcessCleanup()
+  const configEnv: NodeJS.ProcessEnv = {}
+  for (const name of input.profile.configContentEnv) {
+    configEnv[name] = EMPTY_CONFIG_CONTENT
+  }
   const child = spawnBetterC0deBinary(
     input.binaryPath,
-    ["serve", `--hostname=${DEFAULT_HOSTNAME}`, `--port=${port}`],
+    input.profile.serveArgs(port, DEFAULT_HOSTNAME),
     {
       env: {
         ...input.env,
-        BETTERC0DE_CONFIG_CONTENT: BETTERC0DE_EMPTY_CONFIG_CONTENT,
-        BetterC0de_CONFIG_CONTENT: BETTERC0DE_EMPTY_CONFIG_CONTENT,
+        ...configEnv,
       },
     }
   )
-  return waitForBetterC0deServer(child, DEFAULT_SERVER_TIMEOUT_MS)
+  return waitForBetterC0deServer(
+    child,
+    DEFAULT_SERVER_TIMEOUT_MS,
+    input.profile
+  )
 }
 
 function waitForBetterC0deServer(
   child: ChildProcessWithoutNullStreams,
-  timeoutMs: number
+  timeoutMs: number,
+  profile: OpenCodeCompatProfile
 ): Promise<BetterC0deServerConnection> {
   const output = createBoundedProcessOutput()
   let settled = false
@@ -4525,13 +4631,13 @@ function waitForBetterC0deServer(
       if (!appendBoundedProcessOutput(output, "stdout", chunk)) {
         rejectAfterCleanup(
           processOutputLimitError(
-            "BetterC0de compatibility server startup",
+            `${profile.displayName} compatibility server startup`,
             output.byteCap
           )
         )
         return
       }
-      const parsed = parseServerUrlFromOutput(output.stdout)
+      const parsed = parseServerUrlFromOutput(output.stdout, profile)
       if (!parsed) return
       finish(() => {
         // Continue draining diagnostics after readiness so a chatty server
@@ -4550,7 +4656,7 @@ function waitForBetterC0deServer(
       if (appendBoundedProcessOutput(output, "stderr", chunk)) return
       rejectAfterCleanup(
         processOutputLimitError(
-          "BetterC0de compatibility server startup",
+          `${profile.displayName} compatibility server startup`,
           output.byteCap
         )
       )
@@ -4593,16 +4699,17 @@ function waitForBetterC0deServer(
   })
 }
 
-function parseServerUrlFromOutput(output: string): string | null {
+function parseServerUrlFromOutput(
+  output: string,
+  profile: OpenCodeCompatProfile
+): string | null {
   for (const line of output.split("\n")) {
     if (
-      !BETTERC0DE_SERVER_READY_PREFIXES.some((prefix) =>
-        line.startsWith(prefix)
-      )
+      !profile.serverReadyPrefixes.some((prefix) => line.startsWith(prefix))
     ) {
       continue
     }
-    const match = line.match(/on\s+(https?:\/\/[^\s]+)/)
+    const match = line.match(profile.serverReadyUrlPattern)
     return match?.[1] ?? null
   }
   return null
@@ -4663,7 +4770,7 @@ function flattenBetterC0deModels(
         ...normalizeBetterC0deModelVariants(model.variants),
         ...normalizeBetterC0deModelV2Variants(modelV2?.variants),
       }
-      const endpoint = modelV2?.endpoint ?? providerV2?.endpoint
+      const endpoint = betterC0deModelV2Endpoint(modelV2, providerV2)
       const limit = modelV2?.limit ?? model.limit
       const releaseDate = betterC0deModelReleaseDate(modelV2)
       const cost = betterC0deModelCost(modelV2)
@@ -4684,7 +4791,7 @@ function flattenBetterC0deModels(
           providerId: provider.id,
           modelId: model.id,
           api: {
-            id: modelV2?.apiID ?? model.id,
+            id: modelV2?.apiID ?? modelV2?.api?.id ?? model.id,
             ...(endpoint?.url ? { url: endpoint.url } : {}),
             ...(endpoint?.package ? { package: endpoint.package } : {}),
           },
@@ -4800,23 +4907,63 @@ function betterC0deProviderEnabledVia(
   provider: BetterC0deProviderV2 | undefined
 ): string | undefined {
   if (!provider || provider.enabled === false) return undefined
-  return provider.enabled.via
+  // Current `opencode` omits the `enabled` descriptor entirely; only the
+  // legacy compatibility CLI reports `{ via, ... }`.
+  const enabled = provider.enabled
+  if (!enabled || typeof enabled !== "object") return undefined
+  return enabled.via
 }
 
 function betterC0deProviderCatalogEndpoint(
   provider: BetterC0deProviderV2 | undefined
 ): ProviderCatalogEntry["endpoint"] | undefined {
-  if (!provider || provider.endpoint.type === "unknown") return undefined
+  return betterC0deNormalizeEndpoint(provider?.endpoint ?? provider?.api)
+}
+
+/**
+ * The legacy compatibility CLI publishes a flat `endpoint` object; current
+ * `opencode` publishes a nested `api` object. Both normalise to the same
+ * catalog endpoint shape, with `unknown` dropped.
+ */
+function betterC0deNormalizeEndpoint(
+  endpoint:
+    | {
+        readonly type?: string
+        readonly url?: string
+        readonly package?: string
+        readonly websocket?: boolean
+      }
+    | undefined
+): ProviderCatalogEntry["endpoint"] | undefined {
+  if (!endpoint) return undefined
+  const type = endpoint.type
+  if (!type || type === "unknown") return undefined
   return {
-    type: provider.endpoint.type,
-    ...(provider.endpoint.url ? { url: provider.endpoint.url } : {}),
-    ...(provider.endpoint.package
-      ? { package: provider.endpoint.package }
-      : {}),
-    ...(provider.endpoint.websocket !== undefined
-      ? { websocket: provider.endpoint.websocket }
+    type,
+    ...(endpoint.url ? { url: endpoint.url } : {}),
+    ...(endpoint.package ? { package: endpoint.package } : {}),
+    ...(endpoint.websocket !== undefined
+      ? { websocket: endpoint.websocket }
       : {}),
   }
+}
+
+/**
+ * The model/provider v2 endpoint, preferring the legacy `endpoint` object
+ * and falling back to the current `opencode` nested `api` descriptor.
+ */
+function betterC0deModelV2Endpoint(
+  model: BetterC0deModelV2 | undefined,
+  provider: BetterC0deProviderV2 | undefined
+):
+  | {
+      readonly type?: string
+      readonly url?: string
+      readonly package?: string
+      readonly websocket?: boolean
+    }
+  | undefined {
+  return model?.endpoint ?? model?.api ?? provider?.endpoint ?? provider?.api
 }
 
 function betterC0deProviderAgents(
@@ -5064,9 +5211,11 @@ function normalizeCwd(cwd: string | null | undefined): string {
   return cwd?.trim() || process.cwd()
 }
 
-function throwIfCompatStartupCancelled(signal: AbortSignal): void {
-  if (signal.aborted)
-    throw new Error("BetterC0de session startup was cancelled.")
+function throwIfCompatStartupCancelled(
+  signal: AbortSignal,
+  brand = "BetterC0de"
+): void {
+  if (signal.aborted) throw new Error(`${brand} session startup was cancelled.`)
 }
 
 async function loadBetterC0deProjectPermissionInputs(
@@ -5098,7 +5247,8 @@ interface BetterC0deMetadataChange {
 
 function betterC0deMetadataChangeFromFile(
   file: string,
-  eventType: "add" | "change" | "unlink"
+  eventType: "add" | "change" | "unlink",
+  brand = "BetterC0de"
 ): BetterC0deMetadataChange | null {
   const normalized = normalizeBetterC0deMetadataPath(file)
   const segments = normalized.split("/").filter(Boolean)
@@ -5132,7 +5282,7 @@ function betterC0deMetadataChangeFromFile(
   ) {
     return {
       metadataKind: "all",
-      summary: `BetterC0de compatibility configuration ${verb}.`,
+      summary: `${brand} compatibility configuration ${verb}.`,
     }
   }
 
@@ -5143,7 +5293,7 @@ function betterC0deMetadataChangeFromFile(
   ) {
     return {
       metadataKind: "all",
-      summary: `BetterC0de compatibility instructions ${verb}.`,
+      summary: `${brand} compatibility instructions ${verb}.`,
     }
   }
 
@@ -5153,28 +5303,28 @@ function betterC0deMetadataChangeFromFile(
   ) {
     return {
       metadataKind: "skills",
-      summary: `BetterC0de compatibility skills ${verb}.`,
+      summary: `${brand} compatibility skills ${verb}.`,
     }
   }
 
   if (isMarkdown && hasAnySegment(["command", "commands"])) {
     return {
       metadataKind: "slashCommands",
-      summary: `BetterC0de compatibility slash commands ${verb}.`,
+      summary: `${brand} compatibility slash commands ${verb}.`,
     }
   }
 
   if (isMarkdown && hasAnySegment(["agent", "agents", "mode", "modes"])) {
     return {
       metadataKind: "agents",
-      summary: `BetterC0de compatibility agents ${verb}.`,
+      summary: `${brand} compatibility agents ${verb}.`,
     }
   }
 
   if (isPluginScript && hasAnySegment(["plugin", "plugins"])) {
     return {
       metadataKind: "all",
-      summary: `BetterC0de compatibility plugins ${verb}.`,
+      summary: `${brand} compatibility plugins ${verb}.`,
     }
   }
 
@@ -5449,12 +5599,34 @@ function normalizeQuestionRequest(request: QuestionRequest) {
   })
 }
 
-function sessionErrorMessage(error: unknown): string {
+function sessionErrorMessage(error: unknown, brand = "BetterC0de"): string {
   const object = (value: unknown): Record<string, unknown> =>
     value && typeof value === "object" ? (value as Record<string, unknown>) : {}
   const message = object(object(error).data).message
   if (typeof message === "string" && message.trim()) return message
-  return "BetterC0de session failed."
+  return `${brand} session failed.`
+}
+
+/**
+ * Extracts the scoping session id from an SDK event envelope. BetterC0de
+ * compat `session.*` events carry it at the top level while current
+ * `opencode` message events nest it inside `info` or `part`.
+ */
+function readEventSessionId(properties: unknown): string | null {
+  if (!properties || typeof properties !== "object") return null
+  const record = properties as Record<string, unknown>
+  if (typeof record.sessionID === "string" && record.sessionID.trim()) {
+    return record.sessionID.trim()
+  }
+  for (const nestedKey of ["info", "part"] as const) {
+    const nested = record[nestedKey]
+    if (!nested || typeof nested !== "object") continue
+    const nestedSessionId = (nested as Record<string, unknown>).sessionID
+    if (typeof nestedSessionId === "string" && nestedSessionId.trim()) {
+      return nestedSessionId.trim()
+    }
+  }
+  return null
 }
 
 function sdkErrorDetail(cause: unknown): string {

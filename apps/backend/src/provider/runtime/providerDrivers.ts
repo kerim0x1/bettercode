@@ -95,6 +95,9 @@ export const PROVIDER_DRIVERS = [
       "bettercodecli",
       "betterc0deagent",
       "bettercodeagent",
+      // Legacy compatibility spelling: "open-code" predates the upstream
+      // `opencode` driver and must keep resolving to the BetterC0de driver.
+      "opencode",
     ],
     defaultInstanceIds: ["betterc0de", "BetterC0de"],
     catalogId: null,
@@ -117,6 +120,27 @@ export const PROVIDER_DRIVERS = [
     catalogId: "grok-cli",
     protocol: "acp",
     settingsKeys: ["binaryPath", "customModels"],
+  },
+  {
+    // The upstream `opencode` binary's ACP server (`opencode acp`). Kept
+    // distinct from `betterc0de` so both can be configured side by side. Bare
+    // `opencode` is NOT an alias: it is the long-standing spelling of the
+    // BetterC0de compatibility driver (`open-code`) and must keep normalizing
+    // there.
+    driver: "opencode-cli",
+    providerKind: "opencode_cli",
+    aliases: ["opencodecli", "opencodeserver", "opencodeacp"],
+    defaultInstanceIds: ["opencode-cli"],
+    catalogId: "opencode-cli",
+    protocol: "acp",
+    settingsKeys: [
+      "binaryPath",
+      // Kept for configs saved before the ACP migration; no longer read.
+      "serverUrl",
+      "serverUsername",
+      "serverPassword",
+      "customModels",
+    ],
   },
 ] as const satisfies ReadonlyArray<ProviderDriverDescriptor>
 

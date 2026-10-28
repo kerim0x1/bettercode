@@ -69,6 +69,18 @@ export function normalizeProviderDriverKind(driver: string): string {
   ) {
     return "betterc0de"
   }
+  if (
+    compactKey === "opencodecli" ||
+    compactKey === "opencodeserver" ||
+    compactKey === "opencodeacp"
+  ) {
+    return "opencode-cli"
+  }
+  // Legacy BetterC0de compatibility alias — "open-code" compacts to
+  // "opencode" and predates the upstream opencode driver kind.
+  if (compactKey === "opencode") {
+    return "betterc0de"
+  }
   return value
 }
 
@@ -124,13 +136,17 @@ export function deriveProviderInstanceEntries(
   })
 }
 
-export function sortProviderInstanceEntries(entries: ReadonlyArray<ProviderInstanceEntry>): ReadonlyArray<ProviderInstanceEntry> {
+export function sortProviderInstanceEntries(
+  entries: ReadonlyArray<ProviderInstanceEntry>
+): ReadonlyArray<ProviderInstanceEntry> {
   const kinds = new Map<string, number>()
   for (const entry of entries) {
     if (!kinds.has(entry.driverKind)) kinds.set(entry.driverKind, kinds.size)
   }
-  return [...entries].sort((a, b) =>
-    kinds.get(a.driverKind)! - kinds.get(b.driverKind)! || Number(b.isDefault) - Number(a.isDefault),
+  return [...entries].sort(
+    (a, b) =>
+      kinds.get(a.driverKind)! - kinds.get(b.driverKind)! ||
+      Number(b.isDefault) - Number(a.isDefault)
   )
 }
 

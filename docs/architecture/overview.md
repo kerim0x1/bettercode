@@ -240,13 +240,13 @@ HTTP and WebSocket handlers delegate into shared TypeScript services:
   broadcast to every authenticated WebSocket client as
   `{channel:"provider.runtimeEvent", data:{event_type, thread_id, payload}}`.
 - Two provider stacks remain. The provider hub (`provider/runtime/`) runs
-  Claude Code, Codex, Cursor, Grok CLI, Claude Terminal and BetterC0de
-  compatibility instances; the frozen legacy stack (`provider/adapter.ts`,
-  `adapters/`, `registry.ts`, `service.ts`) still runs the API-key
-  providers. ESLint fails any other backend module that imports the legacy
-  stack, apart from an allowlist in `eslint.config.js` (bootstrap, `AppState`,
-  `ClaudeAdapter.ts`) that may only shrink. The legacy event shape is
-  `LegacyProviderEvent` (`provider/types.ts`), distinct from the canonical
+  Claude Code, Codex, Cursor, Grok CLI, OpenCode CLI, Claude Terminal and
+  BetterC0de compatibility instances; the frozen legacy stack
+  (`provider/adapter.ts`, `adapters/`, `registry.ts`, `service.ts`) still runs
+  the API-key providers. ESLint fails any other backend module that imports
+  the legacy stack, apart from an allowlist in `eslint.config.js` (bootstrap,
+  `AppState`, `ClaudeAdapter.ts`) that may only shrink. The legacy event shape
+  is `LegacyProviderEvent` (`provider/types.ts`), distinct from the canonical
   `ProviderRuntimeEvent` the hub emits; `canonicalToLegacy`
   (`runtime/legacyBridge.ts`) is the one translation.
 - `ProviderHub.ts` keeps the instances, their quarantine and the turn
@@ -261,7 +261,9 @@ HTTP and WebSocket handlers delegate into shared TypeScript services:
   spelling, provider kind, aliases, default instance ids, catalog entry,
   session protocol and settings keys. `providerDriverInstances.ts` pairs each
   row with its instance factory and default configuration. Hub-or-legacy
-  routing, aliases, default order and session budgets derive from it.
+  routing, aliases, default order and session budgets derive from it. Cursor,
+  Grok CLI and OpenCode CLI are ACP drivers over the shared `runtime/acp/`
+  core; `opencode acp` is OpenCode's local Agent Client Protocol server.
 - `provider/turnLifecyclePolicy.ts` is the one set of turn hooks for both
   stacks: checkpoint baseline and turn admission before dispatch, the
   workspace trust gate right before the adapter, and checkpoint

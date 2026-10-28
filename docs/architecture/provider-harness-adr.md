@@ -13,8 +13,9 @@ crosses the same canonical adapter and event contracts.
 
 - Preserve provider-native sessions, tools, and authentication.
 - Enforce one application security and durability boundary.
-- Keep Codex, Claude SDK, Claude Terminal, Cursor ACP, BetterC0de compatibility,
-  and API-key providers first-class without duplicating orchestration logic.
+- Keep Codex, Claude SDK, Claude Terminal, Cursor and OpenCode ACP, BetterC0de
+  compatibility, and API-key providers first-class without duplicating
+  orchestration logic.
 
 ## Consequences
 

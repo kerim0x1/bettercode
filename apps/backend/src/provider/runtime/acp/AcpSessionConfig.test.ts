@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest"
 import {
   buildAcpDiscoveredModelsFromConfigOptions,
   buildAcpDiscoveredModelsFromSessionModels,
+  findAcpModeConfigOption,
   findAcpModelConfigOption,
+  modeStateFromConfigOptions,
   resolveAcpAdvertisedModelId,
   resolveAcpBaseModelId,
   resolveAcpConfigUpdates,
@@ -150,5 +152,47 @@ describe("resolveAcpConfigUpdates", () => {
         { id: "effort", value: "high" },
       ])
     ).toEqual([{ configId: "reasoning", value: "high" }])
+  })
+})
+
+describe("ACP session modes", () => {
+  const modeOptions: AcpSessionConfigOption[] = [
+    {
+      id: "mode",
+      name: "Session Mode",
+      category: "mode",
+      type: "select",
+      currentValue: "build",
+      options: [
+        { value: "build", name: "Build" },
+        { value: "plan", name: "Plan" },
+      ],
+    },
+  ]
+
+  it("reads a build/plan selector exposed as a config option", () => {
+    expect(findAcpModeConfigOption(modeOptions)?.id).toBe("mode")
+    expect(modeStateFromConfigOptions(modeOptions)).toEqual({
+      currentModeId: "build",
+      availableModes: [
+        { id: "build", name: "Build" },
+        { id: "plan", name: "Plan" },
+      ],
+    })
+  })
+
+  it("ignores unrelated select options", () => {
+    expect(
+      modeStateFromConfigOptions([
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "opencode/big-pickle",
+          options: [{ value: "opencode/big-pickle", name: "Big Pickle" }],
+        },
+      ])
+    ).toBeUndefined()
   })
 })

@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events"
 import { randomUUID } from "node:crypto"
 import {
   findAcpModelConfigOption,
+  modeStateFromConfigOptions,
   resolveAcpAdvertisedModelId,
   type AcpSessionConfigOption,
 } from "./AcpSessionConfig"
@@ -110,6 +111,17 @@ export interface AcpMode {
 export interface AcpModeState {
   readonly currentModeId: string
   readonly availableModes: ReadonlyArray<AcpMode>
+}
+
+/**
+ * What the agent last reported about the turn's usage. ACP sends a
+ * `usage_update` notification with the running total and (when the CLI knows
+ * it) the cost; the prompt result carries the input/output split. Neither is
+ * enough alone, so the adapter combines them after the prompt.
+ */
+export interface AcpUsageSnapshot {
+  readonly totalTokens?: number
+  readonly totalCostUsd?: number
 }
 
 export interface AcpStarted {
@@ -224,6 +236,8 @@ export interface AcpRuntime {
   ): Promise<AcpSessionSetupResult>
   setModel(model: string): Promise<void>
   setMode(modeId: string): Promise<void>
+  /** Last `usage_update` reported by the agent for the current turn. */
+  usageSnapshot?(): AcpUsageSnapshot | undefined
   prompt(input: {
     prompt: ReadonlyArray<Record<string, unknown>>
   }): Promise<Record<string, unknown>>
@@ -300,6 +314,7 @@ export class AcpRuntimeImpl<
   private modeState: AcpModeState | undefined
   private activeAssistantItemId: string | null = null
   private nextAssistantSegment = 0
+  private lastUsage: AcpUsageSnapshot | undefined
   private readonly toolCalls = new Map<string, AcpToolCallState>()
   /** The in-flight `session/prompt`, so a cancel can tell when it landed. */
   private promptInFlight: Promise<unknown> | null = null
@@ -580,6 +595,10 @@ export class AcpRuntimeImpl<
     return this.modeState
   }
 
+  usageSnapshot(): AcpUsageSnapshot | undefined {
+    return this.lastUsage
+  }
+
   async setConfigOption(
     configId: string,
     value: string | boolean
@@ -667,6 +686,7 @@ export class AcpRuntimeImpl<
     prompt: ReadonlyArray<Record<string, unknown>>
   }): Promise<Record<string, unknown>> {
     const started = await this.start()
+    this.lastUsage = undefined
     const pending = this.requireClient().call<Record<string, unknown>>(
       "session/prompt",
       { sessionId: started.sessionId, prompt: input.prompt },
@@ -777,6 +797,7 @@ export class AcpRuntimeImpl<
     this.activeAssistantItemId = null
     this.nextAssistantSegment = 0
     this.toolCalls.clear()
+    this.lastUsage = undefined
   }
 
   private async handleServerRequest(
@@ -799,9 +820,24 @@ export class AcpRuntimeImpl<
     const update = asRecord(asRecord(params).update)
     const sessionUpdate = readTrimmed(update, "sessionUpdate")
     switch (sessionUpdate) {
+      case "usage_update": {
+        const used = typeof update.used === "number" ? update.used : undefined
+        const cost = asRecord(update.cost)
+        const amount = typeof cost.amount === "number" ? cost.amount : undefined
+        const currency = readString(cost, "currency")?.toUpperCase()
+        this.lastUsage = {
+          ...(used !== undefined ? { totalTokens: used } : {}),
+          ...(amount !== undefined && (!currency || currency === "USD")
+            ? { totalCostUsd: amount }
+            : {}),
+        }
+        break
+      }
       case "config_option_update": {
         if (Array.isArray(update.configOptions)) {
           this.configOptions = update.configOptions as AcpSessionConfigOption[]
+          const modeState = modeStateFromConfigOptions(this.configOptions)
+          if (modeState) this.modeState = modeState
           if (this.started) {
             this.started = {
               ...this.started,
@@ -891,7 +927,9 @@ export class AcpRuntimeImpl<
     this.configOptions = Array.isArray(response.configOptions)
       ? response.configOptions
       : this.configOptions
-    const modeState = parseSessionModeState(response)
+    const modeState =
+      parseSessionModeState(response) ??
+      modeStateFromConfigOptions(this.configOptions)
     if (modeState) this.modeState = modeState
   }
 

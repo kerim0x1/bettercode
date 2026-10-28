@@ -33,14 +33,22 @@ afterEach(() => {
 
 describe("BetterC0deCompatHttpClient bounds", () => {
   it("keeps split CRLF sequences within a single multiline SSE frame", async () => {
-    const chunks = ['data: {"type":\r', '\ndata: "test"}\r', '\n\r\n']
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({
-      pull(controller) {
-        const chunk = chunks.shift()
-        if (chunk === undefined) controller.close()
-        else controller.enqueue(new TextEncoder().encode(chunk))
-      },
-    }))))
+    const chunks = ['data: {"type":\r', '\ndata: "test"}\r', "\n\r\n"]
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              pull(controller) {
+                const chunk = chunks.shift()
+                if (chunk === undefined) controller.close()
+                else controller.enqueue(new TextEncoder().encode(chunk))
+              },
+            })
+          )
+      )
+    )
     const { stream } = await client().event.subscribe()
     const events = []
     for await (const event of stream) events.push(event)
@@ -50,14 +58,24 @@ describe("BetterC0deCompatHttpClient bounds", () => {
   it("counts empty SSE data lines toward the frame budget", async () => {
     const chunk = new TextEncoder().encode("data:\n".repeat(1024))
     let remaining = 180
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({
-      pull(controller) {
-        if (remaining-- > 0) controller.enqueue(chunk)
-        else controller.close()
-      },
-    }))))
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              pull(controller) {
+                if (remaining-- > 0) controller.enqueue(chunk)
+                else controller.close()
+              },
+            })
+          )
+      )
+    )
     const { stream } = await client().event.subscribe()
-    await expect(stream[Symbol.asyncIterator]().next()).rejects.toThrow(/frame exceeded/i)
+    await expect(stream[Symbol.asyncIterator]().next()).rejects.toThrow(
+      /frame exceeded/i
+    )
   })
 
   it("rejects oversized JSON responses", async () => {
@@ -186,5 +204,65 @@ describe("BetterC0deCompatHttpClient bounds", () => {
     const iterator = subscription.stream[Symbol.asyncIterator]()
 
     await expect(iterator.next()).rejects.toThrow(/frame exceeded/i)
+  })
+
+  it("returns the bare v2 list payload for the legacy compatibility shape", async () => {
+    let requestedUrl = ""
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL | Request) => {
+        requestedUrl = String(url)
+        return new Response(JSON.stringify([{ id: "gpt-5" }]), { status: 200 })
+      })
+    )
+    const legacy = createBetterC0deCompatHttpClient<{
+      readonly v2: {
+        readonly model: {
+          list(parameters?: unknown): Promise<{ readonly data?: unknown }>
+        }
+      }
+    }>({ baseUrl: "http://127.0.0.1:4096", directory: "/workspace" })
+
+    await expect(legacy.v2.model.list()).resolves.toEqual({
+      data: [{ id: "gpt-5" }],
+    })
+    expect(requestedUrl).toContain("/api/model")
+  })
+
+  it("unwraps the opencode v2 { location, data } envelope when enabled", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              location: { directory: "/workspace" },
+              data: [{ id: "gpt-5", api: { id: "responses", type: "aisdk" } }],
+            }),
+            { status: 200 }
+          )
+      )
+    )
+    const opencode = createBetterC0deCompatHttpClient<{
+      readonly v2: {
+        readonly model: {
+          list(parameters?: unknown): Promise<{ readonly data?: unknown }>
+        }
+        readonly provider: {
+          list(parameters?: unknown): Promise<{ readonly data?: unknown }>
+        }
+      }
+    }>({
+      baseUrl: "http://127.0.0.1:4096",
+      directory: "/workspace",
+      v2Envelope: true,
+    })
+
+    await expect(opencode.v2.model.list()).resolves.toEqual({
+      data: [{ id: "gpt-5", api: { id: "responses", type: "aisdk" } }],
+    })
+    await expect(opencode.v2.provider.list()).resolves.toEqual({
+      data: [{ id: "gpt-5", api: { id: "responses", type: "aisdk" } }],
+    })
   })
 })

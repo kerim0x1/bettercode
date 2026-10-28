@@ -18,6 +18,8 @@ import { probeCursorProviderStatus } from "./cursor/CursorProviderStatus"
 import { GrokAcpAdapter } from "./grok-cli/GrokAcpAdapter"
 import { probeGrokProviderStatusAsync } from "./grok-cli/GrokProviderStatus"
 import { BetterC0deCompatAdapter } from "./betterc0deCompat/BetterC0deCompatAdapter"
+import { OpenCodeAcpAdapter } from "./opencode/OpenCodeAcpAdapter"
+import { probeOpenCodeProviderStatusAsync } from "./opencode/OpenCodeProviderStatus"
 import type { ProviderRuntimeInstance } from "./ProviderHubTypes"
 import type { ProviderInstanceManagerOptions } from "./ProviderInstanceManager"
 import {
@@ -474,6 +476,59 @@ const FACTORIES: {
       },
     }),
   },
+  "opencode-cli": {
+    buildInstance: ({ config, base, environment, options }) => {
+      const binaryPath =
+        readConfigString(config.config, "binaryPath") ?? "opencode"
+      const continuationKey = instanceContinuationKey(
+        "opencode-cli",
+        config.instanceId
+      )
+      const env = providerEnvironmentToProcessEnv(config.environment)
+      const adapter = new OpenCodeAcpAdapter({
+        providerInstanceId: config.instanceId,
+        continuationKey,
+        binaryPath,
+        environment,
+        customModels: readConfigStringArray(config.config, "customModels"),
+        clientInfo: options.clientInfo,
+        nativeEventLogger: options.nativeEventLogger,
+        resolveMcpServers: options.resolveAcpMcpServers,
+        resolveOrchestratorServer: options.resolveOrchestratorServer,
+      })
+      return {
+        ...base,
+        provider: "opencode_cli",
+        continuationKey,
+        version: null,
+        statusProbe: (input) =>
+          probeOpenCodeProviderStatusAsync({
+            binaryPath,
+            env,
+            refresh: input.refresh,
+          }),
+        adapter,
+      }
+    },
+    defaultInstances: (providers) => ({
+      // `opencode acp` runs the CLI locally; there is no compatibility
+      // server URL to configure. The settings slot stays separate from the
+      // BetterC0de compatibility provider so both can be enabled side by side.
+      "opencode-cli": {
+        instanceId: "opencode-cli",
+        driver: "opencode-cli",
+        displayName: "OpenCode CLI",
+        enabled: providers["opencode-cli"]?.enabled !== false,
+        environment: inheritedProviderEnvironment(OPENCODE_ENV_KEYS),
+        config: {
+          binaryPath:
+            readConfigString(providers["opencode-cli"], "binaryPath") ||
+            "opencode",
+          customModels: providers["opencode-cli"]?.custom_models ?? [],
+        },
+      },
+    }),
+  },
 }
 
 /** The provider-hub drivers in registry order, each with its factory. */
@@ -557,6 +612,21 @@ function instanceContinuationKey(driver: string, instanceId: string): string {
 const CLAUDE_INHERITED_CREDENTIAL_KEYS = [
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
+] as const
+
+/**
+ * Provider keys OpenCode itself reads from the environment. The app's child
+ * environment withholds credentials by default, so a user who runs
+ * `opencode` from shell keys (without `opencode auth login`) needs these
+ * passed explicitly or the provider looks signed out.
+ */
+const OPENCODE_ENV_KEYS = [
+  "OPENCODE_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "OPENROUTER_API_KEY",
+  "XAI_API_KEY",
 ] as const
 
 function inheritedProviderEnvironment(
