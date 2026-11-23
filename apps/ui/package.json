@@ -15,6 +15,6 @@
     "@betterc0de/schema": "*",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "thinking-orbs": "0.3.1"
+    "thinking-orbs": "0.3.2"
   }
 }
