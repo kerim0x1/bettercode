@@ -153,9 +153,10 @@ HTTP and WebSocket handlers delegate into shared TypeScript services:
   `on_message_send` hooks in order (a goal or an Autonomous Work run runs
   them once for the command that sets it going, not for each of its turns);
   one that fails refuses the message (422 `message_hook_failed`) and each run is
-  recorded in `hooks.json`. It fails closed: an unreadable `hooks.json`, or an
-  enabled hook without a valid approval marker, refuses the message instead
-  of skipping the hook. A request with `prepareTurn`, which the desktop, the
+  recorded in `hooks.json`. Identical in-flight sends with the same message ID
+  in a thread share the hook run and admission result. An unreadable
+  `hooks.json` or an enabled hook without a valid approval marker refuses
+  the message. A request with `prepareTurn`, which the desktop, the
   remote web UI and the phone all send, also gets its system instruction
   built here from the user's and the project's skills, MCP servers,
   subagents and rules. The request carries only what the client alone
@@ -249,14 +250,34 @@ HTTP and WebSocket handlers delegate into shared TypeScript services:
   `LegacyProviderEvent` (`provider/types.ts`), distinct from the canonical
   `ProviderRuntimeEvent` the hub emits; `canonicalToLegacy`
   (`runtime/legacyBridge.ts`) is the one translation.
+- Claude API and the OpenAI-compatible adapters for OpenAI, OpenRouter, Grok
+  API and LM Studio share BetterC0de's tool permissions and executor. BetterC0de
+  registers tool approvals before publishing them, so a listener can answer or
+  cancel one immediately. A watchdog timeout rejects the dispatch completion
+  at the deadline. Turn admission and the workspace lease stay held until the
+  adapter has stopped and terminal hooks have finished.
+- The first follow-up after an interrupted turn carries the interruption
+  and available partial context in the provider request. The backend reads
+  the interrupted turn and its saved transcript from the same chat. With
+  conversation saving off, the live backend tracks the interruption and
+  uses the history provided by the client.
 - `ProviderHub.ts` keeps the instances, their quarantine and the turn
   lifecycle, and delegates the rest: `ProviderSessionRegistry` (sessions per
-  thread through one serialized admission queue), `ProviderTurnCapacity`
+  thread through one serialized admission queue, with bounded session
+  configuration checks outside the queue), `ProviderTurnCapacity`
   (turn and session limits, checked synchronously before reserving),
   `HubApprovalRouter` (sends approval answers and permission-mode changes to
-  the instance that owns the session), `ProviderStatusService` (status
+  the instance that owns the live session), `ProviderStatusService` (status
   snapshots and the metadata and status caches), with shared types in
   `ProviderHubTypes.ts` and errors in `ProviderHubErrors.ts`.
+  Chat requests route by provider kind before the hub checks instance
+  availability. A Stop request only targets a live session. During dispatch,
+  the hub accepts approval events only when their available identifiers agree
+  with the active turn.
+  Worktree teardown and the idle reaper require confirmation that the owning
+  provider stopped the session. A late hard stop restores provider availability
+  after all outstanding hard stops are confirmed and any separate quarantine
+  has been resolved.
 - `runtime/providerDrivers.ts` lists each hub driver once: settings
   spelling, provider kind, aliases, default instance ids, catalog entry,
   session protocol and settings keys. `providerDriverInstances.ts` pairs each

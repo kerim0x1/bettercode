@@ -33,6 +33,7 @@ import {
   pendingRequestKindFromDecisionKind,
   StalePendingProviderRequestError,
 } from "../pendingRequestErrors"
+import { readTurnId } from "./translator/shared"
 
 export interface CodexSessionStartOptions {
   readonly codeSearchServer?: CodeSearchServer | null
@@ -493,6 +494,10 @@ export class CodexSessionRuntime extends EventEmitter {
           respondError(-32601, `unsupported method: ${method}`)
           return
         }
+        if (this.isStaleTurn(readTurnId(params))) {
+          respondError(-32000, "The request belongs to a previous turn.")
+          return
+        }
         const requestId = extractRequestId(params) || randomUUID()
         this.pendingServerRequests.set(requestId, {
           jsonRpcMethod: method,
@@ -522,12 +527,21 @@ export class CodexSessionRuntime extends EventEmitter {
         )
       }
       if (m === "turn/started") {
-        const turn = (params as { turn?: { id?: string } } | null)?.turn
-        if (turn?.id) this.activeTurnId = turn.id
+        const turnId = readStartedTurnId(params) ?? undefined
+        if (this.isStaleTurn(turnId)) return
+        if (turnId) this.activeTurnId = turnId
       }
       if (m === "turn/completed" || m === "turn/aborted") {
-        this.lastCompletedTurnId =
-          readStartedTurnId(params) ?? this.activeTurnId
+        const flatId = (params as { id?: unknown } | null)?.id
+        const completedId =
+          (m === "turn/completed"
+            ? readStartedTurnId(params)
+            : readTurnId(params)) ??
+          (typeof flatId === "string" && flatId ? flatId : undefined)
+        // Filter before emitting: the adapter clears dispatch correlation
+        // on terminal notifications, and the hub cannot undo that change.
+        if (this.isStaleTurn(completedId)) return
+        this.lastCompletedTurnId = completedId ?? this.activeTurnId
         this.activeTurnId = null
         this.interruptQueued = false
       }
@@ -624,6 +638,14 @@ export class CodexSessionRuntime extends EventEmitter {
             }
       this.emit("event", native)
     })
+  }
+
+  private isStaleTurn(turnId: string | undefined): boolean {
+    return Boolean(
+      turnId &&
+      (turnId === this.lastCompletedTurnId ||
+        (this.activeTurnId !== null && turnId !== this.activeTurnId))
+    )
   }
 }
 

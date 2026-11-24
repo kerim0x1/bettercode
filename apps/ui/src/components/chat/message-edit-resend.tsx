@@ -82,7 +82,7 @@ export function UserMessageActions({
             <MoreHorizontalIcon className="size-3.5" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="min-w-40">
+        <DropdownMenuContent align="end" className="min-w-40">
           <DropdownMenuItem onClick={onEdit}>
             <PencilIcon className="size-3.5" /> Edit and resend
           </DropdownMenuItem>

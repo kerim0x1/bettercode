@@ -5,7 +5,7 @@ import { detectCliAsync, isClaudeCliAuthenticatedAsync } from "../../cli/detect"
 import { scanAppendOnlyWithCache, type AppendScan } from "./cache"
 import { commandOutput, runCommand } from "./command"
 import {
-  forEachLine,
+  forEachMatchingLine,
   listJsonlFiles,
   numberValue,
   parseJson,
@@ -17,6 +17,7 @@ import {
   addTokens,
   countMax,
   localDay,
+  modelLabel,
   percent,
   summarize,
   topEntries,
@@ -24,6 +25,7 @@ import {
 } from "./shared"
 import {
   PriceBook,
+  normalizeModelId,
   priceModels,
   dayCost,
   tokenTotal,
@@ -52,6 +54,17 @@ const LIMITS_TTL_MS = 60_000
 const LIMITS_CACHE_FILE = "usage-limits-cache.json"
 /** Longer than this between two messages and the session was idle, not busy. */
 const SESSION_IDLE_GAP_MS = 30 * 60_000
+/**
+ * The transcript aggregate's format. 1: a message written as several rows is
+ * counted once. 2: every row is also summed, as Claude's stats cache does.
+ */
+const TRANSCRIPT_CACHE_REVISION = 2
+/** Full days before the stats cache's last one that test how it counts. */
+const STATS_CHECK_DAYS = 7
+/** Fewer row tokens than this and a model's own factor is noise. */
+const MIN_OWN_SCALE_TOKENS = 10_000_000
+/** Every row that can carry usage has it; the scan decodes no other line. */
+const ASSISTANT_ROW_MARKER = '"type":"assistant"'
 
 /** `[tokens, messages, input, output, reasoning, cacheRead, cacheWrite]` */
 type FileDay = [number, number, number, number, number, number, number]
@@ -63,8 +76,22 @@ type FileSessions = Record<
 
 /** `[input, output, cacheRead, cacheWrite5m, cacheWrite1h]` per model. */
 type FileModelTokens = [number, number, number, number, number]
+/** `[input, output, cacheRead, cacheWrite]` */
+type RowTokens = [number, number, number, number]
 
-interface ClaudeFileAggregate {
+/**
+ * The message the last counted row belonged to, kept with the aggregate so a
+ * resumed scan still recognises its further rows.
+ */
+type LastMessage = [
+  key: string,
+  day: string | null,
+  model: string | null,
+  output: number,
+  reasoning: number,
+]
+
+export interface ClaudeFileAggregate {
   days: FileDays
   /**
    * Per model per day, so a day the stats cache has not folded in yet can be
@@ -77,6 +104,14 @@ interface ClaudeFileAggregate {
   plugins: Record<string, number>
   sessions: FileSessions
   messages: number
+  last?: LastMessage
+  /**
+   * Every row's usage per model, repeats included, the way Claude's own stats
+   * cache counts it; compared with the counted replies to correct that cache.
+   */
+  rowModels?: Record<string, RowTokens>
+  /** The same per day, all models together. */
+  rowDays?: Record<string, number>
 }
 
 interface ModelTokens {
@@ -99,6 +134,8 @@ interface ClaudeStatsCache {
 }
 
 let cachedLimits: LimitsReport | null = null
+/** The CLI the last report found, which `readClaudeLimits` asks. */
+let claudeBinaryPath: string | null = null
 
 function bump(
   target: Record<string, number>,
@@ -112,8 +149,13 @@ function bump(
 /**
  * Adds a transcript's assistant messages to an aggregate, from the start or,
  * for a transcript that only grew, from where the last scan stopped.
+ *
+ * Claude Code writes one row per content block of a reply (thinking, text,
+ * each tool call), and every row repeats the reply's usage. The rows follow
+ * each other, and only `output_tokens` grows while the reply streams, so a
+ * reply is counted once and its later rows add only the output it gained.
  */
-async function scanTranscript(
+export async function scanClaudeTranscript(
   file: string,
   from: AppendScan<ClaudeFileAggregate> | null
 ): Promise<AppendScan<ClaudeFileAggregate> | null> {
@@ -132,11 +174,10 @@ async function scanTranscript(
   const lastSeen = new Map<string, number>(
     Object.entries(aggregate.sessions).map(([id, session]) => [id, session[1]])
   )
-  const offset = await forEachLine(
+  const offset = await forEachMatchingLine(
     file,
+    ASSISTANT_ROW_MARKER,
     (line) => {
-      // Cheap reject first: assistant rows are the only ones carrying usage.
-      if (line.length < 40 || line.indexOf('"type":"assistant"') < 0) return
       const row = parseJson(line)
       if (!row || row.type !== "assistant") return
       const message = record(row.message)
@@ -157,13 +198,44 @@ async function scanTranscript(
         record(usage.output_tokens_details)?.thinking_tokens
       )
       const total = input + output + cacheRead + cacheWrite
-      aggregate.messages += 1
-
       const timestamp = stringValue(row.timestamp)
       const stamp = timestamp ? Date.parse(timestamp) : Number.NaN
       const model = stringValue(message.model)
-      if (Number.isFinite(stamp)) {
-        const day = localDay(stamp)
+      const day = Number.isFinite(stamp) ? localDay(stamp) : null
+      if (day !== null && model && model !== "<synthetic>") {
+        const rows = (aggregate.rowModels ??= {})
+        const counted = (rows[model] ??= [0, 0, 0, 0])
+        counted[0] += input
+        counted[1] += output
+        counted[2] += cacheRead
+        counted[3] += cacheWrite
+        const rowDays = (aggregate.rowDays ??= {})
+        rowDays[day] = (rowDays[day] ?? 0) + total
+      }
+
+      const messageId = stringValue(message.id)
+      const key = messageId
+        ? `${messageId}:${stringValue(row.requestId) ?? ""}`
+        : null
+      const last = aggregate.last
+      if (key !== null && last !== undefined && last[0] === key) {
+        addReplyGrowth(aggregate, last, output, reasoning)
+        return
+      }
+      aggregate.messages += 1
+
+      if (key !== null) {
+        aggregate.last = [
+          key,
+          day,
+          model && model !== "<synthetic>" ? model : null,
+          output,
+          reasoning,
+        ]
+      } else {
+        delete aggregate.last
+      }
+      if (day !== null) {
         const bucket = aggregate.days[day] ?? [0, 0, 0, 0, 0, 0, 0]
         bucket[0] += total
         bucket[1] += 1
@@ -211,6 +283,189 @@ async function scanTranscript(
     { from: from?.offset ?? 0, completeLinesOnly: true }
   )
   return offset === null ? null : { value: aggregate, offset }
+}
+
+/** Output a reply gained since its previous row, on that reply's day. */
+function addReplyGrowth(
+  aggregate: ClaudeFileAggregate,
+  last: LastMessage,
+  output: number,
+  reasoning: number
+): void {
+  const extraOutput = Math.max(0, output - last[3])
+  const extraReasoning = Math.max(0, reasoning - last[4])
+  if (extraOutput === 0 && extraReasoning === 0) return
+  last[3] += extraOutput
+  last[4] += extraReasoning
+  const [, day, model] = last
+  if (day === null) return
+  const bucket = aggregate.days[day]
+  if (bucket) {
+    bucket[0] += extraOutput
+    bucket[3] += extraOutput
+    bucket[4] += extraReasoning
+  }
+  const entry = model ? aggregate.dayModels[day]?.[model] : undefined
+  if (entry) entry[1] += extraOutput
+}
+
+const UNSCALED: ModelTokens = {
+  input: 1,
+  output: 1,
+  cacheRead: 1,
+  cacheWrite: 1,
+}
+
+function emptyModelTokens(): ModelTokens {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+}
+
+function addModelTokens(target: ModelTokens, add: ModelTokens): void {
+  target.input += add.input
+  target.output += add.output
+  target.cacheRead += add.cacheRead
+  target.cacheWrite += add.cacheWrite
+}
+
+function addModelTokensTo(
+  target: Map<string, ModelTokens>,
+  model: string,
+  add: ModelTokens
+): void {
+  const current = target.get(model) ?? emptyModelTokens()
+  addModelTokens(current, add)
+  target.set(model, current)
+}
+
+function modelTokensTotal(tokens: ModelTokens): number {
+  return tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite
+}
+
+export interface StatsScale {
+  /** Reply tokens per counted row token, by token type. */
+  forModel(model: string): ModelTokens
+  /** The same for a day's single total. */
+  forDayTotal(model: string): number
+  /** Rows counted per reply token, over all models. */
+  rowsPerReply: number
+}
+
+/**
+ * How far Claude's stats cache overcounts, or null when it doesn't.
+ *
+ * Claude Code sums every transcript row into `stats-cache.json`, and a reply
+ * is written as one row per part, each repeating its usage. The transcripts
+ * carry both counts, so their ratio corrects the stats for days whose
+ * transcripts are gone: per model and token type where a model has enough
+ * rows, pooled otherwise. The last full days both cover decide first whether
+ * the cache counts rows at all, so a cache that counts replies is left as it
+ * is.
+ */
+export function measureStatsScale(
+  aggregates: readonly ClaudeFileAggregate[],
+  stats: Pick<ClaudeStatsCache, "lastComputedDate" | "dailyModelTokens">
+): StatsScale | null {
+  const rows = new Map<string, ModelTokens>()
+  const replies = new Map<string, ModelTokens>()
+  const rowDays = new Map<string, number>()
+  const replyDays = new Map<string, number>()
+  for (const aggregate of aggregates) {
+    for (const [model, row] of Object.entries(aggregate.rowModels ?? {})) {
+      addModelTokensTo(rows, normalizeModelId(model), {
+        input: row[0],
+        output: row[1],
+        cacheRead: row[2],
+        cacheWrite: row[3],
+      })
+    }
+    for (const byModel of Object.values(aggregate.dayModels)) {
+      for (const [model, entry] of Object.entries(byModel)) {
+        addModelTokensTo(replies, normalizeModelId(model), {
+          input: entry[0],
+          output: entry[1],
+          cacheRead: entry[2],
+          cacheWrite: entry[3] + entry[4],
+        })
+      }
+    }
+    for (const [day, total] of Object.entries(aggregate.rowDays ?? {})) {
+      rowDays.set(day, (rowDays.get(day) ?? 0) + total)
+    }
+    for (const [day, bucket] of Object.entries(aggregate.days)) {
+      replyDays.set(day, (replyDays.get(day) ?? 0) + bucket[0])
+    }
+  }
+
+  // The cache's last day is usually cut off where it was computed.
+  const cutoff = stats.lastComputedDate ?? ""
+  const checked = stats.dailyModelTokens
+    .filter((entry) => entry.date < cutoff && rowDays.has(entry.date))
+    .sort((a, b) => (a.date < b.date ? -1 : 1))
+    .slice(-STATS_CHECK_DAYS)
+  let statsSum = 0
+  let rowSum = 0
+  let replySum = 0
+  for (const entry of checked) {
+    for (const value of Object.values(entry.tokensByModel)) statsSum += value
+    rowSum += rowDays.get(entry.date) ?? 0
+    replySum += replyDays.get(entry.date) ?? 0
+  }
+  if (statsSum <= 0 || replySum <= 0 || rowSum <= replySum) return null
+  // Whichever of the two counts the cache is closer to, as a ratio.
+  if (
+    Math.abs(Math.log(statsSum / rowSum)) >=
+    Math.abs(Math.log(statsSum / replySum))
+  ) {
+    return null
+  }
+
+  const share = (reply: number, row: number, fallback: number) =>
+    row > 0 ? Math.min(1, reply / row) : fallback
+  const factors = (
+    reply: ModelTokens,
+    row: ModelTokens,
+    fallback: ModelTokens
+  ): ModelTokens => ({
+    input: share(reply.input, row.input, fallback.input),
+    output: share(reply.output, row.output, fallback.output),
+    cacheRead: share(reply.cacheRead, row.cacheRead, fallback.cacheRead),
+    cacheWrite: share(reply.cacheWrite, row.cacheWrite, fallback.cacheWrite),
+  })
+  const pooledRows = emptyModelTokens()
+  const pooledReplies = emptyModelTokens()
+  for (const tokens of rows.values()) addModelTokens(pooledRows, tokens)
+  for (const tokens of replies.values()) addModelTokens(pooledReplies, tokens)
+  const pooled = factors(pooledReplies, pooledRows, UNSCALED)
+  const pooledTotal = share(
+    modelTokensTotal(pooledReplies),
+    modelTokensTotal(pooledRows),
+    1
+  )
+  const own = (model: string) => {
+    const id = normalizeModelId(model)
+    const row = rows.get(id)
+    const reply = replies.get(id)
+    return row && reply && modelTokensTotal(row) >= MIN_OWN_SCALE_TOKENS
+      ? { row, reply }
+      : null
+  }
+  return {
+    forModel(model) {
+      const found = own(model)
+      return found ? factors(found.reply, found.row, pooled) : pooled
+    },
+    forDayTotal(model) {
+      const found = own(model)
+      return found
+        ? share(
+            modelTokensTotal(found.reply),
+            modelTokensTotal(found.row),
+            pooledTotal
+          )
+        : pooledTotal
+    },
+    rowsPerReply: pooledTotal > 0 ? 1 / pooledTotal : 1,
+  }
 }
 
 function readStatsCache(home: string): ClaudeStatsCache | null {
@@ -364,19 +619,24 @@ function writePersistedLimits(
 
 /** Serialises refreshes so overlapping page loads spawn the CLI once. */
 let limitsRefresh: Promise<LimitsReport> | null = null
+/** When the CLI was last asked, so a failing read isn't repeated on every poll. */
+let limitsAttemptAt = 0
 
 async function fetchLimits(
   binaryPath: string,
   dataDir: string | null
 ): Promise<LimitsReport> {
   // `/usage` is handled inside the CLI and never reaches a model, so this is
-  // a local report rather than a billed request.
+  // a local report rather than a billed request. `--strict-mcp-config` with
+  // no config starts none of the user's MCP servers, which `/usage` never
+  // needs.
   const result = await runCommand(binaryPath, [
     "-p",
     "/usage",
     "--output-format",
     "text",
     "--no-session-persistence",
+    "--strict-mcp-config",
   ])
   const parsed = parseLimits(commandOutput(result))
   const report: LimitsReport = { at: Date.now(), ...parsed }
@@ -387,35 +647,67 @@ async function fetchLimits(
   return report
 }
 
-/**
- * Reading the limits costs a CLI round trip of several seconds, which is
- * most of what a page load used to wait for. A stored copy is served right
- * away and a refresh runs behind the request, so only the very first load on
- * a machine pays that wait.
- */
-async function loadLimits(
-  binaryPath: string,
-  dataDir: string | null,
-  refresh: boolean
-): Promise<LimitsReport> {
-  const known = cachedLimits ?? readPersistedLimits(dataDir)
-  if (known) cachedLimits = known
-  const fresh = known !== null && Date.now() - known.at < LIMITS_TTL_MS
+interface ClaudeLimitsReading extends LimitsReport {
+  /** A newer reading is being taken; ask again shortly. */
+  refreshing: boolean
+}
 
-  if (refresh || (!known && !limitsRefresh)) {
-    limitsRefresh ??= fetchLimits(binaryPath, dataDir).finally(() => {
-      limitsRefresh = null
-    })
-    return limitsRefresh
-  }
-  if (!fresh && !limitsRefresh) {
-    limitsRefresh = fetchLimits(binaryPath, dataDir).finally(() => {
-      limitsRefresh = null
-    })
-    // Deliberately not awaited: the stored copy answers this request.
+/**
+ * The limits `claude /usage` printed last, without waiting for the CLI.
+ *
+ * Starting the CLI takes seconds, and the page used to wait for it on every
+ * Refresh and on the first load. A reading older than a minute, or any
+ * reading when `refresh` is set, starts a new one behind the request instead,
+ * and `refreshing` tells the caller to ask again. A failed reading is retried
+ * after a minute, not on the next request.
+ */
+function readClaudeLimits(options: {
+  dataDir: string | null
+  refresh: boolean
+}): ClaudeLimitsReading {
+  const known = cachedLimits ?? readPersistedLimits(options.dataDir)
+  if (known) cachedLimits = known
+  const now = Date.now()
+  const due =
+    options.refresh ||
+    ((known === null || now - known.at >= LIMITS_TTL_MS) &&
+      now - limitsAttemptAt >= LIMITS_TTL_MS)
+  if (due && !limitsRefresh && claudeBinaryPath) {
+    limitsAttemptAt = now
+    limitsRefresh = fetchLimits(claudeBinaryPath, options.dataDir).finally(
+      () => {
+        limitsRefresh = null
+      }
+    )
+    // Deliberately not awaited: the stored reading answers this request.
     limitsRefresh.catch(() => {})
   }
-  return known ?? { at: 0, limits: [], plan: null, contributions: [] }
+  return {
+    ...(known ?? { at: 0, limits: [], plan: null, contributions: [] }),
+    refreshing: limitsRefresh !== null,
+  }
+}
+
+/**
+ * A Claude report with the current `/usage` reading. Reports are kept for a
+ * while and restored after a restart, but limits move faster, so they are
+ * added to each answer instead of being stored with the report.
+ */
+export function withClaudeLimits(
+  report: ProviderUsageReport,
+  options: { dataDir: string | null; refresh: boolean }
+): ProviderUsageReport {
+  if (!report.installed) return report
+  const reading = readClaudeLimits(options)
+  return {
+    ...report,
+    plan: reading.plan,
+    limits: reading.limits,
+    limitNotes: reading.contributions,
+    limitsObservedAt:
+      reading.at > 0 ? new Date(reading.at).toISOString() : null,
+    ...(reading.refreshing ? { refreshing: true } : {}),
+  }
 }
 
 export async function collectClaudeUsage(options: {
@@ -428,12 +720,14 @@ export async function collectClaudeUsage(options: {
     isAuthenticated: isClaudeCliAuthenticatedAsync,
     authType: "cli",
   })
+  claudeBinaryPath = detected.installed ? detected.binaryPath : null
   const files = await listJsonlFiles(path.join(home, "projects"))
   const scan = await scanAppendOnlyWithCache<ClaudeFileAggregate>({
     dataDir: options.dataDir,
     scope: "claude",
+    revision: TRANSCRIPT_CACHE_REVISION,
     files,
-    scan: scanTranscript,
+    scan: scanClaudeTranscript,
   })
 
   const daily = new Map<string, DayBucket>()
@@ -510,7 +804,9 @@ export async function collectClaudeUsage(options: {
   const notes: string[] = []
   const stats = readStatsCache(home)
   const modelTokens = new Map<string, PricedTokens>()
-  const addModel = (model: string, add: Partial<PricedTokens>) => {
+  const addModel = (id: string, add: Partial<PricedTokens>) => {
+    // A dated id (`claude-haiku-4-5-20251001`) is the same model as its alias.
+    const model = normalizeModelId(id)
     const current = modelTokens.get(model) ?? {
       input: 0,
       output: 0,
@@ -559,13 +855,21 @@ export async function collectClaudeUsage(options: {
     // `dailyModelTokens` reaches back a few months at most. Totals therefore
     // start from it and add only the transcript days it has not seen yet.
     const cutoff = stats.lastComputedDate ?? ""
+    const scale = measureStatsScale(scan.values, stats)
+    if (scale) {
+      notes.push(
+        `Claude Code's own stats cache counts a reply once for each of its parts (thinking, text, every tool call); on the transcripts here that is ${scale.rowsPerReply.toFixed(1)}× the real usage. Totals and days older than the transcripts on disk are scaled down by the factor measured on them for each model; the days the transcripts cover are counted exactly.`
+      )
+    }
     for (const [model, usage] of Object.entries(stats.modelUsage)) {
+      const factor = scale?.forModel(model) ?? UNSCALED
+      const cacheWrite = usage.cacheWrite * factor.cacheWrite
       addModel(model, {
-        input: usage.input,
-        output: usage.output,
-        cacheRead: usage.cacheRead,
-        cacheWrite5m: usage.cacheWrite * (1 - ratio1h),
-        cacheWrite1h: usage.cacheWrite * ratio1h,
+        input: Math.round(usage.input * factor.input),
+        output: Math.round(usage.output * factor.output),
+        cacheRead: Math.round(usage.cacheRead * factor.cacheRead),
+        cacheWrite5m: Math.round(cacheWrite * (1 - ratio1h)),
+        cacheWrite1h: Math.round(cacheWrite * ratio1h),
       })
     }
     addTranscriptDays(cutoff)
@@ -574,8 +878,10 @@ export async function collectClaudeUsage(options: {
     for (const entry of stats.dailyModelTokens) {
       if (transcriptDays.has(entry.date)) continue
       let dayTokens = 0
-      for (const value of Object.values(entry.tokensByModel)) dayTokens += value
-      addDay(daily, entry.date, { tokens: dayTokens })
+      for (const [model, value] of Object.entries(entry.tokensByModel)) {
+        dayTokens += value * (scale?.forDayTotal(model) ?? 1)
+      }
+      addDay(daily, entry.date, { tokens: Math.round(dayTokens) })
     }
     for (const entry of stats.dailyActivity) {
       if (transcriptDays.has(entry.date)) continue
@@ -723,25 +1029,9 @@ export async function collectClaudeUsage(options: {
     })
   }
 
-  let limits: UsageLimit[] = []
-  let limitNotes: string[] = []
-  let plan: string | null = null
-  let limitsObservedAt: string | null = null
-  if (detected.installed) {
-    const report = await loadLimits(
-      detected.binaryPath,
-      options.dataDir,
-      options.refresh
-    )
-    limits = report.limits
-    plan = report.plan
-    limitNotes = report.contributions
-    if (report.at > 0) limitsObservedAt = new Date(report.at).toISOString()
-  }
-
   const modelEntries: UsageEntry[] = topEntries(models, 20).map((entry) => ({
     ...entry,
-    label: entry.id,
+    label: modelLabel(entry.id),
     ...(costByModel.has(entry.id) ? { cost: costByModel.get(entry.id) } : {}),
   }))
 
@@ -753,7 +1043,8 @@ export async function collectClaudeUsage(options: {
     installed: detected.installed,
     authenticated: detected.authenticated,
     version: detected.version,
-    plan,
+    // The plan and limits come from `/usage`; `withClaudeLimits` adds them.
+    plan: null,
     source: "~/.claude transcripts + stats cache + claude /usage",
     fetchedAt: new Date().toISOString(),
     scannedMs: Date.now() - startedAt,
@@ -766,9 +1057,9 @@ export async function collectClaudeUsage(options: {
     models: modelEntries,
     insights,
     lists,
-    limits,
-    limitsObservedAt,
-    limitNotes,
+    limits: [],
+    limitsObservedAt: null,
+    limitNotes: [],
     notes,
   }
 }

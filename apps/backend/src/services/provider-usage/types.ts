@@ -140,6 +140,11 @@ export interface ProviderUsageReport {
   limitNotes: string[]
   /** Caveats worth showing under the report, e.g. retention windows. */
   notes: string[]
+  /**
+   * A newer reading is being taken behind this answer (a rescan, or Claude's
+   * `/usage`); ask again shortly to get it.
+   */
+  refreshing?: boolean
   error?: string
 }
 

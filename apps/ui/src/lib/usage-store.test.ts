@@ -17,6 +17,7 @@ describe("usage page report loading", () => {
     useUsageStore.setState({
       reports: [],
       loading: false,
+      refreshing: false,
       loadedAt: 0,
       error: null,
     })
@@ -51,5 +52,55 @@ describe("usage page report loading", () => {
     expect(loadProviderUsage).toHaveBeenLastCalledWith({ refresh: true })
     await useUsageStore.getState().load()
     expect(useUsageStore.getState().error).toBeNull()
+  })
+
+  it("asks again while the backend reads newer reports behind its answer", async () => {
+    const stale = [
+      { provider: "claude", status: "ready", refreshing: true },
+    ] as ProviderUsageReport[]
+    vi.mocked(loadProviderUsage)
+      .mockResolvedValueOnce(stale)
+      .mockResolvedValueOnce(stale)
+      .mockResolvedValueOnce(reports)
+
+    await useUsageStore.getState().load(true)
+    expect(useUsageStore.getState()).toMatchObject({
+      reports: stale,
+      refreshing: true,
+      loading: false,
+    })
+    expect(loadProviderUsage).toHaveBeenLastCalledWith({ refresh: true })
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(loadProviderUsage).toHaveBeenCalledTimes(2)
+    // Follow-ups pick up the running read; they never start another one.
+    expect(loadProviderUsage).toHaveBeenLastCalledWith({ refresh: false })
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(loadProviderUsage).toHaveBeenCalledTimes(3)
+    expect(useUsageStore.getState()).toMatchObject({
+      reports,
+      refreshing: false,
+    })
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(loadProviderUsage).toHaveBeenCalledTimes(3)
+  })
+
+  it("stops asking again after a failed follow-up", async () => {
+    vi.mocked(loadProviderUsage)
+      .mockResolvedValueOnce([
+        { provider: "claude", status: "ready", refreshing: true },
+      ] as ProviderUsageReport[])
+      .mockRejectedValueOnce(new Error("Offline"))
+
+    await useUsageStore.getState().load()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(useUsageStore.getState()).toMatchObject({
+      refreshing: false,
+      error: expect.any(String),
+    })
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(loadProviderUsage).toHaveBeenCalledTimes(2)
   })
 })

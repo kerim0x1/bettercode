@@ -339,7 +339,7 @@ export function ChatToolbar({
           ? "max-w-none gap-1 px-2 py-1 text-[11px]"
           : "gap-2 px-4 py-1.5 text-xs",
         !editorCompact &&
-          (minimal ? "max-w-[900px]" : "max-w-[var(--chat-max-width)]"),
+          (minimal ? "max-w-[1080px]" : "max-w-[var(--chat-max-width)]"),
         sideLayout &&
           "mx-0 max-w-none flex-col items-stretch gap-3 rounded-xl border border-sidebar-border/80 bg-sidebar-accent/25 px-3 py-3"
       )}

@@ -52,7 +52,7 @@ export function ChatResumeCard({ threadId }: { threadId: string | null }) {
   return (
     <section
       aria-label={resumeTitle(resume)}
-      className="mx-auto mb-2 w-full max-w-[900px] min-w-0 rounded-2xl border border-border/50 bg-sidebar px-3 py-2.5 text-foreground"
+      className="mx-auto mb-2 w-full max-w-[1080px] min-w-0 rounded-2xl border border-border/50 bg-sidebar px-3 py-2.5 text-foreground"
     >
       <div className="flex min-w-0 items-start gap-2.5">
         <Icon

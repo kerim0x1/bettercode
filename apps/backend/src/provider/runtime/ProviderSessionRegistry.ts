@@ -8,6 +8,7 @@ import {
 } from "./contracts"
 import {
   ProviderBackendQuarantinedError,
+  ProviderInstanceUnavailableError,
   ProviderSessionAdmissionCapacityError,
   ProviderSessionCapacityError,
   ProviderSessionInspectionError,
@@ -32,9 +33,13 @@ export interface ProviderSessionRegistryHost {
   instances(): IterableIterator<ProviderRuntimeInstance>
   getInstance(instanceId: string): ProviderRuntimeInstance | undefined
   isQuarantined(adapter: ProviderAdapterShape): boolean
-  quarantineOf(
-    adapter: ProviderAdapterShape
-  ): { readonly failure: ProviderBackendQuarantinedError } | undefined
+  quarantineOf(adapter: ProviderAdapterShape):
+    | {
+        readonly failure: ProviderBackendQuarantinedError
+        readonly uncertainThreads: ReadonlySet<string>
+        readonly pendingHardStops: ReadonlySet<string>
+      }
+    | undefined
   /** Quarantined, retiring, or failed to retire: not safe to enumerate. */
   isRetainedAdapter(adapter: ProviderAdapterShape): boolean
   isAcceptingWork(): boolean
@@ -43,7 +48,8 @@ export interface ProviderSessionRegistryHost {
   runSessionOperation<T>(
     instance: ProviderRuntimeInstance,
     label: string,
-    operation: () => Promise<T>
+    operation: () => Promise<T>,
+    thread?: ThreadId
   ): Promise<T>
   raceInterruptBudget<T>(operation: () => Promise<T>, label: string): Promise<T>
   emitSessionStarted(input: {
@@ -65,6 +71,21 @@ export interface ProviderSessionRegistryHost {
 interface ProviderSessionAdmissionWaiter {
   readonly resolve: (release: () => void) => void
   readonly reject: (error: unknown) => void
+}
+
+interface SessionRecoveryInput {
+  readonly instance: ProviderRuntimeInstance
+  readonly thread: ThreadId
+  readonly bindings?: ProviderSessionBindingStore
+  readonly context?: Pick<
+    ProviderSendTurnInput,
+    "modelSelection" | "projectPath"
+  > & { readonly runtimeMode?: string | null }
+}
+
+interface SessionConfigurationCheck {
+  readonly session: ProviderSession
+  readonly needsRefresh: boolean
 }
 
 /**
@@ -242,6 +263,37 @@ export class ProviderSessionRegistry {
     )
   }
 
+  async stopSessionsForThread(
+    threadId: ThreadId,
+    reason: string
+  ): Promise<void> {
+    await this.withSessionAdmission(() =>
+      this.stopSessionsForThreadUnderAdmission({ threadId, reason })
+    )
+  }
+
+  /** Refuse cleanup while a quarantined adapter may still own the thread. */
+  skipQuarantinedSession(
+    adapter: ProviderAdapterShape,
+    thread: ThreadId
+  ): boolean {
+    const quarantine = this.host.quarantineOf(adapter)
+    if (!quarantine) return false
+    if (
+      quarantine.uncertainThreads.has(thread) ||
+      quarantine.pendingHardStops.has(thread) ||
+      this.knownLiveSessions.get(adapter)?.has(thread)
+    ) {
+      throw quarantine.failure
+    }
+    try {
+      if (!adapter.hasSession(thread)) return true
+    } catch {
+      // An inspection failure leaves ownership uncertain.
+    }
+    throw quarantine.failure
+  }
+
   private async stopSessionsForThreadUnderAdmission(input: {
     readonly threadId: ThreadId
     readonly preservedAdapter?: ProviderAdapterShape
@@ -252,25 +304,8 @@ export class ProviderSessionRegistry {
     for (const instance of this.host.instances()) {
       if (inspectedAdapters.has(instance.adapter)) continue
       inspectedAdapters.add(instance.adapter)
-      const quarantine = this.host.quarantineOf(instance.adapter)
-      if (quarantine) {
-        // A quarantined backend cannot be asked to stop anything, so a stale
-        // session it may own for this thread blocks the turn (fail closed).
-        // A quarantined backend with no session for this thread is not this
-        // turn's problem: it used to block every turn on every provider.
-        let ownsThread = this.knownLiveSessions
-          .get(instance.adapter)
-          ?.has(input.threadId)
-        if (!ownsThread) {
-          try {
-            ownsThread = instance.adapter.hasSession(input.threadId)
-          } catch {
-            ownsThread = true
-          }
-        }
-        if (ownsThread) throw quarantine.failure
+      if (this.skipQuarantinedSession(instance.adapter, input.threadId))
         continue
-      }
       try {
         const hasSession = instance.adapter.hasSession(input.threadId)
         const listedSession = await this.readLiveAdapterSession(
@@ -287,8 +322,11 @@ export class ProviderSessionRegistry {
           input.threadId,
           instance.instanceId,
           () =>
-            this.host.runSessionOperation(instance, "stopSession", () =>
-              instance.adapter.stopSession(input.threadId)
+            this.host.runSessionOperation(
+              instance,
+              "stopSession",
+              () => instance.adapter.stopSession(input.threadId),
+              input.threadId
             )
         )
         this.forgetKnownLiveSession(instance.adapter, input.threadId)
@@ -308,32 +346,60 @@ export class ProviderSessionRegistry {
     }
   }
 
-  async recoverSessionForThread(input: {
-    readonly instance: ProviderRuntimeInstance
-    readonly thread: ThreadId
-    readonly bindings?: ProviderSessionBindingStore
-    readonly context?: Pick<
-      ProviderSendTurnInput,
-      "modelSelection" | "projectPath"
-    > & { readonly runtimeMode?: string | null }
-  }): Promise<boolean> {
-    return this.withSessionAdmission(() =>
-      this.recoverSessionForThreadUnderAdmission(input)
-    )
+  async recoverSessionForThread(input: SessionRecoveryInput): Promise<boolean> {
+    const adapter = input.instance.adapter
+    const checkConfiguration = adapter.needsSessionConfigurationRefresh
+    let configurationCheck: SessionConfigurationCheck | undefined
+    while (true) {
+      const result = await this.withSessionAdmission(() =>
+        this.recoverSessionForThreadUnderAdmission(
+          input,
+          checkConfiguration ? { configurationCheck } : undefined
+        )
+      )
+      if (typeof result === "boolean") return result
+
+      // Resolving MCP configuration can wait on I/O. Release the shared
+      // admission queue and validate the session again before using the result.
+      try {
+        const needsRefresh = await this.host.raceInterruptBudget(
+          async () =>
+            (await checkConfiguration?.call(adapter, {
+              threadId: input.thread,
+              cwd: input.context?.projectPath ?? result.cwd,
+            })) ?? false,
+          "session configuration check"
+        )
+        configurationCheck = { session: result, needsRefresh }
+      } catch (error) {
+        throw new ProviderSessionInspectionError(
+          `Could not check the configuration of provider session '${input.thread}'.`,
+          error
+        )
+      }
+    }
   }
 
-  private async recoverSessionForThreadUnderAdmission(input: {
-    readonly instance: ProviderRuntimeInstance
-    readonly thread: ThreadId
-    readonly bindings?: ProviderSessionBindingStore
-    readonly context?: Pick<
-      ProviderSendTurnInput,
-      "modelSelection" | "projectPath"
-    > & { readonly runtimeMode?: string | null }
-  }): Promise<boolean> {
+  private async recoverSessionForThreadUnderAdmission(
+    input: SessionRecoveryInput,
+    refresh?: {
+      readonly configurationCheck: SessionConfigurationCheck | undefined
+    }
+  ): Promise<boolean | ProviderSession> {
     this.host.assertAcceptingWork("create or recover provider session")
     const providerKind =
       input.instance.provider ?? input.instance.adapter.provider
+    const currentInstance = this.host.getInstance(input.instance.instanceId)
+    if (
+      currentInstance?.adapter !== input.instance.adapter ||
+      !currentInstance.enabled ||
+      currentInstance.unavailableReason
+    ) {
+      throw new ProviderInstanceUnavailableError(
+        providerKind,
+        input.instance.instanceId
+      )
+    }
     const directBinding =
       input.bindings?.get(input.thread, input.instance.instanceId) ?? null
     const recoveryBinding = input.bindings
@@ -366,12 +432,9 @@ export class ProviderSessionRegistry {
           `Provider instance '${input.instance.instanceId}' reported session '${input.thread}' in hasSession() but omitted it from listSessions().`
         )
       }
-      if (
-        !(await input.instance.adapter.needsSessionConfigurationRefresh?.({
-          threadId: input.thread,
-          cwd: input.context?.projectPath ?? activeSession.cwd,
-        })) &&
-        !shouldRestartActiveSessionForContext(activeSession, {
+      const restartForContext = shouldRestartActiveSessionForContext(
+        activeSession,
+        {
           cwd:
             input.context?.projectPath ??
             directBinding?.cwd ??
@@ -384,16 +447,26 @@ export class ProviderSessionRegistry {
             (normalizeRuntimeMode(activeSession.runtimeMode)
               ? (directBinding?.runtimeMode ?? recoveryBinding?.runtimeMode)
               : undefined),
-        })
-      ) {
-        return true
+        }
+      )
+      if (!restartForContext) {
+        if (
+          refresh &&
+          !matchesCheckedSession(activeSession, refresh.configurationCheck)
+        ) {
+          return activeSession
+        }
+        if (!refresh?.configurationCheck?.needsRefresh) return true
       }
       await this.withSessionExitCorrelationSuppressed(
         input.thread,
         input.instance.instanceId,
         () =>
-          this.host.runSessionOperation(input.instance, "stopSession", () =>
-            input.instance.adapter.stopSession(input.thread)
+          this.host.runSessionOperation(
+            input.instance,
+            "stopSession",
+            () => input.instance.adapter.stopSession(input.thread),
+            input.thread
           )
       )
       stoppedActiveSession = activeSession
@@ -446,7 +519,8 @@ export class ProviderSessionRegistry {
       session = await this.host.runSessionOperation(
         input.instance,
         "startSession",
-        () => input.instance.adapter.startSession(startInput)
+        () => input.instance.adapter.startSession(startInput),
+        input.thread
       )
     } catch (err) {
       if (!(err instanceof ProviderBackendQuarantinedError)) {
@@ -458,7 +532,8 @@ export class ProviderSessionRegistry {
               restoreStoppedSession(
                 input.instance.adapter,
                 stoppedActiveSession
-              )
+              ),
+            input.thread
           )
         } catch {
           // The original start failure is the one the turn should see.
@@ -819,6 +894,19 @@ function shouldRestartActiveSessionForContext(
   const activeRuntimeMode = normalizeRuntimeMode(activeSession.runtimeMode)
   const requestedRuntimeMode = normalizeRuntimeMode(context.runtimeMode)
   return !!requestedRuntimeMode && activeRuntimeMode !== requestedRuntimeMode
+}
+
+function matchesCheckedSession(
+  session: ProviderSession,
+  check: SessionConfigurationCheck | undefined
+): boolean {
+  return (
+    check !== undefined &&
+    session.createdAt === check.session.createdAt &&
+    session.providerThreadId === check.session.providerThreadId &&
+    session.cwd === check.session.cwd &&
+    session.runtimeMode === check.session.runtimeMode
+  )
 }
 
 function normalizeSessionCwd(value: string | null | undefined): string | null {

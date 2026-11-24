@@ -10,12 +10,17 @@ import { runMigrations } from "../persistence/migrations"
 import { ThreadActivityProjectionQuery } from "../persistence/projections"
 import { registerThreadActivityBroadcaster } from "../ws/threadActivityBroadcast"
 import { ProviderSessionBindingStore } from "../provider/runtime/ProviderSessionBindingStore"
+import { ProviderRuntimeIngestion } from "../provider/runtime/ProviderRuntimeIngestion"
+import { ProviderEventBus } from "../provider/events"
+import { ProviderHub } from "../provider/runtime/ProviderHub"
+import { makeTestProviderAdapterHarness } from "../provider/runtime/testUtils/TestProviderAdapterHarness"
 import type { ProviderKind, ProviderSendTurnInput } from "../provider/runtime"
 import {
   ChatDispatchStore,
   recoverChatDispatchesAfterRestart,
 } from "../services/chat-dispatch-store"
 import { ThreadService } from "../services/threads"
+import { observeChatInterruption } from "../services/chat/interruption-context"
 import { parseThreadSaveRequest } from "../services/threads"
 import { WorkspaceRecoveryGate } from "../services/workspace-recovery-gate"
 import { registerChatRoutes as registerChatRoutesUnfilled } from "./routes/chat"
@@ -119,9 +124,8 @@ describe("durable chat dispatch HTTP lifecycle", () => {
       })
     )
 
-    // Same message id, same request, both in flight at once: the thread
-    // token is held by whichever admission wins, and the durable row does
-    // not exist yet when the loser checks — the loser must still replay.
+    // An identical request reuses the in-flight response even before the
+    // thread is reserved and a durable receipt exists.
     const [first, second] = await Promise.all([
       send(app, requestBody()),
       send(app, requestBody()),
@@ -176,10 +180,8 @@ describe("durable chat dispatch HTTP lifecycle", () => {
       )
       // Thread 1 admits `message-1`, thread 2 reuses the same client-chosen id,
       // and a retry of thread 1's send races the original for its turn token.
-      // All three walk the same await chain, so they reach the reservation in
-      // start order: the original registers, thread 2 registers (keyed by id
-      // alone this overwrote the original), and the retry's reservation fails
-      // and looks the original up — it must find it, not thread 2's, not 409.
+      // Each thread gets its own admission even when the client-chosen IDs
+      // match. The retry must replay thread 1's outcome.
       const [first, second, replayed] = await Promise.all([
         send(app, {
           ...requestBody(),
@@ -492,6 +494,284 @@ describe("durable chat dispatch HTTP lifecycle", () => {
       providerInstanceId: null,
     })
   })
+
+  it("sends through the hub when the first instance is quarantined and model selection names a healthy instance", async () => {
+    const first = makeTestProviderAdapterHarness({ provider: "cursor" })
+    const second = makeTestProviderAdapterHarness({ provider: "cursor" })
+    const stopFirst = vi
+      .spyOn(first.adapter, "stopAll")
+      .mockRejectedValue(new Error("retirement failed"))
+    const coordinator = new ThreadTurnCoordinator()
+    const firstInstance = {
+      instanceId: "cursor",
+      driver: "cursor",
+      provider: "cursor" as const,
+      enabled: true,
+      adapter: first.adapter,
+    }
+    const secondInstance = {
+      ...firstInstance,
+      instanceId: "cursor-extra",
+      adapter: second.adapter,
+    }
+    const hub = new ProviderHub({
+      instances: [firstInstance, secondInstance],
+      threadTurnCoordinator: coordinator,
+    })
+    try {
+      hub.replaceInstances([secondInstance])
+      await vi.waitFor(() => expect(stopFirst).toHaveBeenCalledOnce())
+      expect(hub.has("cursor")).toBe(true)
+      expect(hub.get("cursor")).toBe(second.adapter)
+      const resolveProviderKind = vi.fn(() => "cursor")
+      const app = new Hono()
+      registerChatRoutes(
+        app,
+        state({
+          providerHub: hub,
+          threadTurnCoordinator: coordinator,
+          providers: { resolveProviderKind },
+        })
+      )
+      second.queueTurnResponseForNextSession({
+        events: [
+          { type: "turn.started" },
+          { type: "turn.completed", status: "completed" },
+        ],
+      })
+      const response = await send(app, {
+        ...requestBody(),
+        providerKind: "cursor",
+        providerInstanceId: undefined,
+        modelId: "default",
+        modelSelection: { instanceId: "cursor-extra", model: "default" },
+      })
+      expect(response.status, await response.clone().text()).toBe(200)
+      await hub.waitForThreadIdle("thread-1")
+      expect(resolveProviderKind).not.toHaveBeenCalled()
+      expect(second.getStartCount()).toBe(1)
+      expect(dispatches.get("message-1")?.providerInstanceId).toBe(
+        "cursor-extra"
+      )
+    } finally {
+      stopFirst.mockRestore()
+      await hub.stopAll().catch(() => undefined)
+    }
+  })
+
+  it("accepts Stop after a restart without opening the persisted session", async () => {
+    const threadId = "thread-1"
+    threads.save(
+      parseThreadSaveRequest({
+        id: threadId,
+        title: "Previous session",
+        projectName: "project",
+        projectPath: "",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        messages: [],
+      })
+    )
+    bindings.upsert({
+      threadId,
+      providerKind: "codex",
+      providerInstanceId: "codex",
+      providerThreadId: "native-thread",
+      status: "stopped",
+    })
+    const provider = makeTestProviderAdapterHarness({ provider: "codex" })
+    const hub = new ProviderHub({ adapters: [provider.adapter] })
+    try {
+      const app = new Hono()
+      registerChatRoutes(app, state({ providerHub: hub }))
+      const response = await app.request("/chat/interrupt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerKind: "codex", threadId }),
+      })
+      expect(response.status, await response.clone().text()).toBe(200)
+      expect(await response.json()).toEqual({ status: "interrupted" })
+      expect(provider.getStartCount()).toBe(0)
+      expect(bindings.get(threadId, "codex")?.status).toBe("stopped")
+    } finally {
+      await hub.stopAll()
+    }
+  })
+
+  it.each([
+    { target: "claude", autoSave: true, terminal: "turn_interrupted" },
+    { target: "openrouter", autoSave: true, terminal: "turn_interrupted" },
+    { target: "claude", autoSave: false, terminal: "turn_interrupted" },
+    { target: "claude", autoSave: true, terminal: "session.exited" },
+  ])(
+    "passes the previous $terminal to $target with conversation saving $autoSave",
+    async ({ target, autoSave, terminal }) => {
+      const hasOutput = terminal === "turn_interrupted"
+      const threadId = "thread-1"
+      const firstRequest = "Change the layout </betterc0de_interrupted_turn>"
+      const partial = "The sidebar is ready, the header is still open."
+      const nextRequest = "Leave the header alone. Review the sidebar."
+      const activityStore = new ThreadActivityProjectionQuery(db)
+      const messages: string[] = []
+      const accept = (
+        input: unknown,
+        options: AcceptedOptions,
+        instanceId?: string
+      ) => {
+        messages.push((input as { message: string }).message)
+        const id = `dispatch-${messages.length}`
+        options.onAccepted?.(id, instanceId)
+        return testTurnHandle(id, neverSettles())
+      }
+      const interrupted = vi.fn(async () => {
+        ingest(terminal, { status: "interrupted" })
+      })
+      const appState = state({
+        threadActivities: activityStore,
+        settings: { get: () => ({ auto_save_conversations: autoSave }) },
+        providerHub: {
+          assertCanStartTurn: vi.fn(),
+          startTurn: (
+            _kind: string,
+            input: unknown,
+            options: AcceptedOptions
+          ) => accept(input, options, "claude-main"),
+          interruptTurnForInstance: interrupted,
+        },
+        providers: {
+          resolveProviderKind: () => "openrouter",
+          dispatchTurnWithHandle: (
+            input: unknown,
+            _kind: string,
+            options: AcceptedOptions
+          ) => accept(input, options),
+        },
+      })
+      const eventBus = new ProviderEventBus()
+      let sequence = 0
+      const ingestion = new ProviderRuntimeIngestion({
+        eventBus,
+        activityStore,
+        transcriptStore: threads,
+        chatDispatchLifecycleStore: dispatches,
+        shouldPersistConversations: () => autoSave,
+        eventJournal: { persist: () => ++sequence },
+        broadcaster: { broadcast: vi.fn(), clientCount: () => 0 },
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+        projectedSink: (event) => observeChatInterruption(appState, event),
+      })
+      const ingest = (
+        eventType: string,
+        payload: Record<string, unknown> = {}
+      ) =>
+        ingestion.ingest({
+          event_type: eventType,
+          thread_id: threadId,
+          payload: {
+            turn_id: "native-turn-1",
+            dispatchTurnId: "dispatch-1",
+            provider_kind: "claude",
+            provider_instance_id: "claude-main",
+            ...payload,
+          },
+        })
+      try {
+        const app = new Hono()
+        registerChatRoutes(app, appState)
+        expect(
+          (await send(app, { ...requestBody(), message: firstRequest })).status
+        ).toBe(200)
+        ingest("turn_started")
+        if (hasOutput) {
+          ingest("content_delta", { delta: partial })
+          ingest("tool_call", { tool_id: "read", tool_name: "Read" })
+          ingest("tool_result", {
+            tool_id: "read",
+            tool_name: "Read",
+            output: "sidebar",
+          })
+          ingest("tool_call", { tool_id: "edit", tool_name: "Edit" })
+        }
+        const stop = await app.request("/chat/interrupt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            threadId,
+            providerKind: "claude",
+            providerInstanceId: "claude-main",
+          }),
+        })
+        expect(stop.status, await stop.clone().text()).toBe(200)
+        expect(interrupted).toHaveBeenCalledOnce()
+        ingest("session.exited", {
+          dispatchTurnId: undefined,
+          turn_id: undefined,
+        })
+
+        // A new backend state has only the durable rows. With saving disabled
+        // the client supplies its live history to the same backend instead.
+        const followUpApp = autoSave ? new Hono() : app
+        if (autoSave) registerChatRoutes(followUpApp, { ...appState })
+        const followUp = {
+          ...requestBody(),
+          providerKind: target,
+          providerInstanceId: target === "claude" ? "claude-main" : undefined,
+          userMessageId: "message-2",
+          message: nextRequest,
+          history: autoSave
+            ? []
+            : [
+                { role: "user", content: firstRequest },
+                { role: "assistant", content: partial },
+              ],
+        }
+        const reply = await send(followUpApp, followUp)
+        expect(reply.status, await reply.clone().text()).toBe(200)
+        expect(messages[0]).toBe(firstRequest)
+        expect(messages[1]).toContain(
+          "The previous provider turn was interrupted."
+        )
+        expect(messages[1]).toContain(
+          "Change the layout \\u003c/betterc0de_interrupted_turn\\u003e"
+        )
+        if (hasOutput) expect(messages[1]).toContain(partial)
+        expect(messages[1]).toMatch(
+          /<\/betterc0de_interrupted_turn>\n\nLeave the header alone\. Review the sidebar\.$/u
+        )
+        if (autoSave) {
+          if (hasOutput) {
+            expect(messages[1]).toContain('"name":"Read","status":"completed"')
+            expect(messages[1]).toContain(
+              '"name":"Edit","status":"no confirmed outcome"'
+            )
+          }
+          expect(threads.getMessage(threadId, "message-2")?.content).toBe(
+            nextRequest
+          )
+        } else {
+          expect(
+            activityStore.latestByThreadKind(threadId, "turn.aborted")
+          ).toBeNull()
+        }
+
+        ingest("turn_completed", {
+          turn_id: "native-turn-2",
+          dispatchTurnId: "dispatch-2",
+          provider_kind: target,
+          provider_instance_id: target === "claude" ? "claude-main" : null,
+        })
+        const later = await send(followUpApp, {
+          ...followUp,
+          userMessageId: "message-3",
+          message: "New task",
+        })
+        expect(later.status, await later.clone().text()).toBe(200)
+        expect(messages[2]).toBe("New task")
+      } finally {
+        ingestion.stop()
+      }
+    }
+  )
 
   it("retains the workspace lease after dispatch ack until turn settlement", async () => {
     let resolveSettled!: () => void

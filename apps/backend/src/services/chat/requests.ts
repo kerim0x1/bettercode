@@ -287,10 +287,7 @@ export async function respondToChatApproval(
       }
     }
     const hubKind = asHubProviderKind(body.providerKind)
-    if (
-      hubKind &&
-      (state.providerHub.has(hubKind) || body.providerInstanceId)
-    ) {
+    if (hubKind) {
       let providerInstanceId: string | null = body.providerInstanceId ?? null
       try {
         providerInstanceId = resolveHubInstanceId({
@@ -499,10 +496,7 @@ export async function respondToChatInput(
 ): Promise<ApprovalResponse> {
   return withChatRecoveryMutation(state, body.threadId, async () => {
     const hubKind = asHubProviderKind(body.providerKind)
-    if (
-      hubKind &&
-      (state.providerHub.has(hubKind) || body.providerInstanceId)
-    ) {
+    if (hubKind) {
       let providerInstanceId: string | null = body.providerInstanceId ?? null
       try {
         providerInstanceId = resolveHubInstanceId({
@@ -575,10 +569,7 @@ export async function rejectChatInput(
 ): Promise<ApprovalResponse> {
   return withChatRecoveryMutation(state, body.threadId, async () => {
     const hubKind = asHubProviderKind(body.providerKind)
-    if (
-      hubKind &&
-      (state.providerHub.has(hubKind) || body.providerInstanceId)
-    ) {
+    if (hubKind) {
       let providerInstanceId: string | null = body.providerInstanceId ?? null
       try {
         providerInstanceId = resolveHubInstanceId({

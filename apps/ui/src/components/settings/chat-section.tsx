@@ -52,7 +52,7 @@ export function SettingsChatSection() {
         <SettingsRow
           icon={<ALargeSmallIcon />}
           label="Message Text Size"
-          description="Text size of chat messages, in every mode. 13px is the default."
+          description="Text size of chat messages, in every mode. 18px is the default."
         >
           <SettingsStepper
             label="Message text size"

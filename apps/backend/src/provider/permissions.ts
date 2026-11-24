@@ -438,6 +438,22 @@ export function awaitApproval(
   })
 }
 
+/** Registers the waiter before listeners can answer or cancel the request. */
+export async function requestToolApproval(
+  threadId: string,
+  publish: (requestId: string) => void
+): Promise<ApprovalDecision> {
+  const requestId = generateApprovalRequestId()
+  const answer = awaitApproval(threadId, requestId)
+  try {
+    publish(requestId)
+  } catch (error) {
+    resolveApproval(threadId, requestId, "deny")
+    throw error
+  }
+  return answer
+}
+
 export function resolveApproval(
   threadId: string,
   requestId: string,

@@ -975,7 +975,7 @@ describe("ProviderService", () => {
     ).not.toThrow()
   })
 
-  it("emits one timeout terminal and retains admission until timeout interruption completes", async () => {
+  it("reports a timeout before shutdown and retains admission until dispatch quiesces", async () => {
     vi.useFakeTimers()
     let finishInterrupt!: () => void
     let finishSend!: () => void
@@ -1017,8 +1017,13 @@ describe("ProviderService", () => {
     })
 
     const handle = service.dispatchTurnWithHandle(INPUT, "openai")
+    const rejected = vi.fn()
+    void handle.completion.catch(rejected)
     await vi.advanceTimersByTimeAsync(25)
 
+    expect(rejected).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ name: "ProviderTurnTimeoutError" })
+    )
     expect(terminalEvents).toEqual([])
     expect(() => service.dispatchTurn(INPUT, "openai")).toThrowError(
       expect.objectContaining({ statusCode: 409, code: "turn_active" })

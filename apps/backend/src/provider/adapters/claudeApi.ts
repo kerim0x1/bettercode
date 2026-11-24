@@ -539,6 +539,7 @@ export class ClaudeApiAdapter extends BaseProviderAdapter {
                 mode,
                 toolName: tu.name,
                 input: tu.input,
+                signal: controller.signal,
                 projectPermissionRules: projectToolPolicy.permissionRules,
               })
 

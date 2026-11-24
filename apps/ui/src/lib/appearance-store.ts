@@ -290,7 +290,7 @@ const DEFAULTS: AppearanceSnapshot = {
   radius: "0.625",
   chatMaxWidth: 1200,
   chatScale: 100,
-  messageTextSize: 13,
+  messageTextSize: 18,
   sidebarWidth: 300,
   compactMode: false,
   chatUiStyle: "simple",
@@ -310,6 +310,16 @@ const DEFAULTS: AppearanceSnapshot = {
 }
 
 const STORAGE_KEY = "betterc0de-appearance"
+/** Set once saves have moved off the old message text defaults. */
+const MESSAGE_TEXT_DEFAULT_KEY = "betterc0de-message-text-18"
+/** The message text default in releases before it grew. */
+const RELEASED_MESSAGE_TEXT_SIZE = 13
+/**
+ * Development builds of that change used 16px first and marked the move with
+ * this key. Only where it is set is 16 that default rather than a choice.
+ */
+const INTERIM_MESSAGE_TEXT_KEY = "betterc0de-message-text-16"
+const INTERIM_MESSAGE_TEXT_SIZE = 16
 
 /** Auto-save snapshot to localStorage (strips functions automatically) */
 function saveSnapshot(snapshot: AppearanceSnapshot) {
@@ -335,6 +345,49 @@ function migrateMessageSize(parsed: Record<string, unknown>) {
     legacy !== 14
   ) {
     parsed.messageTextSize = legacy
+  }
+}
+
+/**
+ * Message text grew from 13px to 18px. Every save carries every field, so a
+ * setting nobody touched reads as 13 like a chosen one; once, the old default
+ * moves to the new one. Returns whether it changed the save. After that (or
+ * on a first start, which never saw the old default) a chosen 13 stays.
+ */
+export function migrateMessageTextDefault(
+  parsed: Record<string, unknown>,
+  migration: { done: boolean; interim: boolean }
+): boolean {
+  if (migration.done) return false
+  const size = parsed.messageTextSize
+  const oldDefault =
+    size === RELEASED_MESSAGE_TEXT_SIZE ||
+    (migration.interim && size === INTERIM_MESSAGE_TEXT_SIZE)
+  if (!oldDefault) return false
+  parsed.messageTextSize = DEFAULTS.messageTextSize
+  return true
+}
+
+function storedFlag(key: string, fallback: boolean): boolean {
+  try {
+    return localStorage.getItem(key) !== null
+  } catch {
+    return fallback
+  }
+}
+
+function messageTextMigration(): { done: boolean; interim: boolean } {
+  return {
+    done: storedFlag(MESSAGE_TEXT_DEFAULT_KEY, true),
+    interim: storedFlag(INTERIM_MESSAGE_TEXT_KEY, false),
+  }
+}
+
+function markMessageTextDefaultMigrated(): void {
+  try {
+    localStorage.setItem(MESSAGE_TEXT_DEFAULT_KEY, "1")
+  } catch {
+    /* Expected: localStorage may be unavailable (incognito) */
   }
 }
 
@@ -567,6 +620,10 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => ({
         // on a no-op template id that silently skips `applyTemplate`.
         parsed.template = normalizeSelectableTemplateId(parsed.template)
         migrateMessageSize(parsed)
+        const grewMessageText = migrateMessageTextDefault(
+          parsed,
+          messageTextMigration()
+        )
         // Extended UI mode is temporarily disabled — force every stored
         // preference back to simple regardless of what the user last had.
         // When extended lands again, remove this coercion.
@@ -577,7 +634,9 @@ export const useAppearanceStore = create<AppearanceState>((set, get) => ({
         }
         set(merged)
         applyToDOM(merged)
+        if (grewMessageText) saveSnapshot(merged)
       }
+      markMessageTextDefaultMigrated()
     } catch {
       console.warn("Failed to load appearance settings from localStorage")
     }

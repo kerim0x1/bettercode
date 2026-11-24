@@ -20,6 +20,7 @@ import {
 } from "../../observability/metrics"
 import { openDatabase } from "../../persistence/db"
 import { runMigrations } from "../../persistence/migrations"
+import { deferred } from "../../testUtils/deferred"
 import {
   ProviderBackendQuarantinedError,
   ProviderHub,
@@ -32,6 +33,8 @@ import {
   ProviderTurnConflictError,
 } from "./ProviderHub"
 import { ProviderSessionBindingStore } from "./ProviderSessionBindingStore"
+import { ProviderSessionReaper } from "./ProviderSessionReaper"
+import { StalePendingProviderRequestError } from "./pendingRequestErrors"
 import { ThreadTurnCoordinator } from "../threadTurnCoordinator"
 
 const createdDirs = new Set<string>()
@@ -363,6 +366,57 @@ describe("ProviderHub", () => {
     expect(sendTurn).not.toHaveBeenCalled()
     expect(interruptTurn).not.toHaveBeenCalled()
     expect(coordinator.activeOwner("thread-cancel-before-send")).toBeNull()
+  })
+
+  it("keeps a correlated session exit marked as a stopped turn after a late start event", async () => {
+    let emit!: (event: ProviderRuntimeEvent) => void
+    const threadId = "thread-stop-with-exit" as ThreadId
+    const nativeTurn = "native-turn"
+    const forwarded: ProviderRuntimeEvent[] = []
+    const hub = new ProviderHub({
+      adapters: [
+        makeAdapter(true, {
+          sendTurn: async () => {},
+          onSubscribe: (listener) => {
+            emit = listener
+          },
+          interruptTurn: async () => {
+            emit({
+              threadId,
+              turnId: nativeTurn,
+              type: "turn.started",
+              eventId: "late-start",
+              at: 1,
+            })
+            emit({
+              threadId,
+              turnId: nativeTurn,
+              type: "session.exited",
+              eventId: "stopped-exit",
+              at: 2,
+            })
+          },
+        }),
+      ],
+    })
+    hub.subscribe((event) => forwarded.push(event))
+    const handle = hub.startTurn("codex", {
+      threadId,
+      message: "Implement",
+      modelId: "gpt-5.5",
+      history: [],
+    })
+    await handle.completion
+    await hub.interruptTurn("codex", threadId)
+
+    expect(
+      forwarded.find((event) => event.type === "session.exited")
+    ).toMatchObject({
+      turnId: nativeTurn,
+      payload: { dispatchTurnId: handle.turnId, status: "interrupted" },
+    })
+    expect(forwarded.some((event) => event.type === "turn.aborted")).toBe(false)
+    await expect(handle.settled).resolves.toBeUndefined()
   })
 
   it("keeps native settlement and admission open through terminal afterTurn", async () => {
@@ -1460,6 +1514,7 @@ describe("ProviderHub", () => {
         modelId: "gpt-live",
         history: [],
       })
+      await turn.completion
       emitRuntimeEvent({
         type: "turn.started",
         threadId: "thread-idle",
@@ -1467,7 +1522,6 @@ describe("ProviderHub", () => {
         eventId: "turn-started-idle",
         at: Date.now(),
       })
-      await turn.completion
 
       // A turn that keeps streaming outlives many idle windows.
       for (let index = 0; index < 10; index++) {
@@ -1483,6 +1537,21 @@ describe("ProviderHub", () => {
       }
       expect(interruptTurn).not.toHaveBeenCalled()
 
+      const forwarded = vi.fn()
+      hub.subscribe(forwarded)
+      // The second turn is running on the same instance, so the turn id
+      // must reject a late request from the previous turn.
+      emitRuntimeEvent({
+        type: "request.opened",
+        threadId: "thread-idle",
+        turnId: "previous-turn",
+        eventId: "previous-request",
+        at: Date.now(),
+        requestId: "old-question",
+        kind: "user_input",
+      })
+      expect(forwarded).not.toHaveBeenCalled()
+
       // Waiting for the user is not provider inactivity.
       emitRuntimeEvent({
         type: "request.opened",
@@ -1493,6 +1562,16 @@ describe("ProviderHub", () => {
         requestId: "approval-1",
         kind: "user_input",
       } as ProviderRuntimeEvent)
+      emitRuntimeEvent({
+        type: "request.resolved",
+        threadId: "thread-idle",
+        turnId: "previous-turn",
+        eventId: "previous-resolution",
+        at: Date.now(),
+        requestId: "approval-1",
+        decision: "answer",
+      })
+      expect(forwarded).toHaveBeenCalledOnce()
       await vi.advanceTimersByTimeAsync(1_000)
       expect(interruptTurn).not.toHaveBeenCalled()
 
@@ -3355,35 +3434,222 @@ describe("ProviderHub", () => {
   })
 
   it("releases session admission when startSession never finishes", async () => {
-    const hub = new ProviderHub({
-      interruptTimeoutMs: 40,
-      instances: [
-        {
-          instanceId: "codex",
-          driver: "codex",
-          provider: "codex",
-          displayName: "Codex",
-          enabled: true,
-          adapter: makeAdapter(true, {
-            startSession: () => new Promise(() => {}),
+    vi.useFakeTimers()
+    try {
+      const starting = deferred<void>()
+      const stopAll = vi.fn(async () => {})
+      const hub = new ProviderHub({
+        interruptTimeoutMs: 40,
+        adapters: [
+          makeAdapter(true, {
+            startSession: () => {
+              starting.resolve()
+              return new Promise(() => {})
+            },
+            stopAll,
           }),
-        },
-      ],
+        ],
+      })
+      const first = hub.startTurn("codex", {
+        threadId: "thread-hung-start",
+        message: "first",
+        modelId: "gpt-live",
+        history: [],
+      })
+      const second = hub.startTurn("codex", {
+        threadId: "thread-hung-start-next",
+        message: "second",
+        modelId: "gpt-live",
+        history: [],
+      })
+      await starting.promise
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(stopAll).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(first.settled).rejects.toThrow(
+        ProviderBackendQuarantinedError
+      )
+      await expect(second.settled).rejects.toThrow(ProviderSessionCapacityError)
+      expect(stopAll).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("bounds a session configuration check while another provider starts", async () => {
+    vi.useFakeTimers()
+    const checking = deferred<void>()
+    const configuration = deferred<boolean>()
+    const codex = makeAdapter(true, {
+      needsSessionConfigurationRefresh: () => {
+        checking.resolve()
+        return configuration.promise
+      },
     })
-    const first = hub.startTurn("codex", {
-      threadId: "thread-hung-start",
-      message: "first",
-      modelId: "gpt-live",
-      history: [],
+    const sendTurn = vi.fn(async () => {})
+    const cursor = {
+      ...makeAdapter(true, { sendTurn }),
+      provider: "cursor" as const,
+    }
+    const hub = new ProviderHub({
+      adapters: [codex, cursor],
+      interruptTimeoutMs: 50,
     })
-    const second = hub.startTurn("codex", {
-      threadId: "thread-hung-start-next",
-      message: "second",
-      modelId: "gpt-live",
-      history: [],
+    const existing = "thread-with-session" as ThreadId
+    try {
+      await codex.startSession({ threadId: existing })
+      const first = hub.startTurn("codex", {
+        threadId: existing,
+        message: "continue",
+        modelId: "gpt-live",
+        history: [],
+      })
+      await checking.promise
+      const second = hub.startTurn("cursor", {
+        threadId: "new-on-cursor",
+        message: "start",
+        modelId: "default",
+        history: [],
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(sendTurn).toHaveBeenCalledOnce()
+      await expect(second.completion).resolves.toBeUndefined()
+      await vi.advanceTimersByTimeAsync(50)
+      await expect(first.settled).rejects.toThrow(
+        ProviderSessionInspectionError
+      )
+      expect(codex.hasSession(existing)).toBe(true)
+    } finally {
+      configuration.resolve(false)
+      await hub.stopAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it("blocks teardown and reaping when an adapter cannot confirm its session stopped", async () => {
+    vi.useFakeTimers()
+    const db = openDatabase(":memory:")
+    const threadId = "quarantined-idle-session" as ThreadId
+    const adapter = makeAdapter(true, {
+      hasSession: () => false, // Some adapters hide a session as soon as it starts closing.
+      stopSession: () => new Promise(() => {}),
+      stopAll: async () => {
+        throw new Error("cleanup unconfirmed")
+      },
     })
-    await expect(first.settled).rejects.toThrow(ProviderBackendQuarantinedError)
-    await expect(second.settled).rejects.toThrow(ProviderSessionCapacityError)
+    const hub = new ProviderHub({ adapters: [adapter], interruptTimeoutMs: 25 })
+    try {
+      runMigrations(db)
+      insertProviderHubTestThread(db, threadId)
+      const bindings = new ProviderSessionBindingStore(db)
+      bindings.upsert({
+        threadId,
+        providerInstanceId: "codex",
+        providerKind: "codex",
+        providerThreadId: "native-session",
+      })
+      const reaper = new ProviderSessionReaper({
+        bindings,
+        providerHub: hub,
+        logger: { info: vi.fn(), warn: vi.fn() },
+        inactivityThresholdMs: 1,
+        now: () => Date.now() + 100,
+      })
+      const firstSweep = reaper.sweep()
+      await vi.advanceTimersByTimeAsync(25)
+      expect(await firstSweep).toMatchObject({ reapedCount: 0, failedCount: 1 })
+      expect(await reaper.sweep()).toMatchObject({
+        reapedCount: 0,
+        failedCount: 1,
+      })
+      expect(bindings.get(threadId, "codex")?.status).toBe("ready")
+
+      const mutate = vi.fn()
+      await expect(
+        hub.withThreadTeardown(threadId, mutate)
+      ).rejects.toBeInstanceOf(ProviderBackendQuarantinedError)
+      expect(mutate).not.toHaveBeenCalled()
+      await hub.withThreadTeardown("unrelated-thread", mutate)
+      expect(mutate).toHaveBeenCalledOnce()
+    } finally {
+      db.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it("only reads the current thread's bindings on a warm-session send", async () => {
+    const db = openDatabase(":memory:")
+    const threadId = "active-binding" as ThreadId
+    const adapter = makeAdapter(true, {
+      needsSessionConfigurationRefresh: async () => false,
+    })
+    const hub = new ProviderHub({ adapters: [adapter] })
+    try {
+      runMigrations(db)
+      const bindings = new ProviderSessionBindingStore(db)
+      for (const id of [threadId, "unrelated-binding"]) {
+        insertProviderHubTestThread(db, id)
+        bindings.setProviderThreadId({
+          threadId: id,
+          providerInstanceId: "codex",
+          providerKind: "codex",
+          providerThreadId: id,
+        })
+      }
+      const list = vi.spyOn(bindings, "list")
+      const listForThread = vi.spyOn(bindings, "listForThread")
+      await adapter.startSession({ threadId })
+      await hub.sendTurn(
+        "codex",
+        { threadId, message: "continue", modelId: "gpt-live", history: [] },
+        { bindings }
+      )
+      expect(list).not.toHaveBeenCalled()
+      expect(listForThread.mock.calls).toEqual([[threadId]])
+      expect(listForThread.mock.results[0].value).toEqual([
+        expect.objectContaining({ threadId }),
+      ])
+    } finally {
+      await hub.stopAll()
+      db.close()
+    }
+  })
+
+  it("checks configuration again when the native session changes during the lookup", async () => {
+    const checking = deferred<void>()
+    const configuration = deferred<boolean>()
+    const needsSessionConfigurationRefresh = vi
+      .fn(async () => false)
+      .mockImplementationOnce(() => {
+        checking.resolve()
+        return configuration.promise
+      })
+    const codex = makeAdapter(true, { needsSessionConfigurationRefresh })
+    const stopSession = vi.spyOn(codex, "stopSession")
+    const hub = new ProviderHub({ adapters: [codex] })
+    const threadId = "changing-session" as ThreadId
+    try {
+      await codex.startSession({ threadId, cwd: "/first" })
+      const turn = hub.startTurn("codex", {
+        threadId,
+        message: "continue",
+        modelId: "gpt-live",
+        history: [],
+      })
+      await checking.promise
+      await codex.stopSession(threadId)
+      await codex.startSession({ threadId, cwd: "/second" })
+      configuration.resolve(true)
+      await expect(turn.completion).resolves.toBeUndefined()
+      expect(needsSessionConfigurationRefresh.mock.calls).toEqual([
+        [{ threadId, cwd: "/first" }],
+        [{ threadId, cwd: "/second" }],
+      ])
+      expect(stopSession).toHaveBeenCalledOnce()
+    } finally {
+      configuration.resolve(false)
+      await hub.stopAll()
+    }
   })
 
   it("drains an in-flight provider metadata read before stopping adapters", async () => {
@@ -4822,7 +5088,7 @@ describe("ProviderHub", () => {
           ? requestedBinding
           : null
       ),
-      list: vi.fn(() => [oldBinding, requestedBinding]),
+      listForThread: vi.fn(() => [oldBinding, requestedBinding]),
       setProviderThreadId: vi.fn(),
       updateSessionLifecycle: vi.fn(),
     } as unknown as ProviderSessionBindingStore
@@ -4943,7 +5209,7 @@ describe("ProviderHub", () => {
     const sendTurn = vi.fn(async (_input: ProviderSendTurnInput) => {})
     const bindings = {
       get: vi.fn(() => staleBinding),
-      list: vi.fn(() => [staleBinding]),
+      listForThread: vi.fn(() => [staleBinding]),
       getThreadGeneration: vi.fn(() => 0),
       setProviderThreadId: vi.fn(),
       updateSessionLifecycle: vi.fn(),
@@ -6292,7 +6558,7 @@ describe("ProviderHub", () => {
     )
   })
 
-  it("recovers a persisted provider session before responding to a pending request", async () => {
+  it("rejects a stale approval without starting a persisted session", async () => {
     const startSession = vi.fn<ProviderAdapterShape["startSession"]>(
       async (input) => ({
         threadId: input.threadId,
@@ -6351,36 +6617,73 @@ describe("ProviderHub", () => {
       ],
     })
 
-    await hub.respondToRequest(
-      "claude",
-      "thread-1" as ThreadId,
-      "approval-1" as ApprovalRequestId,
-      { kind: "tool_approval", decision: "approve" },
-      "claude-main",
-      bindings
-    )
+    await expect(
+      hub.respondToRequest(
+        "claude",
+        "thread-1" as ThreadId,
+        "approval-1" as ApprovalRequestId,
+        { kind: "tool_approval", decision: "approve" },
+        "claude-main",
+        bindings
+      )
+    ).rejects.toBeInstanceOf(StalePendingProviderRequestError)
+    expect(startSession).not.toHaveBeenCalled()
+    expect(respondToRequest).not.toHaveBeenCalled()
+    expect(bindings.updateSessionLifecycle).not.toHaveBeenCalled()
+  })
 
-    expect(startSession).toHaveBeenCalledWith({
-      threadId: "thread-1",
-      cwd: "/Users/example/project",
-      modelSelection: {
-        instanceId: "claude-main",
-        model: "claude-opus-4-7",
-      },
-      resumeCursor: { sessionId: "sdk-thread-1" },
-      runtimeMode: "full-access",
+  it("answers on the active instance without refreshing its session", async () => {
+    const thread = "approval-on-second-instance" as ThreadId
+    const requestId = "pending-tool" as ApprovalRequestId
+    const decision = { kind: "tool_approval", decision: "approve" } as const
+    const needsSessionConfigurationRefresh = vi.fn(async () => true)
+    const respondToRequest = vi.fn(async () => {})
+    const defaultResponse = vi.fn(async () => {})
+    const adapter = makeAdapter(true, {
+      needsSessionConfigurationRefresh,
+      respondToRequest,
     })
-    expect(respondToRequest).toHaveBeenCalledWith("thread-1", "approval-1", {
-      kind: "tool_approval",
-      decision: "approve",
+    const stopSession = vi.spyOn(adapter, "stopSession")
+    const hub = new ProviderHub({
+      instances: [
+        {
+          instanceId: "codex",
+          driver: "codex",
+          provider: "codex",
+          enabled: true,
+          adapter: makeAdapter(true, { respondToRequest: defaultResponse }),
+        },
+        {
+          instanceId: "codex-work",
+          driver: "codex",
+          provider: "codex",
+          enabled: true,
+          adapter,
+        },
+      ],
     })
-    expect(bindings.updateSessionLifecycle).toHaveBeenCalledWith({
-      threadId: "thread-1",
-      providerKind: "claude",
-      providerInstanceId: "claude-main",
-      status: "ready",
-      activeTurnId: null,
-    })
+    try {
+      const turn = hub.startTurn("codex", {
+        providerInstanceId: "codex-work",
+        threadId: thread,
+        message: "continue",
+        modelId: "gpt-live",
+        history: [],
+      })
+      await turn.completion
+      await expect(
+        hub.respondToRequest("codex", thread, requestId, decision, "codex")
+      ).rejects.toMatchObject({
+        code: "provider_instance_not_found",
+      })
+      await hub.respondToRequest("codex", thread, requestId, decision)
+      expect(respondToRequest).toHaveBeenCalledWith(thread, requestId, decision)
+      expect(defaultResponse).not.toHaveBeenCalled()
+      expect(needsSessionConfigurationRefresh).not.toHaveBeenCalled()
+      expect(stopSession).not.toHaveBeenCalled()
+    } finally {
+      await hub.stopAll()
+    }
   })
 
   it("enforces the active-turn cap globally before reserving another turn", async () => {

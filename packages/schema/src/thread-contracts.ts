@@ -377,6 +377,8 @@ export interface ProviderUsageReport {
   limitsObservedAt: string | null
   limitNotes: string[]
   notes: string[]
+  /** A newer reading is being taken behind this answer; ask again shortly. */
+  refreshing?: boolean
   error?: string
 }
 
@@ -490,6 +492,7 @@ const providerUsageReportSchema: RecordSchema<ProviderUsageReport> = z
     limitsObservedAt: text.nullable(),
     limitNotes: z.array(text),
     notes: z.array(text),
+    refreshing: bool.optional(),
     error: text.optional(),
   })
   .passthrough()
@@ -567,7 +570,9 @@ export const threadHttpContracts = {
     threadWorktreeResetSchema,
     threadWorktreeCreateResponseSchema
   ),
-  // `?refresh=1` reads the stores again instead of the cached reports.
+  // Answers at once from the last reports. `?refresh=1` reads the stores and
+  // Claude's limits again behind the answer, as does a report older than 30
+  // seconds; such reports carry `refreshing: true` until the new one is in.
   providerUsage: endpoint(
     "GET",
     "/usage/providers",

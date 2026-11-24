@@ -200,6 +200,8 @@ interface SessionContext {
   unexpectedExit: boolean
   stopComplete: boolean
   stopPromise: Promise<void> | null
+  promptSubmission: Promise<unknown> | null
+  interruptPromise: Promise<void> | null
   activeTurnId: TurnId | null
   activeDispatchTurnId: string | null
   activeAgent: string | null
@@ -1866,6 +1868,8 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         unexpectedExit: false,
         stopComplete: false,
         stopPromise: null,
+        promptSubmission: null,
+        interruptPromise: null,
         activeTurnId: null,
         activeDispatchTurnId: null,
         activeAgent: null,
@@ -1911,6 +1915,9 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
   async sendTurn(input: ProviderSendTurnInput): Promise<void> {
     const key = input.threadId as string
     const context = this.ensureContext(key)
+    if (context.interruptPromise) {
+      throw new Error("BetterC0de is still interrupting the previous turn.")
+    }
     const turnId = `betterc0de-turn-${randomUUID()}` as TurnId
     const modelSelection =
       input.modelSelection ??
@@ -1940,11 +1947,13 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
 
     context.activeTurnId = turnId
     context.activeDispatchTurnId = input.dispatchTurnId ?? null
-    context.activeAgent =
+    context.promptSubmission = null
+    const agent =
       getModelSelectionStringOptionValue(modelSelection, "agent") ??
       (await this.resolveAgentForChatMode(context.directory, input.chatMode))
     if (
       context.stopped ||
+      context.interruptPromise ||
       this.sessions.get(key) !== context ||
       context.activeTurnId !== turnId
     ) {
@@ -1952,6 +1961,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         "BetterC0de turn was stopped or cancelled during agent discovery."
       )
     }
+    context.activeAgent = agent
     context.activeVariant =
       getModelSelectionStringOptionValue(modelSelection, "variant") ?? null
     this.updateSession(context, {
@@ -1971,6 +1981,7 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     try {
       if (
         context.stopped ||
+        context.interruptPromise ||
         this.sessions.get(key) !== context ||
         context.activeTurnId !== turnId
       ) {
@@ -1983,16 +1994,22 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
         currentPrompt: input.message,
         resumed: !context.historySeedPending,
       })
-      await context.client.session.promptAsync({
+      context.promptSubmission = context.client.session.promptAsync({
         sessionID: context.betterC0deSessionId,
         model: parsedModel,
         ...(context.activeAgent ? { agent: context.activeAgent } : {}),
         ...(context.activeVariant ? { variant: context.activeVariant } : {}),
         parts: buildBetterC0dePromptParts(input, currentPrompt),
       })
+      await context.promptSubmission
       context.historySeedPending = false
     } catch (err) {
-      if (context.stopped || context.activeTurnId !== turnId) throw err
+      if (
+        context.stopped ||
+        context.interruptPromise ||
+        context.activeTurnId !== turnId
+      )
+        throw err
       const publicMessage = "BetterC0de compatibility provider turn failed."
       context.activeTurnId = null
       context.activeAgent = null
@@ -2034,24 +2051,40 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
 
   async interruptTurn(threadId: ThreadId): Promise<void> {
     const context = this.sessions.get(threadId as string)
-    if (!context) return
-    await context.client.session.abort({
-      sessionID: context.betterC0deSessionId,
-    })
+    if (!context || !context.activeTurnId) return
+    if (context.interruptPromise) return context.interruptPromise
     const turnId = context.activeTurnId
-    context.activeTurnId = null
-    context.activeAgent = null
-    context.activeVariant = null
-    clearPendingRequests(context)
-    resetTransientTurnState(context)
-    this.updateSession(context, { status: "ready", activeTurnId: null })
-    if (turnId) {
+    const submission = context.promptSubmission
+    // Close admission to the prompt before awaiting anything. If it already
+    // went out, send abort after submission so it cannot overtake the prompt.
+    const interruption = Promise.resolve().then(async () => {
+      if (submission) {
+        await submission.catch(() => {})
+        if (context.stopped || context.activeTurnId !== turnId) return
+        await context.client.session.abort({
+          sessionID: context.betterC0deSessionId,
+        })
+      }
+      if (context.stopped || context.activeTurnId !== turnId) return
+      context.activeTurnId = null
+      context.activeAgent = null
+      context.activeVariant = null
+      context.promptSubmission = null
+      clearPendingRequests(context)
+      resetTransientTurnState(context)
+      this.updateSession(context, { status: "ready", activeTurnId: null })
       this.emitEvent({
         ...this.eventBase(threadId as string),
         turnId,
         type: "turn.aborted",
-        payload: { reason: "Interrupted by user." },
+        payload: { reason: "Interrupted by user.", status: "interrupted" },
       })
+    })
+    context.interruptPromise = interruption
+    try {
+      await interruption
+    } finally {
+      context.interruptPromise = null
     }
   }
 
@@ -4018,9 +4051,17 @@ export class BetterC0deCompatAdapter implements ProviderAdapterShape {
     context.stopped = true
     context.eventAbort.abort()
     const stopPromise = (async () => {
-      await context.client.session
-        .abort({ sessionID: context.betterC0deSessionId })
-        .catch(() => {})
+      const remoteSubmission =
+        context.server.external && context.activeTurnId
+          ? context.promptSubmission
+          : null
+      if (remoteSubmission) await remoteSubmission.catch(() => {})
+      const abort = context.client.session.abort({
+        sessionID: context.betterC0deSessionId,
+      })
+      // Closing an external connection cannot stop a running server turn.
+      if (remoteSubmission) await abort
+      else await abort.catch(() => {})
       await this.closeTrackedServer(context.server)
       context.stopComplete = true
       this.emitEvent({

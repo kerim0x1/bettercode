@@ -4,6 +4,7 @@ import {
   base,
   normalizeUserInputQuestions,
   normalizeMcpElicitationQuestions,
+  readTurnId,
 } from "./shared"
 
 /**
@@ -70,9 +71,11 @@ export function translateProcessEvents(
     const method = native.method!
     const params = (native.params ?? {}) as Record<string, unknown>
     const requestId = native.requestId ?? ""
+    const turnId = readTurnId(params)
+    const request = { ...base(threadId), ...(turnId ? { turnId } : {}) }
     if (method === "item/commandExecution/requestApproval") {
       out.push({
-        ...base(threadId),
+        ...request,
         type: "request.opened",
         requestId,
         kind: "tool_approval",
@@ -81,7 +84,7 @@ export function translateProcessEvents(
       })
     } else if (method === "item/fileChange/requestApproval") {
       out.push({
-        ...base(threadId),
+        ...request,
         type: "request.opened",
         requestId,
         kind: "tool_approval",
@@ -90,7 +93,7 @@ export function translateProcessEvents(
       })
     } else if (method === "item/fileRead/requestApproval") {
       out.push({
-        ...base(threadId),
+        ...request,
         type: "request.opened",
         requestId,
         kind: "tool_approval",
@@ -99,7 +102,7 @@ export function translateProcessEvents(
       })
     } else if (method === "item/permissions/requestApproval") {
       out.push({
-        ...base(threadId),
+        ...request,
         type: "request.opened",
         requestId,
         kind: "tool_approval",
@@ -112,7 +115,7 @@ export function translateProcessEvents(
       })
     } else if (method === "applyPatchApproval") {
       out.push({
-        ...base(threadId),
+        ...request,
         type: "request.opened",
         requestId,
         kind: "tool_approval",
@@ -121,7 +124,7 @@ export function translateProcessEvents(
       })
     } else if (method === "execCommandApproval") {
       out.push({
-        ...base(threadId),
+        ...request,
         type: "request.opened",
         requestId,
         kind: "tool_approval",
@@ -133,7 +136,7 @@ export function translateProcessEvents(
       method === "item/tool/requestUserInput"
     ) {
       out.push({
-        ...base(threadId),
+        ...request,
         type: "request.opened",
         requestId,
         kind: "user_input",
@@ -141,7 +144,7 @@ export function translateProcessEvents(
       })
     } else if (method === "mcpServer/elicitation/request") {
       out.push({
-        ...base(threadId),
+        ...request,
         type: "request.opened",
         requestId,
         kind: "user_input",

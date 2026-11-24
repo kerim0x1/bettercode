@@ -53,7 +53,9 @@ export function UsagePage({
   view?: UsageView
   onViewChange?: (view: UsageView) => void
 }) {
-  const { reports, loading, error, load } = useUsageStore()
+  const { reports, loading, refreshing, error, load } = useUsageStore()
+  // The backend answers at once and reads newer reports behind it.
+  const busy = loading || refreshing
   const [localView, setLocalView] = useState<UsageView>(view)
   const [range, setRange] = useState<UsageRangeId>("30d")
   const active = onViewChange ? view : localView
@@ -94,7 +96,7 @@ export function UsagePage({
             role="status"
             className="hidden text-[11px] text-muted-foreground sm:inline"
           >
-            {loading
+            {busy
               ? reports.length > 0
                 ? "Updating…"
                 : "Reading local usage…"
@@ -106,11 +108,11 @@ export function UsagePage({
             variant="ghost"
             size="sm"
             onClick={() => void load(true)}
-            disabled={loading}
+            disabled={busy}
             className={HEADER_BUTTON}
           >
             <RefreshCwIcon
-              className={cn("size-3.5", loading && "motion-safe:animate-spin")}
+              className={cn("size-3.5", busy && "motion-safe:animate-spin")}
               strokeWidth={1.5}
             />
             Refresh

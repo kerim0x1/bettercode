@@ -9,6 +9,10 @@ import type { HubApprovalRequests } from "./HubApprovalRequests"
 import { ProviderInstanceUnavailableError } from "./ProviderHubErrors"
 import type { ProviderRuntimeInstance } from "./ProviderHubTypes"
 import type { ProviderSessionBindingStore } from "./ProviderSessionBindingStore"
+import {
+  pendingRequestKindFromDecisionKind,
+  StalePendingProviderRequestError,
+} from "./pendingRequestErrors"
 
 /** What approval routing needs from the hub. */
 export interface HubApprovalRouterHost {
@@ -16,19 +20,13 @@ export interface HubApprovalRouterHost {
     readonly provider?: ProviderKind | null
     readonly instanceId?: string | null
   }): ProviderRuntimeInstance | null
-  recoverSessionForThread(input: {
-    readonly instance: ProviderRuntimeInstance
-    readonly thread: ThreadId
-    readonly bindings?: ProviderSessionBindingStore
-  }): Promise<boolean>
   /** The instance the thread's active turn runs on, if any. */
   activeTurnInstanceId(thread: string): string | null | undefined
 }
 
 /**
  * Routes approval answers and permission-mode changes to the instance that
- * owns the thread's session, recovering that session first. The live request
- * bookkeeping and the policy-driven auto-answers stay in
+ * owns the thread's live session. The live request bookkeeping and the policy-driven auto-answers stay in
  * {@link HubApprovalRequests}; this class only decides where a response goes.
  */
 export class HubApprovalRouter {
@@ -53,13 +51,18 @@ export class HubApprovalRouter {
     instanceId?: string | null,
     bindings?: ProviderSessionBindingStore
   ): Promise<void> {
-    const instance = this.host.resolveInstance({
+    const instance = this.resolveRequestInstance(
       provider,
-      instanceId: instanceId ?? null,
-    })
-    if (!instance)
-      throw new ProviderInstanceUnavailableError(provider, instanceId)
-    await this.host.recoverSessionForThread({ instance, thread, bindings })
+      thread,
+      instanceId,
+      bindings
+    )
+    if (!instance.adapter.hasSession(thread)) {
+      throw new StalePendingProviderRequestError(
+        pendingRequestKindFromDecisionKind(decision.kind),
+        requestId
+      )
+    }
     await instance.adapter.respondToRequest(thread, requestId, decision)
   }
 
@@ -71,24 +74,23 @@ export class HubApprovalRouter {
     bindings?: ProviderSessionBindingStore,
     permissionLevel?: string
   ): Promise<{ applied: "live" | "queued" | "unsupported" }> {
-    const instance = this.host.resolveInstance({
+    const instance = this.resolveRequestInstance(
       provider,
-      instanceId: instanceId ?? null,
-    })
-    if (!instance)
-      throw new ProviderInstanceUnavailableError(provider, instanceId)
-    const activeInstanceId = this.host.activeTurnInstanceId(thread)
-    if (activeInstanceId && activeInstanceId !== instance.instanceId) {
-      throw new ProviderInstanceUnavailableError(provider, instanceId)
-    }
+      thread,
+      instanceId,
+      bindings
+    )
     const change = this.requests.updatePermissionMode(
       thread,
       mode,
       permissionLevel
     )
     await this.requests.reconcile(instance, thread)
-    if (instance.adapter.setPermissionMode && change.nativeMode) {
-      await this.host.recoverSessionForThread({ instance, thread, bindings })
+    if (
+      instance.adapter.setPermissionMode &&
+      change.nativeMode &&
+      instance.adapter.hasSession(thread)
+    ) {
       const native = await instance.adapter.setPermissionMode(
         thread,
         change.nativeMode
@@ -96,5 +98,31 @@ export class HubApprovalRouter {
       return { applied: change.applied === "live" ? "live" : native.applied }
     }
     return { applied: change.applied }
+  }
+
+  private resolveRequestInstance(
+    provider: ProviderKind,
+    thread: ThreadId,
+    instanceId?: string | null,
+    bindings?: ProviderSessionBindingStore
+  ): ProviderRuntimeInstance {
+    const activeInstanceId = this.host.activeTurnInstanceId(thread)
+    const requestedInstanceId =
+      instanceId ??
+      activeInstanceId ??
+      bindings?.getLatestForThreadProvider(thread, provider)
+        ?.providerInstanceId ??
+      null
+    const instance = this.host.resolveInstance({
+      provider,
+      instanceId: requestedInstanceId,
+    })
+    if (
+      !instance ||
+      (activeInstanceId && activeInstanceId !== instance.instanceId)
+    ) {
+      throw new ProviderInstanceUnavailableError(provider, requestedInstanceId)
+    }
+    return instance
   }
 }

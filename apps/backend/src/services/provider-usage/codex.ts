@@ -2,6 +2,7 @@ import Database from "better-sqlite3"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import zlib from "node:zlib"
 import {
   detectCodexCliAsync,
   isCodexCliAuthenticatedAsync,
@@ -10,12 +11,14 @@ import { scanWithCache } from "./cache"
 import {
   LONG_CONTEXT_NOTE,
   PriceBook,
+  normalizeModelId,
   priceModels,
   dayCost,
   type PricedTokens,
 } from "./pricing"
 import {
-  forEachLine,
+  forEachMatchingLine,
+  lastMatchingLines,
   numberValue,
   parseJson,
   record,
@@ -26,6 +29,7 @@ import {
   addTokens,
   countMax,
   localDay,
+  modelLabel,
   percent,
   summarize,
   topEntries,
@@ -45,18 +49,29 @@ import {
  *
  * `~/.codex/state_<n>.sqlite` stores one row per thread with `tokens_used`,
  * which matches the final `total_token_usage.total_tokens` of that thread's
- * rollout exactly. Reading it avoids walking the rollout corpus, which runs
- * to gigabytes (single files past 7 GB) and cannot be read eagerly.
+ * rollout exactly. The split into input, cache and output, and the rate
+ * limits, are only in the rollouts (gigabytes, single files past 7 GB).
+ *
+ * Codex compresses a finished rollout to `<name>.jsonl.zst` (one zstd frame,
+ * so it can only be read from the start) and moves archived ones to
+ * `archived_sessions`, while the index keeps the original `.jsonl` path.
  */
 
-const ROLLOUT_TAIL_BYTES = 512 * 1024
-const ROLLOUT_LIMIT_CANDIDATES = 5
 /**
  * A thread's last `token_count` carries its running totals, and it sits at the
- * end of the rollout. Reading a tail keeps the corpus (gigabytes, single files
- * past 7 GB) out of the request while still recovering the token split.
+ * end of the rollout. Reading the tail of a plain rollout keeps a live session
+ * of gigabytes out of the request while still recovering the token split.
  */
 const ROLLOUT_USAGE_TAIL_BYTES = 1024 * 1024
+/** Decompressed bytes handed over at a time when reading a `.zst` rollout. */
+const ZSTD_CHUNK_BYTES = 1024 * 1024
+/**
+ * The rollout cache's format. 1: compressed and archived rollouts are read,
+ * and each entry keeps its rollout's last rate limits.
+ */
+const ROLLOUT_CACHE_REVISION = 1
+/** Node 22.15+ decompresses zstd; an older runtime skips those rollouts. */
+const CAN_READ_ZSTD = typeof zlib.createZstdDecompress === "function"
 const WINDOWS_LONG_PATH_PREFIX = `\\\\?\\`
 
 interface CodexThreadRow {
@@ -156,52 +171,149 @@ function windowLabel(minutes: number, fallback: string): string {
   return fallback
 }
 
-/** The freshest `rate_limits` block Codex wrote, taken from a tail read. */
-async function readRateLimits(rolloutPaths: readonly string[]): Promise<{
+/**
+ * The usage limits in a `rate_limits` block, and the plan it names. A window
+ * whose reset has passed since Codex wrote the block is left out: its new
+ * share is unknown until Codex reports again with its next turn.
+ */
+export function rateLimitsOf(
+  block: Record<string, unknown>,
+  now = Date.now()
+): {
   limits: UsageLimit[]
   plan: string | null
-}> {
-  for (const rollout of rolloutPaths) {
-    let latest: Record<string, unknown> | null = null
-    await forEachLine(
-      rollout,
-      (line) => {
-        if (line.indexOf('"rate_limits"') < 0) return
-        const row = parseJson(line)
-        const payload = record(row?.payload)
-        const limits = record(payload?.rate_limits)
-        if (limits) latest = limits
-      },
-      { fromEnd: ROLLOUT_TAIL_BYTES }
-    )
-    if (!latest) continue
-    const block = latest as Record<string, unknown>
-    const limits: UsageLimit[] = []
-    for (const key of ["primary", "secondary"] as const) {
-      const window = record(block[key])
-      if (!window) continue
-      const usedPercent = numberValue(window.used_percent)
-      if (!Number.isFinite(usedPercent)) continue
-      const resetsAtSeconds = numberValue(window.resets_at)
-      const resetsAt =
-        resetsAtSeconds > 0
-          ? new Date(resetsAtSeconds * 1000).toISOString()
-          : null
-      limits.push({
-        id: key,
-        label: windowLabel(
-          numberValue(window.window_minutes),
-          key === "primary" ? "Primary limit" : "Secondary limit"
-        ),
-        usedPercent,
-        resetsAt,
-        resetLabel: null,
-      })
-    }
-    if (limits.length === 0) continue
-    return { limits, plan: stringValue(block.plan_type) }
+} {
+  const limits: UsageLimit[] = []
+  for (const key of ["primary", "secondary"] as const) {
+    const window = record(block[key])
+    if (!window) continue
+    const usedPercent = numberValue(window.used_percent)
+    if (!Number.isFinite(usedPercent)) continue
+    const resetsAtSeconds = numberValue(window.resets_at)
+    if (resetsAtSeconds > 0 && resetsAtSeconds * 1000 <= now) continue
+    const resetsAt =
+      resetsAtSeconds > 0
+        ? new Date(resetsAtSeconds * 1000).toISOString()
+        : null
+    limits.push({
+      id: key,
+      label: windowLabel(
+        numberValue(window.window_minutes),
+        key === "primary" ? "Primary limit" : "Secondary limit"
+      ),
+      usedPercent,
+      resetsAt,
+      resetLabel: null,
+    })
   }
-  return { limits: [], plan: null }
+  return { limits, plan: stringValue(block.plan_type) }
+}
+
+/**
+ * Where a thread's rollout is now: as recorded while it is in use, with
+ * `.zst` once Codex compressed it, or in `archived_sessions`.
+ */
+export async function findRollout(
+  home: string,
+  recorded: string
+): Promise<string | null> {
+  const plain = localPath(recorded)
+  const archived = path.join(home, "archived_sessions", path.basename(plain))
+  for (const candidate of [
+    plain,
+    `${plain}.zst`,
+    archived,
+    `${archived}.zst`,
+  ]) {
+    try {
+      if ((await fs.promises.stat(candidate)).isFile()) return candidate
+    } catch {
+      // Try the next place.
+    }
+  }
+  return null
+}
+
+interface RolloutTally {
+  /** `info.total_token_usage` of the last `token_count` with one. */
+  usage: Record<string, unknown> | null
+  /** The last `rate_limits` block, and when it was written. */
+  rateLimits: Record<string, unknown> | null
+  rateLimitsAt: number | null
+}
+
+function tallyFrom(
+  tally: RolloutTally,
+  line: string | null,
+  want: "usage" | "limits" | "both"
+): void {
+  if (!line) return
+  const row = parseJson(line)
+  const payload = record(row?.payload)
+  if (payload?.type !== "token_count") return
+  if (want !== "limits") {
+    const usage = record(record(payload.info)?.total_token_usage)
+    if (usage) tally.usage = usage
+  }
+  if (want !== "usage") {
+    const limits = record(payload.rate_limits)
+    if (limits) {
+      tally.rateLimits = limits
+      const at = Date.parse(stringValue(row?.timestamp) ?? "")
+      tally.rateLimitsAt = Number.isFinite(at) ? at : null
+    }
+  }
+}
+
+/** The decompressed bytes of a `.zst` rollout, in order. */
+async function* zstdChunks(file: string): AsyncGenerator<Buffer> {
+  const source = fs.createReadStream(file, { highWaterMark: ZSTD_CHUNK_BYTES })
+  const decompress = zlib.createZstdDecompress({ chunkSize: ZSTD_CHUNK_BYTES })
+  source.on("error", (error) => decompress.destroy(error))
+  source.pipe(decompress)
+  try {
+    for await (const chunk of decompress) yield chunk as Buffer
+  } finally {
+    source.destroy()
+    decompress.destroy()
+  }
+}
+
+async function readRolloutTally(file: string): Promise<RolloutTally | null> {
+  const tally: RolloutTally = {
+    usage: null,
+    rateLimits: null,
+    rateLimitsAt: null,
+  }
+  if (file.endsWith(".zst")) {
+    if (!CAN_READ_ZSTD) return null
+    try {
+      const [usageLine, limitsLine] = await lastMatchingLines(
+        zstdChunks(file),
+        ['"total_token_usage"', '"rate_limits"']
+      )
+      tallyFrom(tally, usageLine ?? null, "usage")
+      tallyFrom(tally, limitsLine ?? null, "limits")
+    } catch {
+      // A damaged archive reads as one without a tally.
+    }
+    return tally
+  }
+  const offset = await forEachMatchingLine(
+    file,
+    '"token_count"',
+    (line) => tallyFrom(tally, line, "both"),
+    { fromEnd: ROLLOUT_USAGE_TAIL_BYTES }
+  )
+  return offset === null ? null : tally
+}
+
+export interface RolloutUsage extends UsageTokenBreakdown {
+  total: number
+  /** Carried so a cached entry can still be mapped back to its thread. */
+  file: string
+  rateLimits: Record<string, unknown> | null
+  rateLimitsAt: number | null
 }
 
 /**
@@ -209,28 +321,17 @@ async function readRateLimits(rolloutPaths: readonly string[]): Promise<{
  * `input_tokens` and `reasoning_output_tokens` inside `output_tokens`, so the
  * cached share is subtracted out to match how every other provider reports.
  */
-async function scanRolloutUsage(file: string): Promise<
-  UsageTokenBreakdown & {
-    total: number
-    /** Carried so a cached entry can still be mapped back to its thread. */
-    file: string
+export async function scanRolloutUsage(
+  file: string
+): Promise<RolloutUsage | null> {
+  const tally = await readRolloutTally(file)
+  if (!tally) return null
+  const limits = {
+    rateLimits: tally.rateLimits,
+    rateLimitsAt: tally.rateLimitsAt,
   }
-> {
-  let found: Record<string, unknown> | null = null
-  await forEachLine(
-    file,
-    (line) => {
-      if (line.indexOf('"token_count"') < 0) return
-      const row = parseJson(line)
-      const payload = record(row?.payload)
-      if (payload?.type !== "token_count") return
-      const total = record(record(payload.info)?.total_token_usage)
-      if (total) found = total
-    },
-    { fromEnd: ROLLOUT_USAGE_TAIL_BYTES }
-  )
-  const usage = found as Record<string, unknown> | null
-  if (!usage) return { ...emptyTokenBreakdown(), total: 0, file }
+  const usage = tally.usage
+  if (!usage) return { ...emptyTokenBreakdown(), total: 0, file, ...limits }
   const cacheRead = numberValue(usage.cached_input_tokens)
   const input = Math.max(0, numberValue(usage.input_tokens) - cacheRead)
   return {
@@ -241,6 +342,7 @@ async function scanRolloutUsage(file: string): Promise<
     cacheWrite: numberValue(usage.cache_write_input_tokens),
     total: numberValue(usage.total_tokens),
     file,
+    ...limits,
   }
 }
 
@@ -289,39 +391,67 @@ export async function collectCodexUsage(options: {
       longestSessionMs = Math.max(longestSessionMs, activeMs)
     }
     const model = stringValue(thread.model)
-    if (model) models.set(model, (models.get(model) ?? 0) + tokens)
+    if (model) {
+      const id = normalizeModelId(model)
+      models.set(id, (models.get(id) ?? 0) + tokens)
+    }
     const effort = stringValue(thread.reasoning_effort)
     if (effort) efforts.set(effort, (efforts.get(effort) ?? 0) + 1)
     const project = projectLabel(thread.cwd)
     if (project) projects.set(project, (projects.get(project) ?? 0) + tokens)
   }
 
+  // Keyed by the file found on disk, which is what the scan reports.
+  const located = await Promise.all(
+    threads.map(async (thread) => ({
+      thread,
+      file: thread.rollout_path
+        ? await findRollout(home, thread.rollout_path)
+        : null,
+    }))
+  )
   const modelByRollout = new Map<string, string>()
   const dayByRollout = new Map<string, string>()
-  for (const thread of threads) {
+  const rollouts: string[] = []
+  let missingRollouts = 0
+  for (const { thread, file } of located) {
+    if (!file) {
+      if (thread.rollout_path && numberValue(thread.tokens_used) > 0)
+        missingRollouts += 1
+      continue
+    }
+    rollouts.push(file)
     const model = stringValue(thread.model)
-    if (thread.rollout_path && model) {
-      modelByRollout.set(localPath(thread.rollout_path), model)
-    }
+    if (model) modelByRollout.set(file, normalizeModelId(model))
     const created = numberValue(thread.created_at)
-    if (thread.rollout_path && created > 0) {
-      dayByRollout.set(localPath(thread.rollout_path), localDay(created * 1000))
-    }
+    if (created > 0) dayByRollout.set(file, localDay(created * 1000))
   }
-  const rollouts = threads
-    .filter((thread) => Boolean(thread.rollout_path))
-    .sort((a, b) => numberValue(b.updated_at) - numberValue(a.updated_at))
-    .map((thread) => localPath(thread.rollout_path as string))
-  const { limits, plan } = await readRateLimits(
-    rollouts.slice(0, ROLLOUT_LIMIT_CANDIDATES)
-  )
 
-  const split = await scanWithCache({
+  // Reading a compressed rollout takes the whole file, so they are read one
+  // at a time: once, behind the page, and cached for good after that.
+  const split = await scanWithCache<RolloutUsage>({
     dataDir: options.dataDir,
     scope: "codex",
+    revision: ROLLOUT_CACHE_REVISION,
+    concurrency: 1,
     files: rollouts,
     compute: scanRolloutUsage,
   })
+  // The freshest limits Codex reported, from whichever rollout holds them.
+  let latestLimits: RolloutUsage | null = null
+  for (const usage of split.values) {
+    if (
+      usage.rateLimits &&
+      usage.rateLimitsAt !== null &&
+      (latestLimits === null ||
+        usage.rateLimitsAt > (latestLimits.rateLimitsAt ?? 0))
+    ) {
+      latestLimits = usage
+    }
+  }
+  const { limits, plan } = latestLimits?.rateLimits
+    ? rateLimitsOf(latestLimits.rateLimits)
+    : { limits: [], plan: null }
   const tokens = emptyTokenBreakdown()
   const modelTokens = new Map<string, PricedTokens>()
   let splitTotal = 0
@@ -433,6 +563,16 @@ export async function collectCodexUsage(options: {
       `The token split is read from the end of each session log and covers ${percent(splitCoverage)} of those tokens; the rest belongs to logs whose final tally sits further back than the tail that is read.`
     )
   }
+  if (missingRollouts > 0) {
+    notes.push(
+      `${missingRollouts.toLocaleString("en-US")} session logs named in Codex's index are no longer on disk; their tokens count in the totals, without a split or cost.`
+    )
+  }
+  if (!CAN_READ_ZSTD && rollouts.some((file) => file.endsWith(".zst"))) {
+    notes.push(
+      "Codex compressed most of its session logs, which this runtime cannot read, so their token split and cost are missing."
+    )
+  }
   if (!databasePath) {
     notes.push("No Codex thread index was found in ~/.codex.")
   }
@@ -459,12 +599,18 @@ export async function collectCodexUsage(options: {
     pricesFile: priceBook.file,
     models: topEntries(models, 20).map((entry) => ({
       ...entry,
-      ...(costByModel.has(entry.id) ? { cost: costByModel.get(entry.id) } : {}),
+      label: modelLabel(entry.id),
+      ...(costByModel.has(normalizeModelId(entry.id))
+        ? { cost: costByModel.get(normalizeModelId(entry.id)) }
+        : {}),
     })),
     insights,
     lists,
     limits,
-    limitsObservedAt: null,
+    limitsObservedAt:
+      latestLimits?.rateLimitsAt != null
+        ? new Date(latestLimits.rateLimitsAt).toISOString()
+        : null,
     limitNotes: [],
     notes,
   }

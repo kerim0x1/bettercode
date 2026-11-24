@@ -7,7 +7,7 @@ import type { AppState } from "../../appState"
 import { HttpError } from "../../errors"
 import { threadId as toThreadId } from "../../provider/runtime"
 import { autoCompactionContextSnapshot } from "../auto-compaction"
-import { asHubProviderKind, resolveHubInstanceId } from "./dispatch"
+import { asHubProviderKind } from "./dispatch"
 import { markActiveDispatchInterrupted } from "./dispatch-lifecycle"
 import { withChatRecoveryMutation } from "./requests"
 import { threadGoals } from "./goal-registry"
@@ -26,22 +26,11 @@ export async function interruptChatTurn(
       body.threadId,
       async (): Promise<{ status: "interrupted" }> => {
         const hubKind = asHubProviderKind(body.providerKind)
-        if (
-          hubKind &&
-          (state.providerHub.has(hubKind) || body.providerInstanceId)
-        ) {
-          const providerInstanceId = resolveHubInstanceId({
-            state,
-            providerKind: hubKind,
-            threadId: body.threadId,
-            explicitInstanceId: body.providerInstanceId,
-            operation: "interrupt",
-            requireBinding: true,
-          })
+        if (hubKind) {
           await state.providerHub.interruptTurnForInstance(
             hubKind,
             toThreadId(body.threadId),
-            providerInstanceId,
+            body.providerInstanceId,
             state.providerSessionBindings
           )
           markActiveDispatchInterrupted(state, body.threadId)

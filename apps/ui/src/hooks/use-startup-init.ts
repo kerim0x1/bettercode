@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { useAppearanceStore } from "@/lib/appearance-store"
 import { usePluginStore } from "@/lib/plugin-store"
 import { usePreferencesStore } from "@/lib/preferences-store"
+import { useUserIdentityStore } from "@/lib/user-identity-store"
 import { gitUserProfile } from "@/services/backend/gitApi"
 
 /**
@@ -15,7 +16,8 @@ import { gitUserProfile } from "@/services/backend/gitApi"
  *
  * Returns the two git-derived strings as `{ gitUserName, gitHubUser }` —
  * both default to empty strings so the caller can use them directly in
- * `||` fallback chains without null-checks.
+ * `||` fallback chains without null-checks. The same identity goes to
+ * `useUserIdentityStore`, which labels the user's messages in the chat.
  */
 export function useStartupInit(gitCwd?: string | null) {
   useEffect(() => {
@@ -50,11 +52,17 @@ export function useStartupInit(gitCwd?: string | null) {
           ""
         setGitUserName(displayName)
         setGitHubUser(githubUser)
+        useUserIdentityStore
+          .getState()
+          .setIdentity({ name: displayName, githubUser })
       })
       .catch(() => {
         if (cancelled) return
         setGitUserName("")
         setGitHubUser("")
+        useUserIdentityStore
+          .getState()
+          .setIdentity({ name: "", githubUser: "" })
       })
 
     return () => {

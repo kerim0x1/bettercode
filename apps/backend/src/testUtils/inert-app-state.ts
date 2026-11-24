@@ -65,7 +65,11 @@ function inertMembers(): Members {
       getLatestForThread: () => null,
       list: () => [],
     },
-    threadActivities: { latestByThreadKind: () => null, upsert: () => {} },
+    threadActivities: {
+      latestByThreadKind: () => null,
+      latestProviderTurnBoundary: () => null,
+      upsert: () => {},
+    },
     providerHub: {
       withThreadMaintenance: (_threadId: string, operation: () => unknown) =>
         operation(),

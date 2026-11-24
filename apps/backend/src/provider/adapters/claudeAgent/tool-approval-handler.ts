@@ -1,28 +1,29 @@
 import {
-  awaitApproval,
   classifyTool,
   describeBlock,
   evaluatePermission,
-  generateApprovalRequestId,
   normalizeLevel,
-} from "../../permissions";
+  requestToolApproval,
+} from "../../permissions"
 import {
   classifyToolPermission,
   ASK_MODE_DENY_MESSAGE,
   PLAN_MODE_DENY_MESSAGE,
   normalizeChatMode,
-} from "../../shared/chat-mode-tools";
-import {
-  evaluateBetterC0deProjectToolPermission,
-} from "../../project-tool-policy";
-import type { ProjectPermissionRule } from "../../project-permission-rules";
+} from "../../shared/chat-mode-tools"
+import { evaluateBetterC0deProjectToolPermission } from "../../project-tool-policy"
+import type { ProjectPermissionRule } from "../../project-permission-rules"
 
-type EmitFn = (event: { event_type: string; thread_id: string; payload: Record<string, unknown> }) => void;
+type EmitFn = (event: {
+  event_type: string
+  thread_id: string
+  payload: Record<string, unknown>
+}) => void
 
 export type CanUseTool = (
   toolName: string,
-  toolInput: unknown,
-) => Promise<{ behavior: "allow" | "deny"; input?: unknown; reason?: string }>;
+  toolInput: unknown
+) => Promise<{ behavior: "allow" | "deny"; input?: unknown; reason?: string }>
 
 /**
  * Build a SDK `canUseTool` callback for the given permission level + chat mode.
@@ -46,64 +47,72 @@ export function buildCanUseTool(
   emit: EmitFn,
   chatMode: string | null | undefined,
   options: {
-    readonly projectPermissionRules?: readonly ProjectPermissionRule[];
-  } = {},
+    readonly projectPermissionRules?: readonly ProjectPermissionRule[]
+    readonly signal?: AbortSignal
+  } = {}
 ): CanUseTool {
-  const normalizedMode = normalizeChatMode(chatMode);
-  const isPlanMode = normalizedMode === "plan";
-  const isAskMode = normalizedMode === "ask" || normalizedMode === "restricted";
-  const isSecurityMode = normalizedMode === "security";
-  const projectPermissionRules = options.projectPermissionRules ?? [];
+  const normalizedMode = normalizeChatMode(chatMode)
+  const isPlanMode = normalizedMode === "plan"
+  const isAskMode = normalizedMode === "ask" || normalizedMode === "restricted"
+  const isSecurityMode = normalizedMode === "security"
+  const projectPermissionRules = options.projectPermissionRules ?? []
 
   return async (toolName, toolInput) => {
+    if (options.signal?.aborted)
+      return { behavior: "deny", reason: "Turn cancelled." }
     if (isPlanMode) {
-      const permissionClass = classifyToolPermission(toolName);
+      const permissionClass = classifyToolPermission(toolName)
       if (permissionClass !== "read") {
         emit({
           event_type: "content_delta",
           thread_id: threadId,
           payload: { delta: `\n\n> ${PLAN_MODE_DENY_MESSAGE}\n\n` },
-        });
-        return { behavior: "deny" as const, reason: PLAN_MODE_DENY_MESSAGE };
+        })
+        return { behavior: "deny" as const, reason: PLAN_MODE_DENY_MESSAGE }
       }
     }
 
     if (isAskMode) {
-      const permissionClass = classifyToolPermission(toolName);
+      const permissionClass = classifyToolPermission(toolName)
       if (permissionClass !== "read") {
         emit({
           event_type: "content_delta",
           thread_id: threadId,
           payload: { delta: `\n\n> ${ASK_MODE_DENY_MESSAGE}\n\n` },
-        });
-        return { behavior: "deny" as const, reason: ASK_MODE_DENY_MESSAGE };
+        })
+        return { behavior: "deny" as const, reason: ASK_MODE_DENY_MESSAGE }
       }
     }
 
     const projectRule = evaluateBetterC0deProjectToolPermission(
       projectPermissionRules,
-      { toolName, toolInput },
-    );
+      { toolName, toolInput }
+    )
     if (projectRule?.action === "deny") {
-      const reason = `BetterC0de project permission denied ${projectRule.permission}:${projectRule.pattern}.`;
+      const reason = `BetterC0de project permission denied ${projectRule.permission}:${projectRule.pattern}.`
       emit({
         event_type: "content_delta",
         thread_id: threadId,
         payload: { delta: `\n\n> ${reason}\n\n` },
-      });
-      return { behavior: "deny" as const, reason };
+      })
+      return { behavior: "deny" as const, reason }
     }
 
-    const cls = classifyTool(toolName, toolInput);
+    const cls = classifyTool(toolName, toolInput)
     // Plan/Ask tools still pass project and durable policy. Safe question/plan
     // builtins are classified by the hard gate above, while network tools keep
     // the read-only policy's explicit egress approval.
-    const ceilingDecision = (isPlanMode || isAskMode) && cls !== "egress"
-      ? "allow"
-      : evaluatePermission(
-          isPlanMode || isAskMode ? "read-only" : isSecurityMode ? "ask-on-edit" : level,
-          cls,
-        );
+    const ceilingDecision =
+      (isPlanMode || isAskMode) && cls !== "egress"
+        ? "allow"
+        : evaluatePermission(
+            isPlanMode || isAskMode
+              ? "read-only"
+              : isSecurityMode
+                ? "ask-on-edit"
+                : level,
+            cls
+          )
     // Repository policy may narrow a session (deny/ask), but must never
     // widen its immutable user/security ceiling. In particular, an `allow`
     // rule cannot turn read-only or Security mode into write/execute access.
@@ -111,45 +120,47 @@ export function buildCanUseTool(
       ceilingDecision === "deny"
         ? "deny"
         : projectRule?.action === "ask"
-        ? "ask"
-        : projectRule?.action === "allow" && ceilingDecision === "allow"
-          ? "allow"
-          : ceilingDecision;
+          ? "ask"
+          : projectRule?.action === "allow" && ceilingDecision === "allow"
+            ? "allow"
+            : ceilingDecision
 
     if (decision === "allow") {
-      return { behavior: "allow" as const };
+      return { behavior: "allow" as const }
     }
 
     if (decision === "deny") {
-      const reason = describeBlock(level, toolName);
+      const reason = describeBlock(level, toolName)
       emit({
         event_type: "content_delta",
         thread_id: threadId,
         payload: { delta: `\n\n> ${reason}\n\n` },
-      });
-      return { behavior: "deny" as const, reason };
+      })
+      return { behavior: "deny" as const, reason }
     }
 
     // ask-on-edit: surface an approval request and wait on the renderer.
-    const requestId = generateApprovalRequestId();
-    emit({
-      event_type: "tool_approval_requested",
-      thread_id: threadId,
-      payload: {
-        providerKind: "anthropic_cli",
-        requestId,
-        tool: toolName,
-        input: toolInput ?? {},
-      },
-    });
-    const answer = await awaitApproval(threadId, requestId);
-    if (answer === "approve") return { behavior: "allow" as const };
-    const reason = describeBlock(level, toolName);
+    const answer = await requestToolApproval(threadId, (requestId) => {
+      emit({
+        event_type: "tool_approval_requested",
+        thread_id: threadId,
+        payload: {
+          providerKind: "anthropic_cli",
+          requestId,
+          tool: toolName,
+          input: toolInput ?? {},
+        },
+      })
+    })
+    if (options.signal?.aborted)
+      return { behavior: "deny", reason: "Turn cancelled." }
+    if (answer === "approve") return { behavior: "allow" as const }
+    const reason = describeBlock(level, toolName)
     emit({
       event_type: "content_delta",
       thread_id: threadId,
       payload: { delta: `\n\n> ${reason} (user denied)\n\n` },
-    });
-    return { behavior: "deny" as const, reason };
-  };
+    })
+    return { behavior: "deny" as const, reason }
+  }
 }

@@ -916,6 +916,7 @@ export class ThreadActivityProjectionQuery {
   private readonly listBeforeNonNullCursorStmt
   private readonly listBeforeNullCursorStmt
   private readonly latestByThreadKindStmt
+  private readonly latestProviderTurnBoundaryStmt
   private readonly deleteByThreadStmt
 
   constructor(db: Db) {
@@ -1073,6 +1074,17 @@ export class ThreadActivityProjectionQuery {
         sequence DESC,
         created_at DESC,
         activity_id DESC
+      LIMIT 1
+    `)
+    this.latestProviderTurnBoundaryStmt = db.prepare(`
+      SELECT *
+      FROM projection_thread_activities
+      WHERE thread_id = ? AND (
+        kind IN ('turn.completed', 'turn.aborted')
+        OR CASE WHEN kind = 'session.exited' AND json_valid(payload_json)
+           THEN json_extract(payload_json, '$.status') = 'interrupted' END
+      )
+      ORDER BY sequence DESC, created_at DESC, activity_id DESC
       LIMIT 1
     `)
     this.deleteByThreadStmt = db.prepare(`
@@ -1242,6 +1254,28 @@ export class ThreadActivityProjectionQuery {
       tone: row.tone,
       summary: row.summary,
       payload,
+      sequence: row.sequence,
+      created_at: row.created_at,
+    }
+  }
+
+  /** One reverse scan from the newest activity to the most recent turn boundary. */
+  latestProviderTurnBoundary(
+    threadId: string
+  ): ThreadActivityProjection | null {
+    const row = this.latestProviderTurnBoundaryStmt.get(threadId) as
+      | ThreadActivityRow
+      | undefined
+    if (!row) return null
+    return {
+      activity_id: row.activity_id,
+      thread_id: row.thread_id,
+      turn_id: row.turn_id,
+      provider_instance_id: row.provider_instance_id,
+      kind: row.kind,
+      tone: row.tone,
+      summary: row.summary,
+      payload: parseActivityPayload(row),
       sequence: row.sequence,
       created_at: row.created_at,
     }

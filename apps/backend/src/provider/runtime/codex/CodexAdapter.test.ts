@@ -12,6 +12,7 @@ import {
 import { CodexSessionRuntime } from "./CodexSessionRuntime"
 import { CodexRpcClient } from "./rpc"
 import type { ThreadId } from "../contracts"
+import { deferred } from "../../../testUtils/deferred"
 
 const tempRoots: string[] = []
 const sessionAdapters: CodexAdapter[] = []
@@ -357,6 +358,94 @@ afterEach(async () => {
 })
 
 describe("CodexAdapter", () => {
+  it("closes a child still starting and discards its late startup result", async () => {
+    const fake = makeFakeCodexBinary()
+    const persistProviderThreadId = vi.fn()
+    const adapter = new CodexAdapter({
+      providerInstanceId: "codex",
+      continuationKey: "codex",
+      binaryPath: fake.binaryPath,
+      clientInfo: { name: "test", title: "Test", version: "0.0.0" },
+      getStoredProviderThreadId: () => null,
+      persistProviderThreadId,
+    })
+    const started = deferred<CodexSessionRuntime>()
+    const releaseStartup = deferred<void>()
+    const originalStart = CodexSessionRuntime.prototype.start
+    const start = vi
+      .spyOn(CodexSessionRuntime.prototype, "start")
+      .mockImplementation(async function (this: CodexSessionRuntime, options) {
+        await originalStart.call(this, options)
+        started.resolve(this)
+        await releaseStartup.promise
+      })
+    const startup = adapter.startSession({
+      threadId: "starting" as ThreadId,
+      cwd: fake.dir,
+    })
+    void startup.catch(started.reject)
+
+    try {
+      const runtime = await started.promise
+      expect(runtime.isAlive()).toBe(true)
+      await adapter.stopAll()
+      expect(runtime.isAlive()).toBe(false)
+
+      releaseStartup.resolve()
+      await expect(startup).rejects.toThrow("startup was cancelled")
+      expect(await adapter.listSessions()).toEqual([])
+      expect(persistProviderThreadId).not.toHaveBeenCalled()
+    } finally {
+      releaseStartup.resolve()
+      try {
+        await startup.catch(() => {})
+        await adapter.stopAll()
+      } finally {
+        start.mockRestore()
+      }
+    }
+  })
+
+  it("does not spawn after shutdown during startup configuration lookup", async () => {
+    const fake = makeFakeCodexBinary()
+    const configuring = deferred<void>()
+    const configuration = deferred<null>()
+    const adapter = new CodexAdapter({
+      providerInstanceId: "codex",
+      continuationKey: "codex",
+      binaryPath: fake.binaryPath,
+      clientInfo: { name: "test", title: "Test", version: "0.0.0" },
+      getStoredProviderThreadId: () => null,
+      persistProviderThreadId: vi.fn(),
+      resolveCodeSearchServer: () => {
+        configuring.resolve()
+        return configuration.promise
+      },
+    })
+    const start = vi.spyOn(CodexSessionRuntime.prototype, "start")
+    const startup = adapter.startSession({
+      threadId: "configuring" as ThreadId,
+      cwd: fake.dir,
+    })
+    void startup.catch(configuring.reject)
+
+    try {
+      await configuring.promise
+      await adapter.stopAll()
+      configuration.resolve(null)
+      await expect(startup).rejects.toThrow("startup was cancelled")
+      expect(start).not.toHaveBeenCalled()
+    } finally {
+      configuration.resolve(null)
+      try {
+        await startup.catch(() => {})
+        await adapter.stopAll()
+      } finally {
+        start.mockRestore()
+      }
+    }
+  })
+
   it.each([false, true])(
     "cleans up startup when thread persistence fails (cleanup retry: %s)",
     async (retryCleanup) => {
@@ -403,10 +492,10 @@ describe("CodexAdapter", () => {
         await adapter.stopAll()
         expect(closeSpy).toHaveBeenCalledTimes(retryCleanup ? 2 : 1)
       } finally {
-        for (const runtime of startSpy.mock.contexts)
-          await originalClose.call(runtime)
+        const runtimes = [...startSpy.mock.contexts]
         startSpy.mockRestore()
         closeSpy.mockRestore()
+        for (const runtime of runtimes) await originalClose.call(runtime)
       }
     }
   )

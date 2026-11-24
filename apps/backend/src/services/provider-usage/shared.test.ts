@@ -4,6 +4,7 @@ import {
   addDay,
   countMax,
   localDay,
+  modelLabel,
   percent,
   streaks,
   summarize,
@@ -162,5 +163,22 @@ describe("parseLimits", () => {
 
   it("survives output without any percentages", () => {
     expect(parseLimits("Nothing to report").limits).toEqual([])
+  })
+})
+
+describe("modelLabel", () => {
+  it.each([
+    ["claude-opus-5-5", "Claude Opus 5.5"],
+    ["claude-haiku-4-5-20251001", "Claude Haiku 4.5"],
+    ["claude-fable-5", "Claude Fable 5"],
+    ["claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet"],
+    ["gpt-5.6-sol", "GPT-5.6 Sol"],
+    ["gpt-6-astra", "GPT-6 Astra"],
+    ["gpt-5.3-codex-spark", "GPT-5.3 Codex Spark"],
+    ["o4-mini", "o4 Mini"],
+    ["grok-4.7-build-fast", "Grok 4.7 Build Fast"],
+    ["coding-codex", "Coding Codex"],
+  ])("names %s as %s", (id, label) => {
+    expect(modelLabel(id)).toBe(label)
   })
 })

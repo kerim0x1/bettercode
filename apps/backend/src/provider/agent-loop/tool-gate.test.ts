@@ -6,6 +6,7 @@ import {
 } from "../agent-permission-runtime"
 import {
   cancelPendingApprovals,
+  pendingApprovalCount,
   resolveApproval,
   type PermissionLevel,
 } from "../permissions"
@@ -15,6 +16,75 @@ const threadId = "direct-mode-ceiling"
 afterEach(() => {
   cancelPendingApprovals(threadId)
   setDefaultAgentPermissionRuntime(null)
+})
+
+describe("direct tool approval delivery", () => {
+  const call = {
+    threadId,
+    level: "ask-on-edit",
+    mode: "agent",
+    toolName: "Write",
+    input: { file_path: "src/file.ts" },
+  } as const
+
+  it.each(["anthropic", "openai", "grok", "openrouter", "lmstudio"])(
+    "accepts an immediate approval for %s",
+    async (providerKind) => {
+      await expect(
+        gateToolCall({
+          ...call,
+          providerKind,
+          emit: ({ payload }) => {
+            expect(
+              resolveApproval(threadId, String(payload.requestId), "approve")
+            ).toBe(true)
+          },
+        })
+      ).resolves.toEqual({ allow: true })
+    }
+  )
+
+  it("cancels an approval while it is being published", async () => {
+    const controller = new AbortController()
+    await expect(
+      gateToolCall({
+        ...call,
+        providerKind: "openai",
+        signal: controller.signal,
+        emit: () => {
+          controller.abort()
+          expect(cancelPendingApprovals(threadId)).toBe(1)
+        },
+      })
+    ).resolves.toEqual({ allow: false, reason: "Turn cancelled." })
+  })
+
+  it("does not request approval once the turn has stopped", async () => {
+    const emit = vi.fn()
+    await expect(
+      gateToolCall({
+        ...call,
+        providerKind: "anthropic",
+        signal: AbortSignal.abort(),
+        emit,
+      })
+    ).resolves.toEqual({ allow: false, reason: "Turn cancelled." })
+    expect(emit).not.toHaveBeenCalled()
+  })
+
+  it("clears the approval if publishing it fails", async () => {
+    const failure = new Error("could not publish approval")
+    await expect(
+      gateToolCall({
+        ...call,
+        providerKind: "openrouter",
+        emit: () => {
+          throw failure
+        },
+      })
+    ).rejects.toBe(failure)
+    expect(pendingApprovalCount(threadId)).toBe(0)
+  })
 })
 
 describe("direct tool gate mode ceilings", () => {

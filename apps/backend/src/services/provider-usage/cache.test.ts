@@ -39,6 +39,38 @@ describe("scanWithCache", () => {
     compute: async (file: string) => compute(file),
   })
 
+  it("starts a scope over when its revision changes", async () => {
+    const file = write("a.jsonl", "one")
+    let computations = 0
+    const compute = () => {
+      computations += 1
+      return 1
+    }
+    await scanWithCache({ ...options([file], compute), revision: 1 })
+    await scanWithCache({ ...options([file], compute), revision: 1 })
+    expect(computations).toBe(1)
+    await scanWithCache({ ...options([file], compute), revision: 2 })
+    expect(computations).toBe(2)
+  })
+
+  it("keeps the order of the files however their scans finish", async () => {
+    const names = ["a", "b", "c", "d", "e", "f"]
+    const files = names.map((name) => write(`${name}.jsonl`, name))
+    const result = await scanWithCache({
+      dataDir,
+      scope: "order",
+      files,
+      compute: async (file) => {
+        // Earlier files finish later.
+        const delay = (files.length - files.indexOf(file)) * 5
+        await new Promise((resolve) => setTimeout(resolve, delay))
+        return path.basename(file, ".jsonl")
+      },
+    })
+    expect(result.values).toEqual(names)
+    expect(result.scanned).toBe(names.length)
+  })
+
   it("computes once and reuses the cached aggregate", async () => {
     const file = write("a.jsonl", "one")
     let computations = 0

@@ -1,10 +1,16 @@
 import { logger } from "../../observability/logger"
-import { isAcpProviderDriver } from "./providerDrivers"
+import {
+  isAcpProviderDriver,
+  providerDriverDescriptor,
+} from "./providerDrivers"
 
 // ACP startup includes a child spawn, authentication and session setup. Its
 // RPC calls can each wait longer than the short turn-interruption budget.
 const ACP_SESSION_START_TIMEOUT_MS = 75_000
 const ACP_SESSION_STOP_TIMEOUT_MS = 15_000
+// Codex spawns a child, initializes the app server and opens or resumes a
+// thread before a turn can start.
+const CODEX_SESSION_START_TIMEOUT_MS = 30_000
 
 export function get(
   instance: { readonly driver: string },
@@ -17,6 +23,12 @@ export function get(
   }
   if (acp && label === "stopSession") {
     return Math.max(interruptTimeoutMs, ACP_SESSION_STOP_TIMEOUT_MS)
+  }
+  if (
+    label === "startSession" &&
+    providerDriverDescriptor(instance.driver)?.protocol === "codex-app-server"
+  ) {
+    return Math.max(interruptTimeoutMs, CODEX_SESSION_START_TIMEOUT_MS)
   }
   return interruptTimeoutMs
 }

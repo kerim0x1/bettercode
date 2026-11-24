@@ -101,7 +101,7 @@ export function ThreadGoalCard({
     >
       <section
         aria-label="Thread goal"
-        className="mx-auto mb-2 w-full max-w-[900px] min-w-0 rounded-2xl border border-border/50 bg-sidebar text-foreground"
+        className="mx-auto mb-2 w-full max-w-[1080px] min-w-0 rounded-2xl border border-border/50 bg-sidebar text-foreground"
       >
         <div className="flex min-w-0 items-center gap-1 p-1.5">
           <CollapsibleTrigger asChild>

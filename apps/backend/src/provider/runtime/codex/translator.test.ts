@@ -954,6 +954,7 @@ describe("translateCodexEvent", () => {
         method: "item/permissions/requestApproval",
         requestId: "permission-1",
         params: {
+          turnId: "native-turn-1",
           cwd: "/repo",
           reason: "Need write access",
           permissions: { fileSystem: { write: ["/repo"] } },
@@ -962,6 +963,7 @@ describe("translateCodexEvent", () => {
     ).toMatchObject({
       type: "request.opened",
       requestId: "permission-1",
+      turnId: "native-turn-1",
       kind: "tool_approval",
       tool: "permissions",
       input: {

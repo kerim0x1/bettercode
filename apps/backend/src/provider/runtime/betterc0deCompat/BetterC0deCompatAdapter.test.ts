@@ -3,9 +3,14 @@ import os from "node:os"
 import path from "node:path"
 import { describe, expect, it, vi } from "vitest"
 import { BetterC0deCompatAdapter } from "./BetterC0deCompatAdapter"
-import type { ApprovalRequestId, ThreadId } from "../contracts"
+import type {
+  ApprovalRequestId,
+  ProviderRuntimeEvent,
+  ThreadId,
+} from "../contracts"
 import { CLEANUP_QUARANTINE_RETRY_WINDOW_MS } from "../CleanupQuarantine"
 import { logger } from "../../../observability/logger"
+import { deferred } from "../../../testUtils/deferred"
 
 function platformNodeCliPath(scriptPath: string): string {
   fs.chmodSync(scriptPath, 0o755)
@@ -25,17 +30,33 @@ describe("BetterC0deCompatAdapter", () => {
     const client = createFakeClient({ stream: stream.stream })
     const close = vi.fn(async () => {})
     let finish!: (value: unknown) => void
-    client.app.skills.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
-    const serverConnector = vi.fn(async () => ({ url: "http://127.0.0.1:4096", external: true, close }))
-    const adapter = new BetterC0deCompatAdapter({ clientFactory: (() => client) as never, serverConnector })
+    client.app.skills.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const serverConnector = vi.fn(async () => ({
+      url: "http://127.0.0.1:4096",
+      external: true,
+      close,
+    }))
+    const adapter = new BetterC0deCompatAdapter({
+      clientFactory: (() => client) as never,
+      serverConnector,
+    })
     const probing = adapter.availableSkills()
     await vi.waitFor(() => expect(finish).toBeDefined())
     let stopped = false
-    const stopping = adapter.stopAll().then(() => { stopped = true })
+    const stopping = adapter.stopAll().then(() => {
+      stopped = true
+    })
     try {
       await new Promise((resolve) => setImmediate(resolve))
       expect(stopped).toBe(false)
-      await expect(adapter.availableSkills({ force: true })).rejects.toThrow(/shutdown/i)
+      await expect(adapter.availableSkills({ force: true })).rejects.toThrow(
+        /shutdown/i
+      )
       expect(serverConnector).toHaveBeenCalledOnce()
     } finally {
       finish({ data: [] })
@@ -46,77 +67,133 @@ describe("BetterC0deCompatAdapter", () => {
     expect(close).toHaveBeenCalledOnce()
   })
 
-  it.each([{ id: 12 }, { id: "" }])("rejects malformed created session identifiers: %j", async (data) => {
-    const stream = createPushStream<unknown>()
-    const client = createFakeClient({ stream: stream.stream })
-    client.session.create.mockResolvedValueOnce({ data })
-    const close = vi.fn(async () => {})
-    const adapter = new BetterC0deCompatAdapter({
-      clientFactory: (() => client) as never,
-      serverConnector: async () => ({ url: "http://127.0.0.1:4096", external: true, close }),
-    })
-    await expect(adapter.startSession({ threadId: "malformed" as ThreadId })).rejects.toThrow("invalid session ID")
-    expect(adapter.hasSession("malformed" as ThreadId)).toBe(false)
-    expect(close).toHaveBeenCalledOnce()
-    stream.close()
-  })
+  it.each([{ id: 12 }, { id: "" }])(
+    "rejects malformed created session identifiers: %j",
+    async (data) => {
+      const stream = createPushStream<unknown>()
+      const client = createFakeClient({ stream: stream.stream })
+      client.session.create.mockResolvedValueOnce({ data })
+      const close = vi.fn(async () => {})
+      const adapter = new BetterC0deCompatAdapter({
+        clientFactory: (() => client) as never,
+        serverConnector: async () => ({
+          url: "http://127.0.0.1:4096",
+          external: true,
+          close,
+        }),
+      })
+      await expect(
+        adapter.startSession({ threadId: "malformed" as ThreadId })
+      ).rejects.toThrow("invalid session ID")
+      expect(adapter.hasSession("malformed" as ThreadId)).toBe(false)
+      expect(close).toHaveBeenCalledOnce()
+      stream.close()
+    }
+  )
 
   it("bounds per-directory metadata and prevents invalidated work from refilling the cache", async () => {
     const stream = createPushStream<unknown>()
     const client = createFakeClient({ stream: stream.stream })
     const adapter = new BetterC0deCompatAdapter({
       clientFactory: (() => client) as never,
-      serverConnector: async () => ({ url: "http://127.0.0.1:4096", external: true, close: async () => {} }),
+      serverConnector: async () => ({
+        url: "http://127.0.0.1:4096",
+        external: true,
+        close: async () => {},
+      }),
     })
-    for (let index = 0; index < 70; index++) await adapter.availableSkills({ cwd: `/workspace/${index}` })
+    for (let index = 0; index < 70; index++)
+      await adapter.availableSkills({ cwd: `/workspace/${index}` })
     const calls = client.app.skills.mock.calls.length
     await adapter.availableSkills({ cwd: "/workspace/0" })
     expect(client.app.skills).toHaveBeenCalledTimes(calls + 1)
     let finish!: (value: unknown) => void
-    client.app.skills.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    client.app.skills.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
     const pending = adapter.availableSkills({ cwd: "/pending" })
     await vi.waitFor(() => expect(finish).toBeDefined())
     adapter.invalidateMetadata({ cwd: "/pending" })
     finish({ data: [{ name: "stale", location: "/old" }] })
     await pending
-    client.app.skills.mockResolvedValueOnce({ data: [{ name: "fresh", location: "/new" }] })
-    expect((await adapter.availableSkills({ cwd: "/pending" }))[0]?.name).toBe("fresh")
+    client.app.skills.mockResolvedValueOnce({
+      data: [{ name: "fresh", location: "/new" }],
+    })
+    expect((await adapter.availableSkills({ cwd: "/pending" }))[0]?.name).toBe(
+      "fresh"
+    )
     stream.close()
   })
 
-  it.each(["session", "all"])("cancels and drains a pending startup when stopping %s", async (stopKind) => {
-    const stream = createPushStream<unknown>()
-    const client = createFakeClient({ stream: stream.stream })
-    const close = vi.fn(async () => {})
-    let connected!: (server: { url: string; external: boolean; close: typeof close }) => void
-    const serverConnector = vi.fn(() => new Promise<{ url: string; external: boolean; close: typeof close }>((resolve) => { connected = resolve }))
-    const adapter = new BetterC0deCompatAdapter({ clientFactory: (() => client) as never, serverConnector })
-    const threadId = "pending-start" as ThreadId
-    const starting = adapter.startSession({ threadId })
-    const rejected = expect(starting).rejects.toThrow(/cancelled/i)
-    await vi.waitFor(() => expect(serverConnector).toHaveBeenCalledOnce())
-    const stopping = stopKind === "all" ? adapter.stopAll() : adapter.stopSession(threadId)
-    connected({ url: "http://127.0.0.1:4096", external: false, close })
-    await stopping
-    await rejected
-    expect(client.session.create).not.toHaveBeenCalled()
-    expect(close).toHaveBeenCalledOnce()
-    expect(adapter.hasSession(threadId)).toBe(false)
-    stream.close()
-  })
+  it.each(["session", "all"])(
+    "cancels and drains a pending startup when stopping %s",
+    async (stopKind) => {
+      const stream = createPushStream<unknown>()
+      const client = createFakeClient({ stream: stream.stream })
+      const close = vi.fn(async () => {})
+      let connected!: (server: {
+        url: string
+        external: boolean
+        close: typeof close
+      }) => void
+      const serverConnector = vi.fn(
+        () =>
+          new Promise<{ url: string; external: boolean; close: typeof close }>(
+            (resolve) => {
+              connected = resolve
+            }
+          )
+      )
+      const adapter = new BetterC0deCompatAdapter({
+        clientFactory: (() => client) as never,
+        serverConnector,
+      })
+      const threadId = "pending-start" as ThreadId
+      const starting = adapter.startSession({ threadId })
+      const rejected = expect(starting).rejects.toThrow(/cancelled/i)
+      await vi.waitFor(() => expect(serverConnector).toHaveBeenCalledOnce())
+      const stopping =
+        stopKind === "all" ? adapter.stopAll() : adapter.stopSession(threadId)
+      connected({ url: "http://127.0.0.1:4096", external: false, close })
+      await stopping
+      await rejected
+      expect(client.session.create).not.toHaveBeenCalled()
+      expect(close).toHaveBeenCalledOnce()
+      expect(adapter.hasSession(threadId)).toBe(false)
+      stream.close()
+    }
+  )
 
   it("does not send a prompt after stop while agent discovery is pending", async () => {
     const stream = createPushStream<unknown>()
     const client = createFakeClient({ stream: stream.stream })
     const adapter = new BetterC0deCompatAdapter({
       clientFactory: (() => client) as never,
-      serverConnector: async () => ({ url: "http://127.0.0.1:4096", external: true, close: async () => {} }),
+      serverConnector: async () => ({
+        url: "http://127.0.0.1:4096",
+        external: true,
+        close: async () => {},
+      }),
     })
     const threadId = "stopped-discovery" as ThreadId
     await adapter.startSession({ threadId })
     let discovered!: (agents: never[]) => void
-    vi.spyOn(adapter, "availableAgents").mockImplementation(() => new Promise((resolve) => { discovered = resolve }))
-    const sending = adapter.sendTurn({ threadId, message: "inspect", modelId: "openai/gpt-5", history: [], chatMode: "ask" })
+    vi.spyOn(adapter, "availableAgents").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          discovered = resolve
+        })
+    )
+    const sending = adapter.sendTurn({
+      threadId,
+      message: "inspect",
+      modelId: "openai/gpt-5",
+      history: [],
+      chatMode: "ask",
+    })
     const rejected = expect(sending).rejects.toThrow(/stopped|cancelled/i)
     await flushAsync()
     await adapter.stopSession(threadId)
@@ -184,7 +261,9 @@ describe("BetterC0deCompatAdapter", () => {
   it("re-attempts a quarantined server after the retry window and releases it only once the close is confirmed", async () => {
     const stream = createPushStream<unknown>()
     const client = createFakeClient({ stream: stream.stream })
-    client.session.create.mockRejectedValueOnce(new Error("session create failed"))
+    client.session.create.mockRejectedValueOnce(
+      new Error("session create failed")
+    )
     const close = vi
       .fn<() => Promise<void>>()
       .mockRejectedValue(new Error("server close failed"))
@@ -200,10 +279,16 @@ describe("BetterC0deCompatAdapter", () => {
     })
 
     await expect(
-      adapter.startSession({ threadId: "quarantine-ttl-a" as ThreadId, cwd: "/tmp/project" })
+      adapter.startSession({
+        threadId: "quarantine-ttl-a" as ThreadId,
+        cwd: "/tmp/project",
+      })
     ).rejects.toMatchObject({ name: "AggregateError" })
     await expect(
-      adapter.startSession({ threadId: "quarantine-ttl-b" as ThreadId, cwd: "/tmp/project" })
+      adapter.startSession({
+        threadId: "quarantine-ttl-b" as ThreadId,
+        cwd: "/tmp/project",
+      })
     ).rejects.toMatchObject({ code: "BETTERC0DE_SERVER_CLEANUP_QUARANTINED" })
     const quarantines = (
       adapter as unknown as {
@@ -220,7 +305,10 @@ describe("BetterC0deCompatAdapter", () => {
       // Still failing after the window: not released on the timer, window
       // restarted, new sessions still refused — the process is unconfirmed.
       await expect(
-        adapter.startSession({ threadId: "quarantine-ttl-c" as ThreadId, cwd: "/tmp/project" })
+        adapter.startSession({
+          threadId: "quarantine-ttl-c" as ThreadId,
+          cwd: "/tmp/project",
+        })
       ).rejects.toMatchObject({ code: "BETTERC0DE_SERVER_CLEANUP_QUARANTINED" })
       expect(quarantines.size).toBe(1)
       expect([...quarantines.values()][0]?.firstFailedAt).toBe(expiredAt)
@@ -234,7 +322,10 @@ describe("BetterC0deCompatAdapter", () => {
 
       close.mockResolvedValue(undefined)
       await expect(
-        adapter.startSession({ threadId: "quarantine-ttl-d" as ThreadId, cwd: "/tmp/project" })
+        adapter.startSession({
+          threadId: "quarantine-ttl-d" as ThreadId,
+          cwd: "/tmp/project",
+        })
       ).resolves.toBeDefined()
       expect(quarantines.size).toBe(0)
     } finally {
@@ -257,7 +348,9 @@ describe("BetterC0deCompatAdapter", () => {
     })
 
     await expect(adapter.availableModels()).resolves.toEqual(
-      expect.arrayContaining([expect.objectContaining({ slug: expect.any(String) })])
+      expect.arrayContaining([
+        expect.objectContaining({ slug: expect.any(String) }),
+      ])
     )
     const cache = (
       adapter as unknown as { modelsCache: { error?: true } | null }
@@ -283,18 +376,16 @@ describe("BetterC0deCompatAdapter", () => {
       threadId: "disposed-session" as ThreadId,
       cwd: "/tmp/project",
     })
-    const context = (
-      adapter as unknown as {
-        sessions: Map<
-          string,
-          {
-            pendingPermissions: Map<string, unknown>
-            pendingQuestions: Map<string, unknown>
-          }
-        >
-        retireDisposedContext(context: unknown): void
-      }
-    )
+    const context = adapter as unknown as {
+      sessions: Map<
+        string,
+        {
+          pendingPermissions: Map<string, unknown>
+          pendingQuestions: Map<string, unknown>
+        }
+      >
+      retireDisposedContext(context: unknown): void
+    }
     const session = context.sessions.get("disposed-session")!
     session.pendingPermissions.set("perm-1", { id: "perm-1" })
     session.pendingQuestions.set("q-1", { id: "q-1" })
@@ -788,6 +879,111 @@ describe("BetterC0deCompatAdapter", () => {
 
     stream.close()
     await adapter.stopAll()
+  })
+
+  it.each(["before submission", "during submission"])(
+    "orders Stop correctly when called %s",
+    async (timing) => {
+      const stream = createPushStream<unknown>()
+      const client = createFakeClient({ stream: stream.stream })
+      const adapter = new BetterC0deCompatAdapter({
+        clientFactory: (() => client) as never,
+        serverConnector: async () => ({
+          url: "http://127.0.0.1:4096",
+          external: true,
+          close: async () => {},
+        }),
+      })
+      const threadId = "interrupt-order" as ThreadId
+      const submission = deferred<unknown>()
+      const events: ProviderRuntimeEvent[] = []
+      const stop = vi.fn(() => adapter.interruptTurn(threadId))
+      const stopOnStart = timing === "before submission"
+      adapter.subscribe((event) => {
+        events.push(event)
+        if (stopOnStart && event.type === "turn.started") void stop()
+      })
+      if (!stopOnStart)
+        client.session.promptAsync.mockReturnValueOnce(submission.promise)
+
+      await adapter.startSession({ threadId })
+      const sending = adapter.sendTurn({
+        threadId,
+        message: "Build this",
+        modelId: "openai/gpt-5",
+        history: [],
+      })
+      try {
+        if (stopOnStart) {
+          await expect(sending).rejects.toThrow(/before prompt dispatch/)
+          await stop.mock.results[0]?.value
+          expect(client.session.promptAsync).not.toHaveBeenCalled()
+          expect(client.session.abort).not.toHaveBeenCalled()
+        } else {
+          await vi.waitFor(() =>
+            expect(client.session.promptAsync).toHaveBeenCalledOnce()
+          )
+          const stopping = stop()
+          await Promise.resolve()
+          expect(client.session.abort).not.toHaveBeenCalled()
+          submission.resolve({ data: {} })
+          await Promise.all([sending, stopping])
+          expect(client.session.abort).toHaveBeenCalledExactlyOnceWith({
+            sessionID: "oc-session-1",
+          })
+        }
+        expect(stop).toHaveBeenCalledOnce()
+        expect(
+          events.filter((event) => event.type === "turn.aborted")
+        ).toHaveLength(1)
+      } finally {
+        submission.resolve({ data: {} })
+        await Promise.allSettled([sending, stop.mock.results[0]?.value])
+        stream.close()
+        await adapter.stopAll()
+      }
+    }
+  )
+
+  it("retains a remote session when its active turn could not be aborted", async () => {
+    const stream = createPushStream<unknown>()
+    const client = createFakeClient({ stream: stream.stream })
+    const adapter = new BetterC0deCompatAdapter({
+      clientFactory: (() => client) as never,
+      serverConnector: async () => ({
+        url: "http://127.0.0.1:4096",
+        external: true,
+        close: async () => {},
+      }),
+    })
+    const threadId = "remote-stop" as ThreadId
+    const events: ProviderRuntimeEvent[] = []
+    adapter.subscribe((event) => events.push(event))
+    await adapter.startSession({ threadId })
+    await adapter.sendTurn({
+      threadId,
+      message: "Build this",
+      modelId: "openai/gpt-5",
+      history: [],
+    })
+
+    const failure = new Error("Remote abort could not be confirmed")
+    client.session.abort.mockRejectedValueOnce(failure)
+    try {
+      await expect(adapter.stopSession(threadId)).rejects.toBe(failure)
+      expect(adapter.hasSession(threadId)).toBe(true)
+      expect(events.some((event) => event.type === "session.exited")).toBe(
+        false
+      )
+      await adapter.stopSession(threadId)
+      expect(adapter.hasSession(threadId)).toBe(false)
+      expect(
+        events.filter((event) => event.type === "session.exited")
+      ).toHaveLength(1)
+    } finally {
+      stream.close()
+      await adapter.stopAll()
+    }
   })
 
   it("seeds durable history only on the first turn of a fresh compatibility session", async () => {

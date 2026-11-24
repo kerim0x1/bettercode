@@ -10,9 +10,11 @@ import type { UsagePricing } from "./types"
  * of tokens is worse than an honest gap. Add rates for other providers in
  * `model-prices.json` next to the database; see `readOverrides`.
  *
- * Anthropic rates from the bundled Claude API reference (cached 2026-06-24).
- * Cache reads are 0.1x the input rate except where noted; cache writes are
- * 1.25x for the 5-minute TTL and 2x for the 1-hour TTL.
+ * Anthropic rates from platform.claude.com/docs/en/about-claude/pricing,
+ * read 2026-11-16. Cache reads are 0.1x the input rate except where noted;
+ * cache writes are 1.25x for the 5-minute TTL and 2x for the 1-hour TTL.
+ * Claude Haiku 5.5 is left out: it bills by prompt size, which the
+ * aggregates do not keep.
  */
 
 export interface ModelRate {
@@ -54,7 +56,8 @@ function rate(
 }
 
 const BUILT_IN: Readonly<Record<string, ModelRate>> = {
-  // Anthropic — bundled Claude API reference, cached 2026-06-24.
+  // Anthropic — platform.claude.com pricing, read 2026-11-16.
+  "claude-fable-5-2": rate(8, 40, 0.2),
   "claude-fable-5-1": rate(10, 50, 0.25),
   "claude-fable-5": rate(10, 50),
   "claude-opus-5-5": rate(4, 20, 0.2),
@@ -62,12 +65,17 @@ const BUILT_IN: Readonly<Record<string, ModelRate>> = {
   "claude-opus-4-8": rate(5, 25),
   "claude-opus-4-7": rate(5, 25),
   "claude-opus-4-6": rate(5, 25),
+  "claude-opus-4-5": rate(5, 25),
+  "claude-sonnet-5-5": rate(2, 10, 0.1),
   "claude-sonnet-5": rate(2, 10),
   "claude-sonnet-4-6": rate(3, 15),
+  "claude-sonnet-4-5": rate(3, 15),
   "claude-haiku-4-5": rate(1, 5),
 
-  // OpenAI — published rates, read 2026-09-22. Cached input is 0.1x and a
-  // cache write 1.25x of input, the same shape as above.
+  // OpenAI — published rates, read 2026-09-22 (GPT-6.1 Sol 2026-11-16).
+  // Cached input is 0.1x and a cache write 1.25x of input, the same shape as
+  // above.
+  "gpt-6.1-sol": rate(2, 10, 0.1),
   "gpt-6-astra": rate(10, 50),
   "gpt-6-sol": rate(2, 10),
   "gpt-6-luna": rate(0.1, 0.5),
@@ -109,7 +117,7 @@ const OVERRIDE_FILE = "model-prices.json"
 const PER_MILLION = 1_000_000
 
 /** `claude-haiku-4-5-20251001` and `claude-haiku-4-5` are the same model. */
-function normalize(model: string): string {
+export function normalizeModelId(model: string): string {
   return model.trim().replace(/-\d{8}$/, "")
 }
 
@@ -145,7 +153,7 @@ function readOverrides(dataDir: string | null): Record<string, ModelRate> {
     const output = readNumber(entry.output)
     if (input === null || output === null) continue
     const base = rate(input, output, readNumber(entry.cacheRead) ?? undefined)
-    rates[normalize(model)] = {
+    rates[normalizeModelId(model)] = {
       ...base,
       cacheWrite5m: readNumber(entry.cacheWrite5m) ?? base.cacheWrite5m,
       cacheWrite1h: readNumber(entry.cacheWrite1h) ?? base.cacheWrite1h,
@@ -169,7 +177,7 @@ export class PriceBook {
   }
 
   rateFor(model: string): ModelRate | null {
-    const key = normalize(model)
+    const key = normalizeModelId(model)
     return this.overrides[key] ?? BUILT_IN[key] ?? null
   }
 

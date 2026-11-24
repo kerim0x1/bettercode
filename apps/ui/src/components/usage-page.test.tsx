@@ -7,6 +7,7 @@ import { localDayKey } from "@/lib/usage-overview"
 const state = vi.hoisted(() => ({
   reports: [] as ProviderUsageReport[],
   loading: false,
+  refreshing: false,
   error: null as string | null,
   loadedAt: 0,
   load: vi.fn(() => Promise.resolve()),
@@ -79,6 +80,7 @@ describe("usage page", () => {
   beforeEach(() => {
     state.reports = []
     state.loading = false
+    state.refreshing = false
     state.error = null
   })
 
@@ -94,6 +96,15 @@ describe("usage page", () => {
     expect(html).toContain("dark:invert")
     expect(html).not.toContain("Grok")
     expect(html).toContain('aria-busy="true"')
+  })
+
+  it("keeps the shown reports and says so while newer ones are read", () => {
+    state.reports = [report({ provider: "claude" })]
+    state.refreshing = true
+    const html = render()
+    expect(html).toContain("Updating…")
+    expect(html).toContain("motion-safe:animate-spin")
+    expect(html).not.toContain('aria-busy="true"')
   })
 
   it("exposes request errors above the views", () => {

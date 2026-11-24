@@ -37,10 +37,17 @@ export interface AppendScan<T> {
 }
 
 const FINGERPRINT_BYTES = 64
+/**
+ * Files scanned at the same time. Their reads overlap while one file's lines
+ * are parsed; more buys little, because parsing shares the backend's thread.
+ */
+const SCAN_CONCURRENCY = 4
 
 interface ScopeCacheFile {
   version: number
   scope: string
+  /** The scope's own value format, so one scope can start over alone. */
+  revision?: number
   entries: Record<string, CacheEntry<unknown>>
 }
 
@@ -59,7 +66,8 @@ export function usageCachePath(dataDir: string, scope: string): string {
 
 async function readScopeCache(
   dataDir: string,
-  scope: string
+  scope: string,
+  revision: number
 ): Promise<Record<string, CacheEntry<unknown>>> {
   try {
     const raw = await fs.promises.readFile(
@@ -70,6 +78,7 @@ async function readScopeCache(
     if (
       parsed.version !== CACHE_VERSION ||
       parsed.scope !== scope ||
+      (parsed.revision ?? 0) !== revision ||
       typeof parsed.entries !== "object" ||
       parsed.entries === null
     ) {
@@ -84,12 +93,18 @@ async function readScopeCache(
 async function writeScopeCache(
   dataDir: string,
   scope: string,
+  revision: number,
   entries: Record<string, CacheEntry<unknown>>
 ): Promise<void> {
   const target = usageCachePath(dataDir, scope)
   // Unique per write so two overlapping scans can never interleave one file.
   const temporary = `${target}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`
-  const body: ScopeCacheFile = { version: CACHE_VERSION, scope, entries }
+  const body: ScopeCacheFile = {
+    version: CACHE_VERSION,
+    scope,
+    ...(revision !== 0 ? { revision } : {}),
+    entries,
+  }
   try {
     await fs.promises.mkdir(path.dirname(target), { recursive: true })
     await fs.promises.writeFile(temporary, JSON.stringify(body), "utf8")
@@ -124,6 +139,10 @@ export interface FileScanResult<T> {
 export function scanWithCache<T>(options: {
   dataDir: string | null
   scope: string
+  /** Bump when `compute` changes what it returns; the scope starts over. */
+  revision?: number
+  /** Files computed at the same time; 4 unless set. */
+  concurrency?: number
   files: readonly string[]
   compute: (file: string) => Promise<T | null>
 }): Promise<FileScanResult<T>> {
@@ -149,6 +168,8 @@ export function scanWithCache<T>(options: {
 export function scanAppendOnlyWithCache<T>(options: {
   dataDir: string | null
   scope: string
+  /** Bump when `scan` changes what it returns; the scope starts over. */
+  revision?: number
   files: readonly string[]
   scan: (
     file: string,
@@ -212,6 +233,8 @@ async function readFingerprint(
 async function scanFiles<T>(options: {
   dataDir: string | null
   scope: string
+  revision?: number
+  concurrency?: number
   files: readonly string[]
   entryFor: (
     file: string,
@@ -219,42 +242,68 @@ async function scanFiles<T>(options: {
     stat: fs.Stats
   ) => Promise<CacheEntry<T> | null>
 }): Promise<FileScanResult<T>> {
+  const revision = options.revision ?? 0
   const previous = options.dataDir
-    ? await readScopeCache(options.dataDir, options.scope)
+    ? await readScopeCache(options.dataDir, options.scope, revision)
     : {}
+  const files = options.files
+  // One slot per file, so the result keeps the order of `files` however the
+  // concurrent scans finish.
+  const results: Array<{ entry: CacheEntry<unknown>; reused: boolean } | null> =
+    new Array<null>(files.length).fill(null)
+  let nextIndex = 0
+  const worker = async (): Promise<void> => {
+    while (nextIndex < files.length) {
+      const index = nextIndex
+      nextIndex += 1
+      const file = files[index]!
+      let stat: fs.Stats
+      try {
+        stat = await fs.promises.stat(file)
+      } catch {
+        continue
+      }
+      const cached = previous[file]
+      if (
+        cached &&
+        cached.size === stat.size &&
+        cached.mtimeMs === stat.mtimeMs
+      ) {
+        results[index] = { entry: cached, reused: true }
+        continue
+      }
+      const entry = await options.entryFor(file, cached, stat)
+      if (entry !== null) results[index] = { entry, reused: false }
+    }
+  }
+  await Promise.all(
+    Array.from(
+      {
+        length: Math.min(
+          Math.max(1, options.concurrency ?? SCAN_CONCURRENCY),
+          files.length
+        ),
+      },
+      worker
+    )
+  )
+
   const next: Record<string, CacheEntry<unknown>> = {}
   const values: T[] = []
   let scanned = 0
   let reused = 0
-  for (const file of options.files) {
-    let stat: fs.Stats
-    try {
-      stat = await fs.promises.stat(file)
-    } catch {
-      continue
-    }
-    const cached = previous[file]
-    if (
-      cached &&
-      cached.size === stat.size &&
-      cached.mtimeMs === stat.mtimeMs
-    ) {
-      next[file] = cached
-      values.push(cached.value as T)
-      reused += 1
-      continue
-    }
-    const entry = await options.entryFor(file, cached, stat)
-    if (entry === null) continue
-    next[file] = entry
-    values.push(entry.value)
-    scanned += 1
-  }
+  results.forEach((result, index) => {
+    if (!result) return
+    next[files[index]!] = result.entry
+    values.push(result.entry.value as T)
+    if (result.reused) reused += 1
+    else scanned += 1
+  })
   if (
     options.dataDir &&
     (scanned > 0 || Object.keys(previous).length !== Object.keys(next).length)
   ) {
-    await writeScopeCache(options.dataDir, options.scope, next)
+    await writeScopeCache(options.dataDir, options.scope, revision, next)
   }
   return { values, scanned, reused }
 }

@@ -7,6 +7,7 @@ import {
 import { initializeThreadGoals } from "../services/chat/goal-runtime"
 import { initializeThreadAutonomy } from "../services/chat/autonomy-runtime"
 import { initializeChatResume } from "../services/chat/resume-runtime"
+import { observeChatInterruption } from "../services/chat/interruption-context"
 import { ProviderRuntimeIngestion } from "../provider/runtime/ProviderRuntimeIngestion"
 import { recoverPendingCheckpointReverts } from "../services/checkpoint-revert-saga"
 import { withCheckpointRecoveryMutation } from "../http/checkpointRecoveryFence"
@@ -95,7 +96,10 @@ export function recoverProviderRuntime(
     // event only after ingestion has processed it — journaled first whenever
     // journaling applies (auto-save off and transcript-lane deltas are the
     // cases where it does not), never before the journal saw it.
-    projectedSink: (event) => eventBus.emitProjected(event),
+    projectedSink: (event) => {
+      observeChatInterruption(providers.state, event)
+      eventBus.emitProjected(event)
+    },
   })
 
   // Startup checkpoint recovery emits canonical runtime diff events. Wire

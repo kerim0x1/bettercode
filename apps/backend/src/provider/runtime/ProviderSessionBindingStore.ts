@@ -76,6 +76,7 @@ export class ProviderSessionBindingStore {
   private readonly getLatestForThreadProviderStmt
   private readonly getLatestForThreadStmt
   private readonly listStmt
+  private readonly listForThreadStmt
   private readonly upsertStmt
   private readonly rotateGenerationStmt
   private readonly rotateGenerationForProviderSwitchStmt
@@ -150,7 +151,7 @@ export class ProviderSessionBindingStore {
       ORDER BY updated_at DESC, created_at DESC
       LIMIT 1
     `)
-    this.listStmt = db.prepare(`
+    const selectBindings = `
       SELECT
         thread_id,
         provider_instance_id,
@@ -168,6 +169,14 @@ export class ProviderSessionBindingStore {
         created_at,
         updated_at
       FROM provider_session_bindings
+    `
+    this.listStmt = db.prepare(`
+      ${selectBindings}
+      ORDER BY updated_at ASC, created_at ASC
+    `)
+    this.listForThreadStmt = db.prepare(`
+      ${selectBindings}
+      WHERE thread_id = ?
       ORDER BY updated_at ASC, created_at ASC
     `)
     this.upsertStmt = db.prepare(`
@@ -300,6 +309,11 @@ export class ProviderSessionBindingStore {
 
   list(): ProviderSessionBinding[] {
     const rows = this.listStmt.all() as BindingRow[]
+    return rows.map(bindingFromRow)
+  }
+
+  listForThread(threadId: string): ProviderSessionBinding[] {
+    const rows = this.listForThreadStmt.all(threadId) as BindingRow[]
     return rows.map(bindingFromRow)
   }
 

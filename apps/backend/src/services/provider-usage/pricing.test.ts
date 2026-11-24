@@ -38,6 +38,29 @@ describe("PriceBook", () => {
     })
   })
 
+  it("knows the models added to the published price lists", () => {
+    expect(book.rateFor("claude-fable-5-2")).toMatchObject({
+      input: 8,
+      output: 40,
+      cacheRead: 0.2,
+      cacheWrite5m: 10,
+      cacheWrite1h: 16,
+    })
+    expect(book.rateFor("claude-sonnet-5-5")).toMatchObject({
+      input: 2,
+      cacheRead: 0.1,
+    })
+    expect(book.rateFor("claude-opus-4-5-20251101")?.input).toBe(5)
+    expect(book.rateFor("claude-sonnet-4-5-20250929")?.output).toBe(15)
+    expect(book.rateFor("gpt-6.1-sol")).toMatchObject({
+      input: 2,
+      output: 10,
+      cacheRead: 0.1,
+    })
+    // Billed by prompt size, which the aggregates do not keep.
+    expect(book.rateFor("claude-haiku-5-5")).toBeNull()
+  })
+
   it("uses the cheaper cache read rate where the model has one", () => {
     expect(
       book.cost("claude-fable-5-1", tokens({ cacheRead: 1_000_000 }))

@@ -55,8 +55,10 @@ import {
   useRef,
   useState,
 } from "react"
-import { Streamdown } from "streamdown"
+import { defaultRehypePlugins, Streamdown } from "streamdown"
 import { MessageTable } from "./message-table"
+import { emphasizeListLeadIns } from "@/lib/markdown-lead-ins"
+import { rehypeFigures } from "@/lib/rehype-figures"
 import "./message-response.css"
 
 // Visual replies load with the first page an answer shows.
@@ -79,7 +81,11 @@ export const Message = ({ className, from, ...props }: MessageProps) => (
   <div
     className={cn(
       "group flex w-full flex-col gap-2",
-      from === "user" ? "is-user max-w-[95%]" : "is-assistant max-w-full",
+      // The user's own messages sit on the right, without a box; the meta
+      // line and the actions follow them there.
+      from === "user"
+        ? "is-user ml-auto max-w-[85%] items-end"
+        : "is-assistant max-w-full",
       className
     )}
     {...props}
@@ -95,11 +101,9 @@ export const MessageContent = ({
 }: MessageContentProps) => (
   <div
     className={cn(
-      // Settings → Chat → Message Text Size (13px by default).
+      // Settings → Chat → Message Text Size (18px by default).
       "is-user:dark flex w-fit max-w-full min-w-0 flex-col gap-2 overflow-hidden text-[length:var(--message-font-size)]",
-      // bg-card (#1F1F1F) — user bubbles follow the card tier of the
-      // two-color theme instead of the old secondary grey.
-      "group-[.is-user]:rounded-lg group-[.is-user]:bg-card group-[.is-user]:px-4 group-[.is-user]:py-3 group-[.is-user]:text-foreground",
+      "group-[.is-user]:text-foreground",
       "group-[.is-assistant]:text-foreground",
       className
     )}
@@ -809,7 +813,7 @@ function SourceMarkdownLink({
   const { workspaceRoot } = useContext(MessageResponseRenderContext)
   const target = typeof href === "string" ? parseSourceReference(href) : null
   const linkClassName = cn(
-    "font-medium wrap-anywhere text-primary underline",
+    "font-medium wrap-anywhere text-primary underline decoration-primary/40 decoration-1 underline-offset-[3px] transition-colors hover:decoration-primary",
     className
   )
 
@@ -877,6 +881,12 @@ const streamdownComponents = {
   table: MessageTable,
 }
 
+/** Streamdown's own steps (raw HTML, sanitize, harden), then the figures. */
+const responseRehypePlugins = [
+  ...Object.values(defaultRehypePlugins),
+  rehypeFigures,
+]
+
 export const MessageResponse = memo(
   ({
     className,
@@ -899,6 +909,14 @@ export const MessageResponse = memo(
       () => ({ concealCodeBlocks, workspaceRoot, closedVisualFences }),
       [concealCodeBlocks, workspaceRoot, closedVisualFences]
     )
+    // Display only: a line introducing a list reads as its title.
+    const displayed = useMemo(
+      () =>
+        typeof props.children === "string"
+          ? emphasizeListLeadIns(props.children)
+          : props.children,
+      [props.children]
+    )
     return (
       <MessageResponseRenderContext.Provider value={renderContext}>
         <Streamdown
@@ -908,8 +926,11 @@ export const MessageResponse = memo(
           )}
           plugins={streamdownPlugins}
           components={streamdownComponents}
+          rehypePlugins={responseRehypePlugins}
           {...props}
-        />
+        >
+          {displayed}
+        </Streamdown>
       </MessageResponseRenderContext.Provider>
     )
   },

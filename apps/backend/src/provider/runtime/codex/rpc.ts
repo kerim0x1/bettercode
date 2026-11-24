@@ -158,6 +158,7 @@ export class CodexRpcClient extends EventEmitter {
   }
 
   async spawnChild(): Promise<void> {
+    if (this.closed) throw new Error("Codex RPC is closed")
     if (this.child) return
     const { binaryPath, cwd, env, args } = this.options
     const isWindows = process.platform === "win32"
@@ -209,6 +210,8 @@ export class CodexRpcClient extends EventEmitter {
       throw error
     }
 
+    // close() owns the child if it ran while we waited for the spawn event.
+    if (this.closed) throw new Error("Codex RPC closed during startup")
     // Registered so a backend that dies does not leave the app-server
     // running; released once the tree is confirmed gone in close().
     this.untrackChild?.()

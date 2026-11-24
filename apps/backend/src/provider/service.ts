@@ -102,8 +102,9 @@ export interface ProviderServiceOptions {
 
 export interface LegacyProviderTurnHandle {
   readonly turnId: string
+  /** Rejects at the watchdog deadline even if adapter shutdown is still pending. */
   readonly completion: Promise<void>
-  /** Resolves only after terminal hooks and interrupt finalization complete. */
+  /** Settles after the adapter quiesces and terminal hooks finish. */
   readonly settled: Promise<void>
 }
 
@@ -354,9 +355,7 @@ export class ProviderService {
       throw error
     }
 
-    // M5: race the turn against its limits. Without this, a hung adapter
-    // promise never settles and the renderer waits forever — no turn_error
-    // event is ever emitted because the .catch below never fires.
+    // Report watchdog failures even when the adapter takes longer to stop.
     const turnWatchdog = this.startTurnWatchdog(input.thread_id)
     const timeoutPromise = turnWatchdog.timedOut
     let syntheticTerminalEvent: LegacyProviderEvent | undefined
@@ -403,10 +402,10 @@ export class ProviderService {
         }
       })
       .catch(async (err) => {
-        const publicMessage =
-          err instanceof ProviderTurnTimeoutError
-            ? "Provider turn timed out."
-            : "Provider turn failed."
+        const timedOut = err instanceof ProviderTurnTimeoutError
+        const publicMessage = timedOut
+          ? "Provider turn timed out."
+          : "Provider turn failed."
         if (!(err instanceof ProviderTurnDispatchCancelledError)) {
           logger.error(
             {
@@ -435,14 +434,11 @@ export class ProviderService {
               turn_id: turnId,
               dispatchTurnId: turnId,
               provider_kind: kind,
-              status:
-                err instanceof ProviderTurnTimeoutError
-                  ? "timed_out"
-                  : "failed",
+              status: timedOut ? "timed_out" : "failed",
               ...(limit ? { limit } : {}),
             },
           }
-          await this.finalizeActiveTurn(
+          const settlement = this.finalizeActiveTurn(
             input.thread_id,
             active,
             terminalEvent,
@@ -451,6 +447,9 @@ export class ProviderService {
               ? () => this.interruptAdapter(active.adapter, input.thread_id)
               : undefined
           )
+          // The caller can observe a timeout while the settlement still holds
+          // admission and the workspace lease until dispatch has quiesced.
+          if (!timedOut) await settlement
         }
         throw err
       })

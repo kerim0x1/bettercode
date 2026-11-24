@@ -40,11 +40,11 @@ import {
  */
 export class ClaudeAgentAdapter extends BaseProviderAdapter {
   private sessions = new Map<string, SdkQuery>()
-  private abortFlags = new Map<string, boolean>()
+  private abortControllers = new Map<string, AbortController>()
 
   protected _activeSessionIds(): string[] {
     return Array.from(
-      new Set([...this.sessions.keys(), ...this.abortFlags.keys()])
+      new Set([...this.sessions.keys(), ...this.abortControllers.keys()])
     )
   }
 
@@ -73,10 +73,11 @@ export class ClaudeAgentAdapter extends BaseProviderAdapter {
   }
 
   async interrupt(threadId: string): Promise<void> {
-    if (this.abortFlags.has(threadId)) this.abortFlags.set(threadId, true)
+    this.abortControllers.get(threadId)?.abort()
+    // The SDK may be waiting for a permission answer before it can stop.
+    cancelPendingApprovals(threadId)
     const session = this.sessions.get(threadId)
     if (!session) return
-    this.abortFlags.set(threadId, true)
     try {
       if (typeof session.interrupt === "function") {
         await session.interrupt()
@@ -90,19 +91,17 @@ export class ClaudeAgentAdapter extends BaseProviderAdapter {
       )
       throw err
     }
-    this.sessions.delete(threadId)
-    // Release any awaiting permission gates so the SDK promise doesn't hang
-    // after the user stops the turn.
-    cancelPendingApprovals(threadId)
+    if (this.sessions.get(threadId) === session) this.sessions.delete(threadId)
   }
 
   async sendMessage(input: ProviderSendTurnInput): Promise<void> {
-    if (this.abortFlags.has(input.thread_id))
+    if (this.abortControllers.has(input.thread_id))
       throw new Error("Claude Agent turn is already active")
-    this.abortFlags.set(input.thread_id, false)
+    const controller = new AbortController()
+    this.abortControllers.set(input.thread_id, controller)
     try {
       const sdk = await loadClaudeSdk()
-      if (this.abortFlags.get(input.thread_id)) return
+      if (controller.signal.aborted) return
       if (!sdk) {
         throw new Error(
           "@anthropic-ai/claude-agent-sdk is not installed or not resolvable from node-backend"
@@ -116,14 +115,14 @@ export class ClaudeAgentAdapter extends BaseProviderAdapter {
       if (existing?.close) {
         await existing.close()
       }
-      if (this.abortFlags.get(input.thread_id)) return
+      if (controller.signal.aborted) return
 
       const level = normalizeLevel(input.permission_level)
       const chatMode = input.chat_mode ?? null
       const projectToolPolicy = await loadBetterC0deProjectToolPolicy(
         input.project_path
       )
-      if (this.abortFlags.get(input.thread_id)) return
+      if (controller.signal.aborted) return
       const canUseTool = buildCanUseTool(
         input.thread_id,
         level,
@@ -131,6 +130,7 @@ export class ClaudeAgentAdapter extends BaseProviderAdapter {
         chatMode,
         {
           projectPermissionRules: projectToolPolicy.permissionRules,
+          signal: controller.signal,
         }
       )
       const tools = filterToolsForBetterC0deProjectPolicy(
@@ -174,7 +174,7 @@ export class ClaudeAgentAdapter extends BaseProviderAdapter {
 
       try {
         for await (const rawMsg of runtime) {
-          if (this.abortFlags.get(input.thread_id)) break
+          if (controller.signal.aborted) break
           if (process.env.BETTERC0DE_TRACE_PROVIDER_EVENTS === "1") {
             // [REASON-TRACE:CLAUDE-SDK-IN]
             const _r = rawMsg as {
@@ -195,7 +195,6 @@ export class ClaudeAgentAdapter extends BaseProviderAdapter {
         }
       } finally {
         this.sessions.delete(input.thread_id)
-        this.abortFlags.delete(input.thread_id)
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -205,7 +204,9 @@ export class ClaudeAgentAdapter extends BaseProviderAdapter {
       )
       throw err
     } finally {
-      this.abortFlags.delete(input.thread_id)
+      controller.abort()
+      cancelPendingApprovals(input.thread_id)
+      this.abortControllers.delete(input.thread_id)
     }
   }
 }

@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import type { AppState } from "../../appState"
 import { createCommandApprovalMarker } from "../../security/commandApproval"
 import { registerChatRoutes as registerChatRoutesUnfilled } from "./chat"
+import { deferred } from "../../testUtils/deferred"
 import { withInertStateArgument } from "../../testUtils/inert-app-state"
 
 // Doubles name only what a test exercises; the rest is filled in inert.
@@ -58,6 +59,7 @@ async function desktopWithProject(
     const completion = Promise.resolve()
     return { turnId: "turn-1", completion, settled: completion }
   })
+  const getLatestForThreadProvider = vi.fn(() => null)
   const app = new Hono()
   registerChatRoutes(app, {
     ...routingTestServices(),
@@ -87,7 +89,7 @@ async function desktopWithProject(
     worktreeRegistry: { listAll: () => [], findByThread: () => null },
     providerSessionBindings: {
       getLatestForThread: () => null,
-      getLatestForThreadProvider: () => null,
+      getLatestForThreadProvider,
     },
     providerHub: {
       has: () => true,
@@ -136,7 +138,14 @@ async function desktopWithProject(
       ]
     )[1]
   const sentInstruction = () => sentTurn().systemInstruction ?? ""
-  return { send, persistUser, startTurn, sentTurn, sentInstruction }
+  return {
+    send,
+    persistUser,
+    startTurn,
+    sentTurn,
+    sentInstruction,
+    getLatestForThreadProvider,
+  }
 }
 
 /** A failing "on message send" hook the user approved on the desktop. */
@@ -200,6 +209,74 @@ describe("a prepared turn", () => {
 })
 
 describe("message hooks", () => {
+  it.each([true, false])(
+    "shares an in-flight hook outcome between identical sends (success: %s)",
+    async (success) => {
+      const { hook } = failingHook()
+      const entered = deferred<void>()
+      const release = deferred<void>()
+      const successfulHook = {
+        success: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      }
+      const runCommand = vi
+        .fn(async () => successfulHook)
+        .mockImplementationOnce(async () => {
+          entered.resolve()
+          await release.promise
+          return success
+            ? successfulHook
+            : { ...successfulHook, success: false, exitCode: 2 }
+        })
+      const { send, startTurn, getLatestForThreadProvider } =
+        await desktopWithProject([hook], {
+          runCommand,
+        })
+      const body = { userMessageId: "message-1", providerInstanceId: undefined }
+      const first = send(body)
+      await entered.promise
+      const duplicate = send(body)
+      try {
+        // Both requests reach the binding lookup just before dispatch checks
+        // for an in-flight receipt. Keep the first hook paused until then.
+        await vi.waitFor(() =>
+          expect(getLatestForThreadProvider).toHaveBeenCalledTimes(2)
+        )
+        const conflict = await send({ ...body, message: "different message" })
+        expect(conflict.status).toBe(409)
+        expect(await conflict.json()).toMatchObject({
+          code: "dispatch_id_conflict",
+        })
+      } finally {
+        release.resolve()
+      }
+
+      const [original, replay] = await Promise.all([first, duplicate])
+      expect(runCommand).toHaveBeenCalledOnce()
+      if (success) {
+        expect(original.status).toBe(200)
+        expect(replay.status).toBe(200)
+        expect(await replay.json()).toEqual({
+          ...((await original.json()) as Record<string, unknown>),
+          replayed: true,
+        })
+        expect(startTurn).toHaveBeenCalledOnce()
+      } else {
+        expect(original.status).toBe(422)
+        expect(replay.status).toBe(422)
+        expect(await replay.json()).toEqual(await original.json())
+        expect(startTurn).not.toHaveBeenCalled()
+
+        // The original hook failure is shared while pending. A later attempt
+        // can run it again after the user fixes the problem.
+        expect((await send(body)).status).toBe(200)
+        expect(runCommand).toHaveBeenCalledTimes(2)
+      }
+    }
+  )
+
   it("run without prepareTurn too: no client can send around them", async () => {
     const { command, hook } = failingHook()
     const { send, startTurn } = await desktopWithProject([hook])

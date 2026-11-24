@@ -560,6 +560,7 @@ export class OpenAiCompatAdapter extends BaseProviderAdapter {
                 mode,
                 toolName: call.name,
                 input: parsedInput,
+                signal: controller.signal,
                 projectPermissionRules: projectToolPolicy.permissionRules,
               })
 

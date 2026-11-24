@@ -231,6 +231,83 @@ describe("CodexSessionRuntime", () => {
     expect(fake.calls).toEqual([])
   })
 
+  it.each(["turn/completed", "turn/aborted"])(
+    "keeps the current turn interruptible when an older turn reports %s",
+    async (method) => {
+      const runtime = new CodexSessionRuntime({ binaryPath: "codex" })
+      const state = runtime as unknown as {
+        initialized: boolean
+        providerThreadId: string
+        rpc: {
+          call(method: string, params: unknown): Promise<unknown>
+          handleLine(line: string): void
+        }
+        wireRpcListeners(): void
+      }
+      state.initialized = true
+      state.providerThreadId = "native-thread"
+      state.wireRpcListeners()
+      const call = vi.spyOn(state.rpc, "call").mockResolvedValue({})
+      const notify = (method: string, params: unknown) =>
+        state.rpc.handleLine(JSON.stringify({ jsonrpc: "2.0", method, params }))
+      notify("turn/started", { turn: { id: "old-turn" } })
+      notify("turn/completed", { turn: { id: "old-turn" } })
+      notify("turn/started", { turn: { id: "current-turn" } })
+      const onEvent = vi.fn()
+      runtime.on("event", onEvent)
+      notify(method, { turnId: "old-turn", turn: { id: "old-turn" } })
+      expect(onEvent).not.toHaveBeenCalled()
+      expect(runtime.getActiveTurnId()).toBe("current-turn")
+      await runtime.interruptTurn()
+      expect(call).toHaveBeenCalledWith("turn/interrupt", {
+        threadId: "native-thread",
+        turnId: "current-turn",
+      })
+
+      notify("turn/completed", { turn: { id: "current-turn" } })
+      expect(onEvent).toHaveBeenCalledOnce()
+      expect(runtime.getActiveTurnId()).toBeNull()
+    }
+  )
+
+  it("rejects approval callbacks for a different native turn", () => {
+    const runtime = new CodexSessionRuntime({ binaryPath: "codex" })
+    const state = runtime as unknown as {
+      rpc: {
+        handleLine(line: string): void
+        writeServerResponse(message: unknown, method: string): void
+      }
+      wireRpcListeners(): void
+    }
+    state.wireRpcListeners()
+    const write = vi
+      .spyOn(state.rpc, "writeServerResponse")
+      .mockImplementation(() => {})
+    const handle = (message: Record<string, unknown>) =>
+      state.rpc.handleLine(JSON.stringify({ jsonrpc: "2.0", ...message }))
+    handle({ method: "turn/started", params: { turn: { id: "current" } } })
+    const onEvent = vi.fn()
+    runtime.on("event", onEvent)
+    const method = "item/commandExecution/requestApproval"
+    handle({ method, id: "late", params: { turnId: "previous" } })
+    expect(write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "late",
+        error: expect.objectContaining({ code: -32000 }),
+      }),
+      method
+    )
+    expect(onEvent).not.toHaveBeenCalled()
+    handle({ method, id: "live", params: { turnId: "current" } })
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "server-request",
+        method,
+        params: { turnId: "current" },
+      })
+    )
+  })
+
   it("does not expose native spawn diagnostics in provider events", () => {
     const runtime = new CodexSessionRuntime({ binaryPath: "codex" })
     const events: Array<{ kind: string; error?: string }> = []

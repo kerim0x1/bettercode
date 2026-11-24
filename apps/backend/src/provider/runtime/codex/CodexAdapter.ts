@@ -95,9 +95,13 @@ interface SessionContext {
 interface StartupCleanupContext {
   readonly runtime: CodexSessionRuntime
   readonly listener: (e: CodexNativeEvent) => void
-  readonly startFailure: unknown
   closePromise: Promise<void> | null
-  closeFailure: unknown
+}
+
+interface SessionStartup {
+  readonly threadId: ThreadId
+  readonly controller: AbortController
+  cleanup: StartupCleanupContext | null
 }
 
 interface ProbeCleanupContext {
@@ -321,7 +325,7 @@ export class CodexAdapter implements ProviderAdapterShape {
     CodexRpcClient,
     ProbeCleanupContext
   >()
-  private startupInProgress = false
+  private startup: SessionStartup | null = null
   private readonly bus = new EventEmitter()
   private lastKnownModels: ReadonlyArray<ProviderModel> | null = null
   private lastKnownAccount: string | null = null
@@ -616,7 +620,7 @@ export class CodexAdapter implements ProviderAdapterShape {
   }
 
   async startSession(input: CodexStartSessionInput): Promise<ProviderSession> {
-    if (this.startupInProgress) {
+    if (this.startup) {
       throw Object.assign(
         new Error(
           "Another Codex runtime startup or startup cleanup is already in progress."
@@ -627,18 +631,25 @@ export class CodexAdapter implements ProviderAdapterShape {
         }
       )
     }
-    this.startupInProgress = true
+    const startup: SessionStartup = {
+      threadId: input.threadId,
+      controller: new AbortController(),
+      cleanup: null,
+    }
+    this.startup = startup
     try {
-      return await this.startSessionWithAdmission(input)
+      return await this.startSessionWithAdmission(input, startup)
     } finally {
-      this.startupInProgress = false
+      this.startup = null
     }
   }
 
   private async startSessionWithAdmission(
-    input: CodexStartSessionInput
+    input: CodexStartSessionInput,
+    startup: SessionStartup
   ): Promise<ProviderSession> {
     const key = input.threadId as string
+    const { signal } = startup.controller
     try {
       await this.closeAllCleanupQuarantines()
     } catch (error) {
@@ -653,6 +664,7 @@ export class CodexAdapter implements ProviderAdapterShape {
         }
       )
     }
+    signal.throwIfAborted()
     const existing = this.sessions.get(key)
     if (existing && existing.runtime.isAlive() && !existing.unexpectedExit) {
       return existing.session
@@ -674,6 +686,7 @@ export class CodexAdapter implements ProviderAdapterShape {
       }
     }
 
+    signal.throwIfAborted()
     const runtime = new CodexSessionRuntime({
       binaryPath: this.options.binaryPath,
       cwd: input.cwd ?? undefined,
@@ -720,8 +733,6 @@ export class CodexAdapter implements ProviderAdapterShape {
         }
       }
     }
-    runtime.on("event", listener)
-
     const stored =
       providerThreadIdFromResumeCursor(input.resumeCursor) ??
       this.options.getStoredProviderThreadId(key)
@@ -748,6 +759,13 @@ export class CodexAdapter implements ProviderAdapterShape {
       | undefined
     let providerThreadId: string | null = null
     let orchestrationConfig: string
+    const cleanupContext: StartupCleanupContext = {
+      runtime,
+      listener,
+      closePromise: null,
+    }
+    startup.cleanup = cleanupContext
+    runtime.on("event", listener)
     try {
       orchestratorServer = input.cwd
         ? await this.options.resolveOrchestratorServer?.(
@@ -756,10 +774,13 @@ export class CodexAdapter implements ProviderAdapterShape {
           )
         : null
       orchestrationConfig = JSON.stringify(orchestratorServer ?? null)
+      signal.throwIfAborted()
+      const codeSearchServer = input.cwd
+        ? await this.options.resolveCodeSearchServer?.(input.cwd)
+        : null
+      signal.throwIfAborted()
       await runtime.start({
-        codeSearchServer: input.cwd
-          ? await this.options.resolveCodeSearchServer?.(input.cwd)
-          : null,
+        codeSearchServer,
         orchestratorServer,
         cwd: input.cwd,
         storedProviderThreadId: stored,
@@ -769,20 +790,13 @@ export class CodexAdapter implements ProviderAdapterShape {
         sandbox: policies.threadSandbox,
         clientInfo: this.options.clientInfo,
       })
+      // Startup can resume after stopSession has already closed the child.
+      signal.throwIfAborted()
       providerThreadId = runtime.getProviderThreadId()
       if (providerThreadId !== stored || !stored) {
         this.options.persistProviderThreadId(key, providerThreadId)
       }
     } catch (e) {
-      runtime.off("event", listener)
-      const cleanupContext: StartupCleanupContext = {
-        runtime,
-        listener,
-        startFailure: e,
-        closePromise: null,
-        closeFailure: null,
-      }
-      this.addStartupCleanupQuarantine(key, cleanupContext)
       try {
         await this.closeStartupCleanupContext(key, cleanupContext)
       } catch (cleanupError) {
@@ -998,15 +1012,25 @@ export class CodexAdapter implements ProviderAdapterShape {
 
   async stopSession(threadId: ThreadId): Promise<void> {
     const key = threadId as string
+    const startup = this.startup
+    if (startup?.threadId === threadId) {
+      startup.controller.abort(
+        new Error("Codex session startup was cancelled.")
+      )
+      if (startup.cleanup) {
+        await this.closeStartupCleanupContext(key, startup.cleanup)
+      }
+    }
     const ctx = this.sessions.get(key)
     if (!ctx) return
     await this.closeSessionContext(key, ctx)
   }
 
   async stopAll(): Promise<void> {
-    const all = Array.from(this.sessions.keys())
+    const all = new Set(this.sessions.keys())
+    if (this.startup) all.add(this.startup.threadId)
     const results = await Promise.allSettled(
-      all.map((key) => this.stopSession(toThreadId(key)))
+      Array.from(all, (key) => this.stopSession(toThreadId(key)))
     )
     const failures = results.flatMap((result) =>
       result.status === "rejected" ? [result.reason] : []
@@ -1164,24 +1188,22 @@ export class CodexAdapter implements ProviderAdapterShape {
     context: StartupCleanupContext
   ): Promise<void> {
     if (context.closePromise) return await context.closePromise
+    this.addStartupCleanupQuarantine(key, context)
     context.runtime.off("event", context.listener)
     const closePromise = context.runtime.close()
     context.closePromise = closePromise
     try {
       await closePromise
-      context.closeFailure = null
       const contexts = this.startupCleanupQuarantines.get(key)
       contexts?.delete(context)
       if (contexts?.size === 0) {
         this.startupCleanupQuarantines.delete(key)
       }
     } catch (error) {
-      context.closeFailure = error
+      // Retry a failed close. Keep successful closes cached for a startup that
+      // is still unwinding after stopSession closed its runtime.
+      context.closePromise = null
       throw error
-    } finally {
-      if (context.closePromise === closePromise) {
-        context.closePromise = null
-      }
     }
   }
 

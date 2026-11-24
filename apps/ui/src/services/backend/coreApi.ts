@@ -203,12 +203,17 @@ export const loadThreadStats = (
   return invokeContract("threadStats", { query: query ? `?${query}` : "" })
 }
 
-/** Usage read from each provider CLI's own local store. */
+/**
+ * Usage read from each provider CLI's own local store. The backend answers at
+ * once once it has reports; the very first read on a machine decompresses
+ * every Codex session log and can take a minute or more.
+ */
 export const loadProviderUsage = (
   options: { refresh?: boolean } = {}
 ): Promise<ProviderUsageReport[]> =>
   invokeContract("providerUsage", {
     query: options.refresh ? "?refresh=1" : "",
+    timeoutMs: 300_000,
   })
 
 /**

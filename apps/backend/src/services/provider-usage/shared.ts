@@ -4,6 +4,7 @@ import type {
   UsageSummary,
   UsageTokenBreakdown,
 } from "./types"
+import { normalizeModelId } from "./pricing"
 import { emptySummary } from "./types"
 
 /**
@@ -193,4 +194,48 @@ export function addTokens(
   target.reasoning += source.reasoning ?? 0
   target.cacheRead += source.cacheRead ?? 0
   target.cacheWrite += source.cacheWrite ?? 0
+}
+
+/** Words a provider spells its own way in model names. */
+const MODEL_WORDS: Readonly<Record<string, string>> = {
+  claude: "Claude",
+  gpt: "GPT",
+  grok: "Grok",
+}
+
+/**
+ * How the providers write a model's name: "claude-opus-5-5" → "Claude Opus
+ * 5.5", "claude-haiku-4-5-20251001" → "Claude Haiku 4.5", "gpt-5.6-sol" →
+ * "GPT-5.6 Sol". The id stays the model's identity; this is only its label.
+ */
+export function modelLabel(id: string): string {
+  const words: string[] = []
+  for (const part of normalizeModelId(id).split(/[-_\s]+/)) {
+    if (!part) continue
+    const previous = words.at(-1)
+    // Anthropic writes versions with dashes: "4-5" is 4.5.
+    if (
+      /^\d+$/.test(part) &&
+      previous !== undefined &&
+      /^\d+$/.test(previous)
+    ) {
+      words[words.length - 1] = `${previous}.${part}`
+      continue
+    }
+    const lower = part.toLowerCase()
+    // OpenAI's reasoning line stays lower case: o3, o4-mini.
+    const word = /^o\d/.test(lower)
+      ? lower
+      : (MODEL_WORDS[lower] ??
+        (/^[a-z]/.test(lower)
+          ? lower[0]!.toUpperCase() + lower.slice(1)
+          : part))
+    words.push(word)
+  }
+  if (words.length === 0) return id
+  // OpenAI joins the family and its version: GPT-5.6.
+  if (words[0] === "GPT" && words[1] !== undefined && /^\d/.test(words[1])) {
+    words.splice(0, 2, `GPT-${words[1]}`)
+  }
+  return words.join(" ")
 }

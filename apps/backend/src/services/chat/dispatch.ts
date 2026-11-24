@@ -40,6 +40,7 @@ import {
   reserveDurableChatDispatch,
 } from "./dispatch-lifecycle"
 import { providerHistoryForDispatch } from "./history"
+import { previousTurnInterruptionContext } from "./interruption-context"
 import { prepareProviderHandoff } from "./provider-handoff"
 import {
   buildPreparedTurnInstruction,
@@ -49,19 +50,8 @@ import { threadGoals } from "./goal-registry"
 import type { GoalTurn } from "./goals"
 import { chatResumes } from "./resume-registry"
 
-/**
- * Admissions currently running in this process, keyed by client dispatch id.
- *
- * The durable dispatch row is created only *after* the thread turn is
- * reserved, so an identical retry that arrives while the original is still
- * being admitted finds no row and then loses the reservation race with a
- * `turn_active` 409 — the one answer a retry must never get. Coalescing on
- * the in-flight admission lets the retry return the original's outcome with
- * `replayed: true`, exactly as a later retry would from the durable row.
- */
+/** Admissions currently running in this process, keyed by thread and dispatch id. */
 interface InFlightAdmission {
-  readonly id: symbol
-  readonly threadId: string
   readonly fingerprint: string
   readonly response: Promise<ChatSendResponse>
 }
@@ -89,42 +79,6 @@ function inFlightAdmissionsFor(
  */
 function inFlightAdmissionKey(threadId: string, dispatchId: string): string {
   return JSON.stringify([threadId, dispatchId])
-}
-
-function findInFlightAdmission(
-  state: AppState,
-  input: {
-    readonly dispatchId: string | null | undefined
-    readonly threadId: string
-    readonly fingerprint: string | null
-    readonly selfId: symbol
-  }
-): InFlightAdmission | null {
-  if (!input.dispatchId || !input.fingerprint) return null
-  const admission = inFlightAdmissions
-    .get(state)
-    ?.get(inFlightAdmissionKey(input.threadId, input.dispatchId))
-  if (!admission || admission.id === input.selfId) return null
-  if (admission.threadId !== input.threadId) return null
-  if (admission.fingerprint !== input.fingerprint) {
-    throw new HttpError(
-      409,
-      `Dispatch id '${input.dispatchId}' is already bound to a different request.`,
-      "dispatch_id_conflict"
-    )
-  }
-  return admission
-}
-
-async function replayInFlightAdmission(
-  admission: InFlightAdmission
-): Promise<ChatSendResponse> {
-  const response = await admission.response
-  return { ...response, replayed: true }
-}
-
-function isTurnActiveError(error: unknown): boolean {
-  return error instanceof HttpError && error.code === "turn_active"
 }
 
 /** The hub-served kinds come from the driver registry (providerDrivers.ts). */
@@ -340,22 +294,18 @@ export async function dispatchChatTurn(
     let workspaceLeaseTransferred = false
     try {
       const hubKind = asHubProviderKind(body.provider_kind)
-      const useHub = Boolean(
-        hubKind && (state.providerHub.has(hubKind) || body.provider_instance_id)
-      )
-      const hubProviderInstanceId =
-        useHub && hubKind
-          ? resolveHubInstanceId({
-              state,
-              providerKind: hubKind,
-              threadId: body.thread_id,
-              explicitInstanceId:
-                body.provider_instance_id ?? body.model_selection?.instanceId,
-              operation: "send turn",
-              requireBinding: false,
-            })
-          : null
-      const legacyKind = useHub
+      const hubProviderInstanceId = hubKind
+        ? resolveHubInstanceId({
+            state,
+            providerKind: hubKind,
+            threadId: body.thread_id,
+            explicitInstanceId:
+              body.provider_instance_id ?? body.model_selection?.instanceId,
+            operation: "send turn",
+            requireBinding: false,
+          })
+        : null
+      const legacyKind = hubKind
         ? null
         : state.providers.resolveProviderKind(body.provider_kind)
       const effectiveProviderKind = hubKind ?? legacyKind!
@@ -366,12 +316,11 @@ export async function dispatchChatTurn(
       // request's own `provider_instance_id`, so the model selection's
       // instance must not reach their durable dispatch, or binding the
       // accepted turn fails as a pending → pending transition.
-      const effectiveProviderInstanceId = useHub
+      const effectiveProviderInstanceId = hubKind
         ? (body.provider_instance_id ??
           body.model_selection?.instanceId ??
           null)
         : (body.provider_instance_id ?? null)
-      const admissionId = Symbol("chat-dispatch-admission")
       const requestFingerprint = body.user_message_id
         ? dispatchRequestFingerprint(
             body,
@@ -380,14 +329,21 @@ export async function dispatchChatTurn(
             effectiveProviderInstanceId
           )
         : null
-      const inFlightLookup = {
-        dispatchId: body.user_message_id,
-        threadId: body.thread_id,
-        fingerprint: requestFingerprint,
-        selfId: admissionId,
+      const admissionKey = body.user_message_id
+        ? inFlightAdmissionKey(body.thread_id, body.user_message_id)
+        : null
+      const admissions = inFlightAdmissionsFor(state)
+      const inFlight = admissionKey ? admissions.get(admissionKey) : undefined
+      if (inFlight) {
+        if (inFlight.fingerprint !== requestFingerprint) {
+          throw new HttpError(
+            409,
+            `Dispatch id '${body.user_message_id}' is already bound to a different request.`,
+            "dispatch_id_conflict"
+          )
+        }
+        return { ...(await inFlight.response), replayed: true }
       }
-      const inFlight = findInFlightAdmission(state, inFlightLookup)
-      if (inFlight) return await replayInFlightAdmission(inFlight)
       const existingDispatch = existingDurableChatDispatch(
         state,
         body,
@@ -396,37 +352,6 @@ export async function dispatchChatTurn(
       )
       if (existingDispatch) {
         return existingDispatchResponse(existingDispatch)
-      }
-      // The admission is registered from inside `admit()` the moment the
-      // thread token is reserved — not before — so two racers on one thread
-      // cannot both register: the loser's reservation fails, it looks the
-      // winner up and replays it. Its response is a deferred that the
-      // outer flow settles from `admit()`'s outcome.
-      const admissions = inFlightAdmissionsFor(state)
-      const admissionKey =
-        body.user_message_id && requestFingerprint
-          ? inFlightAdmissionKey(body.thread_id, body.user_message_id)
-          : null
-      let resolveAdmission: (value: ChatSendResponse) => void = () => {}
-      let rejectAdmission: (reason: unknown) => void = () => {}
-      const admission: InFlightAdmission | null =
-        admissionKey && requestFingerprint
-          ? {
-              id: admissionId,
-              threadId: body.thread_id,
-              fingerprint: requestFingerprint,
-              response: new Promise<ChatSendResponse>((resolve, reject) => {
-                resolveAdmission = resolve
-                rejectAdmission = reject
-              }),
-            }
-          : null
-      // Replayers observe the rejection through their own `await`; without a
-      // handler here an admission nobody replayed would surface as an
-      // unhandled rejection.
-      admission?.response.catch(() => undefined)
-      const registerAdmission = (): void => {
-        if (admission && admissionKey) admissions.set(admissionKey, admission)
       }
       const admit = async (): Promise<ChatSendResponse> => {
         // The user's "on message send" hooks run here for every message,
@@ -459,34 +384,15 @@ export async function dispatchChatTurn(
           // dispatch row. This prevents two different HTTP callers from
           // persisting pending user turns on the same thread while one of
           // them is generating a pre-turn compaction checkpoint.
-          try {
-            sharedToken = reserveDispatchTurn(
-              state,
-              body.thread_id,
-              `http:${useHub ? `hub:${hubKind}` : `legacy:${legacyKind}`}`
-            )
-          } catch (error) {
-            if (!isTurnActiveError(error)) throw error
-            // The thread is busy. If it is busy with *this very request* —
-            // an identical retry that raced the original past the durable
-            // check above — replay it instead of reporting a conflict.
-            const racedAdmission = findInFlightAdmission(state, inFlightLookup)
-            if (racedAdmission)
-              return await replayInFlightAdmission(racedAdmission)
-            const racedDispatch = existingDurableChatDispatch(
-              state,
-              body,
-              effectiveProviderKind,
-              effectiveProviderInstanceId
-            )
-            if (racedDispatch) return existingDispatchResponse(racedDispatch)
-            throw error
-          }
-          registerAdmission()
+          sharedToken = reserveDispatchTurn(
+            state,
+            body.thread_id,
+            `http:${hubKind ? `hub:${hubKind}` : `legacy:${legacyKind}`}`
+          )
           if (remoteProviderReservation) {
             state.remoteProviderTurns.assertActive(remoteProviderReservation)
           }
-          if (useHub && hubKind) {
+          if (hubKind) {
             state.providerHub.assertCanStartTurn?.(
               hubKind,
               body.thread_id,
@@ -544,19 +450,27 @@ export async function dispatchChatTurn(
             body,
             persistedUserMessageId
           )
+          const interruptionContext = previousTurnInterruptionContext(
+            state,
+            body.thread_id,
+            providerHistory
+          )
           setSessionPermission(body.thread_id, body.permission_level)
           const orchestrated = await state.orchestrator.prepareForTurn({
             ...body,
             provider_instance_id:
               hubProviderInstanceId ?? body.provider_instance_id,
           })
+          const providerMessage = interruptionContext
+            ? `${interruptionContext}\n\n${orchestrated.message}`
+            : orchestrated.message
           goalHooks?.guard()
           state.orchestrator.assertDispatchAllowed(body.thread_id)
           // Hub and legacy providers share the admission, permission,
           // compaction, and durable-dispatch work above. The launch below
           // is the only provider-specific step; settlement (owner attach,
           // accepted receipt, error mapping) stays in this function.
-          if (useHub && hubKind) {
+          if (hubKind) {
             const providerInstanceId = hubProviderInstanceId
             let durableProviderInstanceId = providerInstanceId
             let acceptedTurnId: string | null = null
@@ -568,7 +482,7 @@ export async function dispatchChatTurn(
                 {
                   providerInstanceId: providerInstanceId ?? undefined,
                   threadId: body.thread_id,
-                  message: orchestrated.message,
+                  message: providerMessage,
                   modelId: body.model_id,
                   modelSelection: body.model_selection ?? undefined,
                   history: providerHistory,
@@ -691,7 +605,7 @@ export async function dispatchChatTurn(
           let acceptedTurnId: string | null = null
           const input: ProviderSendTurnInput = {
             thread_id: body.thread_id,
-            message: orchestrated.message,
+            message: providerMessage,
             model_id: body.model_id,
             reasoning_effort: body.reasoning_effort,
             chat_mode: body.chat_mode,
@@ -822,15 +736,21 @@ export async function dispatchChatTurn(
           }
         }
       }
-      const response = admit()
-      response.then(resolveAdmission, rejectAdmission)
+      // Publish the promise before admission can run a message hook. Identical
+      // requests share this outcome even before a durable receipt exists.
+      const response = Promise.resolve().then(admit)
+      if (admissionKey && requestFingerprint) {
+        admissions.set(admissionKey, {
+          fingerprint: requestFingerprint,
+          response,
+        })
+      }
       try {
         return await response
       } finally {
         if (
-          admission &&
           admissionKey &&
-          admissions.get(admissionKey) === admission
+          admissions.get(admissionKey)?.response === response
         ) {
           admissions.delete(admissionKey)
         }

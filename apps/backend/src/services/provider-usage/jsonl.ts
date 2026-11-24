@@ -68,24 +68,161 @@ export async function forEachLine(
   }
 }
 
-/** Every `.jsonl` file under `root`, depth first, ignoring unreadable dirs. */
+/**
+ * `forEachLine` for the lines that contain `marker`, which must not contain a
+ * newline.
+ *
+ * The raw bytes are searched and only the matching lines are decoded, so the
+ * rows a caller drops anyway never become strings. In Claude transcripts that
+ * is most of the file: tool results and user messages outweigh the assistant
+ * rows that carry usage. Same options and result as `forEachLine`.
+ */
+export async function forEachMatchingLine(
+  file: string,
+  marker: string,
+  onLine: (line: string) => void,
+  options: { fromEnd?: number; from?: number; completeLinesOnly?: boolean } = {}
+): Promise<number | null> {
+  const needle = Buffer.from(marker, "utf8")
+  let handle: fs.promises.FileHandle
+  try {
+    handle = await fs.promises.open(file, "r")
+  } catch {
+    return null
+  }
+  try {
+    let position = options.from ?? 0
+    if (options.fromEnd !== undefined) {
+      const stat = await handle.stat()
+      position = Math.max(0, stat.size - options.fromEnd)
+    }
+    let lineEnd = position
+    let buffer = Buffer.allocUnsafe(CHUNK_BYTES)
+    // The start of a line the last read cut off, kept at the buffer's head.
+    let carried = 0
+    for (;;) {
+      if (buffer.length - carried < CHUNK_BYTES / 4) {
+        // A line longer than most of a chunk: grow instead of reading slivers.
+        const grown = Buffer.allocUnsafe(carried + CHUNK_BYTES)
+        buffer.copy(grown, 0, 0, carried)
+        buffer = grown
+      }
+      const { bytesRead } = await handle.read(
+        buffer,
+        carried,
+        buffer.length - carried,
+        position
+      )
+      if (bytesRead === 0) break
+      position += bytesRead
+      const end = carried + bytesRead
+      const view = buffer.subarray(0, end)
+      // A newline byte never occurs inside a multi-byte UTF-8 character, so
+      // byte offsets mark line ends and each line decodes on its own.
+      const lastNewline = view.lastIndexOf(0x0a)
+      if (lastNewline < 0) {
+        carried = end
+        continue
+      }
+      lineEnd = position - end + lastNewline + 1
+      let from = 0
+      for (;;) {
+        const hit = view.indexOf(needle, from)
+        if (hit < 0 || hit > lastNewline) break
+        const start = view.lastIndexOf(0x0a, hit) + 1
+        const stop = view.indexOf(0x0a, hit)
+        onLine(view.toString("utf8", start, stop))
+        from = stop + 1
+      }
+      buffer.copy(buffer, 0, lastNewline + 1, end)
+      carried = end - lastNewline - 1
+    }
+    if (options.completeLinesOnly) return lineEnd
+    if (carried > 0 && buffer.subarray(0, carried).indexOf(needle) >= 0) {
+      onLine(buffer.toString("utf8", 0, carried))
+    }
+    return position
+  } finally {
+    await handle.close()
+  }
+}
+
+/**
+ * The last line holding each marker in a stream of JSONL bytes, or null for
+ * a marker that never occurs. Markers must not contain a newline.
+ *
+ * Made for logs that can only be read from the start, like a compressed
+ * Codex rollout: each chunk is searched from its end, and nothing but the
+ * newest matching lines and a partial last line is kept.
+ */
+export async function lastMatchingLines(
+  chunks: AsyncIterable<Buffer>,
+  markers: readonly string[]
+): Promise<Array<string | null>> {
+  const needles = markers.map((marker) => Buffer.from(marker, "utf8"))
+  const found: Array<string | null> = markers.map(() => null)
+  // The start of a line that a later chunk completes.
+  let carried: Buffer[] = []
+  const take = (line: Buffer) => {
+    needles.forEach((needle, index) => {
+      if (line.indexOf(needle) >= 0) found[index] = line.toString("utf8")
+    })
+  }
+  for await (const chunk of chunks) {
+    const first = chunk.indexOf(0x0a)
+    if (first < 0) {
+      carried.push(Buffer.from(chunk))
+      continue
+    }
+    const last = chunk.lastIndexOf(0x0a)
+    // Whole lines after the first newline of this chunk; newest last.
+    const lines = chunk.subarray(first + 1, last)
+    const completed = Buffer.concat([...carried, chunk.subarray(0, first)])
+    needles.forEach((needle, index) => {
+      const hit = lines.lastIndexOf(needle)
+      if (hit >= 0) {
+        const start = lines.lastIndexOf(0x0a, hit) + 1
+        const end = lines.indexOf(0x0a, hit)
+        found[index] = lines.toString(
+          "utf8",
+          start,
+          end < 0 ? lines.length : end
+        )
+      } else if (completed.indexOf(needle) >= 0) {
+        // Older than anything in this chunk, newer than earlier chunks.
+        found[index] = completed.toString("utf8")
+      }
+    })
+    carried =
+      last + 1 < chunk.length ? [Buffer.from(chunk.subarray(last + 1))] : []
+  }
+  if (carried.length > 0) take(Buffer.concat(carried))
+  return found
+}
+
+/**
+ * Every `.jsonl` file under `root`, depth first, ignoring unreadable dirs.
+ * Sibling directories are read concurrently: Claude keeps one per project and
+ * one per chat with subagents, hundreds on an active machine.
+ */
 export async function listJsonlFiles(root: string): Promise<string[]> {
-  const files: string[] = []
-  const visit = async (directory: string): Promise<void> => {
+  const visit = async (directory: string): Promise<string[]> => {
     let entries: fs.Dirent[]
     try {
       entries = await fs.promises.readdir(directory, { withFileTypes: true })
     } catch {
-      return
+      return []
     }
-    for (const entry of entries) {
-      const full = path.join(directory, entry.name)
-      if (entry.isDirectory()) await visit(full)
-      else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(full)
-    }
+    const nested = await Promise.all(
+      entries.map((entry) => {
+        const full = path.join(directory, entry.name)
+        if (entry.isDirectory()) return visit(full)
+        return entry.isFile() && entry.name.endsWith(".jsonl") ? [full] : []
+      })
+    )
+    return nested.flat()
   }
-  await visit(root)
-  return files
+  return visit(root)
 }
 
 export function parseJson(line: string): Record<string, unknown> | null {

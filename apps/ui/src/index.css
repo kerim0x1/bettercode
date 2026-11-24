@@ -321,7 +321,7 @@
 .chat-prose sup {
   font-size: 0.8em;
 }
-.chat-prose img {
+.chat-prose img:where(:not(.not-prose, .not-prose *)) {
   max-width: 100%;
   height: auto;
   border-radius: 0.5em;
@@ -1123,7 +1123,7 @@
 :root {
   --chat-max-width: 1200px;
   --chat-scale: 1;
-  --message-font-size: 13px;
+  --message-font-size: 18px;
   --sidebar-width: 300px;
 }
 

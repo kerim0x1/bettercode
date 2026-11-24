@@ -83,6 +83,7 @@ import type {
   ProviderTurnHandle,
 } from "./ProviderHubTypes"
 import { ProviderSessionRegistry } from "./ProviderSessionRegistry"
+import { ProviderBackendQuarantines } from "./ProviderBackendQuarantines"
 import {
   ProviderStatusService,
   isProviderMetadataChangedEvent,
@@ -228,16 +229,10 @@ interface ProviderTurnAdmission {
   cancelRequested: boolean
   adapterDispatchStarted: boolean
   interruptPromise: Promise<void> | null
+  interruptStatus: string | null
   pendingTerminalEvent: ProviderRuntimeEvent | null
-  backendQuarantined: boolean
   quarantineFinalizerStarted: boolean
   readonly sharedToken?: symbol
-}
-
-interface ProviderBackendQuarantine {
-  readonly quarantinedAt: number
-  readonly reason: string
-  readonly failure: ProviderBackendQuarantinedError
 }
 
 export class ProviderHub {
@@ -245,12 +240,15 @@ export class ProviderHub {
   static readonly TURN_IDLE_TIMEOUT_DEFAULT_MS = TURN_IDLE_TIMEOUT_DEFAULT_MS
   /** Generous absolute ceiling; streaming turns are bounded only by this. */
   static readonly TURN_MAX_DURATION_DEFAULT_MS = TURN_MAX_DURATION_DEFAULT_MS
-  private readonly byProvider = new Map<ProviderKind, ProviderAdapterShape>()
   private readonly byInstance = new Map<string, ProviderRuntimeInstance>()
-  private readonly quarantinedAdapters = new Map<
-    ProviderAdapterShape,
-    ProviderBackendQuarantine
-  >()
+  private readonly quarantinedAdapters = new ProviderBackendQuarantines(
+    (adapter) => {
+      for (const instance of this.byInstance.values()) {
+        if (instance.adapter === adapter)
+          this.status.invalidateInstanceCache(instance.instanceId)
+      }
+    }
+  )
   private readonly activeTurnSettlements = new Set<Promise<void>>()
   private readonly adapterSubscriptions = new Map<
     ProviderAdapterShape,
@@ -371,8 +369,9 @@ export class ProviderHub {
         runSessionOperation: <T>(
           instance: ProviderRuntimeInstance,
           label: string,
-          operation: () => Promise<T>
-        ) => this.runSessionOperation(instance, label, operation),
+          operation: () => Promise<T>,
+          thread?: ThreadId
+        ) => this.runSessionOperation(instance, label, operation, thread),
         raceInterruptBudget: <T>(operation: () => Promise<T>, label: string) =>
           this.raceInterruptBudget(operation, label),
         emitSessionStarted: (input) => this.emitSessionStarted(input),
@@ -395,8 +394,6 @@ export class ProviderHub {
       }),
       {
         resolveInstance: (input) => this.resolveInstance(input),
-        recoverSessionForThread: (input) =>
-          this.sessions.recoverSessionForThread(input),
         activeTurnInstanceId: (thread) =>
           this.turnsByThread.get(thread)?.providerInstanceId,
       }
@@ -470,7 +467,6 @@ export class ProviderHub {
         this.adapterSubscriptions.delete(adapter)
       }
     }
-    this.byProvider.clear()
     this.byInstance.clear()
     for (const adapter of this.quarantinedAdapters.keys()) {
       if (!nextAdapters.has(adapter) && !this.retiringAdapters.has(adapter)) {
@@ -492,13 +488,6 @@ export class ProviderHub {
 
     for (const instance of instances) {
       this.byInstance.set(instance.instanceId, instance)
-      if (
-        instance.enabled &&
-        instance.provider &&
-        !this.byProvider.has(instance.provider)
-      ) {
-        this.byProvider.set(instance.provider, instance.adapter)
-      }
       if (subscribedAdapters.has(instance.adapter)) continue
       subscribedAdapters.add(instance.adapter)
       const unsubscribe = instance.adapter.subscribe((event) => {
@@ -523,7 +512,19 @@ export class ProviderHub {
           )
         }
         const admission = this.turnsByThread.get(normalized.threadId)
-        if (admission) this.observeTurnActivity(admission, normalized)
+        const requestChange = readTurnRequestChange(normalized)
+        if (
+          admission &&
+          requestChange &&
+          !this.isAdmissionEventCorrelated(
+            admission,
+            normalized,
+            generation,
+            true
+          )
+        ) {
+          return
+        }
         const suppressSessionExitCorrelation =
           normalized.type === "session.exited" &&
           this.sessions.isSessionExitCorrelationSuppressed(
@@ -538,11 +539,7 @@ export class ProviderHub {
         const admissionLifecycleEvent =
           !suppressSessionExitCorrelation &&
           lifecycleEvent &&
-          this.isAdmissionLifecycleEventCorrelated(
-            admission,
-            normalized,
-            generation
-          )
+          this.isAdmissionEventCorrelated(admission, normalized, generation)
         if (
           admission &&
           lifecycleEvent &&
@@ -561,12 +558,27 @@ export class ProviderHub {
           })
           return
         }
+        if (admission)
+          this.observeTurnActivity(admission, normalized, requestChange)
         if (admissionLifecycleEvent && admission) {
+          const interruptedExit =
+            normalized.type === "session.exited" &&
+            admission.phase === "interrupting" &&
+            admission.pendingTerminalEvent === null &&
+            admission.interruptStatus !== null
           const rawPayload = (
             normalized as unknown as { readonly payload?: unknown }
           ).payload
           normalized = {
             ...normalized,
+            ...(interruptedExit
+              ? {
+                  turnId:
+                    normalized.turnId ??
+                    admission.providerTurnId ??
+                    admission.admissionId,
+                }
+              : {}),
             payload: {
               ...(rawPayload &&
               typeof rawPayload === "object" &&
@@ -574,6 +586,7 @@ export class ProviderHub {
                 ? rawPayload
                 : {}),
               dispatchTurnId: admission.admissionId,
+              ...(interruptedExit ? { status: admission.interruptStatus } : {}),
             },
           } as ProviderRuntimeEvent
         }
@@ -637,7 +650,7 @@ export class ProviderHub {
     // Close admission before asking the backend to stop. Otherwise a slow
     // stopAll() leaves a window where a new turn can be dispatched to a
     // process generation that is already being retired.
-    this.quarantineProviderBackend(
+    this.quarantinedAdapters.record(
       instance,
       "backend retirement is in progress"
     )
@@ -651,10 +664,10 @@ export class ProviderHub {
       })
       .catch((error) => {
         this.retiredAdapterFailures.set(adapter, error)
-        this.quarantineProviderBackend(
+        this.quarantinedAdapters.record(
           instance,
           error instanceof Error ? error.message : String(error),
-          true
+          { replaceFailure: true }
         )
       })
       .finally(() => {
@@ -673,14 +686,17 @@ export class ProviderHub {
   }
 
   list(): ReadonlyArray<ProviderAdapterShape> {
-    return Array.from(this.byProvider.values()).filter(
-      (adapter) => !this.quarantinedAdapters.has(adapter)
+    const kinds = new Set(
+      Array.from(this.byInstance.values(), (entry) => entry.provider)
     )
+    return Array.from(kinds).flatMap((kind) => {
+      const adapter = kind ? this.get(kind) : null
+      return adapter ? [adapter] : []
+    })
   }
 
   get(provider: ProviderKind): ProviderAdapterShape | null {
-    const adapter = this.byProvider.get(provider)
-    return adapter && !this.quarantinedAdapters.has(adapter) ? adapter : null
+    return this.resolve({ provider })
   }
 
   getInstance(instanceId: string): ProviderRuntimeInstance | null {
@@ -978,8 +994,8 @@ export class ProviderHub {
       cancelRequested: false,
       adapterDispatchStarted: false,
       interruptPromise: null,
+      interruptStatus: null,
       pendingTerminalEvent: null,
-      backendQuarantined: false,
       quarantineFinalizerStarted: false,
       ...(sharedToken ? { sharedToken } : {}),
     }
@@ -1119,24 +1135,10 @@ export class ProviderHub {
         })
       }
 
-      const stoppedAdapters = new Set<ProviderAdapterShape>()
-      for (const instance of this.byInstance.values()) {
-        if (stoppedAdapters.has(instance.adapter)) continue
-        stoppedAdapters.add(instance.adapter)
-        if (this.quarantinedAdapters.has(instance.adapter)) continue
-        const thread = toThreadId(threadId)
-        if (!instance.adapter.hasSession(thread)) continue
-        await this.runSessionOperation(instance, "stopSession", () =>
-          instance.adapter.stopSession(thread)
-        )
-        this.sessions.forgetKnownLiveSession(instance.adapter, thread)
-        this.emitSessionExited({
-          threadId,
-          providerKind: instance.provider ?? instance.adapter.provider,
-          providerInstanceId: instance.instanceId,
-          reason: "provider.threadTeardown",
-        })
-      }
+      await this.sessions.stopSessionsForThread(
+        toThreadId(threadId),
+        "provider.threadTeardown"
+      )
 
       return await operation()
     } finally {
@@ -1437,7 +1439,7 @@ export class ProviderHub {
     instanceId?: string | null,
     bindings?: ProviderSessionBindingStore
   ): Promise<void> {
-    let admission = this.turnsByThread.get(thread)
+    const admission = this.turnsByThread.get(thread)
     if (
       admission?.providerKind === provider &&
       (!admission.providerInstanceId ||
@@ -1450,27 +1452,18 @@ export class ProviderHub {
       })
       return
     }
+    const targetId =
+      instanceId ??
+      bindings?.getLatestForThreadProvider(thread, provider)?.providerInstanceId
     const instance = this.resolveInstance({
       provider,
-      instanceId: instanceId ?? null,
+      instanceId: targetId ?? null,
     })
     if (!instance) {
-      this.throwIfRequestedBackendQuarantined(provider, instanceId ?? null)
-      throw new ProviderInstanceUnavailableError(provider, instanceId)
+      this.throwIfRequestedBackendQuarantined(provider, targetId ?? null)
+      throw new ProviderInstanceUnavailableError(provider, targetId)
     }
-    await this.sessions.recoverSessionForThread({ instance, thread, bindings })
-    admission = this.turnsByThread.get(thread)
-    if (
-      admission?.providerKind === provider &&
-      (!admission.providerInstanceId ||
-        admission.providerInstanceId === instance.instanceId)
-    ) {
-      await this.interruptAdmission(thread, admission, {
-        reason: "provider.interruptTurnForInstance",
-        status: "interrupted",
-      })
-      return
-    }
+    if (!instance.adapter.hasSession(thread)) return
     await this.runInterruptWithTimeout(() =>
       this.interruptAdapterTurn(instance.adapter, thread)
     )
@@ -1548,13 +1541,24 @@ export class ProviderHub {
     thread: ThreadId,
     instanceId?: string | null
   ): Promise<void> {
-    const instance = this.resolveInstance({
-      provider,
-      instanceId: instanceId ?? null,
-    })
-    if (!instance) return
-    await this.runSessionOperation(instance, "stopSession", () =>
-      instance.adapter.stopSession(thread)
+    // Explicit cleanup targets can still own sessions even when they no
+    // longer accept work. Resolve by identity before inspecting ownership.
+    const instance = instanceId
+      ? this.byInstance.get(instanceId)
+      : this.resolveInstance({ provider })
+    if (
+      !instance ||
+      (instance.provider ?? instance.adapter.provider) !== provider
+    ) {
+      if (!instanceId) this.throwIfRequestedBackendQuarantined(provider, null)
+      return
+    }
+    if (this.sessions.skipQuarantinedSession(instance.adapter, thread)) return
+    await this.runSessionOperation(
+      instance,
+      "stopSession",
+      () => instance.adapter.stopSession(thread),
+      thread
     )
     this.sessions.forgetKnownLiveSession(instance.adapter, thread)
     this.emitSessionExited({
@@ -1657,7 +1661,7 @@ export class ProviderHub {
             (candidate) => candidate.adapter === adapter
           )
           const failure = instance
-            ? this.quarantineProviderBackend(
+            ? this.quarantinedAdapters.record(
                 instance,
                 result.reason instanceof Error
                   ? result.reason.message
@@ -1785,39 +1789,8 @@ export class ProviderHub {
         )
     const quarantine = matching
       .map((instance) => this.quarantinedAdapters.get(instance.adapter))
-      .find((entry): entry is ProviderBackendQuarantine => entry !== undefined)
+      .find((entry) => entry !== undefined)
     if (quarantine) throw quarantine.failure
-  }
-
-  private quarantineProviderBackend(
-    instance: ProviderRuntimeInstance,
-    reason: string,
-    replaceExisting = false
-  ): ProviderBackendQuarantinedError {
-    const existing = this.quarantinedAdapters.get(instance.adapter)
-    if (existing && !replaceExisting) return existing.failure
-
-    const quarantinedAt = existing?.quarantinedAt ?? Date.now()
-    const failure = new ProviderBackendQuarantinedError(
-      instance.instanceId,
-      quarantinedAt,
-      reason
-    )
-    this.quarantinedAdapters.set(instance.adapter, {
-      quarantinedAt,
-      reason,
-      failure,
-    })
-    for (const admission of this.turnsByThread.values()) {
-      if (admission.providerInstance?.adapter === instance.adapter) {
-        admission.backendQuarantined = true
-      }
-    }
-    for (const current of this.byInstance.values()) {
-      if (current.adapter !== instance.adapter) continue
-      this.status.invalidateInstanceCache(current.instanceId)
-    }
-    return failure
   }
 
   private resolveFailureMessage(instanceId: string | null): string {
@@ -1927,12 +1900,14 @@ export class ProviderHub {
     this.emitRuntimeEvent(event, input.admission.providerKind)
   }
 
-  private isAdmissionLifecycleEventCorrelated(
+  private isAdmissionEventCorrelated(
     admission: ProviderTurnAdmission | undefined,
     event: ProviderRuntimeEvent,
-    sourceGeneration: number
+    sourceGeneration: number,
+    isRequest = false
   ): admission is ProviderTurnAdmission {
     if (!admission) return false
+    if (isRequest && !admission.adapterDispatchStarted) return false
     if (admission.providerInstanceGeneration !== sourceGeneration) return false
     if (
       event.providerInstanceId &&
@@ -1953,13 +1928,13 @@ export class ProviderHub {
       return dispatchTurnId === admission.admissionId
     }
 
-    // Once a dispatch-correlated start established the provider turn id,
-    // subsequent events may bind by that immutable native id. Before then,
-    // accepting any event merely because it names the same thread/instance
-    // would let a delayed event from the previous turn claim this admission.
+    // Lifecycle events must prove ownership of the turn. Some protocols
+    // open a request without a turn id or before turn/start returns, so
+    // requests may use the live dispatch when neither identifier conflicts.
     return (
-      Boolean(admission.providerTurnId) &&
-      event.turnId === admission.providerTurnId
+      isRequest ||
+      (Boolean(admission.providerTurnId) &&
+        event.turnId === admission.providerTurnId)
     )
   }
 
@@ -1968,17 +1943,11 @@ export class ProviderHub {
     sourceGeneration: number
   ): ProviderTurnAdmission | null {
     const admission = this.turnsByThread.get(event.threadId)
-    if (
-      !this.isAdmissionLifecycleEventCorrelated(
-        admission,
-        event,
-        sourceGeneration
-      )
-    )
+    if (!this.isAdmissionEventCorrelated(admission, event, sourceGeneration))
       return null
 
     if (event.type === "turn.started") {
-      admission.phase = "active"
+      if (admission.phase !== "interrupting") admission.phase = "active"
       admission.providerTurnId = event.turnId ?? admission.providerTurnId
       return null
     }
@@ -2018,14 +1987,15 @@ export class ProviderHub {
   }
 
   /**
-   * Every provider event for the admission's thread counts as activity.
+   * An accepted provider event for the admission's thread counts as activity.
    * Re-arming a timer per streamed token would churn timers, so activity only
    * moves `lastActivityAt`, and the pending check re-schedules itself for the
    * remaining idle budget when it fires early.
    */
   private observeTurnActivity(
     admission: ProviderTurnAdmission,
-    event: ProviderRuntimeEvent
+    event: ProviderRuntimeEvent,
+    requestChange: ReturnType<typeof readTurnRequestChange>
   ): void {
     if (admission.settlementStarted) return
     if (
@@ -2038,17 +2008,9 @@ export class ProviderHub {
     admission.lastActivityAt = Date.now()
     const requestId = (event as { readonly requestId?: unknown }).requestId
     if (typeof requestId !== "string" || !requestId) return
-    if (
-      event.type === "request.opened" ||
-      event.type === "approval.requested" ||
-      event.type === "user-input.requested"
-    ) {
+    if (requestChange === "opened") {
       admission.pendingRequestIds.add(requestId)
-    } else if (
-      event.type === "request.resolved" ||
-      event.type === "approval.resolved" ||
-      event.type === "user-input.resolved"
-    ) {
+    } else if (requestChange === "resolved") {
       admission.pendingRequestIds.delete(requestId)
       if (admission.pendingRequestIds.size === 0 && !admission.timeoutHandle) {
         this.scheduleTurnIdleCheck(
@@ -2210,6 +2172,7 @@ export class ProviderHub {
     }
     admission.cancelRequested = true
     admission.phase = "interrupting"
+    admission.interruptStatus = input.status
     const interruptPromise = (async () => {
       const instance =
         admission.providerInstance ??
@@ -2246,7 +2209,16 @@ export class ProviderHub {
               instance.adapter.stopSession(toThreadId(threadId))
             )
             try {
-              await this.runInterruptWithTimeout(() => hardStopOperation)
+              await this.raceInterruptBudget(
+                () => hardStopOperation,
+                "stopSession",
+                SessionBudget.get(
+                  instance,
+                  "stopSession",
+                  this.interruptTimeoutMs
+                )
+              )
+              this.sessions.forgetKnownLiveSession(instance.adapter, threadId)
               try {
                 this.emitSessionExited({
                   threadId,
@@ -2270,11 +2242,12 @@ export class ProviderHub {
               } catch (emissionError) {
                 interruptFailures.push(emissionError)
               }
-              const quarantineFailure = this.quarantineProviderBackend(
+              const quarantineFailure = this.quarantinedAdapters.record(
                 instance,
                 stopError instanceof Error
                   ? stopError.message
-                  : String(stopError)
+                  : String(stopError),
+                { hardStopThread: threadId }
               )
               interruptFailures.push(quarantineFailure)
               const finalFailure = combineProviderTurnFailures([
@@ -2286,7 +2259,7 @@ export class ProviderHub {
               this.continueQuarantinedAdmissionSettlement({
                 threadId,
                 admission,
-                providerInstanceId: instance.instanceId,
+                instance,
                 reason: input.reason,
                 status: input.status,
                 hardStopOperation,
@@ -2329,7 +2302,7 @@ export class ProviderHub {
   private continueQuarantinedAdmissionSettlement(input: {
     readonly threadId: string
     readonly admission: ProviderTurnAdmission
-    readonly providerInstanceId: string
+    readonly instance: ProviderRuntimeInstance
     readonly reason: string
     readonly status: string
     readonly hardStopOperation: Promise<void>
@@ -2339,7 +2312,13 @@ export class ProviderHub {
     input.admission.quarantineFinalizerStarted = true
 
     const eventuallyStopped = input.hardStopOperation.then(
-      () => true as const,
+      async () => {
+        await input.admission.dispatchQuiesced
+        const adapter = input.instance.adapter
+        this.sessions.forgetKnownLiveSession(adapter, input.threadId)
+        this.quarantinedAdapters.confirmHardStop(adapter, input.threadId)
+        return true as const
+      },
       () => new Promise<never>(() => {})
     )
     void (async () => {
@@ -2353,7 +2332,7 @@ export class ProviderHub {
           this.emitSessionExited({
             threadId: input.threadId,
             providerKind: input.admission.providerKind,
-            providerInstanceId: input.providerInstanceId,
+            providerInstanceId: input.instance.instanceId,
             reason: "quarantined provider backend eventually stopped",
           })
         } catch (error) {
@@ -2439,7 +2418,8 @@ export class ProviderHub {
   private async runSessionOperation<T>(
     instance: ProviderRuntimeInstance,
     label: string,
-    operation: () => Promise<T>
+    operation: () => Promise<T>,
+    thread?: ThreadId
   ): Promise<T> {
     this.throwIfAdapterQuarantined(instance)
     const { interruptTimeoutMs } = this
@@ -2449,9 +2429,10 @@ export class ProviderHub {
     } catch (error) {
       if (!(error instanceof ProviderOperationDeadlineError)) throw error
       SessionBudget.logDeadline(instance, label, timeoutMs)
-      const failure = this.quarantineProviderBackend(
+      const failure = this.quarantinedAdapters.record(
         instance,
-        `Provider ${label} did not complete within ${timeoutMs}ms.`
+        `Provider ${label} did not complete within ${timeoutMs}ms.`,
+        { uncertainThread: thread }
       )
       void this.raceInterruptBudget(
         () => instance.adapter.stopAll(),
@@ -2627,6 +2608,23 @@ function readDispatchTurnId(event: ProviderRuntimeEvent): string | null {
   }
   const value = (payload as Record<string, unknown>).dispatchTurnId
   return typeof value === "string" && value.length > 0 ? value : null
+}
+
+function readTurnRequestChange(
+  event: ProviderRuntimeEvent
+): "opened" | "resolved" | null {
+  switch (event.type) {
+    case "request.opened":
+    case "approval.requested":
+    case "user-input.requested":
+      return "opened"
+    case "request.resolved":
+    case "approval.resolved":
+    case "user-input.resolved":
+      return "resolved"
+    default:
+      return null
+  }
 }
 
 function combineProviderTurnFailures(

@@ -236,20 +236,21 @@ export class ProviderSessionReaper {
       const providerKind = providerKindForHub(binding.providerKind)
       await this.options.providerHub.withThreadMaintenance(
         binding.threadId,
-        () =>
-          this.options.providerHub.stopSession(
+        async () => {
+          await this.options.providerHub.stopSession(
             providerKind,
             binding.threadId as ThreadId,
             binding.providerInstanceId
           )
+          this.options.bindings.updateSessionLifecycle({
+            threadId: binding.threadId,
+            providerKind: binding.providerKind,
+            providerInstanceId: binding.providerInstanceId,
+            status: "stopped",
+            activeTurnId: null,
+          })
+        }
       )
-      this.options.bindings.updateSessionLifecycle({
-        threadId: binding.threadId,
-        providerKind: binding.providerKind,
-        providerInstanceId: binding.providerInstanceId,
-        status: "stopped",
-        activeTurnId: null,
-      })
       this.options.logger.info(
         {
           threadId: binding.threadId,

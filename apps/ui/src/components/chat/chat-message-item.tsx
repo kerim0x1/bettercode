@@ -37,7 +37,12 @@ import {
 } from "@/components/ai-elements/checkpoint"
 import { formatTime } from "@/lib/format"
 import { getModelInfo } from "@/lib/get-model-info"
-import { logoNeedsDarkInvert } from "@/lib/logo-invert"
+import {
+  githubAvatarUrl,
+  identityInitials,
+  useUserIdentityStore,
+} from "@/lib/user-identity-store"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { classifyTask, getCategoryLabel } from "@/lib/task-classifier"
 import { turnDurationMs } from "@/lib/turn-duration"
 import { previousVisibleUserMessage } from "@/lib/chat-context"
@@ -293,11 +298,18 @@ function ChatMessageItemInner({
   showGenericToolOutput?: boolean
   concealCodeBlocks?: boolean
 }) {
-  // One meta header per turn, sitting ABOVE the user bubble: model · time ·
-  // task badge. The assistant block renders no meta row of its own — its
-  // machinery starts directly with thinking/steps, and mid-chat model
-  // changes are announced by the ModelSwitchNotice divider instead.
+  // One meta header per turn, above the user's message: who wrote it (their
+  // GitHub picture and login, else the Git name) · time · task badge, with
+  // the model it went to as the row's tooltip. The assistant block renders
+  // no meta row of its own — its machinery starts directly with
+  // thinking/steps, and mid-chat model changes are announced by the
+  // ModelSwitchNotice divider instead. The row is `not-prose`: the
+  // transcript's image rule (margins, auto height) is for pictures in
+  // messages and squashed the avatar to nothing.
   const modelInfo = msg.role === "user" ? getModelInfo(msg.modelId) : null
+  const githubUser = useUserIdentityStore((state) => state.githubUser)
+  const gitName = useUserIdentityStore((state) => state.name)
+  const authorName = githubUser || gitName || "You"
   const browserElements = (msg.attachments ?? []).flatMap((attachment) => {
     const element = readBrowserElementAttachment(attachment)
     return element ? [element] : []
@@ -319,9 +331,7 @@ function ChatMessageItemInner({
     Boolean(taskCategory) &&
     taskCategory!.category !== "general" &&
     taskCategory!.confidence >= 0.2
-  const showMeta =
-    msg.role === "user" &&
-    (Boolean(modelInfo) || showTimestamp || showTaskCategory)
+  const showMeta = msg.role === "user"
   // Prefer the activity-derived tool timeline (durations, provider badges,
   // work entries) over the persisted msg.toolCalls snapshot when both exist.
   const renderedTools = hideToolCalls
@@ -345,27 +355,21 @@ function ChatMessageItemInner({
       <Message from={msg.role as "user" | "assistant"}>
         {/* Timestamp + Model meta */}
         {showMeta && (
-          <span className="inline-flex items-center gap-1 text-[10px] leading-none whitespace-nowrap text-muted-foreground/50">
-            {modelInfo && (
-              <>
-                {modelInfo.logo ? (
-                  <img
-                    src={modelInfo.logo}
-                    alt=""
-                    className={cn(
-                      "size-3",
-                      logoNeedsDarkInvert(modelInfo.logo) && "dark:invert"
-                    )}
-                    onError={(e) => {
-                      ;(e.target as HTMLImageElement).style.display = "none"
-                    }}
-                  />
-                ) : null}
-                <span className="font-medium">{modelInfo.name}</span>
-                {(showTimestamp || showTaskCategory) && (
-                  <span className="text-muted-foreground/30">·</span>
-                )}
-              </>
+          <span
+            className="not-prose inline-flex items-center gap-1.5 text-[10.5px] leading-none whitespace-nowrap text-muted-foreground/60"
+            title={modelInfo ? `Sent to ${modelInfo.name}` : undefined}
+          >
+            <Avatar className="size-4 after:hidden">
+              {githubUser ? (
+                <AvatarImage src={githubAvatarUrl(githubUser, 16)} alt="" />
+              ) : null}
+              <AvatarFallback className="text-[7px] font-semibold">
+                {identityInitials(authorName)}
+              </AvatarFallback>
+            </Avatar>
+            <span className="font-medium text-foreground/80">{authorName}</span>
+            {(showTimestamp || showTaskCategory) && (
+              <span className="text-muted-foreground/30">·</span>
             )}
             {showTimestamp && <span>{formatTime(msg.createdAt)}</span>}
             {showTaskCategory && taskCategory ? (

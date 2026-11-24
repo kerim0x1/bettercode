@@ -1,22 +1,115 @@
-/* Scoped to rendered Markdown: tool rows and composer controls share .chat-prose. */
+/* Scoped to rendered Markdown: tool rows and composer controls share .chat-prose.
+
+   The reply reads in two weights of ink: running text a step below the
+   foreground, and what the writer stressed (bold, headings, list numbers) at
+   full strength, so a skim lands on the words that matter. Everything is a
+   theme token, so imported themes carry it. */
 .message-response {
-  line-height: 1.75;
+  /* A solid grey, not a transparent one: the letters keep full opacity. */
+  --response-ink: color-mix(
+    in oklab,
+    var(--foreground) 65%,
+    var(--muted-foreground)
+  );
+  --response-accent: color-mix(in oklab, var(--primary) 70%, transparent);
+  /* Line height in one place: the list markers centre on half of it. */
+  --response-leading: 1.65;
+  line-height: var(--response-leading);
+  /* A little air between words and letters; the UI font sets them close. */
+  word-spacing: 0.06em;
+  letter-spacing: 0.008em;
+  color: var(--response-ink);
   overflow-wrap: anywhere;
+}
+/* Code keeps the font's own spacing, so columns stay aligned. */
+.message-response :is(pre, code, kbd, samp) {
+  word-spacing: normal;
+  letter-spacing: normal;
 }
 .message-response p {
   margin: 0.75em 0;
 }
+/* A line that introduces a list ("Zum Stand:") sits with it. */
+.message-response p:has(+ :is(ul, ol)) {
+  margin-bottom: 0.3em;
+}
+.message-response :is(strong, b, [data-streamdown="strong"]) {
+  font-weight: 620;
+  color: var(--foreground);
+}
+/* Figures (3.6s, 85 %, 2026-11-17; lib/rehype-figures.ts) sit between the
+   running text and bold, so a skim finds them without the reply shouting. */
+.message-response .response-figure {
+  font-weight: 560;
+  color: var(--foreground);
+  font-variant-numeric: lining-nums;
+}
+
+/* Headings: a clear step per level; ## carries the accent bar that marks a
+   section, #### is a small label. */
 .message-response :is(h1, h2, h3, h4) {
+  color: var(--foreground);
   text-wrap: pretty;
 }
+.message-response h1 {
+  margin: 1.5em 0 0.55em;
+  font-size: 1.55em;
+  font-weight: 680;
+  line-height: 1.25;
+  letter-spacing: -0.022em;
+}
+.message-response h2 {
+  position: relative;
+  margin: 1.5em 0 0.5em;
+  padding-inline-start: 0.65em;
+  font-size: 1.22em;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.014em;
+}
+.message-response h2::before {
+  content: "";
+  position: absolute;
+  inset-block: 0.22em;
+  inset-inline-start: 0;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--primary);
+}
+.message-response h3 {
+  margin: 1.3em 0 0.4em;
+  font-size: 1.06em;
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: -0.006em;
+}
+.message-response h4 {
+  margin: 1.2em 0 0.35em;
+  font-size: 0.78em;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+/* Lists: a round accent dot for bullets, a numbered tile for steps, and a
+   tight rhythm. The markers are drawn, so they line up with the first line
+   at any text size. Task lists keep their checkboxes (index.css). */
 .message-response :is(ul, ol) {
-  list-style-position: outside;
-  padding-inline-start: 1.65em;
-  margin: 0.85em 0;
+  margin: 0.6em 0;
+  padding-inline-start: 0;
+  list-style: none;
 }
 .message-response li {
-  padding-inline-start: 0.3em;
-  margin: 0.5em 0;
+  position: relative;
+  margin: 0.35em 0;
+  padding-block: 0;
+  padding-inline-start: 1.3em;
+  /* On the item itself, so no inherited disc or circle shows beside it. */
+  list-style: none;
+}
+.message-response li:has(> input[type="checkbox"]) {
+  padding-inline-start: 0;
 }
 .message-response li > :first-child {
   margin-top: 0;
@@ -25,33 +118,89 @@
   margin-bottom: 0;
 }
 .message-response li > :is(ul, ol) {
-  margin-block: 0.35em;
+  margin-block: 0.3em 0.1em;
 }
-.message-response li::marker {
-  color: var(--muted-foreground);
+.message-response ul > li:not(:has(> input[type="checkbox"]))::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0.3em;
+  top: calc(var(--response-leading) * 0.5em - 0.18em);
+  width: 0.36em;
+  height: 0.36em;
+  border-radius: 999px;
+  background: var(--response-accent);
+}
+.message-response
+  :is(ul, ol)
+  ul
+  > li:not(:has(> input[type="checkbox"]))::before {
+  top: calc(var(--response-leading) * 0.5em - 0.19em);
+  width: 0.38em;
+  height: 0.38em;
+  border: 1.5px solid var(--muted-foreground);
+  border-radius: 999px;
+  background: transparent;
+}
+.message-response ol > li {
+  padding-inline-start: 1.85em;
+}
+/* `list-item` follows `start` and `value`, so a list may begin at 3. */
+.message-response ol > li::before {
+  content: counter(list-item);
+  position: absolute;
+  inset-inline-start: 0;
+  /* Centred on the first line: (line of text - 1.6em tile) / 2, in the
+     tile's own 0.75em. */
+  top: calc((var(--response-leading) * 1em / 0.75 - 1.6em) / 2);
+  min-width: 1.6em;
+  height: 1.6em;
+  padding-inline: 0.35em;
+  border-radius: 0.45em;
+  background: color-mix(in oklab, var(--muted) 85%, transparent);
+  color: var(--foreground);
+  font-size: 0.75em;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
+  line-height: 1.6em;
+  text-align: center;
 }
-.message-response blockquote {
-  margin-block: 1em;
-  border-inline-start: 2px solid var(--border);
-  padding-inline-start: 1em;
-  font-style: normal;
+.message-response ol ol > li::before {
+  background: transparent;
   color: var(--muted-foreground);
+}
+
+/* A quote reads as a callout beside the answer, not as greyed-out italics. */
+.message-response blockquote {
+  margin-block: 0.9em;
+  padding: 0.55em 0.95em;
+  border-inline-start: 2px solid var(--response-accent);
+  border-radius: 0 0.6em 0.6em 0;
+  background: color-mix(in oklab, var(--muted) 40%, transparent);
+  color: var(--response-ink);
+  font-style: normal;
+}
+.message-response blockquote > :first-child {
+  margin-top: 0;
+}
+.message-response blockquote > :last-child {
+  margin-bottom: 0;
 }
 .message-response hr {
-  margin-block: 1.75em;
-  border-color: var(--border);
+  margin-block: 1.6em;
+  border: 0;
+  border-top: 1px solid var(--border);
 }
 .message-response .message-inline-code {
   display: inline;
   max-width: 100%;
-  padding: 0.1em 0.32em;
-  border-radius: 4px;
+  padding: 0.08em 0.38em;
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  border-radius: 5px;
   font-family: var(--font-mono);
-  font-size: 0.9em;
+  font-size: 0.86em;
   font-weight: 450;
   line-height: inherit;
-  background: color-mix(in srgb, var(--muted) 65%, transparent);
+  background: color-mix(in oklab, var(--muted) 60%, transparent);
   color: var(--foreground);
   overflow-wrap: anywhere;
   word-break: normal;
